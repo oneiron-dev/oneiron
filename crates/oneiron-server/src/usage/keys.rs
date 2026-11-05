@@ -12,6 +12,19 @@ pub(super) fn usage_event_prefix(owner: &str, vault: &str) -> String {
 pub(super) fn usage_event_key(owner: &str, vault: &str, id: &str) -> String {
     usage_event_prefix(owner, vault) + &key_part(id)
 }
+/// Pending settlements share the event envelope and key length, but put the
+/// vault first so one bounded scan includes every frozen billing owner.
+pub(super) fn settlement_pending_prefix(vault: &str) -> String {
+    format!("usage:retry:{}:", key_part(vault))
+}
+pub(super) fn settlement_pending_key(owner: &str, vault: &str, id: &str) -> String {
+    format!(
+        "{}{}:{}",
+        settlement_pending_prefix(vault),
+        key_part(owner),
+        key_part(id)
+    )
+}
 /// A stored event key's owner and vault parts, as [`usage_event_key`]
 /// encoded them, beside the rest of the key: `None` for a key with no two
 /// parts after [`USAGE_EVENT_ROOT`].

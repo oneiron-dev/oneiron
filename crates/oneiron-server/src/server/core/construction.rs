@@ -155,6 +155,12 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        // The opened vault's own embedding width asks once, here: past its
+        // row the server's questions are told, and the vault serves as opened.
+        let _ = vault.measure_limit(
+            oneiron::limit_ask::EngineLimit::EmbeddingDimensions,
+            u64::try_from(vault.embedding_dimensions()).unwrap_or(u64::MAX),
+        );
         // Reader children wake this server's runner, which also keeps their
         // cutoff.
         let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
@@ -289,6 +295,7 @@ impl SyncServer {
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
+            residence_work_changed: Default::default(),
             queue_driver_started: std::sync::atomic::AtomicBool::new(false),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
@@ -317,8 +324,10 @@ impl SyncServer {
             memories_cursors,
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
-            embedder: None,
-            tagger: None,
+            model_slots: Arc::new(Default::default()),
+            model_setup: None,
+            model_setup_runtime: std::sync::OnceLock::new(),
+            gpu_pool: std::sync::OnceLock::new(),
             llm: None,
             decision_read: None,
             decision_reads,
@@ -342,6 +351,7 @@ impl SyncServer {
             // admission, not a new timeout of its own.
             hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
+            tagger_egress: None,
             owner_host: None,
             feedback: None,
             feedback_triage: crate::config::FeedbackTriageConfig::default(),

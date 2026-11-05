@@ -39,7 +39,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/status",
-                summary: "Where the data lives, the embedder as this server serves it, where feedback goes, the bytes this process's sync links moved, and how its browser stands.",
+                summary: "Where the data lives, the embedder as this server serves it, where feedback goes, the bytes this process's sync and LLM mesh links moved, and how its browser stands.",
                 row: None,
                 shape: None,
             },

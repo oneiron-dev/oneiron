@@ -19,11 +19,11 @@ mod tests;
 pub(crate) use crate::request_limits::narrowed_candidate_window;
 pub use crate::request_limits::{
     MAX_AS_OF_SECONDS, MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES,
-    MAX_CODEBASE_FILES, MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES,
-    MAX_RECALL_DEADLINE_MS, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT,
-    check_as_of, check_batch_len, check_blob_bytes, check_deadline_ms, check_deadline_ms_number,
-    check_dimensions, check_limit, check_limit_nonzero, check_payload_bytes, check_query,
-    check_token_budget_number, check_unix_seconds, clamp_search_limit,
+    MAX_CODEBASE_FILES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_RECALL_DEADLINE_MS,
+    MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_as_of,
+    check_batch_len, check_blob_bytes, check_deadline_ms, check_deadline_ms_number,
+    check_dimensions, check_limit_nonzero, check_payload_bytes, check_query,
+    check_token_budget_number, check_unix_seconds,
 };
 
 /// Rejects a NaN or infinite score before it narrows from `f64` to `f32`.

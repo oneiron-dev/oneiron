@@ -5,15 +5,20 @@ use oneiron_contracts::memory::MemoryError;
 /// Maximum query string, in bytes: 8 KiB.
 pub const MAX_QUERY_BYTES: usize = 8 * 1024;
 
-/// Maximum rows any list/search verb may be asked for: 1,000.
+/// The 1,000-row candidate floor a narrowed read fetches.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
 /// How many candidates a read that narrows its rows after ranking fetches
-/// for `requested`: the whole [`MAX_SEARCH_LIMIT`] window, never the index's
-/// population, so its cost does not grow with the vault. Zero stays zero.
-/// The page is short when the window holds fewer rows the narrowing keeps.
+/// for `requested`: `requested` over the [`MAX_SEARCH_LIMIT`] floor, never
+/// the index's population, so its cost follows the caller's page and not
+/// the vault. Zero stays zero. The page is short when the window holds
+/// fewer rows the narrowing keeps.
 pub fn narrowed_candidate_window(requested: usize) -> usize {
-    if requested == 0 { 0 } else { MAX_SEARCH_LIMIT }
+    if requested == 0 {
+        0
+    } else {
+        requested.max(MAX_SEARCH_LIMIT)
+    }
 }
 
 /// Maximum serialized body of one entity, claim, or message: 64 KiB.
@@ -24,9 +29,6 @@ pub const MAX_BATCH_ENTITIES: usize = 10_000;
 
 /// Maximum files in one legacy codebase-snapshot call: 100,000.
 pub const MAX_CODEBASE_FILES: usize = 100_000;
-
-/// Maximum embedding vector dimensions: 16,384.
-pub const MAX_DIMENSIONS: usize = 16_384;
 
 /// Maximum RAW blob content, in bytes: 32 MiB.
 ///
@@ -48,14 +50,6 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// A ranked retrieval's row count served at [`MAX_SEARCH_LIMIT`]: the
-/// effective limit, and whether the caller's was lowered to it. An
-/// over-large limit is served and says so, never refused (rule 5).
-#[must_use]
-pub fn clamp_search_limit(limit: usize) -> (usize, bool) {
-    (limit.min(MAX_SEARCH_LIMIT), limit > MAX_SEARCH_LIMIT)
-}
 
 /// Rejects an over-long query before it reaches retrieval.
 pub fn check_query(query: &str) -> Result<(), MemoryError> {
@@ -114,27 +108,15 @@ pub fn check_as_of(as_of: Option<u64>) -> Result<(), MemoryError> {
     Ok(())
 }
 
-/// Rejects a non-positive or over-large row count.
+/// Rejects a zero row count.
 ///
 /// Zero is refused rather than silently defaulted: a caller who asks for no
 /// rows has a bug the SDK must not paper over by inventing a page size.
-pub fn check_limit(limit: usize) -> Result<(), MemoryError> {
-    if limit == 0 || limit > MAX_SEARCH_LIMIT {
-        return Err(MemoryError::bad_request_with(
-            format!("limit must be between 1 and {MAX_SEARCH_LIMIT}"),
-            &["Request a smaller page and paginate."],
-        ));
-    }
-    Ok(())
-}
-
-/// Rejects a zero row count on a door that serves an over-large one at
-/// [`MAX_SEARCH_LIMIT`] ([`clamp_search_limit`]).
 pub fn check_limit_nonzero(limit: usize) -> Result<(), MemoryError> {
     if limit == 0 {
         return Err(MemoryError::bad_request_with(
             "limit must be at least 1",
-            &["Request at least one row; past 1000 rows the limit is served at 1000."],
+            &["Request at least one row."],
         ));
     }
     Ok(())
@@ -167,9 +149,9 @@ pub fn check_batch_len(label: &str, len: usize) -> Result<(), MemoryError> {
 
 /// Rejects an unusable embedding dimension count.
 pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
-    if dimensions == 0 || dimensions > MAX_DIMENSIONS {
+    if dimensions == 0 {
         return Err(MemoryError::bad_request_with(
-            format!("dimensions must be between 1 and {MAX_DIMENSIONS}"),
+            "dimensions must be at least 1",
             &["Open the vault with the dimension count its embedding model produces."],
         ));
     }

@@ -125,3 +125,12 @@ pub struct BlobVersionView {
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
 }
+
+/// A checked append's actual result: a version on the chain, or an output
+/// retained beside the live artifact until an authorized Keep settles it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BlobVersionAppendOutcome {
+    Landed(BlobVersionView),
+    Proposed(crate::edit_settle::PendingProposalView),
+}

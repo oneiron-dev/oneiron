@@ -108,24 +108,38 @@ pub(super) async fn preview(
             Ok(request) => request,
             Err(response) => return response,
         };
-    let Ok((page, bytes)) = server.vault.esign_preview_for_capability_as(
-        &token,
-        request.item,
-        caller,
-        verified_actor,
-        ip,
-        ua,
-    ) else {
-        return refused();
-    };
+    let item = request.item;
     let memory = server.memory.clone();
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
-    let pages = match tokio::task::spawn_blocking(move || {
-        parse_lease::inspected_in_memory(&memory, &bytes, stream_decode_bytes)
+    let vault = Arc::clone(&server.vault);
+    let (page, pages) = match tokio::task::spawn_blocking(move || {
+        let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
+        let (page, bytes, lease) = match vault.esign_preview_for_capability_leased_as(
+            &token,
+            item,
+            caller,
+            verified_actor,
+            ip,
+            ua,
+            &memory,
+            deadline,
+        ) {
+            Ok(leased) => leased,
+            Err(oneiron::blob_artifact::esign::EsignLeasedReadError::Vault(_)) => {
+                return Err(refused());
+            }
+            Err(oneiron::blob_artifact::esign::EsignLeasedReadError::Refused(refusal)) => {
+                return Err(super::ingress::memory_refused(refusal));
+            }
+        };
+        match parse_lease::inspected(lease, deadline, &bytes, stream_decode_bytes) {
+            Ok(pages) => Ok((page, pages)),
+            Err(response) => Err(response),
+        }
     })
     .await
     {
-        Ok(Ok(pages)) => pages,
+        Ok(Ok(preview)) => preview,
         Ok(Err(response)) => return response,
         Err(_) => return refused(),
     };
@@ -133,7 +147,7 @@ pub(super) async fn preview(
         fields: page
             .fields
             .into_iter()
-            .filter(|f| f.item as usize == request.item)
+            .filter(|f| f.item as usize == item)
             .collect(),
         values: page.values.into_iter().map(|(k, v)| (k, v.value)).collect(),
         pages,
