@@ -120,3 +120,20 @@ This accounts only those named conversion components. It is not a bound for all
 map-growth or allocator capacity, native outputs, metadata, or total heap use.
 The existing call memory service, one request, missing-service leniency, codec
 and resource errors, signing receipts, and once-only dispatch are unchanged.
+
+## Fetch reply codec admission
+
+After the single `net.fetch` ask returns, its `FetchAnswer` metadata now uses the
+same admitted value-decoding helper as the initial identity and verb arguments.
+Traversal scratch is admitted during each measurement and encoding pass. The
+encoded temporary and typed decode are admitted before conversion, through the
+same call's existing `memory.grow` service. The encoded bytes drop before the
+helper returns the typed answer; host grants remain held until the call ends.
+An unavailable memory service keeps the existing leniency. A real memory refusal
+uses `FetchError::Memory`; an ordinary codec error stays `InvalidResponse`.
+
+The network ask is not replayed. Status checks, returned body-region adoption and
+the separate admitted content-type copy remain unchanged. This covers the named
+reply conversion, not the already-received wire value, allocator slack, native
+response bodies or the call's total heap. The post-`seal.sign` signature decoder
+is unchanged; this does not add an admission wait to that decoder.
