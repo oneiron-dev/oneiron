@@ -62,7 +62,7 @@ use crate::api::{
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::memory::{
-    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+    AdmittedBytes, AdmittedStr, Lease, SealMemory, SealMemoryProvider, SealMemoryRefusal,
 };
 use crate::native::NativeSealEngine;
 
@@ -435,6 +435,7 @@ fn engine(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
+            memory: memory.clone(),
             identity: Mutex::new(None),
         }),
         Arc::new(AskedFetcher { asks, memory }),
@@ -529,8 +530,23 @@ impl SealMemory for AskedMemory {
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
     asks: Arc<CallAsks>,
+    memory: SealMemoryProvider,
     /// The identity the engine gave, asked once per call.
-    identity: Mutex<Option<SigningIdentity>>,
+    identity: Mutex<Option<CachedIdentity>>,
+}
+
+/// The cache's retained identity, dropped before its service reservation.
+struct CachedIdentity {
+    value: SigningIdentity,
+    _lease: Lease,
+}
+
+impl std::ops::Deref for CachedIdentity {
+    type Target = SigningIdentity;
+
+    fn deref(&self) -> &SigningIdentity {
+        &self.value
+    }
 }
 
 #[derive(Deserialize)]
@@ -570,7 +586,7 @@ impl SealBackend for AskedBackend {
     fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
         let mut held = lock(&self.identity);
         if let Some(identity) = held.as_ref() {
-            return Ok(identity.clone());
+            return Ok(identity.value.clone());
         }
         let reply = self
             .asks
@@ -585,7 +601,28 @@ impl SealBackend for AskedBackend {
             signer_certificate_der: answer.signer_certificate.into_vec(),
             certificate_chain_der: answer.chain.into_iter().map(ByteBuf::into_vec).collect(),
         };
-        *held = Some(identity.clone());
+        let bytes = identity
+            .certificate_chain_der
+            .capacity()
+            .checked_mul(std::mem::size_of::<Vec<u8>>())
+            .and_then(|outer| outer.checked_add(identity.signer_certificate_der.capacity()))
+            .and_then(|bytes| {
+                identity
+                    .certificate_chain_der
+                    .iter()
+                    .try_fold(bytes, |total, der| total.checked_add(der.capacity()))
+            })
+            .ok_or(BackendError::Memory(SealMemoryRefusal::Floor {
+                needed: u64::MAX,
+                available: 0,
+            }))?;
+        let lease = self.memory.lease(bytes).map_err(BackendError::Memory)?;
+        let cached = CachedIdentity {
+            value: identity,
+            _lease: lease,
+        };
+        let identity = cached.value.clone();
+        *held = Some(cached);
         Ok(identity)
     }
 
