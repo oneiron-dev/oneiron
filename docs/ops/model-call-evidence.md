@@ -97,3 +97,60 @@ This is not MESSAGE/chat reasoning delivery, replay admission, or complete
 issuing-login and read-world capture. It adds no retrieval, Dreamer-mining,
 training, or export reader. Native label reads use their separate settled-read
 capture path. Whole-engine model-call coverage remains work in progress.
+
+## Ordered MESSAGE Continue parts
+
+The existing Base Continue writer can keep a signed reasoning part whole in
+secret custody when mask-on-write is on and the current known-value or shape
+scan finds a secret. The stored part then contains only a custody handle.
+The canonical typed part, including its kind, text, data and signature, is
+sealed unchanged. This is not a claim about original provider HTTP bytes.
+
+Only new suffix parts are converted. The stored prefix keeps its existing
+representation and order. The normal stream generation, actor, topology,
+document grant, full-envelope ceiling and terminal receipt stay in one write
+transaction with custody registration. A completed generation returns its
+existing receipt before any suffix is sealed again. MESSAGE erasure revokes
+custody under its actual origin and owner act; a restorable delete does not.
+
+Base MESSAGE birth and DAG MESSAGE append use the same whole-part policy.
+Base birth runs its original guards before sealing, then authorizes and stages
+one local plan with the converted parts. The original author, topology,
+assertion, quote, thread, full-envelope ceiling and final route checks remain.
+An exact birth retry never mints again: it reuses a stored reference only after
+matching the actual MESSAGE, part position, custody origin and handle, and the
+original whole value's existing keyed fingerprint at that unit's birth
+generation. It then passes the original full-body and topology comparison.
+This identity proof opens no value and gives no reveal or replay permission.
+The on-record room copy keeps the exact admitted stored bodies, not the
+unsealed draft bodies, so its body digests describe what was committed.
+
+Off-record staging keeps inline parts and never mints durable custody. An
+explicit promote or later room copy applies the same whole-part policy to
+fresh MESSAGE rows in the promotion's existing base transaction. An id base
+already holds keeps the offered bytes for the ordinary replay's equality
+check, and a durable retry receipt returns before sealing. Custody, replay
+and the save receipt therefore commit or roll back together. A room's kept
+message digests come from the actual stored MESSAGE bodies in that writer
+and are published only after commit, not from the unsealed journal copies.
+
+This is a storage path, not reasoning delivery. No production caller currently
+supplies parts to the model-stream finalize door. Scan-off preserves the
+MESSAGE writer's existing inline behavior; it does not implement the generic
+batch door's known-only placement policy. Inline parts must not be assumed
+public or secret-free. Chat wiring, scan-off whole-part marks, actual
+issuing-login replay and whole MESSAGE privacy remain separate work. A custody
+handle is not a reveal grant or provider replay permission.
+
+Generic MESSAGE reads use the caller's ordinary scoped read and its existing
+secret redaction. If that projection changes an inline Reasoning part, the
+read withholds that whole part as JSON `null` at its original array position,
+rather than returning edited text, data or a signature. It does not restore a
+parts field already withheld by the existing projection, or change other
+parts or the ordinary message text. Stored bytes stay unchanged.
+
+A stored custody part remains an opaque handle in that view. Its whole value
+leaves only through the existing secret reveal and wait doors, under their
+current grant and T1 lease, or through the owner's authenticated reveal door.
+Those doors return the canonical typed part bytes sealed by the writer. This
+is not automatic upstream replay or proof of an issuing login.

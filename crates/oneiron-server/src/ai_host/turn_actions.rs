@@ -255,7 +255,6 @@ async fn act(
         }
         None => None,
     };
-    let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
     // FIX 6676: the craft joins once the restored history and the user's
     // turn are in, where the session layout places it, and before any saved
@@ -264,6 +263,7 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
+    let answers = messages.len() - 1;
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
         today_sources.add(Some(&[action.assistant_turn, action.message]));
     }

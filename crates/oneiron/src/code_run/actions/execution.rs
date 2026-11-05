@@ -38,7 +38,7 @@ impl ActionRegistry {
             args: action.args().iter().map(ActionArgument::from_ui).collect(),
             idempotency_key: idempotency_key.to_owned(),
         };
-        self.execute(vault, actor, emitter, &call, binding)
+        self.execute(vault, actor, emitter, &call, binding, None)
     }
     /// One call from either caller, as the host authenticated it: a person's
     /// own app button (a human view) or an agent's call (an agent task). The
@@ -52,7 +52,21 @@ impl ActionRegistry {
         call: &AgentActionCall,
         binding: ActionHostBinding<'_>,
     ) -> Result<ActionDispatch> {
-        self.execute(vault, actor, principal, call, binding)
+        self.execute(vault, actor, principal, call, binding, None)
+    }
+    /// Executes the native Mark behind a public fold whose pre chain already
+    /// ran. Every other call, or a proof for different arguments, keeps the
+    /// native hook boundary; action admission and replay stay the same.
+    pub fn execute_pre_hooked_fold(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        binding: ActionHostBinding<'_>,
+        pre: PreHookedFold,
+    ) -> Result<ActionDispatch> {
+        self.execute(vault, actor, principal, call, binding, Some(pre))
     }
     pub fn execute_agent(
         &self,
@@ -64,7 +78,14 @@ impl ActionRegistry {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
-        self.execute(vault, actor, principal, call, ActionHostBinding::default())
+        self.execute(
+            vault,
+            actor,
+            principal,
+            call,
+            ActionHostBinding::default(),
+            None,
+        )
     }
     /// Executes an agent chat action under an INDEPENDENT authenticated-owner
     /// witness bound by the host, never by a transcript or action argument.
@@ -91,7 +112,7 @@ impl ActionRegistry {
             planner: None,
             slip_issuer: None,
         };
-        self.execute(vault, actor, principal, call, binding)
+        self.execute(vault, actor, principal, call, binding, None)
     }
     pub(super) fn execute<'a>(
         &self,
@@ -100,6 +121,7 @@ impl ActionRegistry {
         principal: &LensPrincipalBinding,
         request: &AgentActionCall,
         binding: ActionHostBinding<'a>,
+        pre_hooked_fold: Option<PreHookedFold>,
     ) -> Result<ActionDispatch> {
         let ActionHostBinding {
             verb_door,
@@ -254,6 +276,8 @@ impl ActionRegistry {
             Some(issuer) => dispatcher.with_slip_issuer(issuer),
             None => dispatcher,
         };
+        let mut dispatcher = dispatcher;
+        dispatcher.pre_hooked_fold = pre_hooked_fold;
         let result = dispatcher
             .dispatch_for_executor_run(
                 super::ExecutorCallSite {
@@ -281,6 +305,7 @@ impl ActionRegistry {
                 effect: call.effect(),
                 error: error.to_string(),
                 code: None,
+                disk_floor: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the
