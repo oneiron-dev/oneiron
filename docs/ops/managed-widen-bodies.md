@@ -223,6 +223,11 @@ payload remain length-framed in the same order, with the same canonical bytes
 and encoding errors. The typed proposal and canonical value tree still allocate;
 this does not account for the whole disclosure path's memory.
 
+Contact-clearance row digests write their validated canonical envelope directly
+into the hasher, without a separate encoded byte vector. The public byte-producing
+encoder still returns bytes. Scope validation and canonical value trees still
+allocate; this is not whole-path memory accounting.
+
 For an accept, file comparison runs outside every LMDB transaction. It compares
 exact bytes to the proposal's stored canonical delta, not just a digest.
 The acting writer then checks the current owner, holder credential, unresolved
