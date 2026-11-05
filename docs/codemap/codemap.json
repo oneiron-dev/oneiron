@@ -14741,7 +14741,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -44864,7 +44864,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 11,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -47398,7 +47398,7 @@
      "path": "src/memory/credential_key.rs",
      "purpose": "The read key a verified credential reads under",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -51365,7 +51365,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "re-export": 19
      }
     },
@@ -51582,7 +51582,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9
      }
     },
@@ -52054,6 +52054,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/note/saved.rs",
+     "purpose": "Native preparation and landing of a selected, already-admitted room NOTE",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/note/scan.rs",
      "purpose": "A NOTE document's sizes, measured where a store-aware entrance loads or a room projects one (rule 5; FIX 4280)",
      "surface": {
@@ -52243,7 +52253,7 @@
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -52325,14 +52335,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/room.rs",
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 12,
-      "fn": 12,
+      "fn": 15,
       "type": 1
      }
     },
@@ -52395,6 +52405,17 @@
      "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/scratch.rs",
+     "purpose": "Explicit selected scratch saves",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2
      }
     },
     {
@@ -52521,7 +52542,7 @@
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
       "const": 3,
-      "crate-vis": 21,
+      "crate-vis": 23,
       "fn": 2,
       "struct": 2
      }
@@ -52553,7 +52574,7 @@
      "path": "src/off_record/promote/result_holds.rs",
      "purpose": "A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70982,7 +71003,7 @@
      "path": "src/store/birth_record/mod.rs",
      "purpose": "Immutable row birth records and their trigger index",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -70992,6 +71013,16 @@
      "notable": [],
      "path": "src/store/birth_record/prompted.rs",
      "purpose": "A row a model wrote from a prompt that carried other rows (FIX 8192): its birth names each of them as a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/birth_record/saved_room.rs",
+     "purpose": "Exact provenance of a selected, admitted room row at an explicit save",
      "surface": {
       "crate-vis": 3
      }
@@ -85907,7 +85938,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1264
+      "fn": 1265
      }
     },
     {
@@ -86397,6 +86428,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OffRecordArtifactSaveRequest",
+      "OffRecordArtifactSaved",
       "OffRecordClaimRequest",
       "OffRecordClosed",
       "OffRecordEnterMode",
@@ -86415,7 +86448,7 @@
      "surface": {
       "enum": 2,
       "fn": 1,
-      "struct": 10
+      "struct": 12
      }
     },
     {
@@ -92541,14 +92574,14 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92961,7 +92994,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 496,
+     "files": 497,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93199,9 +93232,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 148,
+   "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6523,
+   "source_files": 6526,
    "test_files": 895
   },
   "oneiron-android": {
@@ -107225,7 +107258,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -107385,6 +107418,7 @@
      "notable": [
       "CanonicalCheckpointRef",
       "ConversationAnchor",
+      "PreparedUse",
       "RegionDescriptor",
       "SessionAppend",
       "SessionAppended",
@@ -107405,6 +107439,8 @@
       "SessionKey",
       "SessionOp",
       "SessionOpStamp",
+      "SessionPrepare",
+      "SessionPrepared",
       "SessionReleased",
       "SessionResidency",
       "SessionRestore",
@@ -107421,7 +107457,7 @@
       "const": 8,
       "enum": 3,
       "fn": 8,
-      "struct": 28
+      "struct": 31
      }
     },
     {
@@ -107620,7 +107656,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1232
+      "fn": 1233
      }
     },
     {
@@ -109398,7 +109434,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1233
+      "fn": 1234
      }
     },
     {
@@ -114984,7 +115020,7 @@
      "path": "src/api/facade/off_record_doors.rs",
      "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -120941,7 +120977,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 2,
-      "mod": 1,
+      "mod": 2,
       "re-export": 12,
       "struct": 7
      }
@@ -120979,6 +121015,22 @@
       "enum": 4,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannerMode",
+      "SessionPreparePolicy"
+     ],
+     "path": "src/config/models/sessions.rs",
+     "purpose": "`[models.sessions]`: early computation of a conversation's next turn on this host's native model sessions…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -126044,6 +126096,7 @@
       "HealthState",
       "LimitHold",
       "ModelsStatus",
+      "PreparedTailStatus",
       "ProviderStatus",
       "RungHealth",
       "RungStatus",
@@ -126061,7 +126114,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -126135,7 +126188,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 34
      }
     },
     {
@@ -126245,7 +126298,7 @@
      "path": "src/models/worker_host/session.rs",
      "purpose": "Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -126286,6 +126339,16 @@
      "purpose": "The coordinator's calls, one fn or constant each: which workers get sessions, which calls may use one, what…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/prepare.rs",
+     "purpose": "The next turn's prepared tail (I1 = C, ARCH-0067 \"exact early computation\"), host side",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -129557,7 +129620,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 65,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -129830,7 +129893,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 115,
+     "files": 116,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129986,7 +130049,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1565,
+   "source_files": 1567,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -131136,7 +131199,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
-      "mod": 7,
+      "mod": 8,
       "re-export": 2
      }
     },
@@ -131166,6 +131229,16 @@
      "notable": [],
      "path": "src/session_overlay/overlay/retire.rs",
      "purpose": "Promoted-closure retirement reusing the store's index-key builders",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retire_selected.rs",
+     "purpose": "Selected-artifact retirement for a natively saved subset (FIX 13687)",
      "surface": {
       "fn": 1
      }
@@ -132658,7 +132731,7 @@
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
     },
     "session_overlay": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -132730,7 +132803,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 159,
+   "source_files": 160,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -135358,6 +135431,8 @@
       "Of360RateMetric",
       "Of360Speaker",
       "OfPieType",
+      "OffRecordArtifactSaveRequest",
+      "OffRecordArtifactSaved",
       "OffRecordBackendClass",
       "OffRecordClaimRequest",
       "OffRecordClosed",
@@ -137382,7 +137457,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1110,
-      "struct": 3378
+      "struct": 3380
      }
     },
     {
