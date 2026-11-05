@@ -4,7 +4,7 @@ use super::{
     MediaPart, MediaRequest, Modality, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     SyncServer, TierPrecedence, media_part,
 };
-use crate::models::media::MediaRow;
+use crate::models::MediaRow;
 use oneiron::embed::{KindSlotBindings, PendingEmbedderBinding};
 use oneiron::machine_destination::PeerMachine;
 use oneiron::settings::ReadDestination;
