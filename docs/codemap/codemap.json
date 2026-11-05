@@ -2813,7 +2813,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/payload_erase/requester.rs",
-     "purpose": "A hard-erased requester's standing, out of the agent dispatch payloads that keep it (FIX 11689)",
+     "purpose": "A hard-erased requester's standing, out of the agent dispatch and TASK realization payloads that keep it…",
      "surface": {
       "crate-vis": 2
      }
@@ -9401,7 +9401,7 @@
      "path": "src/blob_artifact/holders.rs",
      "purpose": "Which records hold one record's bytes, read for a delete's impact preview",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -14771,6 +14771,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/commitment_reminder_wording.rs",
+     "purpose": "Source admission for attempt-filed reminder wording (FIX 4997)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -19859,7 +19870,7 @@
      "path": "src/commitment_wake/mod.rs",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -19874,7 +19885,7 @@
      "purpose": "Served reminder delivery for commitment wakes (OF-187): the owner's reminder route, the planner the server…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 2
      }
@@ -19892,10 +19903,47 @@
      "purpose": "Reminder wording by a model or a persona (FIX 12000)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
+      "re-export": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_wake/reminder_wording/attempt.rs",
+     "purpose": "Filing the output of one exact leased reminder-wording attempt",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_wake/reminder_wording/output.rs",
+     "purpose": "The source a filed reminder wording quotes (FIX 4997)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommitmentReminderWordingRead",
+      "CommitmentReminderWordingSource"
+     ],
+     "path": "src/commitment_wake/reminder_wording/source.rs",
+     "purpose": "The exact native reminder source each model destination may receive",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -28135,6 +28183,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/admission/requester.rs",
+     "purpose": "Terminal end of a queued TASK realization its requester withdrew (FIX 11687): the Dreamer lane's mirror of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
@@ -31123,7 +31181,7 @@
      "path": "src/dreamer_wake/owed.rs",
      "purpose": "The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -63475,6 +63533,7 @@
      "notable": [
       "ManifestSource",
       "OwnerSecretRegistration",
+      "PrivateCopySecret",
       "RequestedBinding",
       "SecretRegistered"
      ],
@@ -63482,8 +63541,8 @@
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
-      "struct": 4
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -63727,7 +63786,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/storage_seal.rs",
-     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
+     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 4, with required…",
      "surface": {
       "crate-vis": 23
      }
@@ -65444,7 +65503,7 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10
      }
     },
@@ -80980,7 +81039,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -81855,7 +81914,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -90656,7 +90715,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90775,7 +90834,7 @@
      "purpose": "Commitment schedule evaluation and durable projection (CMT-2, ONE-1539)"
     },
     "commitment_wake": {
-     "files": 8,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90964,7 +91023,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 190,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92016,7 +92075,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6421,
+   "source_files": 6426,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109802,6 +109861,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/commitment_reminder_wording.rs",
+     "purpose": "Native model wording for the durable commitment-reminder queue",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
@@ -119225,7 +119294,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -127639,7 +127708,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 106,
+     "files": 107,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128152,7 +128221,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1535,
+   "source_files": 1536,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
