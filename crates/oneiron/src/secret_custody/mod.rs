@@ -189,7 +189,7 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
-pub(crate) use self::run_bound::run_secret_effector;
+pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
