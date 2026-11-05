@@ -690,6 +690,18 @@ planner = "off"       # "learned": skip a conversation's preparation once its ta
 stopped, publishes skipped by reason, forks that attached to a tail or missed
 it, and the tokens computed, reused and wasted.
 
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
+
 ## 3. Let the Dreamer work
 
 The Dreamer consolidates witnessed turns into claims in the background. It
@@ -1226,13 +1238,15 @@ Gate record with the handle, generation, effector, operation and send status.
 
 A served host also supplies `native_mail.jmap` against its installed native
 mail server and `broker.models` against a configured broker-backed
-OpenAI-compatible or Gemini provider. The latter takes
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
 `arguments: {"provider": "<configured provider name>"}` and returns one actual
-provider JSON response: `/v1/models` for OpenAI-compatible providers or
-`/v1beta/models` for Gemini. Any provider pagination token is returned as-is;
-this operation does not fetch later pages or claim a complete catalog. It
-presents the requested handle, not the provider's configured secret, under the
-existing `broker:model` binding.
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
 The host uses one actual model rung only as the broker's bodyless-request
 binding; it does not filter the listing or claim that model is serving.
 The broker is connected before custody releases the value. Both result and
