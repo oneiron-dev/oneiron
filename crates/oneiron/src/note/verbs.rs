@@ -573,6 +573,7 @@ fn live_header(
         occurred_start: row.occurred.start,
         occurred_end: row.occurred.end,
         learned_at: row.learned_at,
+        row_version: row.row_version,
     })
 }
 fn create_from_text_in_txn(

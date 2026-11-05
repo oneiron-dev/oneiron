@@ -72,6 +72,17 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A selected room NOTE, admitted by the save's closed replay capability.
+pub(super) fn persist_saved_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    grant: &crate::off_record::PromoteReplayGrant,
+) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, true, Some(grant))?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
 /// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
 /// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
@@ -102,6 +113,16 @@ fn persist_structural(
     doc: &NoteDocument,
     masks: bool,
 ) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, masks, None)
+}
+
+fn persist_structural_with_origin(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    masks: bool,
+    grant: Option<&crate::off_record::PromoteReplayGrant>,
+) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Each citation's quote, which the pin rows below keep, is scanned as the
@@ -127,8 +148,11 @@ fn persist_structural(
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    vault
-        .batch_in()
+    let batch = match grant {
+        Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),
+        None => vault.batch_in(),
+    };
+    batch
         .text(&doc.id, &[("markdown", markdown.as_str())])
         .apply(txn)?;
     // Reverse pins preserve every cited source frontier, including when the
