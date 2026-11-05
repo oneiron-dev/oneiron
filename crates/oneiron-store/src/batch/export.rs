@@ -6,6 +6,7 @@ pub mod bundle_types;
 pub mod credential_filter;
 pub mod export_authority;
 pub mod export_manifest;
+#[cfg(feature = "sync")]
 pub mod foreign_stage;
 pub mod home_room_project;
 pub mod secret_supplement_record;
