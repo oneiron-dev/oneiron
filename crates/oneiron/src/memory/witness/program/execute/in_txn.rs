@@ -1,7 +1,6 @@
 //! The witness program's one write transaction: guards and admission, staging, `effect`,
 //! the reply's assertions, program wakes, leader chats, and the route revalidated last.
 
-use super::guards::LandingGuards;
 use super::*;
 
 /// What the witness write reads, prepared before its transaction opens.
@@ -17,6 +16,7 @@ pub(super) struct WitnessWrite<'w, 't, 'a, 'v, 'l> {
     pub(super) unproven: &'w Cell<Vec<String>>,
     pub(super) silent: bool,
     pub(super) saver: Option<&'w crate::off_record::SaverCheck<'a, 'v>>,
+    pub(super) terminal: Option<&'w super::super::super::stream::SessionStreamTerminal>,
 }
 
 impl Memory<'_> {
@@ -30,6 +30,37 @@ impl Memory<'_> {
         effect: impl FnOnce(&mut heed::RwTxn<'_>, Option<&WitnessReceipt>) -> MemoryResult<()>,
         lands_new: &mut Vec<bool>,
     ) -> MemoryResult<Landed> {
+        let mut mint_conversation = false;
+        let mut person_author = None;
+        let mut leader_project = None;
+        let mut quoted = None;
+        let mut thread = None;
+        let guarded_plan = match write.sink {
+            WitnessSink::Base(_) => {
+                match self.base_guards_in_txn(write.plan, wtxn, prepare, write.quote_key)? {
+                    BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
+                    BaseGuards::Clear {
+                        mint_conversation: absent,
+                        person_author: person,
+                        leader_project: project,
+                        quoted: proven,
+                        thread: binding,
+                    } => {
+                        mint_conversation = absent;
+                        person_author = person.filter(|_| write.plan.imported.is_none());
+                        leader_project = project;
+                        quoted = proven;
+                        thread = binding;
+                    }
+                }
+                Some(self.custody_witness_plan_in_txn(wtxn, write.plan)?)
+            }
+            WitnessSink::Overlay(_) => None,
+        };
+        let write = &WitnessWrite {
+            plan: guarded_plan.as_ref().unwrap_or(write.plan),
+            ..*write
+        };
         let WitnessWrite {
             plan,
             sink,
@@ -39,16 +70,25 @@ impl Memory<'_> {
             saver,
             ..
         } = *write;
-        let (admission, mint_conversation, leader_project, quoted) =
-            match self.admit_landing_in_txn(wtxn, write, prepare)? {
-                LandingGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
-                LandingGuards::Admitted {
-                    admission,
-                    mint_conversation,
-                    leader_project,
-                    quoted,
-                } => (admission, mint_conversation, leader_project, quoted),
-            };
+        let admission = match sink {
+            WitnessSink::Base(_) => {
+                let assertions = write.assertion_lane.map(|lane| AssertionRead {
+                    lane,
+                    refused: write.refused,
+                    unproven: write.unproven,
+                });
+                self.admit_witness_in_txn(
+                    plan,
+                    &self.vault.store,
+                    wtxn,
+                    assertions,
+                    person_author,
+                    quoted.as_ref(),
+                    thread.as_ref(),
+                )?
+            }
+            WitnessSink::Overlay(overlay) => self.admit_overlay_in_txn(wtxn, write, overlay)?,
+        };
         *lands_new = admission
             .message_exists
             .iter()
@@ -62,23 +102,90 @@ impl Memory<'_> {
             unproven.take();
         }
         let mut landed = match sink {
-            WitnessSink::Base(base) => Landed::Base(self.stage_base_landing_in_txn(
-                wtxn,
-                write,
-                base,
-                &admission,
-                mint_conversation,
-                quoted.as_ref(),
-            )?),
+            WitnessSink::Base(base) => {
+                let receipt = self.stage_base_landing_in_txn(
+                    wtxn,
+                    write,
+                    base,
+                    &admission,
+                    mint_conversation,
+                    quoted.as_ref(),
+                )?;
+                // Admission produces one authorization per planned message,
+                // in plan order, including exact retries.
+                let bodies = plan
+                    .messages
+                    .iter()
+                    .enumerate()
+                    .map(|(index, planned)| {
+                        (
+                            planned.id,
+                            planned.occurred.start,
+                            admission.authorized[index].body().to_vec(),
+                        )
+                    })
+                    .collect();
+                Landed::Base { receipt, bodies }
+            }
             WitnessSink::Overlay(overlay) => {
                 let (segment, aliases) = self.stage_in_overlay(plan, &admission, overlay, wtxn)?;
                 Landed::Overlay { segment, aliases }
             }
         };
+        if let Some(terminal) = write.terminal
+            && let [planned] = plan.messages.as_slice()
+            && admission.message_exists.as_slice() == [false]
+        {
+            let view = match sink {
+                WitnessSink::Base(_) => None,
+                WitnessSink::Overlay(overlay) => Some(overlay.read_view()?),
+            };
+            let dbs = match &view {
+                Some(view) => crate::side_table::RoutedDbs::Session(view),
+                None => crate::side_table::RoutedDbs::Base(self.vault),
+            };
+            let assertions = match &view {
+                Some(view) => {
+                    super::super::super::reply_assertions::admitted_reply_assertions_in_txn(
+                        view,
+                        wtxn,
+                        &[&plan.turn.assertions],
+                    )?
+                }
+                None => super::super::super::reply_assertions::admitted_reply_assertions_in_txn(
+                    &self.vault.store,
+                    wtxn,
+                    &[&plan.turn.assertions],
+                )?,
+            };
+            let bytes = match &view {
+                Some(view) => staged_message_bytes(view, wtxn, &planned.id)?,
+                None => staged_message_bytes(&self.vault.store, wtxn, &planned.id)?,
+            };
+            let receipt = super::super::super::stream::MessageStreamReceipt {
+                message_id: planned.id,
+                actor: self.actor,
+                generation: terminal.generation,
+                finality: terminal.finality,
+                finality_reason: terminal.finality_reason.clone(),
+                finish_reason: terminal.finish_reason.clone(),
+                bytes,
+                recovered: false,
+                ephemeral_text_lost: false,
+                receipt_ref: format!(
+                    "stream:v1:{}:{}",
+                    planned.id.to_hex(),
+                    terminal.generation.to_hex()
+                ),
+                reply_assertions: assertions,
+            };
+            super::super::super::stream::keep_session_terminal_in_txn(&dbs, wtxn, &receipt)?;
+            terminal.remember(receipt);
+        }
         effect(
             wtxn,
             match &landed {
-                Landed::Base(receipt) => Some(receipt),
+                Landed::Base { receipt, .. } => Some(receipt),
                 _ => None,
             },
         )?;
@@ -101,7 +208,7 @@ impl Memory<'_> {
         {
             let outcome =
                 self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
-            if let Landed::Base(receipt) = &mut landed {
+            if let Landed::Base { receipt, .. } = &mut landed {
                 receipt.wake_outcome = Some(outcome);
             }
         }
@@ -189,4 +296,23 @@ impl Memory<'_> {
         }
         Ok(())
     }
+}
+
+/// The text the same staged row actually holds, after its canonical write admission.
+fn staged_message_bytes(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> MemoryResult<u64> {
+    let row = crate::ports::EntityStoreRead::port_entity_record(dbs, txn, message)?.ok_or(
+        Error::InvariantViolation("a staged stream MESSAGE is missing"),
+    )?;
+    let body = crate::entity_doc::resolve_record_body(dbs, txn, message, &row.body)?;
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&body).map_err(|_| Error::CorruptedIndex("stream MESSAGE body"))?;
+    let content = body
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(Error::CorruptedIndex("stream MESSAGE content"))?;
+    Ok(content.len() as u64)
 }

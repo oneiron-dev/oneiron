@@ -228,6 +228,8 @@ families! {
     // classes it yet.
     Class::Unclassified => CODE_RUN_TYPE_DIAGNOSTICS;
     Class::Other(Client::Dispatch(OtherClient::Body)) => CODE_RUN_RAW_OUTPUT;
+    // Canonical owner witnesses survive an undecodable captured request.
+    Class::Owner(Getter::BlockedSourceOwner) => COACH_BLOCKED_SOURCE_OWNER;
     // A blocked report's captured requests (FIX 6708) and a wait's
     // deliveries (FIX 6588); the wait index stays unclassified, as only its
     // settled rows hold a reply, which [`class_for_row`] places row by row
@@ -298,7 +300,7 @@ families! {
         CLAIM_MACHINE_HISTORY_TARGET
         CLAIM_MATERIALIZATION_AUTHORED CLAIM_PENDING_PRODUCER CLAIM_PREDICATE_INDEX
         CLAIM_PREDICATE_NAME CLAIM_PROJECTION_REVERSE CLAIM_VAD_OWED
-        CLAIM_WORLD_INDEX COACH_AGENT_HEALTH_CARD
+        CLAIM_WORLD_INDEX COACH_AGENT_HEALTH_CARD COACH_AGENT_HEALTH_LIVE_PENDING
         COACH_BLOCKED_ISSUE
         COACH_BLOCKED_RUN COACH_CONTRIBUTION_CURSOR COACH_DIAGNOSTIC_ISSUE
         COACH_FEEDBACK_SWEEP_PENDING
@@ -315,7 +317,8 @@ families! {
         CODE_VIEW_BUILD CODE_VIEW_RECEIPT COMM_EVENT_SEQUENCE COMM_PARTY_INDEX COMM_PENDING_STOP
         COMM_SKIPPED_SEND_RECEIPT
         COMMITMENT_DUE_PRIMARY COMMITMENT_REMINDER_ROUTE COMMITMENT_SERIES_INSTANCE
-        COMPACTION_CONVERSATION_RECEIPT COMPACTION_EPOCH_FLOOR CONNECTOR_CREDENTIAL_BINDING
+        COMPACTION_CONVERSATION_RECEIPT COMPACTION_EPOCH_FLOOR CONNECTOR_MESSAGE_ARCHIVE
+        CONNECTOR_CREDENTIAL_BINDING
         CONNECTOR_GRANT_SLATE_BINDING CONNECTOR_SLATE_HOLDER_NARROW CONNECTOR_SLATE_SCOPE_SIGNAL
         CONNECTOR_GRANT_SLATE CONNECTOR_QUALIFICATION_KIT CONNECTOR_WAKE_DECISION
         CONNECTOR_CATALOG_NAME_INDEX
@@ -597,7 +600,7 @@ families! {
         SCOPE_SUMMARY_RESULT
         SECRET_CUSTODY_NAME_INDEX SECRET_CUSTODY_OUTPUT SECRET_CUSTODY_PENDING_REVOKE
         SECRET_CUSTODY_REBIND SECRET_EXHAUST_TAINT SECRET_FOUND_KEY SECRET_FOUND_KEY_DUE
-        SECRET_HANDLE_LABEL SECRET_LEASE SECRET_LEASE_GRANT SECRET_MATERIALIZATION_RECEIPT SECRET_LIFT_MARK
+        SECRET_HANDLE_LABEL SECRET_HANDLE_PURPOSE SECRET_LEASE SECRET_LEASE_GRANT SECRET_MATERIALIZATION_RECEIPT SECRET_LIFT_MARK
         SECRET_LIFT_CONTRIBUTION SECRET_LIFT_NOTICE SECRET_LIFT_PROPOSAL SECRET_LIFT_RECEIPT SECRET_LIFT_RUN
         SECRET_LOCAL_REGISTRATION SECRET_MASK_ORIGIN SECRET_MASK_SPANS SECRET_REVEAL
         SECRET_ROTATION_RECEIPT SELF_HEAL_DETECTOR_WINDOW
@@ -664,7 +667,7 @@ families! {
         TYPED_BODY_HEAD TYPED_BODY_RECEIPT;
     Class::Structure => TEXT_BM25_FIELD_SCHEMA_HASH TEXT_INDEX_SCHEMA_VERSION
         WORLD_KEY_SEALED_MIRROR_LANDED;
-    Class::NotImaged => TASK_CREATE_RATE_WINDOW VAULT_ARCHIVED_BY_RESTORE VAULT_CLEANUP_SCAN_CURSOR;
+    Class::NotImaged => TASK_CREATE_RATE_WINDOW VAULT_ARCHIVED_BY_RESTORE;
     Class::Unclassified => TAGGING_MENTION_REF TAGGING_PROVISIONAL TAGGING_PROVISIONAL_HINT
         TAGGING_TAG_SET TASK_ASK_BAND TASK_ASK_LINK_SIGNER TASK_ASK_OPTION_LINK
         TASK_ASK_OPTION_SEAT TASK_ASK_OPTION_VOID TASK_ASK_OPTION_VOID_ACK
@@ -746,15 +749,14 @@ pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: 
         _ => false,
     };
     let response = mixed
-        && ResponseDb::of_name(database)
-            .and_then(|db| ResponseFamily::of_row(db, key, value))
-            .is_some_and(|family| {
-                family.placed_as_response(
-                    crate::engine_store_hooks::ENGINE_STORE_HOOKS.attempt_operations,
-                    key,
-                    value,
-                )
-            });
+        && ResponseDb::of_name(database).is_some_and(|db| {
+            ResponseFamily::mixed_response_placed_as_response(
+                crate::engine_store_hooks::ENGINE_STORE_HOOKS.attempt_operations,
+                db,
+                key,
+                value,
+            )
+        });
     if response {
         Class::Other(Client::Dispatch(OtherClient::Response))
     } else {
