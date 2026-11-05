@@ -125215,7 +125215,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferCooldowns",
@@ -125226,9 +125226,9 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 14,
       "enum": 1,
-      "fn": 5,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -125240,6 +125240,17 @@
      "purpose": "One spent account parks all its offers (FIX 564)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/cooldown/offer_core.rs",
+     "purpose": "Offer cooldown health, quota and fallback operations",
+     "surface": {
+      "crate-vis": 20,
+      "fn": 3
      }
     },
     {
@@ -129919,7 +129930,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 117,
+     "files": 118,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130073,9 +130084,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 46,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1568,
+   "source_files": 1569,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

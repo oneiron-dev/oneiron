@@ -1354,8 +1354,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/broker_responses.rs` | src | m | 2 crate-vis | — | OpenAI Responses through the credential broker, one upgraded socket per call |
 | `src/models/cache_usage.rs` | src | s | 4 crate-vis | — | The inference receipt a house backend's reply carries (FIX 6567, INF 2 step 1; FIX 8314, INFERENCE R1)… |
 | `src/models/catalog.rs` | src | s | 4 crate-vis | — | Config model references to engine catalog rows |
-| `src/models/cooldown.rs` | src | L | 3 struct · 1 enum · 5 fn · 28 crate-vis | OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion | Offers a provider refused for a quota or a limit (OF-305) |
+| `src/models/cooldown.rs` | src | m | 3 struct · 1 enum · 2 fn · 14 crate-vis | OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion | Offers a provider refused for a quota or a limit (OF-305) |
 | `src/models/cooldown/account_park.rs` | src | s | 5 crate-vis | — | One spent account parks all its offers (FIX 564) |
+| `src/models/cooldown/offer_core.rs` | src | m | 3 fn · 20 crate-vis | — | Offer cooldown health, quota and fallback operations |
 | `src/models/cooldown/quota_queue.rs` | src | s | 2 crate-vis | — | The owner's quota question as a typed ask (OF-305, FIX 562) |
 | `src/models/cooldown/reply_budgets.rs` | src | s | 2 crate-vis | — | The vault's model byte budgets a ladder's chat replies are read on (FIX 10626), kept beside its offers'… |
 | `src/models/cooldown/world_hold.rs` | src | s | 2 crate-vis | — | Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938… |
