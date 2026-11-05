@@ -57,6 +57,20 @@ struct CallReply {
     _frame: Option<crate::budget::Lease>,
 }
 
+impl CallReply {
+    fn failed(detail: String, asks: Vec<AskReceipt>) -> Self {
+        Self {
+            result: PeerResult::Failed(PeerFailure {
+                kind: FailureKind::Failed,
+                detail,
+                organ: None,
+                asks,
+            }),
+            _frame: None,
+        }
+    }
+}
+
 impl std::fmt::Debug for OrganService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OrganService")
@@ -189,15 +203,7 @@ impl OrganService {
             Request::Call { call } => {
                 let result = match self.call(conn, &staging, &call).await {
                     Ok(result) => result,
-                    Err(detail) => CallReply {
-                        result: PeerResult::Failed(PeerFailure {
-                            kind: FailureKind::Failed,
-                            detail,
-                            organ: None,
-                            asks: Vec::new(),
-                        }),
-                        _frame: None,
-                    },
+                    Err(detail) => CallReply::failed(detail, Vec::new()),
                 };
                 match encode(&result.result) {
                     Ok(bytes) => match staging.offer(&bytes) {
@@ -328,7 +334,9 @@ impl OrganService {
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => offered(outcome, staging)?,
+            Ok(outcome) => {
+                offered(outcome, staging).unwrap_or_else(|detail| CallReply::failed(detail, asked))
+            }
             Err(err) => CallReply {
                 result: PeerResult::Failed(failure(err, asked)),
                 _frame: None,
