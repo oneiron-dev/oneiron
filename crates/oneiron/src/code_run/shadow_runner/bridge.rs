@@ -716,13 +716,17 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         // outputs, or the next store mints a new path instead of reusing
         // its frozen occurrence. Only a row whose answer spilled counts:
         // unavailable, trapped and mismatched answers never became bodies.
+        // A FIX449 StoredReply carrier spilled pre-record via `store_reply`
+        // (no later `fit_reply` store to count), so it counts here, once.
         let window = self.window;
-        if window.bridge_calls.get(at).is_some_and(|row| {
-            window
-                .outputs
-                .iter()
-                .any(|output| output.path == bridge_result_output_path(row.seq))
-        }) {
+        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_))
+            || window.bridge_calls.get(at).is_some_and(|row| {
+                window
+                    .outputs
+                    .iter()
+                    .any(|output| output.path == bridge_result_output_path(row.seq))
+            })
+        {
             self.spilled += 1;
         }
         if let SelfDispatchOutcome::DurableWait(wait) = &outcome
