@@ -13,7 +13,7 @@ use crate::llm::BudgetCheckpoint;
 use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
 use crate::side_table::{self, ErasedForm, Named, SideTable};
 use crate::store::result_manifest::StagedSinks;
-use crate::{ContentPart, EdgeActorClass, EntityId, Error, LlmRequest, Result, Vault};
+use crate::{ContentPart, EdgeActorClass, EntityId, Error, LlmRequest, LlmResponse, Result, Vault};
 
 use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 
@@ -22,7 +22,9 @@ mod lifetime;
 mod runtime;
 pub(crate) use lifetime::{erase_actor_in_txn, erase_source_in_txn};
 pub use runtime::WorkflowToolContinuation;
-pub(crate) use runtime::{adopt_claim_in_txn, clear_in_txn};
+pub(crate) use runtime::{
+    adopt_claim_in_txn, advance_saved_retry_in_txn, clear_in_txn, requeue_failure_in_txn,
+};
 
 const TABLE: SideTable<EntityId, CheckpointRow, Named> =
     SideTable::new(&side_table::WORKFLOW_TOOL_CHECKPOINT);
@@ -37,6 +39,17 @@ const BODY_PATH: &str = "workflow/tool-checkpoint";
 pub struct WorkflowToolTranscript {
     pub request: LlmRequest,
     pub objectives: Vec<String>,
+    pub answer: Option<WorkflowToolAnswer>,
+}
+
+/// The paid terminal answer and the exact rung that answered it. These are
+/// admitted body content, never reconstructed from the current route.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowToolAnswer {
+    pub response: LlmResponse,
+    pub rung: crate::code_run::CapsuleRungBinding,
+    pub route: Option<crate::code_run::ReplayRoutePin>,
 }
 
 /// The next uncompleted call within the original assistant message. The
@@ -222,6 +235,18 @@ pub(crate) fn put_in_txn(
         || (progress.wait.is_some() && pending_call(&transcript, &progress.cursor).is_none())
     {
         return Err(invalid("workflow checkpoint tool cursor is invalid"));
+    }
+    if transcript.answer.as_ref().is_some_and(|answer| {
+        progress.wait.is_some()
+            || progress.cursor.tool_index != calls
+            || answer
+                .response
+                .message
+                .content
+                .iter()
+                .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    }) {
+        return Err(invalid("workflow checkpoint answer has unfinished tools"));
     }
     // The one dedicated owner holds this checkpoint's body only. Release
     // its previous occurrence before replacing it, in this same writer.

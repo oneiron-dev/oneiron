@@ -9,6 +9,7 @@ use super::{
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint, AttemptState, HoldAttemptForHook,
+    RequeueAttempt, RetryAttempt,
 };
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::VerbHookWaitStatus;
@@ -286,4 +287,101 @@ pub(crate) fn clear_in_txn(
     }
     TABLE.delete(&vault.store, txn, &k)?;
     Ok(())
+}
+
+/// The failure ladder has already selected Retry. A positive checkpoint
+/// keeps the same leaf, authority, tool ordinals and run meter; ordinary
+/// dispatch retries continue through their existing new-row path.
+pub(crate) fn requeue_failure_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    source: &AttemptRecord,
+    input: &RetryAttempt,
+) -> Result<Option<AttemptRecord>> {
+    let Some(row) = TABLE.get(&vault.store, txn, &key(source.id)?)? else {
+        return Ok(None);
+    };
+    let actual = leased_row(vault, txn, source)?;
+    let content = checked_content(vault, txn, &actual, &row)?;
+    if input.id != actual.id
+        || input.attempt_count != actual.attempt_count
+        || actual.lease_owner.as_deref() != Some(input.lease_owner.as_str())
+        || content.progress.wait.is_some()
+    {
+        return Err(invalid(
+            "workflow checkpoint retry has foreign lease or wait",
+        ));
+    }
+    let reason = input
+        .last_error
+        .clone()
+        .ok_or_else(|| invalid("workflow checkpoint retry has no failure"))?;
+    AttemptQueue::new(vault)
+        .requeue_in_txn(
+            txn,
+            RequeueAttempt {
+                id: actual.id,
+                lease_owner: input.lease_owner.clone(),
+                attempt_count: actual.attempt_count,
+                reason,
+                due_at: input.backoff_until,
+            },
+        )
+        .map(Some)
+}
+
+/// History counts failures, not claims or successful tool checkpoints.
+/// The erased form still binds the same leaf/generation: erasing its body
+/// must not reset its already recorded failure ordinal.
+fn failure_count_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    actual: &AttemptRecord,
+) -> Result<Option<usize>> {
+    let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
+        return Ok(None);
+    };
+    if row.attempt != actual.id || row.generation != actual.attempt_count {
+        return Err(invalid("workflow checkpoint failure history is stale"));
+    }
+    Ok(Some(actual.history.len()))
+}
+
+impl AgentDispatcher<'_> {
+    /// Additional past failures on a positively retained workflow leaf.
+    /// This is an ordinal read, not permission to read or run its body.
+    pub fn workflow_tool_failure_count(&self, attempt: &AttemptRecord) -> Result<usize> {
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(count) = failure_count_in_txn(self.vault, &txn, attempt)? else {
+            return Ok(0);
+        };
+        let actual = AttemptQueue::new(self.vault)
+            .get_in_txn(&txn, attempt.id)?
+            .ok_or_else(|| invalid("workflow failure leaf is missing"))?;
+        if actual.attempt_count != attempt.attempt_count || actual.history != attempt.history {
+            return Err(invalid("workflow failure history changed"));
+        }
+        Ok(count)
+    }
+}
+
+/// A provider-recovery hint only cuts the existing backoff. The next
+/// claim/read still checks the checkpoint and the retained verb boundary.
+pub(crate) fn advance_saved_retry_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    actual: &AttemptRecord,
+    now: u64,
+) -> Result<bool> {
+    if actual.state != AttemptState::Scheduled || actual.history.is_empty() {
+        return Ok(false);
+    }
+    let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
+        return Ok(false);
+    };
+    let content = checked_content(vault, txn, actual, &row)?;
+    if content.progress.wait.is_some() {
+        return Ok(false);
+    }
+    AttemptQueue::new(vault).advance_requeued_retry_in_txn(txn, actual.id, now)
 }

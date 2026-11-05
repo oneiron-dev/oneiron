@@ -299,7 +299,13 @@ fn pump_once(
                     // any model call: paused with its checkpoint, the steps
                     // already done keep their saved results, and the owner is
                     // owed a notice. A hold is not a failure and not retried.
-                    if let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)? {
+                    let continuation = dispatcher.workflow_tool_checkpoint(&step.attempt)?;
+                    let answer_ready = continuation
+                        .as_ref()
+                        .is_some_and(|saved| saved.transcript.answer.is_some());
+                    if !answer_ready
+                        && let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)?
+                    {
                         let read = dispatcher.spend_read(&scope)?;
                         let now = now_secs();
                         let reason = format!("workflow spend cap under scope {scope}");
@@ -332,7 +338,7 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context);
+                    let ran = runner.run(runtime, vault, step, context, continuation);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
                     if !matches!(&ran, Err(fault) if fault.hook_wait) {

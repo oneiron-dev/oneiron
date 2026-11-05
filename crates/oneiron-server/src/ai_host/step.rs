@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, WorkflowToolContinuation, WorkflowToolProgress,
-    WorkflowToolTranscript, agent_dispatch_run_actor,
+    AgentDispatchStatus, AgentDispatcher, WorkflowToolAnswer, WorkflowToolContinuation,
+    WorkflowToolProgress, WorkflowToolTranscript, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::code_run::ReadWorldUnknown;
@@ -35,7 +35,7 @@ use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
     WorkClass,
-    run_admission::{RunAdmission, WorkPhysical, forget_work_parent, take_work_parent},
+    run_admission::{WorkPhysical, forget_work_parent, take_work_parent},
 };
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
@@ -257,6 +257,7 @@ impl StepRunner {
         vault: &Vault,
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
+        continuation: Option<WorkflowToolContinuation>,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
@@ -275,7 +276,7 @@ impl StepRunner {
                 "the workflow step could not declare its read set; its pack receipt keeps it unknown"
             );
         }
-        if let Some(saved) = AgentDispatcher::new(vault).workflow_tool_checkpoint(&step.attempt)? {
+        if let Some(saved) = continuation {
             let objectives = saved.transcript.objectives.clone();
             let known_sources = saved.progress.known_sources.clone();
             let sources = saved
@@ -295,7 +296,8 @@ impl StepRunner {
                     sources,
                     response_format: ResponseFormat::Text,
                 },
-                requires_payer(vault, step.attempt.id, step.input.room.is_some())?,
+                saved.transcript.answer.is_none()
+                    && requires_payer(vault, step.attempt.id, step.input.room.is_some())?,
                 true,
                 step.input.room.map(|room| room.room),
                 Some(WorkflowInputs {
@@ -496,6 +498,33 @@ impl StepRunner {
             sources,
             response_format,
         } = input;
+        if let Some(saved) = &continuation
+            && let Some(answer) = &saved.transcript.answer
+        {
+            stamp_executor(vault, attempt, &answer.rung);
+            let binding = ModelCallBinding {
+                rung: answer.rung.clone(),
+                route: answer.route.clone(),
+            };
+            let no_record = no_record_at_arrival
+                || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
+            record_workflow_response(
+                vault,
+                None,
+                &saved.transcript.request,
+                &answer.response,
+                &binding,
+                attempt,
+                actor,
+                true,
+                no_record,
+            );
+            return Ok(GeneratedStep {
+                bytes: response_text(&answer.response),
+                tool_rounds: true,
+                planner_craft_rows: saved.progress.planner_craft_rows.clone(),
+            });
+        }
         // FIX 5777: a wave plan speaks with its planner's instructions for
         // its requester, so it is shown both crafts, each attributed: the
         // planner's first, after the instructions, then the requester's.
@@ -846,10 +875,18 @@ impl StepRunner {
         let objectives = workflow
             .as_ref()
             .map_or_else(Vec::new, |workflow| workflow.objectives.clone());
+        let mut saved_tool_state = continuation.is_some();
         let mut save = |request: &LlmRequest,
                         cursor: &oneiron::agent_dispatch::WorkflowToolCursor,
-                        wait|
+                        wait,
+                        answer: Option<(&LlmResponse, &ModelCallBinding)>,
+                        refreshed_sources: &[EntityId]|
          -> oneiron::Result<()> {
+            for source in refreshed_sources {
+                if !known_sources.contains(source) {
+                    known_sources.push(*source);
+                }
+            }
             // No new scope booking may remain behind a durable cursor/park.
             live.book_rest()?;
             let budget = guard.checkpoint().map_err(|denied| {
@@ -870,12 +907,19 @@ impl StepRunner {
             let transcript = WorkflowToolTranscript {
                 request: request.clone(),
                 objectives: objectives.clone(),
+                answer: answer.map(|(response, binding)| WorkflowToolAnswer {
+                    response: response.clone(),
+                    rung: binding.rung.clone(),
+                    route: binding.route.clone(),
+                }),
             };
             if progress.wait.is_some() {
-                dispatcher.park_workflow_tool(attempt, &transcript, progress, super::unix_now())
+                dispatcher.park_workflow_tool(attempt, &transcript, progress, super::unix_now())?;
             } else {
-                dispatcher.save_workflow_tool_progress(attempt, &transcript, progress)
+                dispatcher.save_workflow_tool_progress(attempt, &transcript, progress)?;
             }
+            saved_tool_state = true;
+            Ok(())
         };
         let generated = match &uses {
             Some(uses) => uses.converse(
@@ -930,16 +974,7 @@ impl StepRunner {
                 request: final_request,
                 tool_rounds: rounds,
             }) => {
-                if let Some(owner) = attempt.lease_owner.as_deref()
-                    && let Err(error) = AttemptQueue::new(vault).set_executor_model(
-                        attempt.id,
-                        owner,
-                        attempt.attempt_count,
-                        binding.rung.model.as_str(),
-                    )
-                {
-                    tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
-                }
+                stamp_executor(vault, attempt, &binding.rung);
                 (response, binding, final_request, rounds)
             }
             Err(StepConversationFault::Checkpoint(error)) => return Err(error.into()),
@@ -948,7 +983,7 @@ impl StepRunner {
             }
             Err(StepConversationFault::Model(error)) => {
                 let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
-                if retryable {
+                if retryable && !saved_tool_state {
                     let chain = run.read().used_units;
                     self.spent
                         .lock()
@@ -970,7 +1005,7 @@ impl StepRunner {
             || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         record_workflow_response(
             vault,
-            &run,
+            run.source_rows(),
             &final_request,
             &response,
             &binding,
@@ -979,21 +1014,42 @@ impl StepRunner {
             tool_rounds,
             no_record,
         );
-        let text: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
         Ok(GeneratedStep {
-            bytes: text.into_bytes(),
+            bytes: response_text(&response),
             tool_rounds,
             planner_craft_rows,
         })
     }
+}
+
+fn stamp_executor(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    rung: &oneiron::code_run::CapsuleRungBinding,
+) {
+    if let Some(owner) = attempt.lease_owner.as_deref()
+        && let Err(error) = AttemptQueue::new(vault).set_executor_model(
+            attempt.id,
+            owner,
+            attempt.attempt_count,
+            rung.model.as_str(),
+        )
+    {
+        tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
+    }
+}
+
+fn response_text(response: &LlmResponse) -> Vec<u8> {
+    response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>()
+        .into_bytes()
 }
 
 /// Best-effort final-answer capture for FIX 12516. Intermediate self.use
@@ -1001,7 +1057,7 @@ impl StepRunner {
 #[allow(clippy::too_many_arguments)]
 fn record_workflow_response(
     vault: &Vault,
-    run: &RunAdmission,
+    source_rows: Option<Vec<EntityId>>,
     request: &LlmRequest,
     response: &LlmResponse,
     binding: &ModelCallBinding,
@@ -1036,7 +1092,6 @@ fn record_workflow_response(
         let parent_entity = oneiron::EntityId::from_bytes(*parent.as_bytes()).ok()?;
         Some((parent_entity, u64::from(parent_row.attempt_count)))
     });
-    let source_rows = run.source_rows();
     let input_parts = if source_rows.is_none() {
         vec![ModelCallInputPart::Unknown {
             reason: "workflow-step sources are unknown".to_owned(),

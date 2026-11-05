@@ -181,6 +181,8 @@ impl<'a> StepSecretUse<'a> {
             &LlmRequest,
             &WorkflowToolCursor,
             Option<WorkflowToolWait>,
+            Option<(&LlmResponse, &ModelCallBinding)>,
+            &[oneiron::EntityId],
         ) -> oneiron::Result<()>,
     ) -> Result<StepConversation, StepConversationFault> {
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
@@ -200,15 +202,32 @@ impl<'a> StepSecretUse<'a> {
             None,
         ));
         let mut rounds = retained;
+        let mut refreshed_sources = Vec::new();
         loop {
             if !retained {
-                self.refresh_requester_craft(&mut request);
-                let (response, binding) = runtime.block_on(ladder.generate_recorded_while(
+                for source in self.refresh_requester_craft(
+                    &mut request,
+                    rounds.then_some(&mut cursor.assistant_message),
+                ) {
+                    if !refreshed_sources.contains(&source) {
+                        refreshed_sources.push(source);
+                    }
+                }
+                let generated = runtime.block_on(ladder.generate_recorded_while(
                     run,
                     request.clone(),
                     None,
                     &may_send,
-                ))?;
+                ));
+                let (response, binding) = match generated {
+                    Ok(answer) => answer,
+                    Err(error) => {
+                        if rounds {
+                            save(&request, &cursor, None, None, &refreshed_sources)?;
+                        }
+                        return Err(error.into());
+                    }
+                };
                 if !cursor.capture_completed {
                     oneiron::code_run::finalize_step_captures(self.vault);
                     cursor.capture_completed = true;
@@ -219,6 +238,15 @@ impl<'a> StepSecretUse<'a> {
                     .iter()
                     .any(|part| matches!(part, ContentPart::ToolCall { .. }))
                 {
+                    if rounds {
+                        save(
+                            &request,
+                            &cursor,
+                            None,
+                            Some((&response, &binding)),
+                            &refreshed_sources,
+                        )?;
+                    }
                     return Ok(StepConversation::Answered {
                         response,
                         binding,
@@ -245,7 +273,7 @@ impl<'a> StepSecretUse<'a> {
                     content,
                 });
                 // Keep the paid assistant tail before the first tool can run.
-                save(&request, &cursor, None)?;
+                save(&request, &cursor, None, None, &refreshed_sources)?;
             }
             let assistant = request
                 .messages
@@ -296,7 +324,13 @@ impl<'a> StepSecretUse<'a> {
                 };
                 match outcome {
                     StepToolOutcome::HookPending(wait) => {
-                        save(&request, &cursor, Some(wait.clone()))?;
+                        save(
+                            &request,
+                            &cursor,
+                            Some(wait.clone()),
+                            None,
+                            &refreshed_sources,
+                        )?;
                         return Ok(StepConversation::HookPending(wait));
                     }
                     StepToolOutcome::Answered(output, is_error) => {
@@ -310,7 +344,7 @@ impl<'a> StepSecretUse<'a> {
                         });
                         cursor.tool_index = index + 1;
                         // Cursor==calls is a durable point before the next model call.
-                        save(&request, &cursor, None)?;
+                        save(&request, &cursor, None, None, &refreshed_sources)?;
                     }
                 }
             }
@@ -323,7 +357,11 @@ impl<'a> StepSecretUse<'a> {
     /// round that now has craft the start did not gains it after the
     /// instructions, and one that now has none loses it. The planner craft
     /// is the start's, untouched.
-    fn refresh_requester_craft(&self, request: &mut LlmRequest) {
+    fn refresh_requester_craft(
+        &self,
+        request: &mut LlmRequest,
+        assistant: Option<&mut usize>,
+    ) -> Vec<oneiron::EntityId> {
         let at = super::super::unix_now();
         let fresh = super::super::resident_craft::queue_craft(
             self.vault,
@@ -337,14 +375,34 @@ impl<'a> StepSecretUse<'a> {
                     .is_some()
         });
         match (fresh, slot) {
-            (Some((craft, _)), Some(slot)) => request.messages[slot] = craft,
-            (Some((craft, _)), None) => {
+            (Some((craft, rows)), Some(slot)) => {
+                request.messages[slot] = craft;
+                rows
+            }
+            (Some((craft, rows)), None) => {
+                let at = request
+                    .messages
+                    .iter()
+                    .take_while(|message| message.role == LlmMessageRole::System)
+                    .count();
                 super::super::resident_craft::join_craft(&mut request.messages, craft);
+                if let Some(assistant) = assistant
+                    && at <= *assistant
+                {
+                    *assistant += 1;
+                }
+                rows
             }
             (None, Some(slot)) => {
                 request.messages.remove(slot);
+                if let Some(assistant) = assistant
+                    && slot < *assistant
+                {
+                    *assistant -= 1;
+                }
+                Vec::new()
             }
-            (None, None) => {}
+            (None, None) => Vec::new(),
         }
     }
 
