@@ -45,6 +45,13 @@ pub struct LiveLeaseState {
     booked: Arc<Mutex<u64>>,
 }
 
+impl LiveLeaseState {
+    /// The native scope this shared lease books on, not a funding grant.
+    pub(crate) fn scope(&self) -> Option<&SpendScopeId> {
+        self.scope.as_ref()
+    }
+}
+
 /// A lease without its vault, lent to the calls of one entry that run
 /// beside its backend on its meter (FIX 11747): the run's `ai.speech` and
 /// its planner's pattern capture. [`LeaseLine::on`] is the lease itself,

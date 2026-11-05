@@ -74,6 +74,7 @@ mod role_route;
 mod router;
 mod run_backend;
 mod runtime;
+mod scoped_provider_tokens;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;
