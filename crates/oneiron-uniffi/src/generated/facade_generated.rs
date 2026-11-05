@@ -2101,6 +2101,11 @@ export_facade! {
     let output = client.vault_off_record_notes_create(&input)?;
     Lift::lift(output)
 };
+"vault.off_record.artifacts.save" => fn vault_off_record_artifacts_save(&self, input: OffRecordArtifactSaveRequest) -> OffRecordArtifactSaved = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest = crate::codec::lower_record("vault.off_record.artifacts.save", input)?;
+    let output = client.vault_off_record_artifacts_save(&input)?;
+    crate::codec::lift_record("vault.off_record.artifacts.save", &output)
+};
 "vault.off_record.claims.upsert" => fn vault_off_record_claims_upsert(&self, input: OffRecordClaimRequest) -> CommitReceipt = |client| {
     let input: oneiron::task_verb::sdk::OffRecordClaimRequest = crate::codec::lower_record("vault.off_record.claims.upsert", input)?;
     let output = client.vault_off_record_claims_upsert(&input)?;
