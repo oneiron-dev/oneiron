@@ -16,6 +16,15 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+An embedded binding that uses `embedded_serve_config` retains its explicit
+vault path and optional dimensions for first-run model setup on the open
+vault. Setup replays those inputs over the file and environment; dimensions
+not supplied by the binding still come from those layers, so a later sizing
+change is still detected. A caller that constructs `ServeConfig` directly can
+state the same inputs in `embedded_holder_overrides`; leaving it unset keeps
+that caller's existing setup behavior. Managed argv/settings-only holders
+still have no config rewrite target, and setup writes no managed settings file.
+
 ## 2. Point a seat at a model
 
 Each provider is one entry of data. Pick any of the three levels below. HIGH
@@ -217,6 +226,17 @@ made private at start. A value the supervisor also passes on argv
 `--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,
 `--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
 value.
+
+The supervisor can select a separate-user credential broker on managed argv
+with `--broker-socket <absolute-path> --broker-uid <uid>`, or a same-user child
+with `--broker-program <absolute-path>` and repeatable
+`--broker-extra-roots <absolute-pem-path>`. The socket and UID are a pair;
+child program and roots cannot be combined with that pair. These flags use the
+same checks as `[models.broker]`, and their binding stands after the owner's
+model settings settle. With none, the existing same-user default stays in place.
+These are engine flags; the supervisor must supply paths reachable by the child.
+They do not add a vault VM broker transport. Plain serve keeps its file-based
+`[models.broker]` configuration.
 
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that

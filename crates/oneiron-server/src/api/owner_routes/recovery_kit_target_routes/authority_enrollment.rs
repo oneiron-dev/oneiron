@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use super::super::machine_routes::act_surface_admitted;
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use super::{Kit, OwnerDevice, kit_target};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -75,11 +75,12 @@ async fn enroll(
         .machine
         .as_deref()
         .map(|machine| entity_id("machine", machine))
-        .transpose()?;
-    let machine = crate::owner::recovery_kit::authority_holding_machine(server.vault(), named)?
-        .ok_or_else(|| {
-            OwnerError::Refused("this install has no machine in the vault".to_owned())
-        })?;
+        .transpose()
+        .map_err(owner_error)?;
+    let machine = crate::owner::recovery_kit::authority_holding_machine(server.vault(), named)
+        .map_err(owner_error)?
+        .ok_or_else(|| OwnerError::Refused("this install has no machine in the vault".to_owned()))
+        .map_err(owner_error)?;
     let receipt = blocking(move || -> OwnerResult<Receipt> {
         let issuer = server.host_issuer().ok_or_else(|| {
             OwnerError::Refused(
