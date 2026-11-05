@@ -1,9 +1,8 @@
 //! `vault.receipts`'s input and its page (FIX 10186): any positive limit,
-//! requested on the gate ledger and at most [`VAULT_RECEIPTS_PAGE_MAX`] on
-//! the unified family, with `after` continuing a page's receipts.
+//! requested on either ledger, with `after` continuing a page's receipts.
 use serde::{Deserialize, Serialize};
 
-pub use crate::memory::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
+pub use crate::memory::VaultReceiptsPage;
 
 /// `vault.receipts`'s input: a page size, the receipt kinds to list as
 /// `ReceiptKind` names them (`gate`, `hook`, `outbound`, ...), and the
