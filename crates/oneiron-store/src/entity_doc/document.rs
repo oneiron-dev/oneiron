@@ -18,7 +18,7 @@ pub const BODY: &str = "body";
 pub const META: &str = "meta";
 pub const BIRTH: &str = "entity_doc_birth";
 /// The engine stamp every local commit message opens with.
-const STAMP: &str = "oneiron.entity_doc.v1";
+pub const STAMP: &str = "oneiron.entity_doc.v1";
 
 /// The bytes under `key` in `map`; `None` when it holds none, or no bytes.
 pub fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {

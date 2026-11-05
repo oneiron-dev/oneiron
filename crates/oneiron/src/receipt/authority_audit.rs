@@ -559,6 +559,19 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // The owner's cut of a repository's origin authority: its subject is
+        // the refs writer it names, its detail the repository's portable id
+        // (FIX 15740).
+        AuthorityOp::OriginCut(cut) => (
+            Other,
+            "origin_cut",
+            OpFields {
+                detail: Some(format!("repo {}", hex_lower(&cut.repo))),
+                subject_ref: Some(cut.writer.to_hex()),
+                epoch: Some(cut.epoch),
+                ..OpFields::default()
+            },
+        ),
         // A person's own opt-out: its subject is the PERSON, and its detail
         // says left out or not, never a conversation's text (FIX 5502).
         AuthorityOp::ConversationTrainingSet(set) => (

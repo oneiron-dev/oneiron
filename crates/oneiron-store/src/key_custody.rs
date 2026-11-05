@@ -11,7 +11,6 @@ pub mod log;
 pub mod outbox;
 pub mod platform;
 pub mod protocol;
-pub mod publication_policy;
 pub mod recipients;
 pub mod recovery;
 pub mod targets;
