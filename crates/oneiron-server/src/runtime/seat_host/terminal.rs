@@ -11,7 +11,9 @@
 //! own transaction. The run's typed [`ByoaError::SeatSpent`] goes to the
 //! route as the spend it is, and a run that ended printing its limit keeps
 //! its whole exhaust as the failure the route reads it from. A route the
-//! door refuses writes nothing, so the run is then captured as before.
+//! door ordinarily refuses writes nothing, so the run is then captured as
+//! before. TaskErased instead reports an already-committed byte-free native
+//! settlement with child spend and seat quota; it must not fall back to capture.
 
 use oneiron::dispatch_byoa::{
     ByoaDispatcher, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaResult,
@@ -83,7 +85,8 @@ pub(super) fn settle_host_seat(
                 note_route(&route);
                 return;
             }
-            // The door wrote nothing: the run is captured as a plain one.
+            Err(ByoaError::TaskErased) => return,
+            // Every other refusal wrote nothing: capture as a plain run.
             Err(error) => {
                 tracing::warn!(%error, "a seat run's route was refused; it is captured as it ended");
             }

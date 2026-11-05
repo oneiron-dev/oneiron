@@ -246,6 +246,7 @@ pub enum AgentVerb {
     VaultSkillsFork,
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
+    VaultSkillsFitSet,
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
@@ -363,6 +364,7 @@ pub enum AgentVerb {
     VaultFederationBurstBaseline,
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
+    VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
     VaultFederationBurstDisposition,
     VaultFederationBurstReview,
@@ -433,6 +435,7 @@ pub enum AgentVerb {
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
+    VaultOutboundCallsRequestErase,
     VaultResearchCreateChild,
     VaultResearchArchive,
     VaultResearchArchiveInstall,
@@ -1498,6 +1501,7 @@ impl AgentVerb {
         Self::VaultSkillsFork,
         Self::VaultSkillsRulesSet,
         Self::VaultSkillsCodeAutoInstallSet,
+        Self::VaultSkillsFitSet,
         Self::VaultSkillsPermissionsApprove,
         Self::VaultSkillsOptimizeStart,
         Self::VaultSkillsOptimizeResult,
@@ -1615,6 +1619,7 @@ impl AgentVerb {
         Self::VaultFederationBurstBaseline,
         Self::VaultFederationBurstPolicy,
         Self::VaultFederationBurstPolicySet,
+        Self::VaultSyncRetainedWorkWaitSet,
         Self::VaultFederationBurstIngress,
         Self::VaultFederationBurstDisposition,
         Self::VaultFederationBurstReview,
@@ -1685,6 +1690,7 @@ impl AgentVerb {
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultRecordsEraseSweep,
+        Self::VaultOutboundCallsRequestErase,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
         Self::VaultResearchArchiveInstall,
@@ -2753,6 +2759,7 @@ impl AgentVerb {
             Self::VaultSkillsFork => "vault.skills.fork",
             Self::VaultSkillsRulesSet => "vault.skills.rules.set",
             Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
+            Self::VaultSkillsFitSet => "vault.skills.fit.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
             Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
@@ -2874,6 +2881,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
             Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
             Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultSyncRetainedWorkWaitSet => "vault.sync.retained_work.wait.set",
             Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
             Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
             Self::VaultFederationBurstReview => "vault.federation.burst.review",
@@ -2950,6 +2958,7 @@ impl AgentVerb {
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
+            Self::VaultOutboundCallsRequestErase => "vault.outbound_calls.request.erase",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
             Self::VaultResearchArchiveInstall => "vault.research.archive.install",
@@ -4041,6 +4050,7 @@ impl AgentVerb {
                 | Self::VaultSkillsFork
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
+                | Self::VaultSkillsFitSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -4158,6 +4168,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
                 | Self::VaultFederationBurstReview
@@ -4228,6 +4239,7 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
+                | Self::VaultOutboundCallsRequestErase
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -5322,6 +5334,7 @@ impl AgentVerb {
                 | Self::VaultSkillsFork
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
+                | Self::VaultSkillsFitSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -5439,6 +5452,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
                 | Self::VaultFederationBurstReview
@@ -5509,6 +5523,7 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
+                | Self::VaultOutboundCallsRequestErase
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -6748,6 +6763,7 @@ impl AgentVerb {
                 | Self::VaultSkillsFork
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
+                | Self::VaultSkillsFitSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -6864,6 +6880,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
                 | Self::VaultFederationBurstReview
@@ -6933,6 +6950,7 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
+                | Self::VaultOutboundCallsRequestErase
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -7813,6 +7831,7 @@ impl AgentVerb {
                 | Self::VaultSkillsFork
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
+                | Self::VaultSkillsFitSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultProjectsGoalIntakeComplete
@@ -7890,6 +7909,7 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstReviewRelease
                 | Self::VaultFederationBurstReviewReject
@@ -7937,6 +7957,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultOutboundCallsRequestErase
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchiveInstall
                 | Self::VaultResearchArchiveRecord
@@ -8707,6 +8728,7 @@ impl AgentVerb {
             Self::VaultSkillsFork => &["spec"],
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
+            Self::VaultSkillsFitSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -8824,6 +8846,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
             Self::VaultFederationBurstReview => &[],
@@ -8894,6 +8917,7 @@ impl AgentVerb {
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
+            Self::VaultOutboundCallsRequestErase => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -9960,6 +9984,7 @@ impl AgentVerb {
             Self::VaultSkillsFork => &["spec"],
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
+            Self::VaultSkillsFitSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -10077,6 +10102,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
             Self::VaultFederationBurstReview => &[],
@@ -10147,6 +10173,7 @@ impl AgentVerb {
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
+            Self::VaultOutboundCallsRequestErase => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -11690,6 +11717,9 @@ impl AgentVerb {
             Self::VaultSkillsCodeAutoInstallSet => {
                 "The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."
             }
+            Self::VaultSkillsFitSet => {
+                "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."
+            }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."
             }
@@ -12035,6 +12065,9 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicySet => {
                 "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
             }
+            Self::VaultSyncRetainedWorkWaitSet => {
+                "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."
+            }
             Self::VaultFederationBurstIngress => {
                 "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."
             }
@@ -12242,6 +12275,9 @@ impl AgentVerb {
             }
             Self::VaultRecordsEraseSweep => {
                 "Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."
+            }
+            Self::VaultOutboundCallsRequestErase => {
+                "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."
             }
             Self::VaultResearchCreateChild => {
                 "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."
