@@ -32,10 +32,11 @@ pub struct RoomSpeakingClaim {
 impl Memory<'_> {
     /// The open speaking claims on `room`'s newest [`ROOM_SPEAKING_TURNS`]
     /// turns, newest first: each unanswered turn someone claimed, and each
-    /// unanswered, unclaimed turn that names the reader. Only turns the
-    /// reader may read are listed. Empty for an ordinary Conversation, which
-    /// keeps no claim-before-speaking receipts, and when the room's Scope
-    /// reads no turns.
+    /// unanswered, unclaimed turn that names the reader. A turn whose
+    /// claim's holder was erased stays claimed and lists no row. Only turns
+    /// the reader may read are listed. Empty for an ordinary Conversation,
+    /// which keeps no claim-before-speaking receipts, and when the room's
+    /// Scope reads no turns.
     ///
     /// # Errors
     ///
@@ -68,6 +69,10 @@ impl Memory<'_> {
             let claim = CLAIMS.get(store, &txn, &turn_id)?;
             let turn = turn_in(self.vault(), &txn, turn_id)?;
             match claim {
+                // A claim whose holder was erased still holds the turn
+                // (replica.rs carries it as the erased identity): no row
+                // names that holder, and the turn is not offered as open.
+                Some(receipt) if receipt.actor == crate::receipt::ERASED_CALL_IDENTITY => {}
                 Some(receipt) => {
                     let holder = EntityId::from_hex(&receipt.actor).map_err(Error::from)?;
                     open.push((turn, Some(holder)));
