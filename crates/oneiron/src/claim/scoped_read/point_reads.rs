@@ -209,8 +209,8 @@ impl<'v> ScopedRead<'v> {
     ///
     /// Each slot answers its read in order; `None` is a missing target or a
     /// withheld row. Missing targets are not policy exclusions: the receipt
-    /// counts only existing rows this actor may not read. Mixed frontiers and
-    /// mixed id/short-reference slices share the snapshot and the receipt.
+    /// counts only rows the key could read without the request's narrowing.
+    /// Mixed frontiers and id/short-reference slices share the snapshot and receipt.
     pub fn read(
         &self,
         reads: &[PointRead<'_>],
@@ -409,12 +409,37 @@ impl<'v> ScopedRead<'v> {
         let admitted = self.admit_in(txn, &id, || {
             self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
         })?;
-        let withheld = admitted.suppression();
+        let withheld =
+            self.point_suppression_in(txn, policy, &id, admitted.suppression(), authority);
         let row = admitted
             .into_option()
             .map(|revision| ReadRow::from_revision(id, revision))
             .transpose()?;
         Ok((row, withheld))
+    }
+
+    /// A request counts an omitted row only if the reader's own floor admits it.
+    /// An unavailable baseline adds no count and never fails the original read.
+    fn point_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        id: &EntityId,
+        suppressed: usize,
+        authority: &HeldAuthority<'v>,
+    ) -> usize {
+        if suppressed == 0 {
+            return 0;
+        }
+        let floor_authority = authority.for_peer();
+        let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
+            self.is_entity_readable_held_in(txn, policy, id, &floor, &floor_authority)
+        });
+        if readable.unwrap_or(false) {
+            suppressed
+        } else {
+            0
+        }
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
@@ -483,9 +508,14 @@ impl<'v> ScopedRead<'v> {
             );
         if !revealed {
             // A withheld private NOTE shell counts exactly like a missing row.
-            let withheld = self
-                .admit_in(txn, &hydrated.id, || Ok(None::<()>))?
-                .suppression();
+            let admitted = self.admit_in(txn, &hydrated.id, || Ok(None::<()>))?;
+            let withheld = self.point_suppression_in(
+                txn,
+                policy,
+                &hydrated.id,
+                admitted.suppression(),
+                authority,
+            );
             return Ok((None, withheld));
         }
         let occurred = self
