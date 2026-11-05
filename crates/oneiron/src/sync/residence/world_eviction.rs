@@ -244,6 +244,7 @@ fn evict(
                     Progress::Complete => report.windows_evicted += 1,
                     Progress::Busy => report.windows_busy += 1,
                     Progress::LocalMembers => report.windows_with_local_members += 1,
+                    Progress::Unconfirmed => report.windows_unconfirmed += 1,
                 }
             }
         }
@@ -266,14 +267,26 @@ fn evict(
 /// exchanged it, covers every operation its persisted copy holds. One that
 /// does not read covers nothing.
 fn home_holds_window(vault: &Vault, window: &WindowKey) -> Result<bool> {
-    let Some(home) = vault.sync_state_get(&home_window_vv_key(window.as_str()))? else {
-        return Ok(false);
-    };
-    let Ok(home) = VersionVector::decode(&home) else {
-        return Ok(false);
-    };
     let txn = vault.store.env.read_txn()?;
-    let held = super::prune::persisted_window_vv(&vault.store, &txn, window)?;
+    home_holds_window_in_txn(vault, &txn, window)
+}
+
+/// [`home_holds_window`] in `txn`: the destructive write proves it again over
+/// the window it closed, as a mirror may have persisted a local write since
+/// the pass first read it.
+fn home_holds_window_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    window: &WindowKey,
+) -> Result<bool> {
+    let key = home_window_vv_key(window.as_str());
+    let Some(home) = vault.store.sync_state.get(txn, &key)? else {
+        return Ok(false);
+    };
+    let Ok(home) = VersionVector::decode(home) else {
+        return Ok(false);
+    };
+    let held = super::prune::persisted_window_vv(&vault.store, txn, window)?;
     Ok(home.includes_vv(&held))
 }
 
@@ -385,6 +398,8 @@ enum Progress {
     Busy,
     /// A member only this install may hold stays, so the window is whole.
     LocalMembers,
+    /// The home is not known to hold every operation it persists now.
+    Unconfirmed,
 }
 
 /// What one window's eviction did.
@@ -408,10 +423,18 @@ fn evict_window(
     let mut removed = 0;
     loop {
         let step = vault.with_write_txn_grouped(|txn| {
-            // A local write the mirror has not taken yet is in no persisted
-            // copy the home holds: the pass waits for it (FIX 14534).
-            if !discard && crate::sync::manager::window_owes_mirror_in_txn(vault, txn, window)? {
-                return Ok(None);
+            if !discard {
+                // A local write the mirror has not taken yet is in no
+                // persisted copy the home holds: the pass waits for it.
+                if crate::sync::manager::window_owes_mirror_in_txn(vault, txn, window)? {
+                    return Ok(Err(Progress::Busy));
+                }
+                // The proof the pass read before it closed the window is not
+                // this write's: a mirror may have persisted a local write
+                // since. The home must hold what is persisted now (FIX 14534).
+                if !home_holds_window_in_txn(vault, txn, window)? {
+                    return Ok(Err(Progress::Unconfirmed));
+                }
             }
             let step = remove_local_replica_window_in_txn(&vault.store, txn, window, keep.clone())?;
             if step.complete {
@@ -428,14 +451,17 @@ fn evict_window(
                     .sync_state
                     .delete(txn, &home_window_vv_key(window.as_str()))?;
             }
-            Ok(Some(step))
+            Ok(Ok(step))
         })?;
-        let Some(step) = step else {
-            return Ok(WindowStep {
-                removed,
-                kept: 0,
-                progress: Progress::Busy,
-            });
+        let step = match step {
+            Ok(step) => step,
+            Err(progress) => {
+                return Ok(WindowStep {
+                    removed,
+                    kept: 0,
+                    progress,
+                });
+            }
         };
         removed += step.removed.len();
         let local = step
