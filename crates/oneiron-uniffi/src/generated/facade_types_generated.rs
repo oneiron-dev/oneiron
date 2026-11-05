@@ -1074,6 +1074,12 @@ pub struct SectionFold {
     pub keep: Option<Vec<String>>,
     #[serde(rename = "baseline", default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<FoldBaseline>,
+    #[serde(
+        rename = "section_baselines",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_baselines: Option<std::collections::HashMap<String, FoldBaseline>>,
 }
 
 /// `oneiron::context_board::layout::BoardActorClass`.

@@ -91,10 +91,17 @@ pub struct SectionFold {
     /// Rows kept open under the fold line, by their typed id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keep: Vec<EntityId>,
-    /// The section's counts when this fold applied. The engine sets it when
-    /// the fold's batch applies; a staged fold carries none.
+    /// The section's counts when this fold applied, summed over every
+    /// section of its key. The engine sets it when the fold's batch applies;
+    /// a staged fold carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<FoldBaseline>,
+    /// Each section's own counts when this fold applied, by section name
+    /// (one key, such as `memories`, can span one section per world). Each
+    /// fold line compares its section with its own entry; a section with no
+    /// entry had no rows then. The engine sets it with `baseline`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub section_baselines: BTreeMap<String, FoldBaseline>,
 }
 
 /// A section's counts at one moment: its row total and each status count.
@@ -343,14 +350,19 @@ impl BoardLayout {
     }
 
     /// This layout with each named fold that carries no baseline given the
-    /// counts `counts` holds for its key.
+    /// counts `counts` holds for its key: the key's sum and each section's
+    /// own.
     #[must_use]
-    pub fn with_fold_baselines(mut self, counts: &BTreeMap<String, FoldBaseline>) -> Self {
+    pub fn with_fold_baselines(mut self, counts: &BTreeMap<String, FoldCounts>) -> Self {
         for (key, section) in &mut self.sections {
             if let Some(fold) = &mut section.fold
                 && fold.baseline.is_none()
             {
-                fold.baseline = counts.get(key).cloned();
+                let counts = counts.get(key);
+                fold.baseline = counts.map(|counts| counts.total.clone());
+                fold.section_baselines = counts
+                    .map(|counts| counts.sections.clone())
+                    .unwrap_or_default();
             }
         }
         self
@@ -430,12 +442,17 @@ pub fn unfold_command(key: &str) -> String {
     format!("open: self.board.unfold({{section: {key:?}}})")
 }
 
-/// One fold line: the section's total with its change since the fold, each
-/// non-zero count with its change and attention rows, the open command,
-/// then the agent's note. The renderer escapes the whole line as one leaf.
+/// One fold line: the section's total with its change since `baseline`
+/// (the section's counts when the fold applied), each non-zero count with
+/// its change and attention rows, the open command, then the agent's note.
+/// The renderer escapes the whole line as one leaf.
 #[must_use]
-pub fn fold_line(key: &str, summary: &FoldSummary, fold: &SectionFold) -> String {
-    let baseline = fold.baseline.as_ref();
+pub fn fold_line(
+    key: &str,
+    summary: &FoldSummary,
+    fold: &SectionFold,
+    baseline: Option<&FoldBaseline>,
+) -> String {
     let mut parts = Vec::with_capacity(summary.counts.len() + 3);
     let mut head = summary.total.to_string();
     if let Some(baseline) = baseline {
@@ -487,7 +504,17 @@ pub struct LaidOutBoard {
     pub fitted: Vec<String>,
     /// Each folded key's live counts, for the baseline its fold keeps when
     /// its batch applies.
-    pub fold_counts: BTreeMap<String, FoldBaseline>,
+    pub fold_counts: BTreeMap<String, FoldCounts>,
+}
+
+/// One folded key's live counts at one render: summed over its sections,
+/// and each section's own by name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FoldCounts {
+    /// The counts summed over every section of the key.
+    pub total: FoldBaseline,
+    /// Each section's own counts, by section name.
+    pub sections: BTreeMap<String, FoldBaseline>,
 }
 
 /// Applies `layout` to `sections` under the board cap `cap_tok`. A folded
@@ -519,13 +546,39 @@ pub fn apply_board_layout(
                 .cloned()
                 .unwrap_or_else(|| FoldSummary::total(section.detail_rows().len()));
             let counts = board.fold_counts.entry(key.to_owned()).or_default();
-            counts.total += summary.total as u64;
+            counts.total.total += summary.total as u64;
             for count in &summary.counts {
-                *counts.counts.entry(count.label.clone()).or_default() += count.count as u64;
+                *counts.total.counts.entry(count.label.clone()).or_default() += count.count as u64;
             }
+            let own = summary.baseline();
+            match counts.sections.get_mut(section.name()) {
+                // Two sections of one name sum, as the key's total does.
+                Some(same) => {
+                    same.total += own.total;
+                    for (label, count) in own.counts {
+                        *same.counts.entry(label).or_default() += count;
+                    }
+                }
+                None => {
+                    counts.sections.insert(section.name().to_owned(), own);
+                }
+            }
+            // Each section compares with its own counts when the fold
+            // applied; a section absent then had none. A baseline that names
+            // no section compares with the key's sum.
+            let absent = FoldBaseline::default();
+            let baseline = if fold.section_baselines.is_empty() {
+                fold.baseline.as_ref()
+            } else {
+                fold.baseline.as_ref().map(|_| {
+                    fold.section_baselines
+                        .get(section.name())
+                        .unwrap_or(&absent)
+                })
+            };
             board
                 .sections
-                .push(section.folded(fold_line(key, &summary, fold), &fold.keep));
+                .push(section.folded(fold_line(key, &summary, fold, baseline), &fold.keep));
             if !board.folded.iter().any(|folded| folded == key) {
                 board.folded.push(key.to_owned());
             }

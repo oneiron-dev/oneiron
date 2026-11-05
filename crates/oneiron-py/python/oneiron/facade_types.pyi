@@ -335,6 +335,7 @@ class SectionFold(TypedDict):
     note: NotRequired[str | None]
     keep: NotRequired[list[EntityId]]
     baseline: NotRequired[FoldBaseline | None]
+    section_baselines: NotRequired[dict[str, FoldBaseline]]
 BoardActorClass = Literal["human", "agent", "system"]
 class BoardWhoFilterMine(TypedDict):
     kind: Literal["mine"]
