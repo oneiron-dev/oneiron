@@ -1,6 +1,6 @@
 //! The verb hooks of a read a run serves in its room (WILL L11-01 S01-2c):
-//! each of the four forwarded reads runs inside its row's boundary, in the
-//! room, once per call (CALLS-10 `session_hook_once_boundary`).
+//! each forwarded read runs inside its row's boundary, in the room, once per
+//! call (CALLS-10 `session_hook_once_boundary`).
 
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;

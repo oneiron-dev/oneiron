@@ -9,6 +9,7 @@ pub mod admission;
 mod authority_audit;
 mod brief_share;
 mod call;
+mod content;
 mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
@@ -54,6 +55,7 @@ pub use self::call::{
     CallTransport, ERASED_CALL_IDENTITY, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
+pub(crate) use self::content::ReceiptContent;
 pub use self::context_emit::ContextEmitReceipt;
 pub use self::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
