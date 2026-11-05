@@ -262,7 +262,7 @@ pub(crate) fn demote_resident_window(
 
 /// The version vector of `window`'s persisted document: its `d:w:` snapshot
 /// with every `u:w:` row on top.
-fn persisted_window_vv(
+pub(super) fn persisted_window_vv(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     window: &WindowKey,
