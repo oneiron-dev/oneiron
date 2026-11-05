@@ -2165,6 +2165,22 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::BrowserObservationPage': 'BrowserAnswerObservationPage',
+    'crate::task_verb::sdk::BrowserImageOutput': 'BrowserAnswerImageOutput',
+    'crate::task_verb::sdk::BrowserFindOutput': 'BrowserAnswerFindOutput',
+    'crate::task_verb::sdk::BrowserWaitForOutput': 'BrowserAnswerWaitForOutput',
+    'crate::task_verb::sdk::BrowserExpectOutput': 'BrowserAnswerExpectOutput',
+    'crate::task_verb::sdk::BrowserScreenshotOutput': 'BrowserAnswerScreenshotOutput',
+    'crate::task_verb::sdk::BrowserLibraryFindOutput': 'BrowserAnswerLibraryFindOutput',
+    'crate::task_verb::sdk::BrowserLibraryDraftOutput': 'BrowserAnswerDraftOutput',
+    'crate::task_verb::sdk::BrowserDemonstrationStartOutput': 'BrowserAnswerDemonstrationStarted',
+    'crate::task_verb::sdk::BrowserDemonstrationStopOutput': 'BrowserAnswerDemonstrationOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetireOutput': 'BrowserAnswerLibraryRetireOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetiredOutput': 'BrowserAnswerLibraryRetiredOutput',
+    'crate::task_verb::sdk::BrowserHandoverOutput': 'BrowserAnswerHandoverOutput',
+    'crate::task_verb::sdk::BrowserSwitchEngineOutput': 'BrowserAnswerSwitchEngineOutput',
+    'crate::task_verb::sdk::BrowserLibraryProposeOutput': 'BrowserAnswerProposeOutput',
+    'crate::task_verb::sdk::BrowserLibraryRunOutput': 'BrowserAnswerLibraryRunOutput',
     'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
     'crate::memory::ClaimProposalReview': 'ClaimProposalReview',

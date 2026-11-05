@@ -142,3 +142,13 @@ remain absent. A missing or null image release remains absent; null decision
 array elements remain JSON null. The wrapper, manifest and all other batch
 fields keep their existing serde shape. The browser records, client, hooks and
 input conversion do not change.
+
+The remaining browser-answer aliases also consume the optional manifest image
+release through the owned conversion. Their finite payloads keep the shared
+record codec, including all field names, flattened fields, optional values,
+empty-vector omission, booleans, widths and native checks. The library proposal
+answer also consumes decisions in its optional replay batch; the library-run
+answer consumes decisions in its required batch. All decisions and manifest
+JSON are consumed before a finite error can return. A missing replay stays
+missing, while a present replay with no decisions stays present. Desktop-answer
+outputs and unselected input conversions are unchanged.

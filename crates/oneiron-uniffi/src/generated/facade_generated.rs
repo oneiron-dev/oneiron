@@ -6059,67 +6059,67 @@ export_facade! {
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;
     let output = client.self_browser_open(&input)?;
-    crate::codec::lift_record("self.browser.open", &output)
+    Lift::lift(output)
 };
 "self.browser.observe" => fn self_browser_observe(&self, input: LiveRunRequestObserveInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserObserveInput> = crate::codec::lower_record("self.browser.observe", input)?;
     let output = client.self_browser_observe(&input)?;
-    crate::codec::lift_record("self.browser.observe", &output)
+    Lift::lift(output)
 };
 "self.browser.find" => fn self_browser_find(&self, input: LiveRunRequestFindInput) -> BrowserAnswerFindOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserFindInput> = crate::codec::lower_record("self.browser.find", input)?;
     let output = client.self_browser_find(&input)?;
-    crate::codec::lift_record("self.browser.find", &output)
+    Lift::lift(output)
 };
 "self.browser.click" => fn self_browser_click(&self, input: LiveRunRequestClickInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserClickInput> = crate::codec::lower_record("self.browser.click", input)?;
     let output = client.self_browser_click(&input)?;
-    crate::codec::lift_record("self.browser.click", &output)
+    Lift::lift(output)
 };
 "self.browser.click_at" => fn self_browser_click_at(&self, input: LiveRunRequestPointInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserPointInput> = crate::codec::lower_record("self.browser.click_at", input)?;
     let output = client.self_browser_click_at(&input)?;
-    crate::codec::lift_record("self.browser.click_at", &output)
+    Lift::lift(output)
 };
 "self.browser.type" => fn self_browser_type(&self, input: LiveRunRequestTypeInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserTypeInput> = crate::codec::lower_record("self.browser.type", input)?;
     let output = client.self_browser_type(&input)?;
-    crate::codec::lift_record("self.browser.type", &output)
+    Lift::lift(output)
 };
 "self.browser.select" => fn self_browser_select(&self, input: LiveRunRequestSelectInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserSelectInput> = crate::codec::lower_record("self.browser.select", input)?;
     let output = client.self_browser_select(&input)?;
-    crate::codec::lift_record("self.browser.select", &output)
+    Lift::lift(output)
 };
 "self.browser.wait_for" => fn self_browser_wait_for(&self, input: LiveRunRequestWaitForInput) -> BrowserAnswerWaitForOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserWaitForInput> = crate::codec::lower_record("self.browser.wait_for", input)?;
     let output = client.self_browser_wait_for(&input)?;
-    crate::codec::lift_record("self.browser.wait_for", &output)
+    Lift::lift(output)
 };
 "self.browser.expect" => fn self_browser_expect(&self, input: LiveRunRequestExpectInput) -> BrowserAnswerExpectOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserExpectInput> = crate::codec::lower_record("self.browser.expect", input)?;
     let output = client.self_browser_expect(&input)?;
-    crate::codec::lift_record("self.browser.expect", &output)
+    Lift::lift(output)
 };
 "self.browser.screenshot" => fn self_browser_screenshot(&self, input: LiveRunRequestScreenshotInput) -> BrowserAnswerScreenshotOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserScreenshotInput> = crate::codec::lower_record("self.browser.screenshot", input)?;
     let output = client.self_browser_screenshot(&input)?;
-    crate::codec::lift_record("self.browser.screenshot", &output)
+    Lift::lift(output)
 };
 "self.browser.view" => fn self_browser_view(&self, input: LiveRunRequestViewInput) -> BrowserAnswerImageOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserViewInput> = crate::codec::lower_record("self.browser.view", input)?;
     let output = client.self_browser_view(&input)?;
-    crate::codec::lift_record("self.browser.view", &output)
+    Lift::lift(output)
 };
 "self.browser.crop" => fn self_browser_crop(&self, input: LiveRunRequestCropInput) -> BrowserAnswerImageOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserCropInput> = crate::codec::lower_record("self.browser.crop", input)?;
     let output = client.self_browser_crop(&input)?;
-    crate::codec::lift_record("self.browser.crop", &output)
+    Lift::lift(output)
 };
 "self.browser.zoom" => fn self_browser_zoom(&self, input: LiveRunRequestZoomInput) -> BrowserAnswerImageOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserZoomInput> = crate::codec::lower_record("self.browser.zoom", input)?;
     let output = client.self_browser_zoom(&input)?;
-    crate::codec::lift_record("self.browser.zoom", &output)
+    Lift::lift(output)
 };
 "self.browser.batch" => fn self_browser_batch(&self, input: LiveRunRequestBatchInput) -> BrowserAnswerBatchOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserBatchInput> = crate::codec::lower_record("self.browser.batch", input)?;
@@ -6129,52 +6129,52 @@ export_facade! {
 "self.browser.library.find" => fn self_browser_library_find(&self, input: LiveRunRequestLibraryFindInput) -> BrowserAnswerLibraryFindOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryFindInput> = crate::codec::lower_record("self.browser.library.find", input)?;
     let output = client.self_browser_library_find(&input)?;
-    crate::codec::lift_record("self.browser.library.find", &output)
+    Lift::lift(output)
 };
 "self.browser.library.draft" => fn self_browser_library_draft(&self, input: LiveRunRequestDraftInput) -> BrowserAnswerDraftOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryDraftInput> = crate::codec::lower_record("self.browser.library.draft", input)?;
     let output = client.self_browser_library_draft(&input)?;
-    crate::codec::lift_record("self.browser.library.draft", &output)
+    Lift::lift(output)
 };
 "self.browser.demonstration.start" => fn self_browser_demonstration_start(&self, input: LiveRunRequestDemonstrationStartInput) -> BrowserAnswerDemonstrationStarted = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStartInput> = crate::codec::lower_record("self.browser.demonstration.start", input)?;
     let output = client.self_browser_demonstration_start(&input)?;
-    crate::codec::lift_record("self.browser.demonstration.start", &output)
+    Lift::lift(output)
 };
 "self.browser.demonstration.stop" => fn self_browser_demonstration_stop(&self, input: LiveRunRequestDemonstrationStopInput) -> BrowserAnswerDemonstrationOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStopInput> = crate::codec::lower_record("self.browser.demonstration.stop", input)?;
     let output = client.self_browser_demonstration_stop(&input)?;
-    crate::codec::lift_record("self.browser.demonstration.stop", &output)
+    Lift::lift(output)
 };
 "self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> BrowserAnswerProposeOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;
     let output = client.self_browser_library_propose(&input)?;
-    crate::codec::lift_record("self.browser.library.propose", &output)
+    Lift::lift(output)
 };
 "self.browser.library.retire" => fn self_browser_library_retire(&self, input: LiveRunRequestLibraryRetireInput) -> BrowserAnswerLibraryRetireOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRetireInput> = crate::codec::lower_record("self.browser.library.retire", input)?;
     let output = client.self_browser_library_retire(&input)?;
-    crate::codec::lift_record("self.browser.library.retire", &output)
+    Lift::lift(output)
 };
 "self.browser.library.retired" => fn self_browser_library_retired(&self, input: LiveRunRequestLibraryRetiredInput) -> BrowserAnswerLibraryRetiredOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRetiredInput> = crate::codec::lower_record("self.browser.library.retired", input)?;
     let output = client.self_browser_library_retired(&input)?;
-    crate::codec::lift_record("self.browser.library.retired", &output)
+    Lift::lift(output)
 };
 "self.browser.library.run" => fn self_browser_library_run(&self, input: LiveRunRequestLibraryRunInput) -> BrowserAnswerLibraryRunOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRunInput> = crate::codec::lower_record("self.browser.library.run", input)?;
     let output = client.self_browser_library_run(&input)?;
-    crate::codec::lift_record("self.browser.library.run", &output)
+    Lift::lift(output)
 };
 "self.browser.handover" => fn self_browser_handover(&self, input: LiveRunRequestHandoverInput) -> BrowserAnswerHandoverOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserHandoverInput> = crate::codec::lower_record("self.browser.handover", input)?;
     let output = client.self_browser_handover(&input)?;
-    crate::codec::lift_record("self.browser.handover", &output)
+    Lift::lift(output)
 };
 "self.browser.switch_engine" => fn self_browser_switch_engine(&self, input: LiveRunRequestSwitchEngineInput) -> BrowserAnswerSwitchEngineOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserSwitchEngineInput> = crate::codec::lower_record("self.browser.switch_engine", input)?;
     let output = client.self_browser_switch_engine(&input)?;
-    crate::codec::lift_record("self.browser.switch_engine", &output)
+    Lift::lift(output)
 };
 "vault.claims.supersede" => fn vault_claims_supersede(&self, input: LiveRunRequestMemorySupersedeInput) -> MemoryWriteOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput> = crate::codec::lower_record("vault.claims.supersede", input)?;
