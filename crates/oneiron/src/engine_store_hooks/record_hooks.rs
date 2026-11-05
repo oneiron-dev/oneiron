@@ -257,6 +257,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
 
+    fn is_restrictive_comm_predicate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<bool> {
+        crate::comm::is_restrictive_comm_predicate(store, txn, predicate)
+    }
+
     fn read_secret_custody_meta_in_txn(
         &self,
         store: &Store,
