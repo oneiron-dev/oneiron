@@ -173,6 +173,16 @@ impl PipelineBuilder<'_> {
                 mut claim_gate,
                 widening_probe: mut claim_gate_widening_probe,
             } = self.scoped_channel_admission(rtxn, authority_filter)?;
+            // REVIEW-5141 P1: the attempt's suppression baseline, captured
+            // BEFORE channel probing/fetching (fresh gate, so 0). The D19
+            // delta compares against this, not against a count taken after
+            // the fetch imports — that later count already holds the
+            // attempt's own suppressions and the delta could never fire.
+            let attempt_suppressed_baseline = claim_gate
+                .decisions
+                .values()
+                .filter(|decision| decision.is_none())
+                .count();
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
@@ -616,11 +626,6 @@ impl PipelineBuilder<'_> {
             // phonetic/temporal/PPR) AND runs BEFORE expand_ppr implicit
             // seed selection, so a dead claim never seeds the expansion.
             let before_status_gate = scores.len();
-            let suppressed_before = claim_gate
-                .decisions
-                .values()
-                .filter(|decision| decision.is_none())
-                .count();
             apply_claim_status_gate(
                 &mut scores,
                 &self.read,
@@ -634,15 +639,18 @@ impl PipelineBuilder<'_> {
             // suppressions now arrive via import_claim_gate_decisions), so
             // `before_status_gate > 0` never fires and the run reports
             // NoData with 0. Suppressions newly observed during this
-            // attempt are the same evidence: report AllActivated. The delta
-            // keeps a retry that evaluates nothing new on today's NoData
-            // path.
+            // attempt (counted against the attempt-start baseline above,
+            // which predates the fetch imports) are the same evidence:
+            // report AllActivated. The delta keeps a retry that evaluates
+            // nothing new on today's NoData path.
             let suppressed_now = claim_gate
                 .decisions
                 .values()
                 .filter(|decision| decision.is_none())
                 .count();
-            if scores.is_empty() && (before_status_gate > 0 || suppressed_now > suppressed_before) {
+            if scores.is_empty()
+                && (before_status_gate > 0 || suppressed_now > attempt_suppressed_baseline)
+            {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
             let mut blend_allowed_ids = score_id_set(&scores);
