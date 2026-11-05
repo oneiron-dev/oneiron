@@ -59,6 +59,7 @@ pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
+pub mod code_consent_settlement;
 mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;

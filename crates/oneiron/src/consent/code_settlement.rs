@@ -1,0 +1,167 @@
+//! Hold-time code-consent policy and action evidence; neither is a grant.
+
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+
+use crate::gate::ExternalEffectGateInput;
+use crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement;
+use crate::{EntityId, Error, Result, Vault};
+
+use super::{ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, GrantBound};
+
+/// Minted from the producer's real gate input, then covered by the wait's
+/// binding digest. Deserialization is data only, never holder authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrozenCodeConsentSettlement {
+    pub(crate) policy: ResolvedCodeConsentSettlement,
+    effect_bound: Vec<u8>,
+    pub(crate) holders: BTreeSet<EntityId>,
+}
+
+impl FrozenCodeConsentSettlement {
+    pub(crate) fn action_requirement(&self) -> Result<GrantBound> {
+        let mut cursor = std::io::Cursor::new(&self.effect_bound);
+        let value = rmpv::decode::read_value(&mut cursor)
+            .map_err(|_| Error::InvalidConfig("invalid frozen code-consent action".to_owned()))?;
+        if cursor.position() != self.effect_bound.len() as u64 {
+            return Err(Error::InvalidConfig(
+                "trailing frozen code-consent action".to_owned(),
+            ));
+        }
+        super::codec::decode_bound_value(&value)
+    }
+}
+
+impl Vault {
+    /// Freeze BEFORE the connector/browser producer drops its native effect
+    /// input. The caller binds this exact value into its immutable wait row.
+    pub(crate) fn freeze_code_consent_settlement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        effect: &ExternalEffectGateInput,
+    ) -> Result<Option<FrozenCodeConsentSettlement>> {
+        let Some(required) =
+            crate::gate::code_consent_settlement::code_consent_action_requirement(effect)
+        else {
+            return Ok(None);
+        };
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let Some(policy) = resolution.code_consent_settlement.clone() else {
+            return Ok(None);
+        };
+        let (BoundClass::Action(class), BoundEnvelope::Action(envelope)) =
+            (required.class(), required.envelope())
+        else {
+            return Ok(None);
+        };
+        let mut holders = BTreeSet::new();
+        if !policy.conflicting_authored_rows {
+            for holder in self.ask_authority_holders_in_txn(txn, class, envelope)? {
+                if policy.eligible.admits(holder)
+                    && super::doors::person_is_live_for_store_in_txn(&self.store, txn, &holder)?
+                    && self
+                        .code_consent_holder_power_in_txn(txn, holder, class, envelope)?
+                        .is_some()
+                {
+                    holders.insert(holder);
+                }
+            }
+        }
+        let mut effect_bound = Vec::new();
+        rmpv::encode::write_value(
+            &mut effect_bound,
+            &super::codec::encode_bound_value(&required)?,
+        )
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        Ok(Some(FrozenCodeConsentSettlement {
+            policy,
+            effect_bound,
+            holders,
+        }))
+    }
+
+    /// Only an action bound to THIS PERSON covers their settlement power;
+    /// the opener and a granting owner's identity are not substitutes.
+    pub(crate) fn code_consent_holder_power_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        class: &ActionClass,
+        envelope: &ActionEnvelope,
+    ) -> Result<Option<String>> {
+        let required = GrantBound::action(
+            ActorBound::new(person.to_hex())?.with_actor_class("human")?,
+            class.clone(),
+            envelope.clone(),
+        )?;
+        for grant in self.active_standing_consent_grants_in_txn(txn)? {
+            let super::StandingConsentGrant::Action(action) = grant else {
+                continue;
+            };
+            if !action.bound().contains(&required) {
+                continue;
+            }
+            let reference = action.bound().digest().to_hex();
+            if self
+                .consent_grant_in_txn(txn, &reference)?
+                .is_some_and(|row| row.is_active())
+            {
+                return Ok(Some(reference));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Same-snapshot person, policy and power evidence. This alone cannot mint an
+/// approve-once marker or turn a holder into an Owner.
+pub(crate) struct CodeConsentHolderPolicy {
+    pub(crate) actor: EntityId,
+    pub(crate) principal_ref: String,
+    pub(crate) authentication: crate::store::GateDecisionId,
+    pub(crate) grant_ref: String,
+    pub(crate) policy: ResolvedCodeConsentSettlement,
+    pub(crate) policy_frontier: [u8; 32],
+}
+
+impl Vault {
+    /// The final effect writer calls this only after it has proved the wait's
+    /// immutable binding, target, original authority and first-answer state.
+    pub(crate) fn code_consent_holder_policy_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: &super::AuthenticatedOwner,
+        frozen: &FrozenCodeConsentSettlement,
+    ) -> Result<Option<CodeConsentHolderPolicy>> {
+        let actor = holder.revalidate_person_in_txn(self, txn)?;
+        if !frozen.holders.contains(&actor)
+            || frozen.policy.conflicting_authored_rows
+            || !frozen.policy.eligible.admits(actor)
+        {
+            return Ok(None);
+        }
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        if resolution.code_consent_settlement.as_ref() != Some(&frozen.policy) {
+            return Ok(None);
+        }
+        let required = frozen.action_requirement()?;
+        let (BoundClass::Action(class), BoundEnvelope::Action(envelope)) =
+            (required.class(), required.envelope())
+        else {
+            return Ok(None);
+        };
+        let Some(grant_ref) = self.code_consent_holder_power_in_txn(txn, actor, class, envelope)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(CodeConsentHolderPolicy {
+            actor,
+            principal_ref: holder.person_principal_ref_in_txn(self, txn)?.to_owned(),
+            authentication: holder.decision_id(),
+            grant_ref,
+            policy: frozen.policy.clone(),
+            policy_frontier: resolution.frontier_hash(),
+        }))
+    }
+}

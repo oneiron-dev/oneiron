@@ -343,6 +343,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
+    pub(crate) code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,

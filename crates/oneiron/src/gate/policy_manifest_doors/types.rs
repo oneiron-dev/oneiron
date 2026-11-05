@@ -141,6 +141,10 @@ pub struct PolicyManifest {
     /// shipped rows hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
+    /// Who may settle a held code effect; each named person still needs its power.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::CodeConsentSettlementRow>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
