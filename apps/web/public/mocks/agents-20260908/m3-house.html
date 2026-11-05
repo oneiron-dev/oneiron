@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m3 · the house</title>
+<script>
+(function(){var h=document.documentElement,p='m3',d={voice:'indent',head:'line',rail:'open'},t=null;
+try{t=localStorage.getItem('oneiron-theme')}catch(e){}h.dataset.theme=t==='light'?'light':'dark';
+for(var k in d){var v=null;try{v=localStorage.getItem('mock-agents:'+p+':'+k)}catch(e){}h.dataset[k]=v||d[k];}})();
+</script>
+<link rel="stylesheet" href="mock.css">
+</head>
+<body class="app" data-page="m3" data-switches="voice head rail" data-active="agents">
+<div class="app-frame">
+<nav class="rail" aria-label="the app"></nav>
+<main class="pane">
+<div class="pane-body">
+  <div class="pane-head">
+    <h1>Agents</h1>
+    <span class="pane-tools"><button type="button" class="act" title="a new agent · Antevon proposes the pieces, you confirm each">+ new agent</button><button type="button" class="hint-btn" title="what this screen is">?</button></span>
+  </div>
+
+  <div class="agents-grid">
+    <nav class="roster" aria-label="roster">
+      <a class="rrow live" data-agent="eiri" href="m1-rail.html" title="Eiri · the room">
+        <span class="rtext"><span class="rname aname">Eiri</span><span class="rdoing">drafting the COO intro, in Yuki’s register</span></span>
+      </a>
+      <a class="rrow live" data-agent="tory" href="#" title="Tory · the room">
+        <span class="rtext"><span class="rname aname">Tory</span><span class="rdoing">checking the supplier rumor against the filings</span></span>
+      </a>
+      <a class="rrow" data-agent="antevon" href="#" title="Antevon · the room">
+        <span class="rtext"><span class="rname aname">Antevon</span><span class="rdoing">nights</span></span>
+      </a>
+      <span class="rsep" aria-hidden="true"></span>
+      <a class="rrow on" href="m3-house.html" title="the house · every agent and you in one room">
+        <span class="rtext"><span class="rname">The house</span><span class="rrole">Everyone who works here, and you.</span><span class="rdoing">3 agents · you</span></span>
+      </a>
+    </nav>
+
+    <section class="room" aria-label="the house">
+      <div class="centre">
+        <div class="rhead rhead-portrait">
+          <div class="rh-text" style="padding-top:0"><h2 class="rh-name">The house</h2><span class="rh-role">Everyone who works here, and you. Antevon routes what you leave unaddressed.</span></div>
+        </div>
+        <div class="rhead rhead-line">
+          <h2 class="rh-name">The house</h2>
+          <span class="rh-role">Everyone who works here, and you.</span>
+          <span class="meta-line" title="the COO intro · the scope thread · the supplier rumor">3 running</span>
+        </div>
+
+        <div class="thread" aria-live="polite">
+          <span class="rday">today</span>
+
+          <div class="msg mine">
+            <div class="body"><p class="txt">Hokuei want to move the pilot start. Tory, anything in the filings? Eiri, hold the COO intro until we know.</p></div>
+            <span class="at">09:02</span>
+          </div>
+
+          <div class="speaker" data-agent="antevon"><span class="face" data-agent="antevon" role="img" aria-label="Mnemosyne, memory"></span><span class="aname">Antevon</span></div>
+          <div class="msg" data-agent="antevon">
+            <div class="body">
+              <p class="hand" title="a handoff · the run tree carries it"><span class="arrow" aria-hidden="true">→</span><span class="aname" data-agent="tory">Tory</span><span>the Kansai freight filings, anything on Hokuei</span></p>
+              <p class="hand" title="a handoff · the run tree carries it"><span class="arrow" aria-hidden="true">→</span><span class="aname" data-agent="eiri">Eiri</span><span>hold the COO intro · draft only</span></p>
+            </div>
+            <span class="at">09:03</span>
+          </div>
+
+          <div class="speaker" data-agent="tory"><span class="face" data-agent="tory" role="img" aria-label="Athena, watchful"></span><span class="aname">Tory</span></div>
+          <div class="msg" data-agent="tory">
+            <div class="body">
+              <p class="txt">Read the Kansai filings. Nothing on Hokuei moving; four claims on freight terms.</p>
+              <div class="cwidget">
+                <span class="cw-title">Kansai freight filings · Hokuei</span>
+                <span class="cw-line">four writes · none waited</span>
+                <span class="cw-foot"><a class="act" href="#" title="run rx_9033 · sources read, claims written, cost">receipt</a></span>
+              </div>
+            </div>
+            <span class="at">12:48</span>
+          </div>
+
+          <div class="msg mine">
+            <div class="body"><p class="txt">Good. Eiri, go ahead with the COO intro.</p></div>
+            <span class="at">13:52</span>
+          </div>
+
+          <div class="speaker" data-agent="eiri"><span class="face" data-agent="eiri" role="img" aria-label="Iris, the messenger"></span><span class="aname">Eiri</span></div>
+          <div class="msg" data-agent="eiri">
+            <div class="body"><p class="txt">Starting the COO intro in Yuki’s register. It will queue, not send.</p></div>
+            <span class="at">13:55</span>
+          </div>
+          <div class="msg" data-agent="eiri">
+            <div class="body">
+              <p class="txt">The Mika reply is ready.</p>
+              <div class="cwidget">
+                <span class="cw-title">Reply to Mika Tanaka: the quote for Tuesday</span>
+                <span class="cw-line">a draft · LINE · waits in your inbox</span>
+                <span class="cw-foot"><a class="act" href="#" title="the draft, in the inbox">open</a></span>
+              </div>
+            </div>
+            <span class="at">14:02</span>
+          </div>
+
+          <div class="speaker" data-agent="antevon"><span class="face" data-agent="antevon" role="img" aria-label="Mnemosyne, memory"></span><span class="aname">Antevon</span></div>
+          <div class="msg" data-agent="antevon">
+            <div class="body"><p class="txt">Today was mostly Eiri. Nothing left the building without you. Tory’s supplier rumor still rests on one source, so it stays a proposal.</p></div>
+            <span class="at">14:07</span>
+          </div>
+        </div>
+
+        <div class="line">
+          <span class="agent-chip" title="who you address · click to switch"><span class="aname">everyone</span><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5"/></svg></span>
+          <input class="gask-input" type="text" placeholder="message everyone · @name to address one · / for commands" aria-label="message">
+        </div>
+      </div>
+
+      <aside class="rrail" aria-label="the house · work and conversations">
+        <div class="rr-open">
+          <div class="rr-top">
+            <span title="what the roster spent today">¥280 today</span><span class="dot">·</span><span>as of 14:07</span><span class="dot">·</span><button type="button" class="act" title="every run today, the ledger">runs</button>
+            <button type="button" class="foldg" title="fold the rail to the edge · r">›</button>
+          </div>
+
+          <div class="fold" title="the live runs, by agent">work</div>
+          <div class="rgroup" data-agent="eiri">
+            <span class="ghead aname">Eiri</span>
+            <div class="run">
+              <div class="rt"><a class="title" href="m4-run.html" title="open the run · its own thread">The COO intro</a><button type="button" class="act" title="settles at the next breakpoint · the helpers stop with it">stop</button></div>
+              <div class="kid" title="2.8k tokens so far · ¥2"><span class="kt">· drafting · 12m</span><span class="cost">2.8k · ¥2</span></div>
+              <div class="kid need" title="the LinkedIn reach waits on your answer, in Eiri’s room"><span class="live-dot" aria-hidden="true"></span><span class="kt">reaching the COO · needs you</span></div>
+            </div>
+            <div class="run recede">
+              <div class="rt"><a class="title" href="#" title="open the run">The scope thread</a><button type="button" class="act">stop</button></div>
+              <div class="kid"><span class="kt">· watching Hokuei ops · 2h 47m</span></div>
+            </div>
+          </div>
+          <div class="rgroup" data-agent="tory">
+            <span class="ghead aname">Tory</span>
+            <div class="run">
+              <div class="rt"><a class="title" href="#" title="open the run · its own thread">The supplier rumor</a><button type="button" class="act" title="settles at the next breakpoint">stop</button></div>
+              <div class="kid" title="18k tokens so far · ¥21"><span class="kt">· two filings open · 41m</span><span class="cost">18k · ¥21</span></div>
+              <div class="kid" title="grading the lone source"><span class="kt">· grading the source · 6m</span></div>
+            </div>
+            <div class="run recede">
+              <div class="rt"><a class="title" href="#" title="the filings watch · wakes every four hours">The filings watch</a></div>
+              <div class="kid"><span class="kt">· next wake 16:41</span></div>
+            </div>
+          </div>
+          <div class="rgroup" data-agent="antevon">
+            <span class="ghead aname">Antevon</span>
+            <div class="run recede">
+              <div class="rt"><a class="title" href="#" title="the nightly pass · 02:40, every night">The nightly pass</a></div>
+              <div class="kid"><span class="kt">· next wake 02:40</span></div>
+            </div>
+          </div>
+
+          <div class="fold after" title="the threads the house holds with the world">conversations</div>
+          <div class="rgroup" data-agent="eiri">
+            <span class="ghead aname">Eiri</span>
+            <div class="conv" title="LINE · the quote reply waits in your inbox"><span class="who">Mika Tanaka</span><span class="last">LINE · 14:02</span></div>
+            <div class="conv" title="email · the pilot scope summary, sent and verified"><span class="who">Hokuei ops</span><span class="last">email · 11:20</span></div>
+          </div>
+          <div class="rgroup" data-agent="antevon">
+            <span class="ghead aname">Antevon</span>
+            <div class="conv" title="Slack · answered the pilot timeline, cited the scope note"><span class="who">#ops</span><span class="last">Slack · 14:05</span></div>
+          </div>
+
+          <div class="fold after" title="settled runs today, every one receipted">earlier · 7</div>
+        </div>
+        <button type="button" class="edge" title="the rail · open it"><span class="emark"><span class="live-dot" aria-hidden="true"></span>3 working · 1 needs you</span></button>
+      </aside>
+    </section>
+  </div>
+</div>
+</main>
+</div>
+<script src="mock.js"></script>
+</body>
+</html>
