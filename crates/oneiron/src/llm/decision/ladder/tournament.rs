@@ -12,7 +12,9 @@
 use super::{DecisionPack, DecisionProvider, Read, Readings, ask, take};
 use crate::Result;
 use crate::llm::decision::types::invalid;
-use crate::llm::decision::{AnswerContract, DecisionAnswer, DecisionQuestion, ProviderPin};
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionQuestion, ProviderPin, StopCause,
+};
 
 /// The fewest options a provider must take for a tournament to read a wider choice: a
 /// chunk of one cannot narrow the field.
@@ -87,7 +89,7 @@ fn tournament(
             }
         }
         match winners.len() {
-            0 => return Ok(abstained.map_or(Read::Cut, Read::Answer)),
+            0 => return Ok(abstained.map_or(Read::Cut(StopCause::Deadline), Read::Answer)),
             1 => return Ok(Read::Answer(winners.remove(0).1)),
             _ => field = winners.into_iter().map(|(winner, _)| winner).collect(),
         }
@@ -106,7 +108,7 @@ fn read_chunk(
     started: bool,
 ) -> Result<Read> {
     if started && !pack.deadline.decision_may_start() {
-        return Ok(Read::Cut);
+        return Ok(Read::Cut(StopCause::Deadline));
     }
     let mut question = pack.questions[0].clone();
     question.contract = AnswerContract::Choice {
