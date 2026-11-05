@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EdgeActorClass, EntityId,
     Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, parse_actor_key,
@@ -24,7 +25,9 @@ use super::types::{
 };
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 use crate::host_root::HostRootOpenOptions;
+use limit_questions::{NativeLimitCollector, NativeLimitQuestion};
 
+mod limit_questions;
 mod reads;
 
 /// What this embedded vault says to a context pack naming `media` (OF-370):
@@ -85,6 +88,10 @@ pub struct NapiVault {
     binding: Option<RawBinding>,
     /// `openWithHostRoot`'s wrong-root fact (FIX 4730); `false` otherwise.
     wrong_host_root: bool,
+    /// This handle's own engine-question collector, installed where the vault
+    /// opened; `None` on bound views, which share the vault and its sink but
+    /// expose no whole-vault crossing metadata.
+    limit_questions: Option<Arc<NativeLimitCollector>>,
 }
 
 /// The principal a bound vault's app host named, and its off-record
@@ -180,11 +187,19 @@ impl NapiVault {
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         // Signing doors (delete receipts) need this install's keys from the keystore.
         vault.install_default_keystore(std::path::Path::new(&path));
+        // This host keeps its own vault's engine questions (FIX 75): install the
+        // collector once the open stands, then the opened width asks once.
+        let limit_questions = NativeLimitCollector::install_on(&vault);
+        let _ = vault.measure_limit(
+            EngineLimit::EmbeddingDimensions,
+            u64::try_from(vault.embedding_dimensions()).unwrap_or(u64::MAX),
+        );
         Ok(Self {
             vault: Arc::new(vault),
             dimensions,
             binding: None,
             wrong_host_root: false,
+            limit_questions: Some(limit_questions),
         })
     }
 
@@ -222,6 +237,19 @@ impl NapiVault {
     #[napi]
     pub fn wrong_host_root(&self) -> bool {
         self.wrong_host_root
+    }
+
+    /// The engine `[limits]` rows this vault crossed, as this host kept them
+    /// (FIX 75): one entry per row that asked, the row's key plus what it stood
+    /// at and what the work measured, both exact. `None` on a bound view, which
+    /// shares the vault and its sink but exposes no whole-vault crossing
+    /// metadata; an empty list where no row crossed yet.
+    #[napi]
+    pub fn native_limit_questions(&self) -> napi::Result<Option<Vec<NativeLimitQuestion>>> {
+        Ok(self
+            .limit_questions
+            .as_ref()
+            .map(|collector| collector.snapshot()))
     }
 
     /// A NEW vault over this same open vault whose writes run as one caller
@@ -267,6 +295,8 @@ impl NapiVault {
                 session,
             }),
             wrong_host_root: false,
+            // Same vault and sink, but a bound view serves no crossings.
+            limit_questions: None,
         })
     }
 
