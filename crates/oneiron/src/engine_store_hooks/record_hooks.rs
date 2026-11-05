@@ -410,6 +410,34 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::affect::state_inputs::spoke_in(vault, txn, subject, turn)
     }
 
+    fn repair_saved_queries_after_pack_move_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        pack: &str,
+        from_version: &str,
+        to_version: &str,
+        from_source: &str,
+        to_source: &str,
+        from_predicates: &BTreeSet<String>,
+        to_predicates: &BTreeSet<String>,
+        shipped: Option<crate::store::pack_predicate_rewrites::PackMigrationMap>,
+        now: u64,
+    ) -> Result<()> {
+        let moved = crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
+            pack,
+            from_version,
+            to_version,
+            from_source,
+            to_source,
+            from_predicates,
+            to_predicates,
+            shipped,
+        };
+        crate::saved_query::repair_saved_queries_after_pack_move_in_txn(vault, wtxn, &moved, now)
+            .map(|_| ())
+    }
+
     fn processed_subjects(
         &self,
         read: &crate::claim::ScopedRead<'_>,

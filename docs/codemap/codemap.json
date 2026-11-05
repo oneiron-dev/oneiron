@@ -5329,7 +5329,7 @@
      "path": "src/authority/slip_vault/issuer_custody.rs",
      "purpose": "Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -25422,7 +25422,7 @@
      "path": "src/deletion/tombstone_scope.rs",
      "purpose": "The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -41440,7 +41440,7 @@
      "purpose": "Optional process adapter for an explicitly configured native meeting-audio host",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 3
      }
@@ -41472,7 +41472,7 @@
      "path": "src/ingest/meeting_audio/command/unit.rs",
      "purpose": "Each physical model call of a native stage admitted on its own permit (FIX 3765): the bridge names a unit…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -60089,7 +60089,7 @@
       "const": 1,
       "crate-vis": 6,
       "fn": 18,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -60122,6 +60122,19 @@
      "purpose": "A restore's custody read from the residence home in place of the folder beside the backup (FIX 5846): the…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IssuerSeedTransferReport"
+     ],
+     "path": "src/recovery/checkpoint/custody_head/issuer_transfer.rs",
+     "purpose": "Explicit protected issuer-seed transfer to a synced install's current custody",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -67586,16 +67599,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PackMigrationMap",
-      "PackPredicateRewrite"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/predicate_rewrites.rs",
      "purpose": "Predicate rewrite classifications carried by pack-source migration maps",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -71545,7 +71554,7 @@
      "path": "src/store/host_issuer_custody.rs",
      "purpose": "The host issuer seed's custody client (FIX-LIST 10770, the remainder of FIX-LIST 3018): the escrow of a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72007,7 +72016,7 @@
      "path": "src/store/key_custody/recovery.rs",
      "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -72028,6 +72037,16 @@
      "purpose": "A disaster recovery's head keys of erased credentials (FIX 10584 item 4): a key whose credential the head's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/recovery/issuer_transfer.rs",
+     "purpose": "Admit only issuer-seed candidates from a published custody head",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -72307,7 +72326,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 158,
-      "mod": 67,
+      "mod": 68,
       "re-export": 87
      }
     },
@@ -72639,6 +72658,20 @@
       "crate-vis": 4,
       "enum": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackMigrationMap",
+      "PackPredicateRewrite"
+     ],
+     "path": "src/store/pack_predicate_rewrites.rs",
+     "purpose": "Predicate rewrite classifications carried by pack-source migration maps",
+     "surface": {
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -90332,7 +90365,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 116,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -90591,7 +90624,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 380,
+     "files": 382,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90831,7 +90864,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6377,
+   "source_files": 6380,
    "test_files": 895
   },
   "oneiron-android": {
@@ -98973,7 +99006,7 @@
      "purpose": "In-memory multi-revision DOCX projection and its shared op builder",
      "surface": {
       "crate-vis": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -122832,7 +122865,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/anthropic.rs",
@@ -123094,7 +123127,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/gemini_chat.rs",
