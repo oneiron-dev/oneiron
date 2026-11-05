@@ -65,6 +65,17 @@ impl PhoneCallRead {
         Ok(read)
     }
 
+    pub(super) fn admitted_for(
+        &self,
+        vault: &Vault,
+        auth: &CoreAuth,
+    ) -> Result<EntityId, HostError> {
+        if !self.auth.same_authority(auth) {
+            return Err(HostError::InvalidRequest);
+        }
+        self.admitted_media_agent(vault)
+    }
+
     pub(crate) fn admitted_media_agent(&self, vault: &Vault) -> Result<EntityId, HostError> {
         if !std::ptr::eq(vault, self.vault.as_ref()) {
             return Err(HostError::InvalidRequest);
@@ -190,5 +201,17 @@ impl PhoneCallRead {
             .phone_line_output_scope(sources, interlocutors)?
             .as_ref()
             == Some(prepared_scope))
+    }
+}
+
+/// Ends only when the original credential or line no longer admits this call.
+/// A scope-value change instead rebuilds context at the next turn.
+pub(super) async fn revoked(phone: &PhoneCallRead) {
+    let mut every = tokio::time::interval(super::boot::LIVENESS_EVERY);
+    loop {
+        every.tick().await;
+        if phone.current_scope().is_err() {
+            return;
+        }
     }
 }
