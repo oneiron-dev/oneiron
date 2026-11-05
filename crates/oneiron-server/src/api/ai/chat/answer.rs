@@ -138,7 +138,6 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                     meter,
                     funding,
                 )
-                .initiated_by(Some(model_call_caller))
                 .with_work_context(WorkContext {
                     class: WorkClass::Foreground,
                     ..Default::default()

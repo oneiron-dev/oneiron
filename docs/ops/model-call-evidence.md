@@ -39,8 +39,9 @@ Quota fallbacks retain the binding of the rung that actually answered.
 The row's actor is the authenticated request's actual principal or native host
 actor, or the queued action's verified requester. It is not inferred from the
 answering agent or the payer. The existing turn credential continues to own
-liveness. The run's initiator is attribution only; it grants no authority and
-changes no funding or admission rule.
+liveness. Caller attribution is added to an evidence-only run clone after the
+provider terminal. The live run keeps its original initiator, resident-share
+admission and charging; the evidence clone grants no authority.
 
 The native evidence NoRecord check uses that same caller and the request's
 authenticated session, before generation and again at the terminal. The actual

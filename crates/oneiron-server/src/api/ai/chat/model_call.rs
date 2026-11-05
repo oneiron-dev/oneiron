@@ -128,11 +128,14 @@ impl Capture {
             reply_assertions: reply_assertions.clone(),
             token_scores: None,
         };
+        // Attribution is added only after the provider terminal. The live run
+        // must keep its original resident-share admission and charging.
+        let evidence = call.run.initiated_by(Some(self.caller));
         crate::server::blocking(|| {
             crate::api::record_raw_response(
                 vault,
                 &call.ladder,
-                &call.run,
+                &evidence,
                 &call.request,
                 &response,
                 binding.as_ref(),
