@@ -143,17 +143,7 @@ fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<(
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the rows that record actors. Each lane's actor scrub asks it (FIX 8908).
 pub(crate) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
+    crate::ports::names_no_actor_in_txn(&vault.store, txn, id)
 }
 
 /// Every id `vault`'s hard-delete markers name: each hard-erased id, actor or
@@ -165,18 +155,7 @@ pub(crate) fn hard_erased_ids_in(vault: &Vault) -> Result<BTreeSet<EntityId>> {
 }
 
 fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
-    let mut ids = BTreeSet::new();
-    for row in HARD_DELETE_MARKER.iter_raw_from(&vault.store, rtxn, &[])? {
-        let (key, _) = row?;
-        // A key that spells no id names no actor.
-        if let Some(id) = std::str::from_utf8(&key)
-            .ok()
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-        {
-            ids.insert(id);
-        }
-    }
-    Ok(ids)
+    crate::ports::hard_erased_ids_in_txn(&vault.store, rtxn)
 }
 
 /// A checkpoint restore's actor sweep, in its image-write transaction once
