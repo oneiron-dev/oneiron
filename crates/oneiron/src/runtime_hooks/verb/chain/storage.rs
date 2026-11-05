@@ -217,11 +217,12 @@ impl Chain<'_> {
         .chain(run.usage.receipt_fields())
         .map(|(name, value)| (name.to_owned(), value))
         .collect();
+        let scope_text = self.call.scope.as_ref().map(|scope| scope.receipt_text());
         for (name, value) in [
             ("reason", run.reason.as_deref()),
             ("note", run.note.as_deref()),
             ("fail_safe", run.fail_safe),
-            ("scope", self.call.scope.as_deref()),
+            ("scope", scope_text.as_deref()),
             (
                 "retry",
                 self.expired

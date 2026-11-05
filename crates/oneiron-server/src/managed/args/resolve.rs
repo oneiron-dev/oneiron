@@ -108,6 +108,7 @@ impl ManagedArgs {
             vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
+            vm_outbox_companion_admitted: args.vm_outbox_companion_admitted,
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
             break_glass_recipient: args.break_glass_recipient_file.clone(),
@@ -120,10 +121,7 @@ impl ManagedArgs {
                     reason: error.to_string(),
                 }
             })?,
-            host_limits: crate::embedded::host_limits(
-                args.host_memory_bytes,
-                args.host_cpu_millis,
-            ),
+            host_limits: crate::embedded::host_limits(args.host_memory_bytes, args.host_cpu_millis),
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),

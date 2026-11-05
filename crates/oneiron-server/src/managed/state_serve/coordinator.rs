@@ -5,12 +5,11 @@
 use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
 
 use super::{
-    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, ManagedArgs,
-    ManagedCtl, ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal,
-    SyncServer, UnixTs, WakeLedger, WriteKind, admission, build_managed_app,
-    build_managed_artifact_app, escrow_vault_key, final_ledger_push, managed_page_seal,
-    open_managed_vault, provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow,
-    watch,
+    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, ManagedArgs, ManagedCtl,
+    ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal, SyncServer,
+    UnixTs, WakeLedger, WriteKind, admission, build_managed_app, build_managed_artifact_app,
+    escrow_vault_key, final_ledger_push, managed_page_seal, open_managed_vault,
+    provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow, watch,
 };
 
 /// Boots the engine as a supervised child process.
@@ -46,8 +45,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
     let shutdown = ManagedShutdown::new();
-    let mut host =
-        super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
+    let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
@@ -413,6 +411,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&state),
             Arc::clone(&sync_server),
             shutdown.clone(),
+            managed.vm_outbox_companion_admitted,
         );
         // Its carrier as it stands, and the recipients it delivers later.
         super::carrier_watch::spawn(
