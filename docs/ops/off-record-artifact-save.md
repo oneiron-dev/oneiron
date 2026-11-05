@@ -1,0 +1,17 @@
+# Explicit scratch artifact saves
+
+`vault.off_record.artifacts.save` preserves a selected scratch NOTE or CLAIM from a live off-record session in the current vault. Its input is `{ "session_ref": "<live handle>", "artifact_ref": "<room alias or entity id>" }`.
+
+The native entry points are `OffRecordSession::save_artifact_by` (the actual holder's verified slip) and `save_artifact_as` (the vault owner's authenticated proof). The save rechecks the vault write grant and current room membership in the committing writer. A session name, actor label, or broad read permission is not save authority. Write-only credentials use the existing target-key bounds; the save does not add a read-verb requirement.
+
+The selected artifact keeps its identity, original authorship, source revision, birth and supplied evidence. Supplied room evidence remains as supplied, not authenticated evidence or a new claim by the saver. NOTE saves load the actual composed document, its current head and complete Loro state; they do not rebuild text from the birth body. Ordinary structural, source-trust, privacy, mask, citation, deletion and shared-vault write checks still apply. A saved document cannot replace a different durable document merely because its immutable NOTE birth body matches.
+
+The result lists the actual saved closure and room-to-vault short-id pairs. Unsaved scratch and talk remain in the overlay. The native save posts `saved_artifact`, naming the actual saver, only after its commit succeeds. Retirement then removes only the saved source footprints that still match the captured overlay snapshot; it never masks the durable rows or removes newer concurrent values. Close continues to dispose of the remaining overlay.
+
+This adds a normal engine/server/client verb. It requires matching engine/server and regenerated clients at rollout. It adds no configuration, migration, background service, guest change or durable session registry.
+
+A selected artifact whose native dependencies include staged MESSAGE or SUMMARY rows saves only those rows and their owning TURN/shell program. Dependencies in one TURN are combined before its immutable promotion receipt is written. A later selected message in an already saved TURN uses the existing checked append path. Selecting only a TURN subject does not save its messages. The ordinary typed conversation replay, source author, speaker/order, body attachment holds, tagging and embedding checks remain in force.
+
+Selected result attachments use the existing result-body import before the committing writer opens. The writer rechecks the saver, current membership and selected native source. Its result MESSAGE sources must still be covered by the pre-imported selection; a changed dependency remains staged for a fresh save rather than committing a partial save. Imported bodies stay pinned through success or failure and unnamed copies use the normal cleanup. This preserves encrypted session-disk spill and does not make large results memory-only.
+
+The in-memory saved-message keeper captures the actual durable MESSAGE header time and body digest in the committing writer, after native sealing. It is published only after commit and keeps its original first-save value. Selected NOTE/CLAIM programs use ordinary current masking; older whole-turn replay behavior is unchanged. Retirement removes only the saved id's captured text postings, forward row, per-document lengths/metadata and source text. A later text revision retains its whole footprint. Shared text statistics and other ids' postings remain unchanged.
