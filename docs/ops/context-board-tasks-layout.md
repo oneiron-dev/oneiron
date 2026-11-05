@@ -1,13 +1,15 @@
 # ROOT TASKS layout for HTTP and native chat (FIX 12570)
 
 Status: parent 12570 PART. Supports ROOT raw HTTP, live chat `start_turn`,
-and admitted queued Continue/Retry boards, not full BOARD-LAYOUT.
+admitted queued Continue/Retry boards, and new native attenuated-fork TASKS
+snapshots, not full BOARD-LAYOUT.
 
 ## Partial scope
 
 One authenticated actor's ROOT TASKS-row token budget, durably staged and
 commit-linked to an explicit actual TURN or a live chat answer's TURN.
-Nothing else in 12570 ships here.
+New native attenuated forks also inherit that actor-keyed TASKS state once.
+Other sections and fork families remain outside this slice.
 
 Covered:
 
@@ -30,6 +32,10 @@ Covered:
   candidate activates only when that fallback actually answered. A prefix
   answered without the fallback leaves pending state unchanged. Existing
   native/no-slip, refused, held, omitted, empty and unsaved paths remain.
+- A newly registered native attenuated fork copies the actual source
+  definition actor's TASKS state in its creation transaction. It uses the
+  requested source, which need not be the delegation parent's target.
+  Retried registration of an existing fork never recopies the row.
 - Explicit per-request `tasks_budget_tok` still wins for that render and
   never consumes pending.
 - Existing 5426 renderer (`render_with_token_budget`), metadata
@@ -39,8 +45,9 @@ Covered:
 Explicitly OPEN (full 12570 PART):
 
 - MCP/run/program next-turn application of the staged layout.
-- Fork-specific store, eager fork copy, or independent fork layout. Forks
-  hold no copy in this slice and must not pretend otherwise.
+- Eager copies for other fork families, and fork-model consumers beyond
+  the HTTP/native chat paths described here. An inherited row alone does
+  not prove that a pumped run projected it.
 - Full shares summed across all sections, folds, filters, keep/note rows,
   owner defaults/settings, prefix epoch handling, or full-board layout.
 - Any new numeric cap, default, timeout, row/byte/count cap, or speed/GPU/
@@ -135,6 +142,22 @@ rows ride outside the allotment.
 - Chat keeps NO idempotency cache (a fresh answer TURN per turn; once-only
   per TURN holds). A refused/unanswered/unboarded turn commits nothing;
   pending stays pending.
+
+## Fork snapshots
+
+- Only the brand-new AGENT_DEF branch of native attenuated-fork registration
+  copies state. The source read, child row write, definition write and
+  delegation binding share the accepted writer, so they commit or roll back
+  together. The existing occupied-id and deterministic-reuse paths are unchanged.
+- The child gets the source's current live value, pending batch and revision
+  counters, but a fresh row incarnation under its own actual fork actor id.
+  Pending remains pending until the child's own accepted TURN activates it;
+  copying never consumes or activates the source's pending batch.
+- An absent source row becomes an explicit native default (`live: None`,
+  no pending, zero counters). There is no lazy parent lookup. Later source
+  stages cannot change the child, and child stages cannot change the source.
+- A retry never overwrites child customizations. Existing actor-bound staging,
+  candidate ownership, global-cap clamping and history activation still apply.
 
 ## Restore limitations
 
