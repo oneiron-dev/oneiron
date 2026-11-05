@@ -45,6 +45,7 @@ impl Vault {
             grant: ConsentGrant::ApproveOnce(effect_digest),
         };
         self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 
@@ -128,6 +129,7 @@ impl Vault {
         let receipt =
             self.put_standing_grant_row_in_txn(wtxn, issuer.clone(), bound, decision_id)?;
         append_grant_receipt_in_txn(&self.store, wtxn, &issuer, &receipt)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 
@@ -147,6 +149,7 @@ impl Vault {
             decision_id,
         )?;
         self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 
@@ -200,6 +203,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let receipt = self.deny_consent_in_txn(&mut wtxn, owner, effect_digest)?;
         wtxn.commit()?;
+        self.notify_consent_answer();
         Ok(receipt)
     }
 
@@ -218,6 +222,7 @@ impl Vault {
         // an owner signal, so it takes the owner tier like every receipt.
         owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), &receipt, None)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 
