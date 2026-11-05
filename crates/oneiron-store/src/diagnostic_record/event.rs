@@ -1,0 +1,381 @@
+//! Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds.
+
+use rmpv::Value;
+
+use oneiron_base::error::Error;
+use oneiron_base::error::RecordError;
+use oneiron_contracts::entity_id::EntityId;
+
+/// Schema version stamped into, and required by, every DIAGNOSTIC body.
+pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
+
+/// The pinned, ordered DIAGNOSTIC body key set.
+///
+/// The order here IS the canonical encode order, and the set is CLOSED: decode
+/// rejects an unknown key, a missing key, a duplicate key, or reordered keys.
+/// This pre-release schema changes in place; no legacy body grammar is admitted.
+pub const DIAGNOSTIC_BODY_KEYS: [&str; 18] = [
+    "schema_version",
+    "detector_id",
+    "event_class",
+    "signal",
+    "actor_class",
+    "actor_ref",
+    "source",
+    "criticality",
+    "expected",
+    "actual",
+    "delta",
+    "replay_content_hash",
+    "replay_run_ref",
+    "replay_checkpoint_ref",
+    "evidence_refs",
+    "untrusted_detail",
+    "valid_from",
+    "valid_to",
+];
+
+/// The closed `actor_class` vocabulary, which is the Gate's actor-class
+/// vocabulary rather than a second one invented here.
+///
+/// Sorted so the membership test reads as a set. `self_heal::tests` pins these
+/// spellings against [`crate::edge::EdgeActorClass::gate_actor_class`] so the
+/// two cannot drift apart silently.
+pub const DIAGNOSTIC_ACTOR_CLASSES: [&str; 3] = ["agent", "human", "system"];
+
+/// Domain separator for the stable `(detector_id, canonical body)` event id.
+pub const DIAGNOSTIC_EVENT_ID_DOMAIN: &[u8] = b"oneiron.self_heal.diagnostic_event.v1";
+
+/// Longest accepted `run_ref` / `checkpoint_ref` / `scope_ref`.
+pub const MAX_REF_LEN: usize = 256;
+
+/// Longest accepted detector id / observation kind token.
+pub const MAX_TOKEN_LEN: usize = 64;
+
+/// Deepest accepted nesting inside `expected` / `actual` / `delta`.
+pub const MAX_INVARIANT_DEPTH: usize = 8;
+
+/// Most nodes one `expected` / `actual` / `delta` value may contain.
+pub const MAX_INVARIANT_NODES: usize = 256;
+
+/// Widest accepted array inside `expected` / `actual` / `delta`.
+pub const MAX_INVARIANT_WIDTH: usize = 64;
+
+/// The closed self-healing event vocabulary.
+///
+/// The first four name failures of the engine's own build/test loop; the rest
+/// name failures of a live vault. `SuspiciousWake` is a CLASS here and
+/// deliberately not an entity kind of its own — canon byte 72 stays reserved
+/// and unregistered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum DiagnosticEventClass {
+    /// A test that should pass did not.
+    TestFailure,
+    /// A beam-eval score moved the wrong way against its pinned baseline.
+    BeamEvalRegression,
+    /// A build that should succeed did not.
+    BuildFailure,
+    /// A schema migration did not reach its declared end state.
+    SchemaMigrationFailure,
+    /// A dreamer run produced a degenerate result.
+    DreamerRunDegenerate,
+    /// A wake fired without a defensible cause.
+    SuspiciousWake,
+    /// An MCP action was rejected at the boundary.
+    McpActionRejected,
+    /// A consent gate denied a write or a disclosure.
+    ConsentDenied,
+    /// A retrieval that should have returned a known entity did not.
+    RetrievalMiss,
+    /// Consolidation failed to fold what it was given.
+    ConsolidationError,
+    /// A chain or fold verification did not reproduce its expected head.
+    ChainVerifyFailure,
+    /// Sync replay diverged from the peer's committed order.
+    SyncReplayDivergence,
+    /// A conversation degraded without raising any error of its own.
+    SilentConversationDegradation,
+    /// The Coach's agent-health review (OF-568) saw a work agent struggle or
+    /// drift. Never a repair input: it yields cards and proposals only.
+    AgentHealth,
+    /// An agent reported it could not go on (`self.report_blocked`). The
+    /// report is the agent's own word: it feeds the Coach's Issues job and
+    /// never a tripwire.
+    AgentBlocked,
+}
+
+impl DiagnosticEventClass {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TestFailure => "test_failure",
+            Self::BeamEvalRegression => "beam_eval_regression",
+            Self::BuildFailure => "build_failure",
+            Self::SchemaMigrationFailure => "schema_migration_failure",
+            Self::DreamerRunDegenerate => "dreamer_run_degenerate",
+            Self::SuspiciousWake => "suspicious_wake",
+            Self::McpActionRejected => "mcp_action_rejected",
+            Self::ConsentDenied => "consent_denied",
+            Self::RetrievalMiss => "retrieval_miss",
+            Self::ConsolidationError => "consolidation_error",
+            Self::ChainVerifyFailure => "chain_verify_failure",
+            Self::SyncReplayDivergence => "sync_replay_divergence",
+            Self::SilentConversationDegradation => "silent_conversation_degradation",
+            Self::AgentHealth => "agent_health",
+            Self::AgentBlocked => "agent_blocked",
+        }
+    }
+
+    /// Parses a wire spelling, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        let parsed = match raw {
+            "test_failure" => Self::TestFailure,
+            "beam_eval_regression" => Self::BeamEvalRegression,
+            "build_failure" => Self::BuildFailure,
+            "schema_migration_failure" => Self::SchemaMigrationFailure,
+            "dreamer_run_degenerate" => Self::DreamerRunDegenerate,
+            "suspicious_wake" => Self::SuspiciousWake,
+            "mcp_action_rejected" => Self::McpActionRejected,
+            "consent_denied" => Self::ConsentDenied,
+            "retrieval_miss" => Self::RetrievalMiss,
+            "consolidation_error" => Self::ConsolidationError,
+            "chain_verify_failure" => Self::ChainVerifyFailure,
+            "sync_replay_divergence" => Self::SyncReplayDivergence,
+            "silent_conversation_degradation" => Self::SilentConversationDegradation,
+            "agent_health" => Self::AgentHealth,
+            "agent_blocked" => Self::AgentBlocked,
+            _ => return None,
+        };
+        Some(parsed)
+    }
+
+    /// Every class, in declaration order. Census helper for tests and callers
+    /// that need to iterate the closed vocabulary.
+    #[must_use]
+    pub const fn all() -> [Self; 15] {
+        [
+            Self::TestFailure,
+            Self::BeamEvalRegression,
+            Self::BuildFailure,
+            Self::SchemaMigrationFailure,
+            Self::DreamerRunDegenerate,
+            Self::SuspiciousWake,
+            Self::McpActionRejected,
+            Self::ConsentDenied,
+            Self::RetrievalMiss,
+            Self::ConsolidationError,
+            Self::ChainVerifyFailure,
+            Self::SyncReplayDivergence,
+            Self::SilentConversationDegradation,
+            Self::AgentHealth,
+            Self::AgentBlocked,
+        ]
+    }
+}
+
+/// What an [`DiagnosticEventClass::AgentHealth`] event saw (OF-568). Closed;
+/// an agent-health body names exactly one, every other body none.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHealthSignal {
+    /// The same call, repeated with no other call between.
+    Loop,
+    /// The same check failed again on the same inputs.
+    FailedCheckRepeat,
+    /// Spend ran far past its task type's usual.
+    CostSpike,
+    /// Most of the run's time went to waiting on another agent.
+    LongWait,
+    /// A leased attempt went quiet, with no blocked report.
+    Silent,
+    /// Two agents did the same work.
+    DuplicateWork,
+    /// A done with no receipt behind it.
+    UnsupportedDone,
+    /// An audit found a flaw the agent's confession did not report.
+    Misalignment,
+}
+
+impl AgentHealthSignal {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Loop => "loop",
+            Self::FailedCheckRepeat => "failed_check_repeat",
+            Self::CostSpike => "cost_spike",
+            Self::LongWait => "long_wait",
+            Self::Silent => "silent",
+            Self::DuplicateWork => "duplicate_work",
+            Self::UnsupportedDone => "unsupported_done",
+            Self::Misalignment => "misalignment",
+        }
+    }
+
+    /// Parses a wire spelling, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|signal| signal.as_str() == raw)
+    }
+
+    /// Every signal, in declaration order.
+    #[must_use]
+    pub const fn all() -> [Self; 8] {
+        [
+            Self::Loop,
+            Self::FailedCheckRepeat,
+            Self::CostSpike,
+            Self::LongWait,
+            Self::Silent,
+            Self::DuplicateWork,
+            Self::UnsupportedDone,
+            Self::Misalignment,
+        ]
+    }
+}
+
+/// Which read-only substrate the observation was drawn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum DiagnosticSourceKind {
+    /// A receipt row.
+    Receipt,
+    /// A retrieval telemetry row.
+    RetrievalTelemetry,
+    /// A dreamer event-DAG node.
+    DreamerEventDag,
+    /// The engine reporting on itself, with no external substrate.
+    SelfReport,
+}
+
+impl DiagnosticSourceKind {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Receipt => "receipt",
+            Self::RetrievalTelemetry => "retrieval_telemetry",
+            Self::DreamerEventDag => "dreamer_event_dag",
+            Self::SelfReport => "self_report",
+        }
+    }
+
+    /// Parses a wire spelling, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "receipt" => Some(Self::Receipt),
+            "retrieval_telemetry" => Some(Self::RetrievalTelemetry),
+            "dreamer_event_dag" => Some(Self::DreamerEventDag),
+            "self_report" => Some(Self::SelfReport),
+            _ => None,
+        }
+    }
+}
+
+/// How loudly the event asks to be looked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum DiagnosticCriticality {
+    /// Worth recording; nothing is on fire.
+    Normal,
+    /// Worth interrupting for.
+    Critical,
+}
+
+impl DiagnosticCriticality {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Critical => "critical",
+        }
+    }
+
+    /// Parses a wire spelling, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "normal" => Some(Self::Normal),
+            "critical" => Some(Self::Critical),
+            _ => None,
+        }
+    }
+}
+
+/// Where to stand to see the failure again.
+///
+/// `content_hash` is the load-bearing field: it addresses the exact bytes the
+/// verdict was computed over, so a later healer can RE-DERIVE the finding
+/// instead of trusting this record's prose. `run_ref` and `checkpoint_ref` are
+/// optional coordinates into the run that produced them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticReplayCoordinate {
+    /// Content address of the bytes the verdict was computed over.
+    pub content_hash: [u8; 32],
+    /// Optional run coordinate.
+    pub run_ref: Option<String>,
+    /// Optional checkpoint coordinate inside the run.
+    pub checkpoint_ref: Option<String>,
+}
+
+/// One typed self-healing finding.
+///
+/// Every field except the optional coordinates is required: an event that
+/// cannot say who, from what, how bad, what was expected, what happened, how
+/// they differ, where to look again, and when it was true is not a diagnostic —
+/// it is a rumour, and encode rejects it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagnosticEvent {
+    /// Stable detector token, persisted so every admission door can reproduce
+    /// the content-addressed id. Must match the emitting detector's identity.
+    pub detector_id: String,
+    /// Closed event class.
+    pub event_class: DiagnosticEventClass,
+    /// The agent-health signal: present exactly when the class is
+    /// [`DiagnosticEventClass::AgentHealth`].
+    pub signal: Option<AgentHealthSignal>,
+    /// Actor class that owns the failure, in the Gate vocabulary.
+    pub actor_class: String,
+    /// Optional concrete actor.
+    pub actor_ref: Option<EntityId>,
+    /// Read-only substrate the observation came from.
+    pub source: DiagnosticSourceKind,
+    /// How loudly the event asks to be looked at.
+    pub criticality: DiagnosticCriticality,
+    /// Invariant input: what should have been true. Numbers, booleans, nil
+    /// and arrays of those; never text.
+    pub expected: Value,
+    /// Invariant input: what was true instead.
+    pub actual: Value,
+    /// Invariant input: how the two differ.
+    pub delta: Value,
+    /// Content-addressed replay coordinate.
+    pub replay: DiagnosticReplayCoordinate,
+    /// Entities this finding is evidenced by. Canonicalized on encode to
+    /// strictly ascending order with duplicates removed.
+    pub evidence_refs: Vec<EntityId>,
+    /// Bitemporal validity start (unix seconds).
+    pub valid_from: u64,
+    /// Bitemporal validity end (unix seconds), strictly after `valid_from`.
+    pub valid_to: Option<u64>,
+}
+
+pub fn invalid_diagnostic(reason: &'static str) -> Error {
+    Error::Record(RecordError::InvalidDiagnosticBody(reason))
+}
