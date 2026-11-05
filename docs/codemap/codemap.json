@@ -41425,6 +41425,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/connector_archive_link.rs",
+     "purpose": "Record-only occurrence of the provider-event archive an accepted inbound MESSAGE landed from (FIX 10851)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -42052,7 +42062,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 4,
       "re-export": 17
      }
@@ -77567,7 +77577,7 @@
      "path": "src/sync/client/window_pads.rs",
      "purpose": "The device's side of the window pad envelope (KS-5, FIX 7107)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -77672,7 +77682,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/connection/node_batch.rs",
@@ -80138,7 +80148,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 12,
+      "fn": 13,
       "re-export": 1,
       "struct": 4
      }
@@ -80322,7 +80332,7 @@
      "purpose": "A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 8,
       "re-export": 1,
@@ -90322,7 +90332,7 @@
      "path": "src/world_keys/page_seal/sealed_swap.rs",
      "purpose": "A restore over a sealed vault (OF-570 maximum tier), kept recoverable across its swap: the mirrors beside…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -92210,7 +92220,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93017,7 +93027,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6506,
+   "source_files": 6507,
    "test_files": 895
   },
   "oneiron-android": {
