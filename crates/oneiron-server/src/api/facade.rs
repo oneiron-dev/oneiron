@@ -138,6 +138,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
+mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
@@ -329,6 +330,11 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
     unknown_verb(uri.path().trim_start_matches('/'))
 }
 
+/// The native producer's dependency rows, kept only while an in-process
+/// action receives this response. They do not release a held reply's body.
+#[derive(Clone)]
+struct FacadeResultRows(Option<Vec<EntityId>>);
+
 /// Every generated facade route ([`agent_verbs`]): the request's credential
 /// and headers are the call's context, its JSON body the verb's input, and
 /// the row runs in the facade's dispatch ([`call_verb`]), which the held
@@ -367,7 +373,12 @@ async fn facade_route(
             None => call_verb(&server, &call, verb, input).await,
         };
         match output {
-            Ok(output) => released_reply(&server, &auth, verb, output).into_response(),
+            Ok(output) => {
+                let rows = FacadeResultRows(output.rows.clone());
+                let mut response = released_reply(&server, &auth, verb, output).into_response();
+                response.extensions_mut().insert(rows);
+                response
+            }
             Err(refused) => refused.into_response(),
         }
     })

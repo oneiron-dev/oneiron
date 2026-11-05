@@ -34,6 +34,7 @@ use crate::entity_id::EntityId;
 use crate::skill::LoadedSkillPack;
 use crate::task_type::{PlacementDecisions, TaskTypeRef};
 use crate::team::task_exposure::TaskExposure;
+use crate::vault::RevisionRef;
 
 use super::PatternLaunchSpec;
 
@@ -182,6 +183,8 @@ pub struct FrozenPatternPack {
     entity: EntityId,
     skill_id: String,
     version: String,
+    /// The retained revision witnessed at freeze; absent when no witness was available.
+    revision: Option<(EntityId, RevisionRef)>,
     /// The files, path and bytes; `None` for a native record-only skill,
     /// which has no file tree.
     files: Option<Vec<FrozenPackFile>>,
@@ -212,9 +215,23 @@ impl FrozenPatternPack {
             entity: pack.entity,
             skill_id: pack.record.skill_id.clone(),
             version: pack.record.version.clone(),
+            revision: None,
             body_hash: pack_body_hash(files.as_deref()),
             files,
         }
+    }
+
+    /// Binds the revision the engine witnessed when it froze this pack.
+    #[must_use]
+    pub(crate) fn with_revision(mut self, entity: EntityId, revision: RevisionRef) -> Self {
+        self.revision = Some((entity, revision));
+        self
+    }
+
+    /// The retained revision witnessed at freeze, when one was available.
+    #[must_use]
+    pub fn revision(&self) -> Option<(EntityId, RevisionRef)> {
+        self.revision
     }
 
     /// The skill entity that loaded.
