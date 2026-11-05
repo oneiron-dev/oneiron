@@ -224,19 +224,21 @@ pub(super) fn recall_loop(
 #[derive(Debug, Serialize)]
 pub(super) struct StillWait {
     /// The Dreamer stayed still for `QUIET` (no attempt running, its tallies
-    /// unchanged, no new stage or pass line) before the cycle's bound ran
-    /// out.
+    /// unchanged, no new stage or pass line, every status read answered)
+    /// before the cycle's bound ran out.
     pub(super) reached: bool,
     /// How long the wait took, in ms.
     pub(super) waited_ms: f64,
-    /// The status read last.
-    pub(super) status: DreamerStatus,
+    /// The status read last, when that read answered.
+    pub(super) status: Option<DreamerStatus>,
 }
 
 /// Waits until `deadline` for the Dreamer to stay still for `QUIET`. The
 /// round can end while other Dreamer work still runs (Micro rounds, sieve
 /// rungs, maintenance), and the recalls in the `AFTER` that follows measure
-/// that work too; recalls taken once it is still do not.
+/// that work too; recalls taken once it is still do not. Quiet counts only
+/// inside the bound and only over status reads that answered: a failed
+/// read proves nothing, so the quiet starts again after it.
 pub(super) fn await_still(
     agent: &Agent,
     http: &Client,
@@ -249,18 +251,21 @@ pub(super) fn await_still(
     let started = Instant::now();
     let mut changed = Instant::now();
     let mut seen_lines = scan.stages.len() + scan.passes.len();
-    let mut now_status = status(agent, http, base).unwrap_or_default();
+    let mut now_status = status(agent, http, base).ok();
     let mut step = 0_u64;
     loop {
-        let reached = changed.elapsed() >= QUIET && now_status.still();
-        if reached || Instant::now() >= deadline {
-            return StillWait {
-                reached,
-                waited_ms: ms_between(started, Instant::now()),
-                status: now_status,
-            };
+        let done = |reached: bool, status: Option<DreamerStatus>| StillWait {
+            reached,
+            waited_ms: ms_between(started, Instant::now()),
+            status,
+        };
+        if Instant::now() >= deadline {
+            return done(false, now_status);
         }
-        std::thread::sleep(STEP);
+        if changed.elapsed() >= QUIET && now_status.as_ref().is_some_and(DreamerStatus::still) {
+            return done(true, now_status);
+        }
+        std::thread::sleep(STEP.min(deadline.saturating_duration_since(Instant::now())));
         step += 1;
         scan.read(tail, origin);
         let lines = scan.stages.len() + scan.passes.len();
@@ -268,13 +273,21 @@ pub(super) fn await_still(
             seen_lines = lines;
             changed = Instant::now();
         }
-        if step.is_multiple_of(4)
-            && let Ok(read) = status(agent, http, base)
-        {
-            if read.tallies() != now_status.tallies() || read.state != now_status.state {
-                changed = Instant::now();
+        if step.is_multiple_of(4) {
+            match status(agent, http, base) {
+                Ok(read) => {
+                    if now_status.as_ref().is_none_or(|last| {
+                        read.tallies() != last.tallies() || read.state != last.state
+                    }) {
+                        changed = Instant::now();
+                    }
+                    now_status = Some(read);
+                }
+                Err(_) => {
+                    changed = Instant::now();
+                    now_status = None;
+                }
             }
-            now_status = read;
         }
     }
 }
