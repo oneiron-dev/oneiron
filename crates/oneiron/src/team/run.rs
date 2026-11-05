@@ -45,12 +45,8 @@ use crate::receipt::task_type_ref::TypeRef;
 use crate::team::team_shape::CoordinationPattern;
 use crate::team::team_shape::team_pattern;
 
-use super::market::market;
-use super::observations::team_run_observations;
-use super::pattern::{TeamAxis, TeamPattern, pattern_skills};
-use super::receipt::{
-    Coverage, DecidedBy, PatternSkillRef, TeamReceipt, TeamShape, record_team_receipt, team_receipt,
-};
+use super::pattern::{TeamAxis, TeamPattern};
+use super::receipt::{Coverage, DecidedBy, PatternSkillRef, TeamReceipt, TeamShape};
 use super::run_binding::team_run_binding;
 use super::spawn_intent::FrozenPatternPack;
 
@@ -285,8 +281,19 @@ pub(crate) fn record_led_team(
     input: &TeamRecordInput,
     now: u64,
 ) -> Result<std::result::Result<TeamRunAnswer, &'static str>> {
+    vault.with_write_txn_grouped(|txn| record_led_team_in_txn(vault, txn, leader, input, now))
+}
+
+/// Constructs and publishes the receipt from one writer's snapshot.
+pub(crate) fn record_led_team_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    leader: AttemptId,
+    input: &TeamRecordInput,
+    now: u64,
+) -> Result<std::result::Result<TeamRunAnswer, &'static str>> {
     let store = DreamerRunnerStore::new(vault);
-    let Some(lead) = store.status(leader)? else {
+    let Some(lead) = store.status_in_txn(txn, leader)? else {
         return Ok(Err("team_unbound"));
     };
     let lead_input = decode_agent_dispatch_input(&lead.payload.input)?;
@@ -294,14 +301,14 @@ pub(crate) fn record_led_team(
     // leader was shown, and bound the team under the leader it queued
     // (DOOR-111).
     let planned = AgentDispatcher::new(vault)
-        .planned_launch_for_leader(leader)?
+        .planned_launch_for_leader_in_txn(txn, leader)?
         .filter(|launch| launch.team_ref == input.team_ref);
     let root = planned.as_ref().map_or(leader, |launch| launch.root);
     let prefix = led_team_ref(root, "");
     if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
         return Ok(Err("team_record_not_led"));
     }
-    let bound = team_run_binding(vault, root, &input.team_ref)?;
+    let bound = super::run_binding::team_run_binding_in_txn(vault, txn, root, &input.team_ref)?;
     if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
@@ -310,7 +317,7 @@ pub(crate) fn record_led_team(
     let mut members = bound.map(|run| run.members).unwrap_or_default();
     // The start's own spawns are members on the host's word.
     for id in &members {
-        if let Some(row) = store.status(*id)? {
+        if let Some(row) = store.status_in_txn(txn, *id)? {
             started = started.min(row.attempt.created_at);
         }
     }
@@ -322,7 +329,7 @@ pub(crate) fn record_led_team(
         if members.contains(&id) {
             continue;
         }
-        let Some(row) = store.status(id)? else {
+        let Some(row) = store.status_in_txn(txn, id)? else {
             return Ok(Err("team_record_unknown_member"));
         };
         match attempt_team_stamp(&row.attempt)? {
@@ -352,30 +359,33 @@ pub(crate) fn record_led_team(
         TeamDecisionInput::Vote { tally } => DecidedBy::Vote {
             tally: tally.clone(),
         },
-        TeamDecisionInput::Referee { rule, signed_at } => match market(vault, &input.team_ref)? {
-            Some(market) => DecidedBy::Referee {
-                rule: market.referee.rule_ref,
-                signed_at: market.referee.signed_at,
-            },
-            None => DecidedBy::Referee {
-                rule: rule.clone(),
-                signed_at: *signed_at,
-            },
-        },
+        TeamDecisionInput::Referee { rule, signed_at } => {
+            match super::market::market_in_txn(vault, txn, &input.team_ref)? {
+                Some(market) => DecidedBy::Referee {
+                    rule: market.referee.rule_ref,
+                    signed_at: market.referee.signed_at,
+                },
+                None => DecidedBy::Referee {
+                    rule: rule.clone(),
+                    signed_at: *signed_at,
+                },
+            }
+        }
     };
     if decided_by.kind() != pattern.decider_kind() {
         return Ok(Err("team_record_decider"));
     }
-    if let Some(existing) = team_receipt(vault, &input.team_ref)? {
+    if let Some(existing) = super::receipt::team_receipt_in_txn(vault, txn, &input.team_ref)? {
         return Ok(Ok(recorded(&existing, true)));
     }
-    let observed = team_run_observations(vault, leader, &members)?;
+    let observed = super::observations::team_run_observations_in_txn(vault, txn, leader, &members)?;
     // The leader's model, and each member's newest try's, as measured beside
     // its calls and spend (FIX 10192); a model nobody recorded stays out, and
     // a team with none recorded records its models as unknown.
     let mut models: BTreeSet<String> = observed.models.iter().cloned().collect();
-    models.extend(crate::skill_attribution::run_executor_model(
+    models.extend(crate::skill_attribution::run_executor_model_in_txn(
         vault,
+        txn,
         &lead.attempt,
     )?);
     let receipt = TeamReceipt {
@@ -388,7 +398,7 @@ pub(crate) fn record_led_team(
                 .pack
                 .as_ref()
                 .and_then(|pack| frozen_pattern_skill(&lead.attempt, pack)),
-            None => loaded_pattern_skill(vault, &lead.attempt, pattern)?,
+            None => loaded_pattern_skill_in_txn(vault, txn, &lead.attempt, pattern)?,
         },
         axis: planned
             .as_ref()
@@ -412,7 +422,7 @@ pub(crate) fn record_led_team(
     if receipt.validate().is_err() {
         return Ok(Err("team_record_invalid_input"));
     }
-    record_team_receipt(vault, &receipt)?;
+    super::receipt::record_team_receipt_sourced_in_txn(vault, txn, &receipt, None, None)?;
     Ok(Ok(recorded(&receipt, false)))
 }
 
@@ -433,16 +443,17 @@ fn recorded(receipt: &TeamReceipt, replay: bool) -> TeamRunAnswer {
 
 /// The pattern skill for `pattern` that `lead` loaded, at the revision it
 /// loaded.
-fn loaded_pattern_skill(
+fn loaded_pattern_skill_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     lead: &AttemptRecord,
     pattern: TeamPattern,
 ) -> Result<Option<PatternSkillRef>> {
-    for bound in pattern_skills(vault)? {
+    for bound in super::pattern::pattern_skills_in_txn(vault, txn)? {
         if bound.pattern != pattern {
             continue;
         }
-        let Some(record) = vault.get_skill_record(&bound.skill)? else {
+        let Some(record) = vault.get_skill_record_in_txn(txn, &bound.skill)? else {
             continue;
         };
         if let Some(entry) = lead
