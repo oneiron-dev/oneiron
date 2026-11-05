@@ -305,7 +305,8 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         // window is half split.
         let mut whole: BTreeSet<&str> = BTreeSet::new();
         for carrier in &projection.carriers {
-            for copy in carrier.slots.iter().flat_map(|slot| &slot.copies) {
+            // A joined turn's copy is a copy as a slot's is (FIX 12153).
+            for copy in carrier.copies() {
                 let (home, atom) = staged(&emitted, copy)?;
                 if matches!(home, AtomHome::Client(client) if *client != OtherClient::Credential)
                     || !filter.takes_window_value(&carrier.window, &atom.at, &atom.value)
@@ -334,8 +335,7 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             if whole.contains(&carrier.window) {
                 continue;
             }
-            let copies: Vec<&SlotCopy> =
-                carrier.slots.iter().flat_map(|slot| &slot.copies).collect();
+            let copies: Vec<&SlotCopy> = carrier.copies().collect();
             let mut structure = Vec::new();
             let mut clients = Vec::new();
             for copy in &copies {
@@ -499,11 +499,7 @@ pub(super) fn restore_window_carriers(
         .map(|record| LoroCarrier::from_bytes(&record.carrier))
         .collect::<Result<Vec<_>>>()?;
     let mut copies = BTreeMap::new();
-    for copy in carriers
-        .iter()
-        .flat_map(|carrier| &carrier.slots)
-        .flat_map(|slot| &slot.copies)
-    {
+    for copy in carriers.iter().flat_map(LoroCarrier::copies) {
         if copies.insert(copy.atom.0, copy).is_some() {
             return Err(bad_part());
         }
