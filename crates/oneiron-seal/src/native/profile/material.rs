@@ -4,7 +4,8 @@ use const_oid::AssociatedOid;
 use der::{Decode, Encode};
 
 use crate::api::{
-    FetchError, FetchMethod, FetchPurpose, FetchRequest, SealConfig, SigningIdentity,
+    FetchError, FetchMethod, FetchPurpose, FetchRequest, SealConfig, SealResourceLimits,
+    SigningIdentity,
 };
 use crate::error::{FatalCode, SealError, SealStage};
 use crate::memory::{MemoryLedger, SealMemoryRefusal, SharedBytes};
@@ -15,29 +16,35 @@ use super::assembly::SealContext;
 
 mod ocsp;
 
+/// Invalid configured DER is absent material; resource refusals stay distinct
+/// so each caller preserves its own bad-configuration behavior.
 pub(super) fn trust_anchors(
     config: &SealConfig,
-) -> Result<Vec<pkix_chain::TrustAnchor>, SealError> {
-    config
-        .trust_anchors_der
-        .iter()
-        .map(|der| {
-            let cert = x509_cert::Certificate::from_der(der).map_err(|_| SealError::Fatal {
-                stage: SealStage::InputValidation,
-                code: FatalCode::InvalidConfiguration,
-            })?;
-            Ok(pkix_chain::TrustAnchor::from_cert(cert))
-        })
-        .collect()
+    limits: &SealResourceLimits,
+) -> Result<Option<Vec<pkix_chain::TrustAnchor>>, SealMemoryRefusal> {
+    limits
+        .memory
+        .admit::<pkix_chain::TrustAnchor>(config.trust_anchors_der.len())?;
+    let mut anchors = Vec::with_capacity(config.trust_anchors_der.len());
+    for der in &config.trust_anchors_der {
+        let Ok(cert) = x509_cert::Certificate::from_der(der) else {
+            return Ok(None);
+        };
+        anchors.push(pkix_chain::TrustAnchor::from_cert(cert));
+    }
+    Ok(Some(anchors))
 }
 
 /// CRL distribution-point URIs of a certificate (http/https only).
-fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
+fn crl_urls_for(
+    cert_der: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<Vec<url::Url>, SealMemoryRefusal> {
     let Ok(cert) = x509_cert::Certificate::from_der(cert_der) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let Some(exts) = &cert.tbs_certificate.extensions else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut urls = Vec::new();
     for ext in exts {
@@ -61,12 +68,12 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
                     && let Ok(u) = url::Url::parse(uri.as_str())
                     && matches!(u.scheme(), "http" | "https")
                 {
-                    urls.push(u);
+                    pdf::admitted::push(limits, &mut urls, u)?;
                 }
             }
         }
     }
-    urls
+    Ok(urls)
 }
 
 /// Fetch + minimally validate one CRL (see [`crl_valid`]). The CRL keeps
@@ -205,7 +212,9 @@ pub(super) async fn gather_validation_material(
     if let Some(t) = token {
         certs_der.extend(t.tsa_chain_ders.iter().cloned());
     }
-    let Ok(anchors) = trust_anchors(ctx.config) else {
+    let Some(anchors) = trust_anchors(ctx.config, ctx.limits)
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?
+    else {
         return Ok(None);
     };
     let memory = ctx
@@ -241,7 +250,8 @@ pub(super) async fn gather_validation_material(
                 continue; // anchors ride anchor trust: no evidence owed
             }
             need += 1;
-            let urls = crl_urls_for(cert);
+            let urls = crl_urls_for(cert, ctx.limits)
+                .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
             // Issuer identity is bound by key, never by position: the CMS
             // SET OF order is arbitrary, so a positional pick can verify the
             // CRL against the wrong cert and falsely degrade.
