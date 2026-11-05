@@ -26795,7 +26795,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_window.rs",
-     "purpose": "One window of plain Micro partitions (FIX 12487): slots pinned and opened in admission order, extraction…",
+     "purpose": "One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order…",
      "surface": {
       "crate-vis": 1
      }
@@ -27720,7 +27720,7 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 5
@@ -31438,7 +31438,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/driver/window.rs",
-     "purpose": "One wake pass's partition window (FIX 12487): plain Micro partitions admitted back to back, up to the…",
+     "purpose": "One wake pass's partition window (FIX 12487): plain Micro or Meso partitions admitted back to back, up to…",
      "surface": {
       "crate-vis": 7
      }
