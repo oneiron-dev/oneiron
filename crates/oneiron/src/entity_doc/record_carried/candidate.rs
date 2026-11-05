@@ -279,12 +279,28 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
     /// Recheck before ordinary staging, not against a previously returned
     /// import or a head another operation replaced in this same writer.
     pub(crate) fn recheck_in_txn(&self, txn: &mut RwTxn<'_>) -> Result<bool> {
+        self.recheck_with_row_in_txn(txn, self.prior_raw.as_deref())
+    }
+
+    /// After the ordinary put staged its original physical row, but before
+    /// installing the native document. The pre-put row may have been absent;
+    /// only this selected transport's exact row is expected now. This checks
+    /// data binding, not recipient admission or permission to install.
+    pub(crate) fn recheck_staged_in_txn(&self, txn: &mut RwTxn<'_>) -> Result<bool> {
+        self.recheck_with_row_in_txn(txn, Some(self.selected.raw()))
+    }
+
+    fn recheck_with_row_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        expected_raw: Option<&[u8]>,
+    ) -> Result<bool> {
         let store = &self.selected.vault().store;
         if !self.selected.recheck_transport_in_txn(store, txn)? {
             return Ok(false);
         }
         let entity = self.selected.head().entity()?;
-        if store.port_entity_raw(txn, &entity)?.as_deref() != self.prior_raw.as_deref()
+        if store.port_entity_raw(txn, &entity)?.as_deref() != expected_raw
             || storage::record_head_bytes(store, txn, &entity)? != self.prior_head
         {
             return Ok(false);
