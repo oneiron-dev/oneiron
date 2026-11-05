@@ -65,8 +65,8 @@ use serde_json::Value as JsonValue;
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, rung_admitted, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, rung_admitted, turn_admitted,
 };
 
 /// The process's one worker host, made when the first worker is configured
@@ -562,6 +562,23 @@ pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
         }
         Some(_) => {}
     }
+}
+
+/// Takes up the configured `[models.sessions]` policy (I1 = C).
+pub(super) fn prepare_policy(policy: crate::config::models::sessions::SessionPreparePolicy) {
+    #[cfg(unix)]
+    session::set_prepare_policy(policy);
+    #[cfg(not(unix))]
+    let _ = policy;
+}
+
+/// The next turn's prepared tails as this process stands; `None` off Unix.
+pub(super) fn prepared_tail_status() -> Option<super::status::PreparedTailStatus> {
+    #[cfg(unix)]
+    let status = Some(session::prepared_tail_status());
+    #[cfg(not(unix))]
+    let status = None;
+    status
 }
 
 /// Sealed snapshot parking as this process stands; `None` off Unix.
