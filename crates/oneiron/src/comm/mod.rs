@@ -28,6 +28,7 @@ mod projection_writes;
 mod projector;
 mod receipt_import;
 mod records;
+mod scoped_touch;
 mod stop_hold;
 mod thread_membership;
 
@@ -70,6 +71,7 @@ pub(crate) use self::generic_put_routing::{
     take_projector_only_batch_puts_preserving_births_in_txn,
 };
 pub(crate) use self::born_touch::DeferredBornTouches;
+pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{

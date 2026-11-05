@@ -295,6 +295,7 @@ pub(crate) fn record_comm_actor_send_receipt_in_txn(
         occurred_at,
         projected: false,
         original_head: None,
+        source_position: None,
     };
     put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
 }
@@ -372,6 +373,7 @@ pub(crate) fn record_comm_thread_event_in_txn(
         occurred_at,
         projected: false,
         original_head: None,
+        source_position: None,
     };
     put_comm_record_in_txn(vault, txn, EntityId::now(), &record)
 }
@@ -434,6 +436,7 @@ pub(super) fn put_source_event_in_txn(
         occurred_at,
         projected: false,
         original_head: None,
+        source_position: None,
     };
     let id = vault.store.clock.entity_id()?;
     put_comm_record_in_txn(vault, wtxn, id, &record)?;
@@ -487,6 +490,7 @@ fn project_event_in_txn(
         occurred_at,
         projected,
         original_head,
+        source_position,
     } = record
     else {
         return Err(CommError::InvalidRecord);
@@ -562,6 +566,7 @@ fn project_event_in_txn(
             occurred_at,
             projected: true,
             original_head,
+            source_position,
         };
         put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
         delta.source_stamped = true;

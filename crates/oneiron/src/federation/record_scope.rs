@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 
 mod asset_body;
 pub(crate) mod asset_text;
+mod comm_source;
 mod delete;
 mod export;
 pub(crate) mod note_world;
@@ -30,6 +31,7 @@ mod stamping;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
@@ -201,6 +203,12 @@ fn derived_position(
     let (mut scope, facet) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         (body.record_scope("read"), body.scope_facet)
+    } else if kind == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        if let Some(source) = crate::comm::ScopedTouchRecord::decode(id, data)? {
+            return comm_source::birth_position_in_txn(store, txn, id, &source);
+        }
+        let facet = crate::claim::substrate_facet_id(id)?;
+        (default_stamp(kind, facet), facet)
     } else if kind == crate::registry::ENTITY_TYPE_FACET {
         (default_stamp(kind, id), id)
     } else if carries_birth_stamp(kind) {
@@ -352,6 +360,24 @@ fn stored_scope(
         // CLAIM carries its immutable facet in its body; `stamp_put` and the
         // promoted-replay door compare that body to this birth stamp.
         EntityId::from_bytes(stamp.birth_facet).ok()
+    } else if kind == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::ports::EntityStoreRead;
+        let Some(row) = store.port_entity_record(txn, &id)? else {
+            return Ok(None);
+        };
+        if row.entity_type != kind {
+            return Ok(None);
+        }
+        if let Some(source) = crate::comm::ScopedTouchRecord::decode(id, &row.body)? {
+            let mut position = source.position();
+            position.verbs = ScopeAxis::Bottom;
+            if stamp.scope != position {
+                return Ok(None);
+            }
+            Some(source.facet())
+        } else {
+            Some(crate::claim::substrate_facet_id(id)?)
+        }
     } else if kind == crate::registry::ENTITY_TYPE_FACET {
         Some(id)
     } else if carries_birth_stamp(kind) {
@@ -412,6 +438,12 @@ pub(crate) fn record_world_in(
         return Ok(crate::claim::decode_claim_body(data, true)
             .ok()
             .map(|body| body.world));
+    }
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
+        && let Some(source) = crate::comm::ScopedTouchRecord::decode(id, data)?
+    {
+        return Ok(stored_scope(store, txn, id, kind)?
+            .map(|_| Some(source.world())));
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
@@ -617,6 +649,11 @@ pub(crate) fn scope_for_blob(
         }
         return Ok(Some(body.record_scope("read")));
     }
+    if h.entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD
+        && crate::comm::ScopedTouchRecord::decode(id, data)?.is_some()
+    {
+        return comm_source::disclosure_in_txn(store, txn, id, data);
+    }
     if carries_birth_stamp(h.entity_type) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
             let birth = default_stamp(h.entity_type, facet);
@@ -726,6 +763,11 @@ pub(crate) fn disclosure_scope_for_stored_row(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
+        && crate::comm::ScopedTouchRecord::decode(id, data)?.is_some()
+    {
+        return comm_source::disclosure_in_txn(store, txn, id, data);
+    }
     if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         if let Some(scope) = store.machine_history_scope(txn, &body)? {
