@@ -329,7 +329,8 @@ fn take_batch_puts_in_txn(
                     else {
                         continue;
                     };
-                    super::scoped_touch::touch_scope_body(&value, scope_form, sensitivity)?
+                    super::scoped_touch::touch_scope_body(&value, scope_form, sensitivity)
+                        .map_err(source_event_error)?
                 } else {
                     value.claim_body()?
                 };
