@@ -307,7 +307,7 @@ impl DeferredWork {
 
     pub(super) fn decode(value: &[u8]) -> Result<Self> {
         let row: StoredWork<'_> = postcard::from_bytes(value).map_err(|_| corrupt())?;
-        if WindowKey::try_new(&row.window).is_none()
+        if WindowKey::try_new(row.window.as_ref()).is_none()
             || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
             || !row.rate_ratio.is_finite()
             || row.rate_ratio < 0.0
@@ -318,7 +318,7 @@ impl DeferredWork {
                 parts.is_empty()
                     || parts
                         .iter()
-                        .any(|(window, _)| WindowKey::try_new(window).is_none())
+                        .any(|(window, _)| WindowKey::try_new(*window).is_none())
             })
         {
             return Err(corrupt());
