@@ -382,7 +382,7 @@ impl EngineNativeExecutor<'_> {
             // store; none is held whole here.
             let step_bodies = host
                 .take_streamed()
-                .into_step_bodies(&self.storage, &step_outcome)
+                .into_step_bodies(&self.storage, record.run_id, &step_outcome)
                 .map_err(Into::into)
                 .and_then(|bodies| {
                     validate_runtime_outputs(&record, completed_steps, &bodies.files)

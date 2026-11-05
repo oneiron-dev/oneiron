@@ -73,7 +73,6 @@ use crate::channel_identity_selection::ChannelIdentityThreadPin;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::comm::record_comm_thread_event;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
