@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1228 facade rows, 4476 declarations.
-Inputs: 1159 of 1228 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1063 of 1228 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1230 facade rows, 4480 declarations.
+Inputs: 1161 of 1230 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1065 of 1230 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -134,6 +134,21 @@ class CommitmentFulfillRequest(TypedDict):
 class CommitmentCloseRequest(TypedDict):
     commitment_ref: str
     evidence_turn_refs: list[str]
+class EmptyRequest(TypedDict):
+    ...
+class CommitmentReminderVoice(TypedDict):
+    persona_ref: NotRequired[str | None]
+class CommitmentReminderRoute(TypedDict):
+    channel: str
+    verb: str
+    target: str
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
+    voice: NotRequired[CommitmentReminderVoice | None]
+class CommitmentReminderRouteReply(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
+class CommitmentReminderRouteSetRequest(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]
@@ -367,8 +382,6 @@ class StandingBlockView(TypedDict):
     world_ref: EntityId
     name: str
     token_floor: int
-class EmptyRequest(TypedDict):
-    ...
 class StandingBlockEditRequest(TypedDict):
     world_ref: EntityId
     field: str

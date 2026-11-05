@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1279 code-mode rows (1239 host rows, 40 run rows), 4531 declarations.
-// Replies: 1093 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1281 code-mode rows (1241 host rows, 40 run rows), 4535 declarations.
+// Replies: 1095 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -38,6 +38,11 @@ declare namespace Sdk {
   type CommitmentWakeProposal = { proposal_ref: string; instance_ref: string; phase: CommitmentWakePhase; fire_at: number; due_at: number; occurred_at: number; idempotency_key: string; trigger_ref: string; verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; dedupe_key?: string | null; approval: string };
   type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] };
   type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] };
+  type EmptyRequest = Record<string, never>;
+  type CommitmentReminderVoice = { persona_ref?: string | null };
+  type CommitmentReminderRoute = { channel: string; verb: string; target: string; utc_offset_minutes?: number | null; iana_timezone?: string | null; voice?: CommitmentReminderVoice | null };
+  type CommitmentReminderRouteReply = { route?: CommitmentReminderRoute | null };
+  type CommitmentReminderRouteSetRequest = { route?: CommitmentReminderRoute | null };
   type WebFetchRequest = { url: string };
   type RendererKind = "readability" | "headless" | "firecrawl";
   type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind };
@@ -94,7 +99,6 @@ declare namespace Sdk {
   type DiaryReviewAnswer = { request: string; approve: boolean };
   type OwnStandingBlockRequest = { world_ref: EntityId };
   type StandingBlockView = { handle: string; agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
-  type EmptyRequest = Record<string, never>;
   type StandingBlockEditRequest = { world_ref: EntityId; field: string; value: string; run_ref: string; evidence_refs?: EntityId[] };
   type StandingBlockEditReceipt = { handle: string; claim_ref: EntityId; field: string };
   type IdentityAnswerEvidenceRequest = { ask: string; choice: string; evidence_refs?: string[] };
@@ -5796,6 +5800,12 @@ declare const vault: Sdk.VaultHost & {
     proposals(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentWakeProposal[] | StoredResult>;
     /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
     release(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    reminder_route: {
+      /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.CommitmentReminderRouteReply | StoredResult>;
+      /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+      set(input: Sdk.CommitmentReminderRouteSetRequest): Promise<Sdk.CommitmentReminderRouteReply | StoredResult>;
+    };
     /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
     supersede(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
   };
