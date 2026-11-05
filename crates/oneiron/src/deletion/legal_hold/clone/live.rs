@@ -41,6 +41,10 @@ struct Registry {
 pub(crate) struct HostLegalCaptures {
     registry: Mutex<Registry>,
     stopped: AtomicBool,
+    /// Set once managed stop closes every off-record session: a live order
+    /// whose HOST has no working attempt then ends interrupted instead of
+    /// keeping its session open for a retry.
+    closing_at_stop: AtomicBool,
     /// Live prospective-capture connections (FIX 13866).
     pub(super) prospective: super::outbox::ProspectiveAttempts,
 }
@@ -555,11 +559,13 @@ impl Vault {
         self.host_legal_captures.stop_live()
     }
 
-    /// Managed teardown calls this at its stop trigger: it stops
-    /// live-session captures and leaves each prospective connection draining
-    /// for [`Self::finish_host_legal_prospective`].
-    pub fn stop_live_host_legal_captures(&self) -> Result<()> {
-        self.host_legal_captures.stop_live()
+    /// Managed stop's off-record session close starts: from here a live
+    /// order whose capture cannot run ends interrupted, never captured, and
+    /// its session's close proceeds.
+    pub(crate) fn begin_live_capture_close_at_stop(&self) {
+        self.host_legal_captures
+            .closing_at_stop
+            .store(true, Ordering::Release);
     }
 
     /// Managed teardown calls this once every writer of this process stopped,
@@ -606,95 +612,120 @@ impl LiveSpillCaptures {
     }
 
     fn capture(&self, vault: &Vault, source: Option<&WrittenSessionSpill>) -> Result<()> {
-        let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
-            .map_err(|_| io::Error::other("live legal body count overflow"))?;
+        let at_stop = vault
+            .host_legal_captures
+            .closing_at_stop
+            .load(Ordering::Acquire);
         for order in &self.orders {
             if order.completed.load(Ordering::Acquire)
                 || order.ends_at <= vault.store.clock.now_recorded_at()
             {
                 continue;
             }
-            let attempt = order.current_attempt()?;
-            let mut capture = attempt.start(vault)?;
-            let outcome = (|| -> Result<()> {
-                attempt.check(vault)?;
-                let mut collector =
-                    Collector::pinned(&mut capture.stream, &attempt.public, &attempt.request)?;
-                let mut copied = 0u64;
-                if let Some(source) = source {
-                    source.for_each_written_body(|metadata, reference, reader| {
-                        attempt.check(vault)?;
-                        let metadata = match metadata {
-                            WrittenSpillMetadata::Published {
-                                raw_key,
-                                raw_file_row,
-                            } => LiveSpillMetadata::Published {
-                                raw_key: raw_key.to_vec(),
-                                raw_file_row: raw_file_row.to_vec(),
-                            },
-                            WrittenSpillMetadata::NativeFile {
-                                name,
-                                finished,
-                                physical_len,
-                            } => LiveSpillMetadata::NativeFile {
-                                name: name.to_owned(),
-                                finished,
-                                physical_len,
-                            },
-                        };
-                        let encoded = Zeroizing::new(
-                            serde_json::to_vec(&metadata).map_err(io::Error::other)?,
-                        );
-                        let source = CaptureSource::LiveSession(order.key.target.clone());
-                        let revision = *blake3::hash(&encoded).as_bytes();
-                        collector.component(
-                            SourceComponent::LiveSessionMetadata,
-                            source.clone(),
-                            metadata.metadata_family(),
-                            metadata.source_key(),
-                            revision,
-                            encoded.len() as u64,
-                            revision,
-                            &mut &encoded[..],
-                            || attempt.check(vault),
-                        )?;
-                        collector.component(
-                            SourceComponent::LiveSessionBody,
-                            source,
-                            metadata.body_family(),
-                            metadata.source_key(),
-                            revision,
-                            reference.raw_len,
-                            reference.raw_blake3,
-                            reader,
-                            || attempt.check(vault),
-                        )?;
-                        copied = copied
-                            .checked_add(1)
-                            .ok_or_else(|| io::Error::other("live legal body count overflow"))?;
-                        Ok(())
-                    })?;
+            match Self::capture_order(vault, order, source) {
+                Ok(()) => {}
+                // Managed stop: no HOST retry can come. The order's capture of
+                // this session ends interrupted, never claimed, and the other
+                // orders and the session's close go on.
+                Err(error) if at_stop => {
+                    tracing::warn!(
+                        %error,
+                        "a live legal capture ended interrupted at managed stop; its spill was not captured"
+                    );
+                    for attempt in order.attempts()? {
+                        attempt.cancel(io::ErrorKind::Interrupted)?;
+                    }
                 }
-                if copied != bodies {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "live legal body count",
-                    )
-                    .into());
-                }
-                collector.finish(
-                    0,
-                    1,
-                    copied,
-                    0,
-                    CaptureExtent::WrittenLiveSessionSpill,
-                    || attempt.check(vault),
-                )
-            })();
-            capture.finish(&outcome)?;
-            outcome?;
-            vault.host_legal_captures.complete(vault, order)?;
+                Err(error) => return Err(error),
+            }
         }
+        Ok(())
+    }
+
+    fn capture_order(
+        vault: &Vault,
+        order: &Arc<LiveOrder>,
+        source: Option<&WrittenSessionSpill>,
+    ) -> Result<()> {
+        let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
+            .map_err(|_| io::Error::other("live legal body count overflow"))?;
+        let attempt = order.current_attempt()?;
+        let mut capture = attempt.start(vault)?;
+        let outcome = (|| -> Result<()> {
+            attempt.check(vault)?;
+            let mut collector =
+                Collector::pinned(&mut capture.stream, &attempt.public, &attempt.request)?;
+            let mut copied = 0u64;
+            if let Some(source) = source {
+                source.for_each_written_body(|metadata, reference, reader| {
+                    attempt.check(vault)?;
+                    let metadata = match metadata {
+                        WrittenSpillMetadata::Published {
+                            raw_key,
+                            raw_file_row,
+                        } => LiveSpillMetadata::Published {
+                            raw_key: raw_key.to_vec(),
+                            raw_file_row: raw_file_row.to_vec(),
+                        },
+                        WrittenSpillMetadata::NativeFile {
+                            name,
+                            finished,
+                            physical_len,
+                        } => LiveSpillMetadata::NativeFile {
+                            name: name.to_owned(),
+                            finished,
+                            physical_len,
+                        },
+                    };
+                    let encoded =
+                        Zeroizing::new(serde_json::to_vec(&metadata).map_err(io::Error::other)?);
+                    let source = CaptureSource::LiveSession(order.key.target.clone());
+                    let revision = *blake3::hash(&encoded).as_bytes();
+                    collector.component(
+                        SourceComponent::LiveSessionMetadata,
+                        source.clone(),
+                        metadata.metadata_family(),
+                        metadata.source_key(),
+                        revision,
+                        encoded.len() as u64,
+                        revision,
+                        &mut &encoded[..],
+                        || attempt.check(vault),
+                    )?;
+                    collector.component(
+                        SourceComponent::LiveSessionBody,
+                        source,
+                        metadata.body_family(),
+                        metadata.source_key(),
+                        revision,
+                        reference.raw_len,
+                        reference.raw_blake3,
+                        reader,
+                        || attempt.check(vault),
+                    )?;
+                    copied = copied
+                        .checked_add(1)
+                        .ok_or_else(|| io::Error::other("live legal body count overflow"))?;
+                    Ok(())
+                })?;
+            }
+            if copied != bodies {
+                return Err(
+                    io::Error::new(io::ErrorKind::InvalidData, "live legal body count").into(),
+                );
+            }
+            collector.finish(
+                0,
+                1,
+                copied,
+                0,
+                CaptureExtent::WrittenLiveSessionSpill,
+                || attempt.check(vault),
+            )
+        })();
+        capture.finish(&outcome)?;
+        outcome?;
+        vault.host_legal_captures.complete(vault, order)?;
         Ok(())
     }
 }
