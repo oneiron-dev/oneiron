@@ -19,6 +19,7 @@ pub(crate) type EntitySideRowEraser = fn(&Store, &mut heed::RwTxn<'_>, &EntityId
 
 /// Every per-entity eraser, one line per module.
 const ERASERS: &[EntitySideRowEraser] = &[
+    crate::agent_dispatch::erase_workflow_tool_source_in_txn,
     crate::typed_body::erase_in_txn,
     crate::office_body::erase_in_txn,
     crate::edit_roundtrip::deck_create::erase_in_txn,
