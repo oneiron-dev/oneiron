@@ -65,11 +65,12 @@ pub use step::{
     trap_for_durable_wait, trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
-    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
-    wake_trap_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
@@ -103,6 +104,7 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+pub use oneiron_model::llm::{TokenScore, first_token_alternatives};
 // FIX 6567: the cache evidence a backend reports on a physical call.
 pub use oneiron_model::llm::{
     CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,

@@ -274,6 +274,8 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
