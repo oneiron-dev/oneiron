@@ -54,9 +54,9 @@ with its measured values. A measurement error remains its original I/O error.
 This disk budget covers encoded values, not LMDB keys, pages, splits, freelists
 or copy-on-write amplification. It is not a total native-disk or native-heap
 measurement. LMDB's configured map limit and actual filesystem I/O errors remain
-in force. Other row and overlay metadata copies and native transaction
-allocations still need their own admission; this document
-does not claim complete resource coverage or runtime proof.
+in force. Other row and overlay metadata copies and native allocations not covered
+below still need their own admission. This document does not claim complete
+resource coverage or runtime proof.
 
 ## Shared native allocation account
 
@@ -139,9 +139,23 @@ Child setup failure, abort, successful merge and environment close free each
 physical array before releasing its ticket. Setup cleanup clears a freed child
 array pointer so the outer error cleanup cannot free it a second time.
 
-This covers dirty-page, encrypted read-cache, single-ID-list and raw dirty-list
-malloc requests during the accounted transaction, including their actual
-heap-only prefixes. It does not cover other ID2/ID3 control arrays, startup
+Transaction-control blocks and their inline database, cursor, flag and sequence
+arrays use one physical prefix at both native calloc sites. A child supplies
+its parent's current account before allocation. The prefix uses the native
+transaction and tail element types for alignment; its actual size is part of
+the admitted allocation. Materialization follows successful calloc and header
+initialization immediately, before any child setup or other allocation.
+
+All setup failures, transaction frees and environment-close frees release the
+physical block before its ticket. Reset, renew and root-writer reuse keep the
+same block and ticket. The preallocated root and standalone read-only startup
+blocks use the same layout without an account; attaching a later write account
+does not retroactively charge them. Their original tail offsets, zeroed fields,
+borrowed arrays and mutex lifecycle remain unchanged.
+
+This covers dirty-page, encrypted read-cache, single-ID-list, raw dirty-list
+and transaction-control-block allocations during the accounted transaction,
+including their actual heap-only prefixes. It does not cover other ID2/ID3 control arrays, startup
 scratch, encryption stash, mmap, every metadata/overlay copy or native
 physical-disk/CoW costs. The disk claim above still covers encoded values only.
 This is not complete FIX8125, whole-heap coverage or runtime proof.

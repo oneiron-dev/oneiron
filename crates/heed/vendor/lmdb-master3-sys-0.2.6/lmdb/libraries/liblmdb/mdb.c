@@ -2265,6 +2265,59 @@ mdb_dirty_array_free(MDB_ID2L ids)
 	}
 }
 
+/* Transaction blocks keep the native struct and all inline tail alignment. */
+typedef union MDB_txn_buffer {
+	MDB_ntxn txn_alignment;
+	MDB_db db_alignment;
+	MDB_cursor *cursor_alignment;
+	unsigned int sequence_alignment;
+	struct {
+		size_t bytes;
+		void *ticket;
+		MDB_page_release_func *release;
+	} account;
+} MDB_txn_buffer;
+
+static MDB_txn *
+mdb_txn_buffer_alloc(size_t size, const MDB_page_account *account)
+{
+	MDB_txn_buffer *buffer;
+	void *ticket = NULL;
+	size_t bytes;
+	if (size > (size_t)-1 - sizeof(MDB_txn_buffer))
+		return NULL;
+	bytes = sizeof(MDB_txn_buffer) + size;
+	if (account && account->acquire &&
+		account->acquire(account->context, bytes, &ticket))
+		return NULL;
+	buffer = calloc(1, bytes);
+	if (!buffer) {
+		if (account && account->release)
+			account->release(ticket, bytes, 0);
+		return NULL;
+	}
+	buffer->account.bytes = bytes;
+	buffer->account.ticket = ticket;
+	buffer->account.release = account ? account->release : NULL;
+	if (account && account->materialized)
+		account->materialized(ticket, bytes);
+	return (MDB_txn *)(buffer + 1);
+}
+
+static void
+mdb_txn_buffer_free(MDB_txn *txn)
+{
+	if (txn) {
+		MDB_txn_buffer *buffer = (MDB_txn_buffer *)txn - 1;
+		size_t bytes = buffer->account.bytes;
+		void *ticket = buffer->account.ticket;
+		MDB_page_release_func *release = buffer->account.release;
+		free(buffer);
+		if (release)
+			release(ticket, bytes, 1);
+	}
+}
+
 static void
 mdb_page_buffer_free(MDB_page *page)
 {
@@ -3657,7 +3710,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 		txn = env->me_txn0;
 		goto renew;
 	}
-	if ((txn = calloc(1, size)) == NULL) {
+	if ((txn = mdb_txn_buffer_alloc(size, parent ? &parent->mt_page_account : NULL)) == NULL) {
 		DPRINTF(("calloc: %s", strerror(errno)));
 		return ENOMEM;
 	}
@@ -3665,7 +3718,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 	if (MDB_REMAPPING(env->me_flags) && !parent) {
 		txn->mt_rpages = malloc(MDB_TRPAGE_SIZE * sizeof(MDB_ID3));
 		if (!txn->mt_rpages) {
-			free(txn);
+			mdb_txn_buffer_free(txn);
 			return ENOMEM;
 		}
 		txn->mt_rpages[0].mid = 0;
@@ -3698,7 +3751,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 				!(txn->mt_free_pgs = mdb_midl_alloc_accounted(MDB_IDL_UM_MAX, &txn->mt_page_account)))
 			{
 				mdb_dirty_array_free(txn->mt_u.dirty_list);
-				free(txn);
+				mdb_txn_buffer_free(txn);
 				return ENOMEM;
 			}
 			txn->mt_u.dirty_list[0].mid = 0;
@@ -3757,7 +3810,7 @@ renew:
 			if (!F_ISSET(flags, MDB_RDONLY)) {
 				mdb_dirty_array_free(txn->mt_u.dirty_list);
 			}
-			free(txn);
+			mdb_txn_buffer_free(txn);
 		}
 	} else {
 		txn->mt_flags |= flags;	/* could not change txn=me_txn0 earlier */
@@ -3932,7 +3985,7 @@ mdb_txn_end(MDB_txn *txn, unsigned mode)
 	if (mode & MDB_END_FREE) {
 		if (!F_ISSET(txn->mt_flags, MDB_TXN_RDONLY))
 			pthread_mutex_destroy(&txn->mt_child_mutex);
-		free(txn);
+		mdb_txn_buffer_free(txn);
 	}
 }
 
@@ -4649,7 +4702,7 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		parent->mt_last_workid = txn->mt_last_workid;
 		parent->mt_child = NULL;
 		mdb_midl_free(((MDB_ntxn *)txn)->mnt_pgstate.mf_pghead);
-		free(txn);
+		mdb_txn_buffer_free(txn);
 		return rc;
 	}
 
@@ -6466,7 +6519,7 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 			int tsize = sizeof(MDB_txn), size = tsize + env->me_maxdbs *
 				(sizeof(MDB_db)+sizeof(MDB_cursor *)+sizeof(unsigned int)+1);
 			if ((env->me_pbuf = calloc(1, env->me_psize)) &&
-				(txn = calloc(1, size)))
+				(txn = mdb_txn_buffer_alloc(size, NULL)))
 			{
 				txn->mt_dbs = (MDB_db *)((char *)txn + tsize);
 				txn->mt_cursors = (MDB_cursor **)(txn->mt_dbs + env->me_maxdbs);
@@ -6477,7 +6530,7 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 				if (MDB_REMAPPING(env->me_flags)) {
 				txn->mt_rpages = malloc(MDB_TRPAGE_SIZE * sizeof(MDB_ID3));
 				if (!txn->mt_rpages) {
-					free(txn);
+					mdb_txn_buffer_free(txn);
 					rc = ENOMEM;
 					goto leave;
 				}
@@ -6546,7 +6599,7 @@ mdb_env_close_active(MDB_env *env, int excl)
 	}
 	}
 #endif
-	free(env->me_txn0);
+	mdb_txn_buffer_free(env->me_txn0);
 	mdb_midl_free(env->me_free_pgs);
 
 	if (env->me_flags & MDB_ENV_TXKEY) {
