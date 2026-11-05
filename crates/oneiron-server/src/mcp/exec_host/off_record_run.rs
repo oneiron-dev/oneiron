@@ -12,6 +12,7 @@ use oneiron::code_run::{
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::off_record::OffRecordCreator;
+use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
@@ -343,15 +344,21 @@ fn run_in_off_record_session(
 
 /// The model list a session run's reader children are held to (FIX 4539):
 /// its agent's own, read from its stored definition now, when the run's
-/// authenticated actor is an agent; none for the owner or any other actor,
-/// or for an agent with no stored definition. The children's parent row
-/// freezes it at the run's first spawn. `Err` when an agent's definition
-/// does not read: its run then lends no spawn seat, as before.
+/// authenticated actor is an agent; none for the owner or any other actor.
+/// An agent whose id holds no entity, or an entity of another type (a
+/// person-backed agent, FIX 7640), has no definition: its list is empty and
+/// its run lends its spawn seat. The children's parent row freezes the list
+/// at the run's first spawn. `Err` when the entity's type does not read or
+/// its AGENT_DEF body does not decode: its run then lends no spawn seat.
 fn parent_model_list(vault: &Vault, actor: WriteActor) -> oneiron::Result<Vec<AgentModel>> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return Ok(Vec::new());
     }
+    let id = actor.entity_ref();
+    if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_AGENT_DEF) {
+        return Ok(Vec::new());
+    }
     Ok(vault
-        .get_agent_definition(&actor.entity_ref())?
+        .get_agent_definition(&id)?
         .map_or_else(Vec::new, |definition| definition.models))
 }
