@@ -248,6 +248,5 @@ pub(crate) fn funded_run(
     let declaration = RunDeclaration::undeclared(line);
     // Inside a hook's verdict its settlements are also kept for its record
     // (FIX 10075); the host's sink gets every receipt unchanged either way.
-    let receipts = oneiron::llm::run_admission::captured_sink(receipts);
-    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer)
+    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer).capturing_settlements()
 }

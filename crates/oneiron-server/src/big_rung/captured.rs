@@ -55,7 +55,14 @@ impl BigModel {
         // the access-checked evidence: those rows, complete (FIX 6935).
         // A call that carries its caller's run spends on it (FIX 10443).
         let run = match call.run {
-            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            Some(run) => {
+                let run = run.sourced(Some(call.evidence.to_vec()));
+                if context.is_some() {
+                    run.capturing_settlements()
+                } else {
+                    run
+                }
+            }
             None => self
                 .models
                 .funded_run(

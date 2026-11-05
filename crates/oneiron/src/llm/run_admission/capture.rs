@@ -1,27 +1,27 @@
 //! Settlements kept for one scope on the calling thread (FIX 10075 seam):
 //! a host that must name the calls a piece of work settled (a hook's
-//! `ai.verdict`) runs that work in [`capture_settlements`], and each run
-//! admission built meanwhile on its thread through [`captured_sink`] keeps a
-//! copy of every settlement it records. The host's own sink still receives
-//! every receipt unchanged: this adds no settlement and changes none.
+//! `ai.verdict`) runs that work in [`capture_settlements`] and binds its run
+//! handle through [`RunAdmission::capturing_settlements`]. Only permits
+//! admitted through that handle keep settlements for the scope. The host's
+//! own sink still receives every receipt unchanged.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::super::{BudgetDenied, BudgetGuard};
-use super::receipt::{RunEvent, RunReceipt, RunReceiptSink};
+use super::admission::RunAdmission;
+use super::receipt::{RunEvent, RunReceipt};
 
 /// The settlements a capture keeps, in the order their runs recorded them.
 type Kept = Arc<Mutex<Vec<RunReceipt>>>;
 
 thread_local! {
-    /// The captures this thread's newly built run admissions keep to.
+    /// The captures a run handle can bind on this thread.
     static CAPTURE: RefCell<Vec<Kept>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Runs `work`, and returns beside what it returned each settlement receipt
-/// recorded meanwhile by a run admission built on this thread through
-/// [`captured_sink`], in the order they were recorded. An enclosing capture
+/// recorded meanwhile by permits whose run handle bound this scope through
+/// [`RunAdmission::capturing_settlements`], in record order. An enclosing capture
 /// is put back after, panic or not, and sees none of these.
 pub fn capture_settlements<T>(work: impl FnOnce() -> T) -> (T, Vec<RunReceipt>) {
     capture(work, false)
@@ -58,27 +58,38 @@ fn capture<T>(work: impl FnOnce() -> T, shared: bool) -> (T, Vec<RunReceipt>) {
     (done, settled)
 }
 
-/// `sink` for a run admission built now: inside a capture on this thread,
-/// a sink that records every receipt to `sink` unchanged and keeps a copy
-/// of each settlement for the capture; anywhere else, `sink` itself.
-#[must_use]
-pub fn captured_sink(sink: Arc<dyn RunReceiptSink>) -> Arc<dyn RunReceiptSink> {
-    let kept = CAPTURE.with(|slot| slot.borrow().clone());
-    if kept.is_empty() {
-        sink
-    } else {
-        Arc::new(CapturedSink { sink, kept })
-    }
-}
-
-/// A host sink with its captures beside it.
-struct CapturedSink {
-    sink: Arc<dyn RunReceiptSink>,
+/// The capture targets bound to a handle, copied to each permit it admits.
+#[derive(Clone, Default)]
+pub(super) struct SettlementCapture {
     kept: Vec<Kept>,
 }
 
-impl RunReceiptSink for CapturedSink {
-    fn record(&self, receipt: RunReceipt) {
+impl RunAdmission {
+    /// This run, keeping settlements from calls admitted through the returned
+    /// handle for the captures currently visible on this thread. Other
+    /// handles to the same run gain no observer. Already bound captures stay
+    /// bound, once each; cloning and the other handle overlays preserve them.
+    #[must_use]
+    pub fn capturing_settlements(&self) -> Self {
+        let mut run = self.clone();
+        CAPTURE.with(|slot| {
+            for kept in slot.borrow().iter() {
+                if !run
+                    .capture
+                    .kept
+                    .iter()
+                    .any(|bound| Arc::ptr_eq(bound, kept))
+                {
+                    run.capture.kept.push(Arc::clone(kept));
+                }
+            }
+        });
+        run
+    }
+}
+
+impl SettlementCapture {
+    pub(super) fn record(&self, receipt: &RunReceipt) {
         if matches!(receipt.event, RunEvent::Settled { .. }) {
             for kept in &self.kept {
                 kept.lock()
@@ -86,10 +97,5 @@ impl RunReceiptSink for CapturedSink {
                     .push(receipt.clone());
             }
         }
-        self.sink.record(receipt);
-    }
-
-    fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
-        self.sink.budget_hit(seat, guard, denied);
     }
 }
