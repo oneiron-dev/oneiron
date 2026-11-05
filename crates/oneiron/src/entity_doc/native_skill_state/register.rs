@@ -40,6 +40,6 @@ pub(super) fn read_fact(doc: &EntityDoc) -> Result<Option<SkillStateFact>> {
 
 /// Exact encoded bytes at this supplied version, including truthful absence
 /// before its first native operation. This is not an admitted-source proof.
-pub(super) fn current_witness_bytes(doc: &EntityDoc) -> Result<Option<Vec<u8>>> {
+pub(in crate::entity_doc) fn current_witness_bytes(doc: &EntityDoc) -> Result<Option<Vec<u8>>> {
     read_fact(doc)?.map(|fact| fact.encode()).transpose()
 }

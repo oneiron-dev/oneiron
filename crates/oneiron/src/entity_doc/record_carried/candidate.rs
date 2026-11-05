@@ -19,9 +19,9 @@ use crate::side_table::HexId;
 use crate::sync::SelectedRecordDocument;
 
 mod install;
-pub(super) use install::{
-    AdmittedRecordDocument, InstalledRecordDocument, PendingRecordDocument,
-    install_record_document_in_txn,
+pub(in crate::entity_doc) use install::AdmittedRecordDocument;
+pub(crate) use install::{
+    InstalledRecordDocument, PendingRecordDocument, install_record_document_in_txn,
 };
 
 /// A preparation that wrote neither the pointer nor its document.

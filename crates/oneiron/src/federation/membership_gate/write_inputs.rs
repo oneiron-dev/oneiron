@@ -4,6 +4,7 @@
 //! recipient-admission capability. The observer cannot change the gate result.
 
 use super::*;
+use crate::EntityId;
 use crate::authority::AuthorityFold;
 
 /// Inputs observed at the actual successful branch, before its locals leave
