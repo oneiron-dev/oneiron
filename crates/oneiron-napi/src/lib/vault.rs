@@ -13,7 +13,7 @@ pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
     DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
     parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
-    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64, validate_dimensions,
+    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64,
     validate_entity_payload_len,
 };
 use super::codebase::{CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot};
@@ -178,7 +178,7 @@ impl NapiVault {
             config.dict_search_paths = paths.into_iter().map(std::path::PathBuf::from).collect();
         }
 
-        validate_dimensions(config.dimensions).map_err(napi::Error::from_reason)?;
+        // The whole u32 range opens; a zero width is refused by the open itself.
         let dimensions = config.dimensions;
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         // Signing doors (delete receipts) need this install's keys from the keystore.

@@ -9,8 +9,9 @@ use crate::error::{Error, Result};
 
 use super::floor::{as_u64, required_value};
 use super::types::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_STORED_SCHEMA_VERSION,
-    SecretBinding, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
+    SECRET_CUSTODY_STORED_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor, SecretCustodyRecord,
+    SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
 
@@ -204,8 +205,7 @@ fn binding_from_value(value: &Value) -> Result<SecretBinding> {
 /// transition's body DTO, stamped with the record's own schema version as
 /// before; never a row at rest, nor an image's, KS-6 part 2), or the value sealed
 /// under its credential custody key under `sealed_value` (the stored form,
-/// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`], CALLS `KS-6 credential
-/// schema 2`).
+/// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`]).
 pub(crate) enum BodyValue {
     Plain(Vec<u8>),
     Sealed(Vec<u8>),
@@ -294,6 +294,10 @@ pub(crate) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) ->
             Value::from(SECRET_CUSTODY_BODY_KEYS[12]),
             floor_to_value(&rec.policy_floor_snapshot),
         ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[13]),
+            Value::from(rec.model_reveal_allowed),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &map)
@@ -301,7 +305,7 @@ pub(crate) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) ->
     Ok(out)
 }
 
-/// Decodes a custody record from its MessagePack key-map body. All 13 keys
+/// Decodes a custody record from its MessagePack key-map body. All 14 keys
 /// are required except `rotated_at` (nil-or-int): `bindings`, `manifest_ref`,
 /// and `declared_paths` may be EMPTY (an empty array or string is still a
 /// present, well-formed key) but must not be MISSING — a record is complete
@@ -310,6 +314,9 @@ pub(crate) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) ->
 /// opens through the custody doors (KS-6).
 pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
     let (mut record, value) = decode_custody_map(bytes)?;
+    if record.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
+        return Err(invalid_body("unsupported secret custody schema version"));
+    }
     let BodyValue::Plain(value) = value else {
         return Err(invalid_body("value_bytes"));
     };
@@ -420,11 +427,16 @@ pub(crate) fn decode_custody_map(bytes: &[u8]) -> Result<(SecretCustodyRecord, B
         None => return Err(invalid_body("policy_floor_snapshot")),
     };
 
+    let model_reveal_allowed = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[13])
+        .and_then(Value::as_bool)
+        .ok_or(invalid_body("model_reveal_allowed"))?;
+
     let record = SecretCustodyRecord {
         schema_version,
         name,
         class,
         device_only,
+        model_reveal_allowed,
         value_bytes: Vec::new(),
         status,
         registered_at,

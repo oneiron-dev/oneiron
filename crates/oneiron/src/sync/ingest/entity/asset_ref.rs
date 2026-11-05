@@ -67,11 +67,12 @@ pub(super) fn bound(ctx: &IngestCtx<'_>, id: &EntityId, blob: &[u8]) -> Option<A
 
 /// H125 for a body that moves by reference: the fence a release left on `id`
 /// lifts only for the body a transfer staged and verified, never for the
-/// digest a peer offered. The staged body is read whole only under a fence.
+/// digest a peer offered. Its facts were measured while staging the complete
+/// body; readmission does not read the staged bytes again.
 ///
 /// # Errors
 ///
-/// Storage errors, and the staged body's read error.
+/// Storage errors.
 pub(super) fn readmit_staged(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -88,7 +89,12 @@ pub(super) fn readmit_staged(
     {
         return Ok(());
     }
-    crate::blob_artifact::readmit_held_asset_in_txn(&ctx.vault.store, wtxn, id, &staged.to_vec()?)
+    crate::blob_artifact::readmit_held_asset_with_facts_in_txn(
+        &ctx.vault.store,
+        wtxn,
+        id,
+        staged.facts(),
+    )
 }
 
 /// Whether `local`, the row stored at `id`, is the body `body` names under

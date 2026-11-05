@@ -454,6 +454,14 @@ impl Vault {
         )
     }
 
+    pub(crate) fn get_codebase_snapshot_custody_report_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        fork_hash: &CodebaseForkHash,
+    ) -> Result<Option<SnapshotCustodyReport>> {
+        CUSTODY_REPORTS.get(&self.store, txn, &codebase_custody_key(fork_hash))
+    }
+
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: &RepoRef) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         codebase_ids_by_index(
