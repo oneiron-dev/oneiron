@@ -110,7 +110,7 @@ pub use self::grant::{
     CONSENT_REASON_BYPASSED, CONSENT_REASON_CODE_WAIT_CONSUMED, CONSENT_REASON_CODE_WAIT_SETTLED,
     CONSENT_REASON_DENIED, CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED,
     CONSENT_REASON_STANDING_USED, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow,
-    ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
+    ConsentGrantIssuer, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
     DisclosureGrant, StandingConsentGrant,
 };
 pub use self::owner_reason::{

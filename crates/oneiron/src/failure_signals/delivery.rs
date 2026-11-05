@@ -338,8 +338,8 @@ impl Vault {
                 self.withdraw_standing_outbound_grant_in_txn(txn, None, grant)?;
             }
             if on && !current {
-                // The switch lives in the deployment's configuration, which
-                // names no setter, so the stamp takes the vault's owner.
+                // Deployment configuration names no setter; the system issuer
+                // keeps that provenance unknown rather than guessing an owner.
                 self.mint_derived_outbound_grant_in_txn(
                     txn,
                     DerivedGrantOrigin::FailureSignalParticipation,

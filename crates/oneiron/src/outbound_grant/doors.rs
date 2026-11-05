@@ -68,9 +68,8 @@ impl Vault {
     /// bound to the policy frontier that transaction reads. No owner is
     /// present: the derived consent door
     /// ([`Self::create_derived_outbound_standing_grant_in_txn`]) admits only
-    /// the dial `origin`'s path mints, and stamps the row with the owner
-    /// `setting` names. `None`: the vault records no owner to stamp it, and
-    /// nothing was written.
+    /// the dial `origin`'s path mints. The system issuer names the actual
+    /// setting and its setter when known, without inventing an owner.
     ///
     /// # Errors
     ///
@@ -85,19 +84,13 @@ impl Vault {
         id: EntityId,
         principal_ref: &str,
         scope: StandingOutboundGrantScope,
-    ) -> Result<Option<StandingOutboundGrant>> {
+    ) -> Result<StandingOutboundGrant> {
         let frontier =
             crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?.read_frontier_hash()?;
         let bound = scope.grant_bound(principal_ref, id, &frontier)?;
         let grant_ref = bound.digest().to_hex();
-        if self
-            .create_derived_outbound_standing_grant_in_txn(wtxn, origin, setting, bound)?
-            .is_none()
-        {
-            return Ok(None);
-        }
+        self.create_derived_outbound_standing_grant_in_txn(wtxn, origin, setting, bound)?;
         self.minted_standing_outbound_grant_in_txn(&*wtxn, &grant_ref)
-            .map(Some)
     }
 
     /// The standing outbound grant just minted under `grant_ref`, read back

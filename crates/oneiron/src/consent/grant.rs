@@ -166,7 +166,7 @@ impl ConsentGrantStatus {
     }
 }
 
-/// The owner stamp carried by every persisted grant row.
+/// The provenance of one authenticated owner decision.
 ///
 /// It records WHICH authenticated owner decision minted the row so the
 /// registry can show provenance. It holds references only — never key
@@ -181,6 +181,37 @@ pub struct ConsentOwnerStamp {
     pub decision_id: GateDecisionId,
 }
 
+/// Who issued a standing grant: an authenticated owner, or the system
+/// carrying out one recorded setting. A setting's setter is provenance,
+/// not a fresh owner authorization.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConsentGrantIssuer {
+    /// The actual authenticated owner decision.
+    Owner(ConsentOwnerStamp),
+    /// A closed native path carrying out an earlier setting.
+    System {
+        /// The component and action supplied by that closed origin.
+        principal_ref: String,
+        /// This issuance's Gate decision, not a human authentication.
+        decision_id: GateDecisionId,
+        /// The actual setting this issuance carries out.
+        setting_ref: String,
+        /// The recorded setter when known; never current owner authority.
+        setting_owner: Option<EntityId>,
+    },
+}
+
+impl ConsentGrantIssuer {
+    /// The authenticated owner decision, only for an owner-issued grant.
+    #[must_use]
+    pub const fn owner_stamp(&self) -> Option<&ConsentOwnerStamp> {
+        match self {
+            Self::Owner(stamp) => Some(stamp),
+            Self::System { .. } => None,
+        }
+    }
+}
+
 /// One canonical standing consent-grant row.
 ///
 /// Deliberately carries no expiry/duration field (invariant 9) and no
@@ -191,8 +222,8 @@ pub struct ConsentGrantRow {
     pub grant: StandingConsentGrant,
     /// Lifecycle state.
     pub status: ConsentGrantStatus,
-    /// The authenticated-owner decision that minted this row.
-    pub owner_stamp: ConsentOwnerStamp,
+    /// The owner decision or closed system path that minted this row.
+    pub issuer: ConsentGrantIssuer,
     /// Creation time in Unix seconds.
     pub created_at: u64,
     /// Present only on a scoped catastrophe bypass grant (DEC-0006

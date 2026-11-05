@@ -4,7 +4,7 @@
 //! the signature sender's own derived principal, so the ordinary gate admits
 //! its sends by principal with no per-send ask; once either stops, the grant
 //! is revoked. The grant is a standing consent Grant row the run derives
-//! from the owner's two settings, stamped with the owner they belong to.
+//! from the owner's two settings, with a system issuer naming that setting.
 //! Under the outbound writer, admission and every live retry also recheck the
 //! lane's custody and both switches. The bundle send's one-time approval is
 //! never involved.
@@ -86,8 +86,8 @@ impl Vault {
             }
             if let Some(scope) = wanted.filter(|_| !current) {
                 // The publisher dial's row is the owner's setting this grant
-                // carries out; it names no setter, so the stamp takes the
-                // vault's owner.
+                // carries out; its unknown setter stays unknown on the
+                // system-issued grant.
                 let receipt_ref = publisher_dial_row_ref_in_txn(self, txn)?
                     .unwrap_or_else(|| PUBLISHER_DIAL_COMPILED_REF.to_owned());
                 self.mint_derived_outbound_grant_in_txn(

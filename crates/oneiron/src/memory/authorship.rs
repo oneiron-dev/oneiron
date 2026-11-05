@@ -104,7 +104,10 @@ pub(super) fn delegated_grant(
             .ok_or(Error::CorruptedIndex("consent grant disappeared"))?;
         // A grant minted by an arbitrary PERSON is not an owner delegation.
         // The authority root and current owner binding are rechecked on use.
-        if row.is_active() && is_root_owner(vault, txn, row.owner_stamp.actor)? {
+        let Some(stamp) = row.issuer.owner_stamp() else {
+            continue;
+        };
+        if row.is_active() && is_root_owner(vault, txn, stamp.actor)? {
             return Ok(Some(grant_ref));
         }
     }

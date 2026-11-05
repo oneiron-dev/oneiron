@@ -392,7 +392,12 @@ pub(super) fn holders_for_in_txn(
             else {
                 continue;
             };
-            if row.is_active() && owners.contains(&row.owner_stamp.actor) {
+            if row.is_active()
+                && row
+                    .issuer
+                    .owner_stamp()
+                    .is_some_and(|stamp| owners.contains(&stamp.actor))
+            {
                 holders.insert(grant.member_ref);
                 break;
             }

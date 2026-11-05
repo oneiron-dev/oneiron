@@ -747,7 +747,7 @@ fn issued_grants(
     for grant in load_active_standing_grants(&vault.store, txn)? {
         let issuer = vault
             .consent_grant_in_txn(txn, &grant.bound().digest().to_hex())?
-            .map(|row| row.owner_stamp.actor);
+            .and_then(|row| row.issuer.owner_stamp().map(|stamp| stamp.actor));
         issued.push((grant, issuer));
     }
     Ok(issued)

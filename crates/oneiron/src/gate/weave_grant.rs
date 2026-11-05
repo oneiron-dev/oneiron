@@ -144,12 +144,15 @@ pub(crate) fn landing_weave_grant_in_txn(
         let Some(row) = standing_grant_row_in_txn(store, txn, &grant_ref)? else {
             continue;
         };
+        let Some(stamp) = row.issuer.owner_stamp() else {
+            continue;
+        };
         if row.is_active()
             && crate::policy_model::is_live_vault_owner_for_store_in_txn(
                 store,
                 store.privacy_posture,
                 txn,
-                &row.owner_stamp.actor,
+                &stamp.actor,
             )?
         {
             return Ok(Some(grant_ref));
@@ -188,11 +191,12 @@ pub(crate) fn decision_names_weave_grant_in_txn(
     if let Some(row) = standing_grant_row_in_txn(store, txn, grant_ref)?
         && row.is_active()
         && covers_any(row.grant.bound(), writer, scopes)?
+        && let Some(stamp) = row.issuer.owner_stamp()
         && crate::policy_model::is_live_vault_owner_for_store_in_txn(
             store,
             store.privacy_posture,
             txn,
-            &row.owner_stamp.actor,
+            &stamp.actor,
         )?
     {
         return Ok(true);
@@ -206,12 +210,15 @@ pub(crate) fn decision_names_weave_grant_in_txn(
         let Some(row) = standing_grant_row_in_txn(store, txn, &grant_ref)? else {
             continue;
         };
+        let Some(stamp) = row.issuer.owner_stamp() else {
+            continue;
+        };
         if row.is_active()
             && crate::policy_model::is_live_vault_owner_for_store_in_txn(
                 store,
                 store.privacy_posture,
                 txn,
-                &row.owner_stamp.actor,
+                &stamp.actor,
             )?
         {
             return Ok(true);

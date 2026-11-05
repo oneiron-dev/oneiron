@@ -21,7 +21,10 @@ fn owner_recorded(
     txn: &heed::RoTxn<'_>,
     row: &crate::consent::ConsentGrantRow,
 ) -> Result<bool> {
-    crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &row.owner_stamp.actor)
+    let Some(stamp) = row.issuer.owner_stamp() else {
+        return Ok(false);
+    };
+    crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &stamp.actor)
 }
 
 /// An answer delegation names its guest: the grant's target is the guest,
