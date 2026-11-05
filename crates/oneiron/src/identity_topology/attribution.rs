@@ -273,6 +273,7 @@ fn write_sidecar_in_txn(
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
