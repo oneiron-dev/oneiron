@@ -212,11 +212,11 @@ impl Channel {
             lease
                 .check_dispatch_release()
                 .map_err(DispatchWriteError::Release)?;
-            if !attempted {
-                lease.begin_physical_attempt();
-                attempted = true;
-            }
             match stream.try_io(Interest::WRITABLE, || {
+                if !attempted {
+                    lease.begin_physical_attempt();
+                    attempted = true;
+                }
                 sendmsg(stream, &[IoSlice::new(&bytes)], &mut control, SEND_FLAGS)
                     .map_err(io::Error::from)
             }) {
