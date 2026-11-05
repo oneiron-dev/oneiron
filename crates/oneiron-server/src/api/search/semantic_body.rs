@@ -1,7 +1,6 @@
 //! Whole semantic request bytes, admitted before the raw buffer is allocated.
 //! The decoded text is adopted after the parse; transport spool buffers stay separate.
 
-use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -66,8 +65,7 @@ pub(super) async fn read(
         body,
         SpoolPolicy::default(),
         move |mut spool| {
-            let mut reader = spool.reader();
-            let bytes = reader.get_ref().metadata().map_err(|_| unread())?.len();
+            let bytes = spool.byte_len().map_err(|_| unread())?;
             let length = usize::try_from(bytes).map_err(|_| unread())?;
             let mut lease = if bytes == 0 {
                 memory.empty_lease()
@@ -83,7 +81,7 @@ pub(super) async fn read(
             raw.try_reserve_exact(length).map_err(|_| unread())?;
             raw.resize(length, 0);
             lease.materialized(bytes, raw.capacity() as u64);
-            reader.read_exact(&mut raw).map_err(|_| unread())?;
+            spool.read_exact_into(&mut raw).map_err(|_| unread())?;
             let params = Json::<SemanticSearchRequest>::from_bytes(&raw)
                 .map(|Json(params)| params)
                 .map_err(invalid)?;
@@ -98,12 +96,17 @@ pub(super) async fn read(
         },
     )
     .await
-    .map_err(|ending| match ending {
-        Unspooled::NoRoom => unread(),
-        Unspooled::Failed => ApiError::bad_request(
-            "invalid semantic search body: the request body did not arrive whole",
-            None,
-        ),
+    .map_err(|ending| {
+        if matches!(&ending, Unspooled::NoRoom) {
+            unread()
+        } else if matches!(&ending, Unspooled::Failed) {
+            ApiError::bad_request(
+                "invalid semantic search body: the request body did not arrive whole",
+                None,
+            )
+        } else {
+            ending.refusal()
+        }
     })?
 }
 

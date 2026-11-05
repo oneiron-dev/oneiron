@@ -3,7 +3,9 @@
 `POST /api/search/semantic` admits the caller before reading its JSON body.
 It spools the complete wire body into an anonymous vault-staged file, under the
 listener's existing body policy. Content-Length is only a spool hint. The
-spool's actual file length determines the raw-buffer allocation.
+spool's actual file length determines the raw-buffer allocation. The semantic
+reader copies directly from that file into its admitted raw vector; it does not
+allocate or hold a separate buffered reader while waiting for the vector's room.
 
 On the existing transfer worker, one lease from the process-wide MachineMemory
 line admits that entire raw buffer before a fallible exact reserve. This is not
@@ -24,6 +26,8 @@ native codec. Malformed or incomplete JSON remains a 400; native physical-memory
 allocation, complete-spool read and disk-full failures use the existing 500
 response. The shared spool's generic Failed ending still includes non-disk-full
 spool I/O and transport failure under the existing incomplete-body 400 shape.
+Other typed shared-spool endings use the spool's native error mapping rather
+than being relabeled as invalid JSON or disk capacity.
 
 The configured semantic_query_bytes row still asks and serves the whole query.
 No body cap, fixed concurrency, queue deadline or truncation is added here.
