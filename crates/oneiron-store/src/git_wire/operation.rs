@@ -1,0 +1,206 @@
+//! Operation enum, effect classes, and the stable wire-name mapping.
+
+use crate::git_wire::failure::invalid;
+use oneiron_base::error::Result;
+
+/// The complete, positive classification of what an operation may change.
+///
+/// The classification is total: every [`GitWireOperation`] names exactly one
+/// class, so a new operation cannot silently inherit "harmless".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitWireEffectClass {
+    /// Changes no object, ref, index, or working tree.
+    Read,
+    /// May add objects to the object store; moves no ref.
+    ObjectWrite,
+    /// May move refs; writes no object.
+    RefWrite,
+    /// May both add objects and move a ref in one invocation.
+    ObjectAndRefWrite,
+    /// May change working-tree or index state on disk.
+    WorktreeWrite,
+}
+
+impl GitWireEffectClass {
+    /// Whether the class changes nothing.
+    pub const fn is_read(self) -> bool {
+        matches!(self, Self::Read)
+    }
+
+    /// Whether the class may add objects.
+    pub const fn writes_objects(self) -> bool {
+        matches!(self, Self::ObjectWrite | Self::ObjectAndRefWrite)
+    }
+
+    /// Whether the class may move a ref.
+    pub const fn moves_refs(self) -> bool {
+        matches!(self, Self::RefWrite | Self::ObjectAndRefWrite)
+    }
+}
+
+/// Typed name of a git effect. The wire name is what durable rows and derived
+/// keys carry, so it is stable across releases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitWireOperation {
+    ReadConfig,
+    ConfigureCheckout,
+    ReadRefs,
+    ObjectInfo,
+    ReachableObjects,
+    ReadTree,
+    ReadObject,
+    RevParse,
+    MergeBase,
+    WorktreeList,
+    StatusPorcelain,
+    NotesShow,
+    GitPath,
+    WriteBlob,
+    WriteTree,
+    WriteCommit,
+    /// `hash-object -t tag -w`: one annotated tag object, written from a
+    /// retained spool (FIX 7608 slice 2b-i). It adds an object and moves no
+    /// ref.
+    WriteTag,
+    /// The mixed writer class: `notes add` writes objects *and* moves the notes
+    /// ref in one invocation. GitWire classifies it so both phases can refuse
+    /// it, and deliberately exposes no constructor for it.
+    NotesAdd,
+    PublishRefs,
+    WorktreeAdd,
+    WorktreeRemove,
+    WorktreePrune,
+    /// `push` of explicit published `(ref, oid)` pairs to an https mirror. It
+    /// reads the local store only; its one effect is on the mirror.
+    MirrorPush,
+    /// `ls-remote` of one branch at an https mirror, with its credential
+    /// (FIX 6866). Reads the remote only.
+    RemoteRefs,
+    /// `push` of exactly one reviewed commit to exactly one branch of an
+    /// https mirror, leased on the tip read before (FIX 6866). It reads the
+    /// local store only; its one effect is on the mirror.
+    PublishPush,
+    /// `init --bare` of an outside import's private scratch store (FIX
+    /// 6871). It writes only inside that fresh scratch directory.
+    ImportScratchInit,
+    /// `fetch` of exactly one outside ref into the import scratch store,
+    /// full history (FIX 6871). Its objects and its one ref land in the
+    /// scratch only, never in a served store.
+    ImportFetch,
+    /// `push` of exactly one scratch commit to one served ref through the
+    /// authenticated door (FIX 6871). It reads the scratch store only; the
+    /// door's own receive admission decides its one effect.
+    ImportDoorPush,
+    /// `diff-tree` of reviewed commits against their parents: what each
+    /// commit an exact publish would expose introduces (FIX 6866).
+    ReviewDiffs,
+}
+
+pub const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 29] = [
+    GitWireOperation::ReadConfig,
+    GitWireOperation::ConfigureCheckout,
+    GitWireOperation::ReadRefs,
+    GitWireOperation::ObjectInfo,
+    GitWireOperation::ReachableObjects,
+    GitWireOperation::ReadTree,
+    GitWireOperation::ReadObject,
+    GitWireOperation::RevParse,
+    GitWireOperation::MergeBase,
+    GitWireOperation::WorktreeList,
+    GitWireOperation::StatusPorcelain,
+    GitWireOperation::NotesShow,
+    GitWireOperation::GitPath,
+    GitWireOperation::WriteBlob,
+    GitWireOperation::WriteTree,
+    GitWireOperation::WriteCommit,
+    GitWireOperation::WriteTag,
+    GitWireOperation::NotesAdd,
+    GitWireOperation::PublishRefs,
+    GitWireOperation::WorktreeAdd,
+    GitWireOperation::WorktreeRemove,
+    GitWireOperation::WorktreePrune,
+    GitWireOperation::MirrorPush,
+    GitWireOperation::RemoteRefs,
+    GitWireOperation::PublishPush,
+    GitWireOperation::ImportScratchInit,
+    GitWireOperation::ImportFetch,
+    GitWireOperation::ImportDoorPush,
+    GitWireOperation::ReviewDiffs,
+];
+
+impl GitWireOperation {
+    /// Stable wire name recorded on durable rows and hashed into keys.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadConfig => "read_config",
+            Self::ConfigureCheckout => "configure_checkout",
+            Self::ReadRefs => "read_refs",
+            Self::ObjectInfo => "object_info",
+            Self::ReachableObjects => "reachable_objects",
+            Self::ReadTree => "read_tree",
+            Self::ReadObject => "read_object",
+            Self::RevParse => "rev_parse",
+            Self::MergeBase => "merge_base",
+            Self::WorktreeList => "worktree_list",
+            Self::StatusPorcelain => "status_porcelain",
+            Self::NotesShow => "notes_show",
+            Self::GitPath => "git_path",
+            Self::WriteBlob => "write_blob",
+            Self::WriteTree => "write_tree",
+            Self::WriteCommit => "write_commit",
+            Self::WriteTag => "write_tag",
+            Self::NotesAdd => "notes_add",
+            Self::PublishRefs => "publish_refs",
+            Self::WorktreeAdd => "worktree_add",
+            Self::WorktreeRemove => "worktree_remove",
+            Self::WorktreePrune => "worktree_prune",
+            Self::MirrorPush => "mirror_push",
+            Self::RemoteRefs => "remote_refs",
+            Self::PublishPush => "publish_push",
+            Self::ImportScratchInit => "import_scratch_init",
+            Self::ImportFetch => "import_fetch",
+            Self::ImportDoorPush => "import_door_push",
+            Self::ReviewDiffs => "review_diffs",
+        }
+    }
+
+    /// The single effect class of this operation.
+    pub const fn effect_class(self) -> GitWireEffectClass {
+        match self {
+            Self::ReadConfig
+            | Self::ReadRefs
+            | Self::ObjectInfo
+            | Self::ReachableObjects
+            | Self::ReadTree
+            | Self::ReadObject
+            | Self::RevParse
+            | Self::MergeBase
+            | Self::WorktreeList
+            | Self::StatusPorcelain
+            | Self::NotesShow
+            | Self::GitPath
+            | Self::MirrorPush
+            | Self::RemoteRefs
+            | Self::PublishPush
+            | Self::ImportDoorPush
+            | Self::ReviewDiffs => GitWireEffectClass::Read,
+            Self::WriteBlob | Self::WriteTree | Self::WriteCommit | Self::WriteTag => {
+                GitWireEffectClass::ObjectWrite
+            }
+            Self::NotesAdd | Self::ImportFetch => GitWireEffectClass::ObjectAndRefWrite,
+            Self::PublishRefs => GitWireEffectClass::RefWrite,
+            Self::ConfigureCheckout
+            | Self::WorktreeAdd
+            | Self::WorktreeRemove
+            | Self::WorktreePrune
+            | Self::ImportScratchInit => GitWireEffectClass::WorktreeWrite,
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        GIT_WIRE_ALL_OPERATIONS
+            .into_iter()
+            .find(|operation| operation.as_str() == value)
+            .ok_or_else(|| invalid("unknown git wire operation"))
+    }
+}

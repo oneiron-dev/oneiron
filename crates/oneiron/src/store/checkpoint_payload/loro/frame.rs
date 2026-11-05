@@ -1,17 +1,12 @@
-//! A Loro row's content as the shared projection frames it: the framing
-//! version, the family, the slice, each hole's address and the no-one
-//! history, every length a u32be.
+//! Core half of `store::checkpoint_payload::loro::frame`: its store-layer items live in `oneiron_store::checkpoint_payload::loro::frame` and are
+//! re-exported here; the items below stay in the engine.
 
-use ::loro::IdSpan;
+pub(crate) use oneiron_store::checkpoint_payload::loro::frame::*;
 
 use super::super::corrupt;
 use super::{Atom, Slice};
 use crate::error::Result;
-
-/// The content framing's version.
-const FRAME_VERSION: u8 = 1;
-const SNAPSHOT: u8 = 0;
-const UPDATES: u8 = 1;
+use ::loro::IdSpan;
 
 fn put_len(out: &mut Vec<u8>, len: usize) -> Result<()> {
     let len = u32::try_from(len).map_err(|_| corrupt())?;
@@ -53,13 +48,6 @@ pub(super) fn write_frame(
     }
     put_bytes(&mut out, history)?;
     Ok(out)
-}
-
-/// A row's content, read back.
-pub(super) struct Frame {
-    pub(super) slice: Slice,
-    pub(super) holes: Vec<String>,
-    pub(super) history: Vec<u8>,
 }
 
 pub(super) fn read_frame(family: &str, bytes: &[u8]) -> Result<Frame> {
