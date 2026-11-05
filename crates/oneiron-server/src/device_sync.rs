@@ -137,7 +137,14 @@ impl DeviceSyncHost {
 
     fn dial_result(vault: &oneiron::Vault, result: anyhow::Result<Option<Dial>>) -> Option<Dial> {
         match result {
-            Ok(Some(dial)) => Some(dial),
+            Ok(Some(dial)) => {
+                if let Err(error) = vault.record_configured_device_residence(
+                    oneiron::sync::SyncClientConfig::default().residence_mode,
+                ) {
+                    tracing::warn!(%error, "device sync residence could not be recorded");
+                }
+                Some(dial)
+            }
             Ok(None) => {
                 vault.record_device_sync_start(DeviceSyncStart::NotConfigured);
                 None

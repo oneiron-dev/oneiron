@@ -1,3 +1,6 @@
+//! TASK creation door with admission, hooks, and rate limiting.
+//! Entry [`Memory::tasks_create`]; dispatched from the `verbs` agent-verb surface.
+//! Owned by `task_verb`; validation lives in `create_validation`, specs in `create_spec`.
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
@@ -681,12 +684,15 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
+        // FIX 11687: freeze who queued this realization, as a dispatch
+        // does; a positive withdrawal ends it before admission runs it.
+        let requester = crate::agent_dispatch::QueuedRequester::of_memory(self);
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
-                payload: encode_task_realization_input(spec)?,
+                payload: encode_task_realization_input(spec, requester.as_ref())?,
                 dedupe_key: Some(task_route_dedupe_key(task_ref)),
                 run_id: None,
                 now,

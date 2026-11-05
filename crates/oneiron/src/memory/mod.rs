@@ -115,6 +115,7 @@ mod lifted_view;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
+mod message_parts;
 mod message_result;
 mod note_tombstone;
 mod notes;
@@ -308,8 +309,7 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{
-    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VAULT_RECEIPTS_PAGE_MAX,
-    VaultReceiptsPage,
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
@@ -361,11 +361,13 @@ pub use structural::{
     ProductivityTreeRequest, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
+pub use support::{
+    HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
+    resolve_entity_ref,
+};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
-pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -378,6 +380,10 @@ pub use witness::{
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
     StreamSyncVisibility,
+};
+pub use witness::{
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
+    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

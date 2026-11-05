@@ -26,7 +26,7 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
 const CODE_CONSENT_WAIT_DOMAIN: &[u8] = b"oneiron:code-consent-wait:v1";
 
 /// The hash domain of a binding digest.
-const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v1";
+const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
@@ -172,14 +172,14 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         }
         principal.opener_slip = Some(slip);
     }
-    let Some(owner) = crate::policy_model::owners_in_txn(vault, txn)?
+    let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
-        .min()
-    else {
+        .collect();
+    if owners.is_empty() {
         return Ok(None);
-    };
+    }
     let question = CodeConsentQuestion {
-        owner,
+        owners,
         conversation: vault.store.clock.entity_id()?,
         turn: vault.store.clock.entity_id()?,
         message: vault.store.clock.entity_id()?,
@@ -229,8 +229,8 @@ pub(crate) fn mint_code_consent_wait_in_txn(
 }
 
 /// The binding digest: BLAKE3 over the stable call site, the request and
-/// frozen digests, the original caller's instrument and the pending effect.
-/// It names no effect digest, ask, time, checkpoint or receipt, so nothing
+/// frozen digests, the frozen owner audience, the original caller's instrument
+/// and the pending effect. It names no effect digest, ask, time, checkpoint or receipt, so nothing
 /// computed from it later feeds back into it.
 pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
@@ -250,8 +250,13 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     field(binding.verb_row.as_bytes());
     field(&binding.request_digest);
     field(&binding.frozen_input_digest);
+    field(&(binding.question.owners.len() as u64).to_le_bytes());
+    for owner in &binding.question.owners {
+        field(owner.as_bytes());
+    }
     let original = &binding.original;
     field(original.actor_ref.as_bytes());
+    field(&[original.actor_class]);
     field(
         original
             .opener_slip
