@@ -276,6 +276,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::ReaderSpawn,
                 error: code.to_owned(),
                 code: None,
+                disk_floor: None,
             })
         };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
@@ -347,6 +348,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::ReaderReport,
                 error: code.to_owned(),
                 code: None,
+                disk_floor: None,
             })
         };
         let Some(child) = self
@@ -359,6 +361,7 @@ impl HostSelfDispatcher<'_> {
         let Some(finding) = call.bound else {
             return Ok(failed("finding_not_own"));
         };
+        let reference = finding.reference()?;
         let reported = self.storage.report_reader_finding(
             call.task,
             child.generation,
@@ -372,7 +375,7 @@ impl HostSelfDispatcher<'_> {
         };
         Ok(SelfDispatchOutcome::ReaderReport(ReaderReportReceipt {
             task: call.task,
-            finding: finding.handle,
+            finding: reference,
             replay,
         }))
     }
@@ -397,6 +400,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::TasksWaitSet,
                 error: code.to_owned(),
                 code: None,
+                disk_floor: None,
             })
         };
         // FIX 4706: a wait on a world-privacy request, no children.

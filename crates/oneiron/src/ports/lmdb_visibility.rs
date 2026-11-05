@@ -3,6 +3,7 @@ use super::{DeletionMarker, DeletionState, TombstoneStoreRead, WindowAddress, Wi
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
+use std::collections::BTreeSet;
 
 /// The `sync_state` table of one deletion family; each is keyed by the row id.
 fn marker_table(marker: DeletionMarker) -> SideTable<HexId, Vec<u8>, Raw> {
@@ -71,6 +72,44 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     ) -> Result<bool> {
         marker_table(marker).contains(self, txn, &HexId(*id))
     }
+}
+
+/// Every hard-delete marker id in this transaction, including marker-only erasures.
+pub(crate) fn hard_erased_ids_in_txn(
+    dbs: &impl ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut ids = BTreeSet::new();
+    for row in marker_table(DeletionMarker::HardDelete).iter_raw_from(dbs, rtxn, &[])? {
+        let (key, _) = row?;
+        // A key that spells no id names no actor.
+        if let Some(id) = std::str::from_utf8(&key)
+            .ok()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        {
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Whether an existing, readable row proves that `id` is not an actor.
+pub(crate) fn names_no_actor_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if let Some(raw) = super::EntityStoreRead::port_entity_raw(dbs, txn, id)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+    {
+        return Ok(!matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        ));
+    }
+    Ok(false)
 }
 
 /// The row's deletion state as `dbs` reads it in `txn`: its archive marker,

@@ -31,9 +31,11 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
-pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
+pub(in crate::calendar) use import_claim::{
+    admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
+};
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ poly1305 = { version = "=0.9.1", features = ["zeroize"] }
 rmp-serde = { workspace = true }
 ml-kem = { version = "=0.3.2", features = ["zeroize"] }
 rand_core = "=0.10.1"
+schemars = "=0.8.22"
 serde = { workspace = true }
 sha2 = { version = "=0.11.0", features = ["zeroize"] }
 sha3 = { version = "=0.11.0", features = ["zeroize"] }

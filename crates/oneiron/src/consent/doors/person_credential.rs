@@ -32,6 +32,7 @@ impl Vault {
             || credential.is_transferred()
             || claims.holder_ref != person.actor.to_hex()
             || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+            || claims.trusted_contact.is_some()
         {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "credential is not this person's own slip",

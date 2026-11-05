@@ -1,5 +1,8 @@
 //! Project attributed skill outcomes into the shared learning.reliability cells.
 
+mod actor_displacement;
+pub(crate) use actor_displacement::reconcile_displaced_actor_credit_in_txn;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;

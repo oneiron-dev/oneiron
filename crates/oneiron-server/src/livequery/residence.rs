@@ -13,6 +13,7 @@ mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod pad_objects;
 mod pad_refill;
@@ -176,6 +177,9 @@ struct SearchRequest {
     /// selector and caller check below stands.
     #[serde(default)]
     scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
+    /// A recall clock pin, not a historical grant or storage snapshot.
+    #[serde(default)]
+    as_of: Option<u64>,
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
@@ -213,6 +217,7 @@ impl SearchRequest {
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            self.as_of,
             locality,
             self.page.as_ref(),
             |request| {
@@ -452,6 +457,9 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
             ),
+            "residence.media_vectors" => {
+                media_vectors::media_vectors(server, auth, peer, request.params)
+            }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {

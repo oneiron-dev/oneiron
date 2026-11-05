@@ -27,10 +27,10 @@ use crate::config::KeystoreInstall;
 /// serves without (WILL-PLAN L14 row 17): the supervisor's key directory,
 /// where the owner did not turn the keystore off (`keystore_unbound`), a
 /// keystore that would not open, signing keys that did not load, and a
-/// node the roster did not take. None of them stops the start, nor does a
-/// missing issuer seed (`MANAGED_MISSING_HOST_SEED`): the vault then serves
-/// rootless, said once by its typed reason, its host node not provisioned,
-/// and each host-signed act answers as a host with no issuer does.
+/// node the roster did not take. Non-hosted starts retain their rootless
+/// warning behavior. An explicitly hosted start must provision a usable issuer
+/// before normal service (QUORUM-HOST-ROOT=C): a missing seed returns its real
+/// typed error, never a replacement root or a customer signing step.
 pub(super) fn provision_host_authority(
     vault: &oneiron::Vault,
     keystore: &crate::config::KeystoreConfig,
@@ -53,7 +53,20 @@ pub(super) fn provision_host_authority(
         (_, Ok(issuer)) => {
             vault.ensure_host_root_slip(&issuer)?;
             vault.provision_engine_machine_identities(&issuer)?;
+            if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted
+                && !vault.checkpoint_policy_selection_available()
+                && !vault.checkpoint_root_eligible(&issuer.public_key())?
+            {
+                return Err(oneiron::Error::Record(
+                    oneiron::error::RecordError::CheckpointPolicyRefused(
+                        "the hosted issuer is not an eligible checkpoint host root",
+                    ),
+                ));
+            }
             Some(issuer)
+        }
+        (_, Err(error)) if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted => {
+            return Err(error);
         }
         (MissingHostSeed::ServeRootlessWarn, Err(error)) => {
             tracing::warn!(

@@ -72,9 +72,29 @@ pub fn review_cleanup_proposal_as(
     owner: &AuthenticatedOwner,
     input: &CleanupReviewRequest,
 ) -> MemoryResult<CleanupReviewView> {
+    review_cleanup_proposal_sourced_as(memory, owner, input).map(|(view, _)| view)
+}
+
+/// [`review_cleanup_proposal_as`] beside the review's additive attempt
+/// sources (FIX 10494): the union of genuine known gated source rows from
+/// the actual decoded attempt records of that same snapshot. Each unknown,
+/// gone, erased or unreadable attempt contributes nothing; known rows
+/// contribute even while another attempt stays unknown. The vector is
+/// additive named release evidence only, never a complete whole-response
+/// assertion. Every return pairs its view with that snapshot's trace, never
+/// a later head read.
+///
+/// # Errors
+///
+/// As [`review_cleanup_proposal_as`].
+pub fn review_cleanup_proposal_sourced_as(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CleanupReviewRequest,
+) -> MemoryResult<(CleanupReviewView, Vec<EntityId>)> {
     let mut read = 1;
     loop {
-        let Some((mut view, reads)) = snapshot(memory, owner, &input.proposal)? else {
+        let Some((mut view, reads, sources)) = snapshot(memory, owner, &input.proposal)? else {
             return Err(proposal_not_open(&input.proposal));
         };
         finish_note_content(memory, &mut view, reads);
@@ -84,7 +104,7 @@ pub fn review_cleanup_proposal_as(
             return Err(proposal_not_open(&input.proposal));
         };
         if revision == view.revision {
-            return Ok(view);
+            return Ok((view, sources));
         }
         if read >= CLEANUP_REVIEW_READ_ATTEMPTS {
             for (item, now) in view.items.iter_mut().zip(&slots) {
@@ -92,7 +112,7 @@ pub fn review_cleanup_proposal_as(
                     item.changed_during_review = Some(true);
                 }
             }
-            return Ok(view);
+            return Ok((view, sources));
         }
         read += 1;
     }
@@ -171,7 +191,11 @@ pub(super) fn review_revision_in_txn(
     Ok(bytes_to_hex_lower(hasher.finalize().as_bytes()))
 }
 
-type Snapshot = (CleanupReviewView, Vec<Option<PreparedNoteRead>>);
+type Snapshot = (
+    CleanupReviewView,
+    Vec<Option<PreparedNoteRead>>,
+    Vec<EntityId>,
+);
 
 /// Facts and native record content in one snapshot under the owner's
 /// proof; none when the proposal is not open.
@@ -240,6 +264,7 @@ fn snapshot(
     };
     let mut items = Vec::with_capacity(row.candidates.len());
     let mut reads = Vec::with_capacity(row.candidates.len());
+    let mut sources = Vec::new();
     for (slot, candidate) in row.candidates.iter().enumerate() {
         let revision = slot_revision_in_txn(vault, &rtxn, candidate.as_ref())?;
         fold_revision(&mut hasher, revision.as_ref());
@@ -261,13 +286,15 @@ fn snapshot(
             changed_during_review: None,
         };
         let read = if candidate.kind == CleanupKind::CompletedAttempt {
-            review_attempt(
+            if let Some(rows) = review_attempt(
                 vault,
                 &rtxn,
                 candidate.entity,
                 task_retention_days,
                 &mut item,
-            )?;
+            )? {
+                sources.extend(rows);
+            }
             None
         } else {
             review_record(vault, &rtxn, candidate, task_retention_days, &mut item)?
@@ -346,24 +373,29 @@ fn snapshot(
         counts,
         items,
     };
-    Ok(Some((view, reads)))
+    sources.sort_unstable();
+    sources.dedup();
+    Ok(Some((view, reads, sources)))
 }
 
-/// One completed attempt: its eligibility, evidence and whole stored row.
+/// One completed attempt: its eligibility, evidence and whole stored row,
+/// beside its gated source rows from that same decode (FIX 10494). `None`
+/// is honest unknown: the row is gone, its set never completed, or its row
+/// does not read; existing unreadable-slot behavior is unchanged.
 fn review_attempt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     entity: EntityId,
     retention_days: u64,
     item: &mut CleanupReviewItem,
-) -> Result<()> {
+) -> Result<Option<Vec<EntityId>>> {
     let id = AttemptId::from_bytes(entity.as_bytes())?;
     let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
-        return Ok(());
+        return Ok(None);
     };
     item.accept = accept_effect(eligible(vault, txn, id, &raw).map(|record| record.is_some()))?;
     let mut content = CleanupReviewContent::default();
-    match decode_record(&raw, id) {
+    let sources = match decode_record(&raw, id) {
         Ok(record) => {
             let holds_now = item.accept == CleanupAcceptEffect::Archive;
             item.state = held(holds_now);
@@ -376,6 +408,7 @@ fn review_attempt(
                 Ok(value) => content.attempt = Some(value),
                 Err(error) => content.refused.push(format!("attempt: {error}")),
             }
+            record.source_rows().map(|rows| rows.to_vec())
         }
         Err(error) => {
             unreadable(error)?;
@@ -383,10 +416,11 @@ fn review_attempt(
             content
                 .refused
                 .push("attempt: its stored queue row does not read".to_owned());
+            None
         }
-    }
+    };
     item.content = Some(content);
-    Ok(())
+    Ok(sources)
 }
 
 /// One record's eligibility and evidence; its native content is projected

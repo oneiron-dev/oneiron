@@ -242,6 +242,7 @@ pub fn fork_executor_run(
 ) -> Result<PreparedExecutorContinuation, ContinuationRefusal> {
     let successor = attempt_key(leased_successor.id)?;
     let (row, proved) = {
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let Some(row) = run_continuation_in_txn(vault, &txn, successor)? else {
             return Err(ContinuationRefusal::SourceMissing);

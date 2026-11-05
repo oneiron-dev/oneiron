@@ -11,7 +11,7 @@ mod citation_floor;
 mod commit_receipts;
 mod doc_actor;
 mod document;
-pub mod document_resources;
+pub use oneiron_store::entity_doc::document_resources;
 mod forks;
 mod history_erase;
 mod lift;
@@ -33,10 +33,10 @@ mod registry;
 mod summary;
 pub(crate) use summary::{
     birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn, summary_meta_in_txn,
-    summary_read_in_txn, summary_text_in_txn,
+    summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
-mod side_keys;
+use oneiron_store::entity_doc::side_keys;
 mod storage;
 #[cfg(feature = "sync")]
 mod sweep;

@@ -1,0 +1,250 @@
+/* ── the pipeline — the CRM lens the consultancy runs on (FLOWS §3 #6):
+   ONE lens, TWO views. the BOARD is the main view (owner 08-18, ruling 3):
+   one column per stage, sourced → deposit, cards that carry the org, the
+   money, the next step, who holds it; cards drag between columns and the
+   move settles in place. the LEDGER waits behind the view switch: stage
+   groups of one-line rows, money first. no eyebrow, no instrument chrome
+   (ruling 1): provenance is one meta-line in the head. ── */
+
+/* the sheet holds the body (same anatomy as inbox/vault) */
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  position: relative;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* the head tools: quick search (types filter both views) · the view switch
+   (two mono acts, the current one in silver-1) · provenance meta · (?) */
+.pane-tools .qs {
+  font-family: var(--serif); font-size: 13px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 3px 9px; width: 150px; outline: none;
+  transition: background 160ms ease;
+}
+.pane-tools .qs::placeholder { color: var(--silver-4); }
+
+.pane-tools .qs::-webkit-search-cancel-button { -webkit-appearance: none; }
+.proj { display: inline-flex; align-items: baseline; gap: 8px; }
+.proj .act[aria-pressed="true"] { color: var(--silver-1); }
+.proj .act[aria-pressed="true"]:hover { color: var(--silver-1); }
+.proj .sep { font-family: var(--mono); font-size: 10px; color: var(--silver-4); }
+
+/* the house mind's one line under the head: name-fronted, serif, quiet */
+.sec-voice { display: flex; gap: 9px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 76ch; margin-top: -4px; }
+
+/* the strip: 8 stage chips with counts (spine order) · today's due count ·
+   the booked call · the brief door. a chip filters the ledger to that
+   stage and dims the other board columns */
+.funnel { display: flex; align-items: baseline; gap: 2px; flex-wrap: wrap; }
+.funnel .fgap { flex: 1; min-width: 12px; }
+.schip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; font-feature-settings: "tnum" 1;
+  color: var(--silver-3); padding: 3px 9px;
+  border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.schip .n { color: var(--silver-4); transition: color 160ms ease; }
+.schip:hover { color: var(--silver-1); }
+.schip:hover .n { color: var(--silver-3); }
+.schip.on { color: var(--silver-1); background: var(--bg-well); }
+.schip.on .n { color: var(--silver-2); }
+/* today's chip speaks serif: it is a sentence, the count is the datum */
+.schip.today { font-family: var(--serif); font-size: 13px; }
+.schip.today .n { font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); }
+.funnel .fsep { font-family: var(--mono); font-size: 10px; color: var(--silver-4); padding: 0 1px; }
+.funnel .t-say { font-family: var(--serif); font-size: 13px; color: var(--silver-3); padding: 0 6px; }
+.funnel > .act { margin-left: 4px; }
+
+/* ══ the board: one column per stage, left→right, sourced … deposit.
+   columns scroll sideways inside the sheet; each is a tinted zone (the
+   well divides, not a line); the cards sit on it in the sheet's own ink ══ */
+.board {
+  display: flex; gap: 10px; align-items: flex-start;
+  overflow-x: auto; overflow-y: hidden;
+  margin: 0 calc(-1 * var(--pane-pad-x)); padding: 2px var(--pane-pad-x) 12px;
+  scroll-padding-inline: var(--pane-pad-x);
+  scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent;
+}
+.board.dragging { cursor: grabbing; user-select: none; }
+.pcol {
+  flex: 0 0 236px; width: 236px;
+  background: var(--bg-well); border-radius: 8px; padding: 10px 8px 8px;
+  display: flex; flex-direction: column; gap: 8px; min-height: 120px;
+  transition: opacity 200ms ease, box-shadow 160ms ease;
+}
+.pcol.dim { opacity: 0.38; }
+.pcol.dim:hover { opacity: 0.7; }
+/* the column under the hand lights, faintly */
+.pcol.over { box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.pc-head { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 2px; }
+.pc-name { font-family: var(--serif); font-size: 13.5px; font-weight: 550; color: var(--silver-1); }
+.pc-n { font-family: var(--mono); font-size: 11.5px; color: var(--silver-4); font-feature-settings: "tnum" 1; }
+.pc-money { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+.pc-cards { display: flex; flex-direction: column; gap: 6px; }
+.pc-more { align-self: flex-start; padding: 4px 6px 2px; }
+.pc-empty { font-family: var(--serif); font-size: 13px; color: var(--silver-4); padding: 4px 6px; }
+
+/* the card: org · money · next step + when · holder. radius 6, the sheet's
+   ink on the well, no shadow; the hand lifts it to a faint inset rule */
+.card {
+  background: var(--bg-elevated); border-radius: 6px;
+  display: flex; flex-direction: column;
+  transition: box-shadow 160ms ease, opacity 160ms ease;
+}
+.card:hover { box-shadow: inset 0 0 0 1px var(--rule); }
+.card.sel { box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.card.parked { opacity: 0.45; }
+.card.dragging { opacity: 0.35; }
+.c-head {
+  display: flex; flex-direction: column; gap: 3px;
+  width: 100%; text-align: left; padding: 8px 10px 8px;
+  cursor: grab; touch-action: none; border-radius: 6px;
+}
+.c-head:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.board.dragging .c-head { cursor: grabbing; }
+.c-top { display: flex; align-items: baseline; gap: 10px; }
+.c-org {
+  flex: 1; min-width: 0;
+  font-family: var(--serif); font-size: 14px; font-weight: 550; color: var(--silver-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.c-money { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+.c-step {
+  font-family: var(--serif); font-size: 12.5px; line-height: 1.4; color: var(--silver-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.c-holder { display: flex; align-items: center; gap: 8px; padding-top: 3px; }
+.c-holder .aname { font-family: var(--mono); font-size: 11px; }
+/* ONE glyph, only when a draft waits: the channel in amber */
+.c-waits { display: flex; color: var(--amber); }
+.c-waits svg { width: 12px; height: 12px; display: block; }
+
+/* the card unfolds in place: the same tail · claims · acts as a ledger row */
+.c-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
+.card.open .c-fold { grid-template-rows: 1fr; }
+.c-fold .rd-inner { padding: 0 10px 0 10px; }
+.card.open .c-fold .rd-inner { padding-bottom: 10px; }
+.c-fold .rd-cols { grid-template-columns: 1fr; gap: 8px; }
+/* the settle line a move lands: serif, quiet, `undo` the act. one shape,
+   under a card on the board and under a row in the ledger */
+.c-moved, .r-moved {
+  display: flex; align-items: baseline; gap: 10px;
+  font-family: var(--serif); font-size: 12.5px; color: var(--silver-3);
+  animation: land 220ms ease-out;
+}
+.c-moved { padding: 0 10px 8px; margin-top: -2px; }
+.r-moved { padding: 0 8px 4px 14px; }
+@keyframes land { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+
+/* the ghost: the card in the hand, over everything, no hit-testing.
+   it moves by transform alone — the board never re-renders to follow it */
+.drag-ghost {
+  position: fixed; left: 0; top: 0; z-index: 40; pointer-events: none;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px; border-radius: 6px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  will-change: transform;
+}
+
+/* ══ the ledger: stage groups, flat on the sheet, money first ══ */
+.stack { display: flex; flex-direction: column; }
+.sgroup { display: flex; flex-direction: column; }
+.sgroup + .sgroup { margin-top: 20px; }
+.sgroup.closed + .sgroup { margin-top: 0; }
+.sgroup .head {
+  display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px;
+  width: 100%; text-align: left;
+}
+.sgroup .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.sgroup .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.sgroup .head:hover .fold-hint, .sgroup .head:focus-visible .fold-hint { opacity: 1; }
+.sgroup.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+/* the head count exists ONLY when the rows are hidden (one place per fact) */
+.sgroup .head .meta-line { margin-left: auto; display: none; }
+.sgroup.closed .head .meta-line { display: inline; }
+.sgroup.closed .rows, .sgroup.closed .more-row { display: none; }
+.rows { padding: 3px 0 0; display: flex; flex-direction: column; }
+
+/* one-line rows: org · next step · money · who · channel · last touch · age */
+.orow { outline: none; }
+.r-line {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 6px 8px 6px 6px; text-align: left;
+  border-radius: 5px; cursor: pointer;
+  transition: background 160ms ease;
+}
+.r-line:hover, .r-line:focus-visible { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.orow.sel .r-line { background: var(--bg-well); }
+.orow.parked { opacity: 0.45; }
+.r-org {
+  flex: 0 0 172px; min-width: 0;
+  font-family: var(--serif); font-size: 14px; font-weight: 500; color: var(--silver-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.r-next {
+  flex: 1; min-width: 0;
+  font-family: var(--serif); font-size: 13.5px; color: var(--silver-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.r-money { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+.r-who { flex: none; align-self: center; display: flex; }
+.r-who .aname { font-family: var(--mono); font-size: 11px; }
+.r-chan { flex: none; align-self: center; display: flex; color: var(--silver-3); }
+.r-chan svg { width: 13px; height: 13px; display: block; }
+/* ONE icon: the channel glyph carries the state ink — amber = a draft waits */
+.r-chan.waits { color: var(--amber); }
+.r-when { flex: none; width: 40px; font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.r-age { flex: none; width: 30px; text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--silver-4); font-feature-settings: "tnum" 1; }
+
+/* the unfold, in place: thread tail · claims · acts · receipts */
+.r-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
+.orow.open .r-detail { grid-template-rows: 1fr; }
+.rd-clip { min-height: 0; overflow: hidden; }
+.rd-inner { padding: 2px 8px 0 14px; display: flex; flex-direction: column; gap: 8px; }
+.orow.open .rd-inner { padding-bottom: 12px; }
+.rd-cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px 28px; }
+@media (max-width: 1100px) { .rd-cols { grid-template-columns: 1fr; } }
+.rd-col { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+/* thread tail: seal or name-in-ink + serif line; time·channel and the
+   send state ride the tooltip. only a WAITING draft shows its state (amber
+   mono) with its door, on a line of its own under the message */
+.tl { display: flex; gap: 9px; align-items: baseline; }
+.tl .seal { transform: translateY(2px); }
+.tl .aname { font-family: var(--mono); font-size: 11px; }
+.tl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tl-msg { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); }
+.tl-foot { display: flex; align-items: baseline; gap: 10px; }
+.tl-foot .act { font-size: 11px; }
+.tl-foot .send-pending { color: var(--amber); }   /* amber = waits (rule 17) */
+/* claims about the org: the dot, the claim in confidence ink, the row is a door to the vault */
+.cl {
+  display: flex; gap: 9px; align-items: baseline;
+  padding: 2px 6px 2px 4px; margin-left: -4px; border-radius: 5px;
+  transition: background 160ms ease;
+}
+.cl:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.cl .dot { flex: none; transform: translateY(-1px); }
+.cl .claim { font-size: 13px; flex: 1; min-width: 0; }
+.rd-acts { display: flex; gap: 12px; flex-wrap: wrap; padding-top: 2px; }
+/* a receipt lands where the verb was: serif, quiet, the name in ink */
+.receipt { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); }
+.receipt .aname { font-size: 13px; }
+.receipts { display: flex; flex-direction: column; gap: 2px; }
+
+/* `N more` = a door; opens the rest of the stage in place */
+.more-row { display: flex; gap: 14px; align-items: baseline; padding: 7px 8px 4px 6px; }
+
+/* the empty ledger (a filter with nothing under it): one serif line */
+.ledger-empty { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding: 6px 6px 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .r-detail, .c-fold, .pane-tools .qs, .pcol, .card { transition: none; }
+  .c-moved, .r-moved { animation: none; }
+}

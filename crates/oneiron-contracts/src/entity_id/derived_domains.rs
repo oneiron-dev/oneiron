@@ -193,6 +193,18 @@ pub const HISTORY_TURN: &[u8] = b"oneiron.ingest.history.turn.v1";
 /// content hash.
 pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 
+/// A mail thread's CONVERSATION (`mail_pack`). Parts: mail source id (hex),
+/// the source's own thread key.
+pub const MAIL_CONVERSATION: &[u8] = b"oneiron.mail_pack.conversation.v1";
+
+/// One provider message's TURN (`mail_pack`). Parts: mail source id (hex),
+/// the provider's message id.
+pub const MAIL_TURN: &[u8] = b"oneiron.mail_pack.turn.v1";
+
+/// One revision of a provider message (`mail_pack`). Parts: mail source id
+/// (hex), the provider's message id, the revision's content hash.
+pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
+
 /// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
@@ -271,6 +283,11 @@ pub const REPO_SECRET_MARK: &[u8] = b"oneiron:repo-secret-mark:v1";
 /// is outside the foreign-world range.
 pub const FILES_WORLD: &[u8] = b"oneiron.files.world.v1";
 
+/// The Clipboard role in each isolated vault (`clipboard`, FIX 12583). Parts:
+/// a u64 little-endian counter, selecting the first non-base local-world id.
+/// Imported worlds still acquire their source-vault-bound foreign identity.
+pub const CLIPBOARD_WORLD: &[u8] = b"oneiron.clipboard.world.v1";
+
 /// One folder source of a Files world (`note::files`, FIX 6942). Parts: the
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
@@ -295,7 +312,7 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 57] = [
+pub(crate) const ALL: [&[u8]; 60] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -338,6 +355,9 @@ pub(crate) const ALL: [&[u8]; 57] = [
     HISTORY_CONVERSATION,
     HISTORY_TURN,
     HISTORY_MESSAGE,
+    MAIL_CONVERSATION,
+    MAIL_TURN,
+    MAIL_MESSAGE,
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,

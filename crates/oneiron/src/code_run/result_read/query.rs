@@ -11,7 +11,9 @@
 //! A selection past one reply streams into the spill sink when the caller
 //! gave one (a code run binds it as a result); without one it pages. One
 //! picked document value past one reply, with no sink, is answered as a
-//! range ref over its own bytes in the body, with its first page.
+//! range ref over its own bytes in the body, with its first page. A
+//! re-encoded value pages through the same query with a byte cursor within
+//! that value; its offsets never address the original body.
 
 use super::{
     READ_PIECE_BYTES, ReadBounds, Reply, ResultBody, SHAPE_HEAD_BYTES, Scan, decode, invalid_input,
@@ -49,7 +51,8 @@ struct QueryInput {
 }
 
 /// Where a query goes on: a table's next row by its byte offset and number,
-/// or the picked values of a document to pass over.
+/// or the picked values of a document to pass over. Within a table row,
+/// `skip` passes over values the row's path already picked.
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QueryCursor {
@@ -59,6 +62,9 @@ struct QueryCursor {
     row: Option<u64>,
     #[serde(default)]
     skip: Option<u64>,
+    /// A byte offset in the one selected value re-derived by this query.
+    #[serde(default)]
+    within: Option<u64>,
 }
 
 /// One step of a JSON path.
@@ -402,9 +408,10 @@ struct Picked<'s> {
     seen: u64,
     stop: Option<Stop>,
     failed: Option<Error>,
-    /// The one document value that did not fit an empty reply, with no
-    /// sink to stream it into.
+    /// The one selected value that did not fit an empty reply, with no
+    /// sink to stream it into, or whose byte page is being resumed.
     oversized: Option<Box<RawValue>>,
+    within: Option<u64>,
     /// The bytes the parser had taken from the body when the last picked
     /// value ended.
     value_end: u64,
@@ -439,10 +446,12 @@ impl Picked<'_> {
     }
 
     fn emit(&mut self, item: Box<RawValue>) -> Result<bool> {
-        if !self.spilling && self.held_bytes + item.get().len() + 1 > self.budget {
+        if !self.spilling
+            && (self.within.is_some() || self.held_bytes + item.get().len() + 1 > self.budget)
+        {
             let (rows, many) = (self.rows(), self.many);
             let Some(sink) = self.spill.as_deref_mut() else {
-                if self.held.is_empty() && self.filter.is_none() {
+                if self.held.is_empty() {
                     self.oversized = Some(item);
                 }
                 self.stop = Some(Stop::Budget);
@@ -597,6 +606,9 @@ pub(super) fn query(
         steps
     };
     let cursor = input.cursor.unwrap_or_default();
+    // A byte-page continuation stays a page even when this caller has a
+    // spill sink; the cursor names part of one selection, not a new store.
+    let spill = if cursor.within.is_some() { None } else { spill };
     let picked = Picked {
         many: filter.is_some() || steps.contains(&Step::All),
         filter,
@@ -612,6 +624,7 @@ pub(super) fn query(
         stop: None,
         failed: None,
         oversized: None,
+        within: cursor.within,
         value_end: 0,
     };
     match table {
@@ -663,18 +676,32 @@ fn document(
     };
     if picked.stop == Some(Stop::Budget)
         && let Some(raw) = picked.oversized.take()
-        && let Some(paged) = page_value(body, parent, &raw, picked.value_end, bounds)?
     {
-        let mut reply = json!({
-            "ref": reference,
-            "count": 1,
-            "done": !picked.many,
-            "paged": paged,
-        });
-        if picked.many {
-            reply["next"] = json!({"skip": picked.seen});
+        if picked.filter.is_none()
+            && picked.within.is_none()
+            && let Some(paged) = page_value(body, parent, &raw, picked.value_end, bounds)?
+        {
+            let mut reply = json!({
+                "ref": reference,
+                "count": 1,
+                "done": !picked.many,
+                "paged": paged,
+            });
+            if picked.many {
+                reply["next"] = json!({"skip": picked.seen});
+            }
+            return Ok(Reply::Output(reply));
         }
-        return Ok(Reply::Output(reply));
+        let resume = json!({"skip": picked.seen.saturating_sub(1)});
+        let after = picked.many.then(|| json!({"skip": picked.seen}));
+        return page_selection(
+            reference,
+            &raw,
+            picked.within.unwrap_or(0),
+            resume,
+            after,
+            bounds,
+        );
     }
     let next = match picked.stop {
         Some(Stop::Limit) => Some(json!({"skip": picked.seen})),
@@ -728,6 +755,85 @@ fn page_value(
             Ok(Some(page))
         }
         Reply::Denied(_) | Reply::Spilled { .. } => Ok(None),
+    }
+}
+
+/// Pages one re-derived selection, not a range of the source body. The
+/// continuation must re-run the same query, so its normal occurrence and
+/// release checks apply again before any bytes are read.
+fn page_selection(
+    reference: &str,
+    raw: &RawValue,
+    within: u64,
+    mut resume: Value,
+    after: Option<Value>,
+    bounds: &ReadBounds<'_>,
+) -> Result<Reply> {
+    let body = SelectionBody(raw.get().as_bytes());
+    let page_bounds = ReadBounds {
+        reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
+        watch: bounds.watch,
+    };
+    let Reply::Output(mut page) =
+        super::slice::slice(&body, reference, json!({"bytes": [within]}), &page_bounds)?
+    else {
+        return Err(Error::CorruptedIndex("query selected value page"));
+    };
+    let end = page["end"]
+        .as_u64()
+        .ok_or(Error::CorruptedIndex("query selected value page end"))?;
+    if let Value::Object(fields) = &mut page {
+        // These source-range fields would promise that slice(parent) can
+        // reproduce re-encoded bytes. Only the query cursor can do that.
+        fields.remove("ref");
+        fields.remove("next");
+        fields.remove("lines");
+    }
+    page["bytes"] = json!(body.len());
+    let next = if end < body.len() {
+        resume["within"] = json!(end);
+        Some(resume)
+    } else {
+        after
+    };
+    let mut reply = json!({
+        "ref": reference,
+        "count": 1,
+        "done": next.is_none(),
+        "paged": page,
+    });
+    if let Some(next) = next {
+        reply["next"] = next;
+    }
+    Ok(Reply::Output(reply))
+}
+
+/// One serialized selection, borrowed only for the current read.
+struct SelectionBody<'b>(&'b [u8]);
+
+impl ResultBody for SelectionBody<'_> {
+    fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn kind(&self) -> CodeRunOutputKind {
+        CodeRunOutputKind::Text
+    }
+
+    fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let start = usize::try_from(offset)
+            .unwrap_or(self.0.len())
+            .min(self.0.len());
+        let end = start.saturating_add(len).min(self.0.len());
+        Ok(self.0[start..end].to_vec())
+    }
+
+    fn line_index(&self) -> Option<Vec<u64>> {
+        None
+    }
+
+    fn base(&self) -> u64 {
+        0
     }
 }
 
@@ -1245,6 +1351,7 @@ fn table_rows(
         lines = LineReader::new(body, data_start);
     }
     let mut skipped = 0_u64;
+    let mut selection_page = None;
     let (done, next) = 'rows: loop {
         let start = lines.at;
         let mut completed: Option<Vec<u8>> = None;
@@ -1350,25 +1457,49 @@ fn table_rows(
         };
         let mut values = Vec::new();
         select(value, rest, &mut values);
-        let mut going = true;
-        for value in values {
-            if !picked.offer(value)? {
-                going = false;
-                break;
+        let value_count = values.len();
+        for (index, value) in values.into_iter().enumerate() {
+            if start == data_start && (index as u64) < cursor.skip.unwrap_or(0) {
+                continue;
             }
-        }
-        if !going {
-            break match picked.stop {
-                Some(Stop::Budget) => (false, Some(json!({"offset": start, "row": this}))),
-                Some(Stop::Limit) => (false, Some(json!({"offset": lines.at, "row": row}))),
-                _ => (true, None),
-            };
+            if !picked.offer(value)? {
+                let after = if index + 1 < value_count {
+                    Some(json!({"offset": start, "row": this, "skip": index + 1}))
+                } else if only.is_none() && lines.at < body.len() {
+                    Some(json!({"offset": lines.at, "row": row}))
+                } else {
+                    None
+                };
+                break 'rows match picked.stop {
+                    Some(Stop::Budget) => {
+                        let resume = json!({"offset": start, "row": this, "skip": index});
+                        if picked.oversized.is_some() {
+                            selection_page = Some((resume.clone(), after));
+                        }
+                        (false, Some(resume))
+                    }
+                    Some(Stop::Limit) => (after.is_none(), after),
+                    _ => (true, None),
+                };
+            }
         }
         if only.is_some() {
             break (true, None);
         }
     };
-    let mut reply = picked.finish(reference, done, next)?;
+    let mut reply =
+        if let (Some(raw), Some((resume, after))) = (picked.oversized.take(), selection_page) {
+            page_selection(
+                reference,
+                &raw,
+                picked.within.unwrap_or(0),
+                resume,
+                after,
+                bounds,
+            )?
+        } else {
+            picked.finish(reference, done, next)?
+        };
     if let Reply::Output(reply) = &mut reply {
         if limited {
             reply["limit"] = scan_limit();

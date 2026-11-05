@@ -126,14 +126,36 @@ impl PreparedWindowPads {
         sub_tag: u8,
         queue_seq: Option<u64>,
     ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
-        let kind = WindowPadKind::of_sub_tag(sub_tag).ok_or(TransportError::InvalidPayload(
-            "window frame carries no window bytes",
-        ))?;
-        let envelope = self.envelope(kind, queue_seq);
+        let envelope = self.frame_envelope(sub_tag, queue_seq)?;
         Ok((
             envelope.encode_frames(window_key, sub_tag)?,
             envelope.binding(),
         ))
+    }
+
+    /// The same send and receipt binding, sized for node batch members.
+    pub(crate) fn frames_batched(
+        &self,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+    ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
+        let envelope = self.frame_envelope(sub_tag, queue_seq)?;
+        Ok((
+            envelope.encode_batch_frames(window_key, sub_tag)?,
+            envelope.binding(),
+        ))
+    }
+
+    fn frame_envelope(
+        &self,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+    ) -> Result<WindowPadEnvelope, TransportError> {
+        let kind = WindowPadKind::of_sub_tag(sub_tag).ok_or(TransportError::InvalidPayload(
+            "window frame carries no window bytes",
+        ))?;
+        Ok(self.envelope(kind, queue_seq))
     }
 }
 

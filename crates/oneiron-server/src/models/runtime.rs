@@ -124,8 +124,8 @@ impl ModelRuntime {
     }
 
     #[must_use]
-    pub fn build(config: Option<&ModelsConfig>) -> Self {
-        Self::build_with_keys(config, None)
+    pub fn build(config: Option<&ModelsConfig>, posture: oneiron::HostingPrivacyPosture) -> Self {
+        Self::build_with_keys(config, None, posture)
     }
 
     /// [`build`](Self::build), with the custody door a `key_secret`
@@ -133,11 +133,15 @@ impl ModelRuntime {
     /// providers alone. Without one, or outside a runtime, such a provider is
     /// unavailable.
     #[must_use]
-    pub fn build_with_keys(config: Option<&ModelsConfig>, keys: Option<Arc<dyn KeyDoor>>) -> Self {
+    pub fn build_with_keys(
+        config: Option<&ModelsConfig>,
+        keys: Option<Arc<dyn KeyDoor>>,
+        posture: oneiron::HostingPrivacyPosture,
+    ) -> Self {
         let broker = config
             .zip(keys)
             .and_then(|(config, keys)| BrokerContext::for_providers(keys, config));
-        Self::build_hosted(config, broker.as_ref(), OfferCooldowns::unkept())
+        Self::build_hosted(config, broker.as_ref(), OfferCooldowns::unkept(), posture)
     }
 
     /// [`build`](Self::build), with the vault's one credential-broker
@@ -149,8 +153,15 @@ impl ModelRuntime {
         config: Option<&ModelsConfig>,
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
+        posture: oneiron::HostingPrivacyPosture,
     ) -> Self {
-        Self::build_hosted_on(config, broker, rests, &ModelHostBudgets::unhosted())
+        Self::build_hosted_on(
+            config,
+            broker,
+            rests,
+            &ModelHostBudgets::unhosted(),
+            posture,
+        )
     }
 
     /// [`build_hosted`](Self::build_hosted), its media rungs, clone wires
@@ -163,6 +174,7 @@ impl ModelRuntime {
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
         budgets: &ModelHostBudgets,
+        posture: oneiron::HostingPrivacyPosture,
     ) -> Self {
         let Some(config) = config else {
             // A discovered model's rest outlives a restart here too.
@@ -174,6 +186,8 @@ impl ModelRuntime {
         };
         // V2-R3: the next vault lock's bound and the status read this.
         worker_host::snapshot_policy(&config.snapshots);
+        // I1 = C: whether published sessions prepare their next turn's tail.
+        worker_host::prepare_policy(config.sessions);
         let mut status = ModelsStatus {
             // The process's supervisors for `[models.workers]` (FIX 8315).
             workers: worker_host::configure(&config.workers, &config.providers),
@@ -189,7 +203,16 @@ impl ModelRuntime {
         let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
         let responses = ResponsesContext::default();
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys, &identities, &responses) {
+            match build_provider(
+                name,
+                provider,
+                config,
+                site,
+                keys,
+                &identities,
+                &responses,
+                posture,
+            ) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -510,6 +533,7 @@ impl ModelRuntime {
         worker_host::refresh_devices(&mut status.devices);
         // V2-R3: sealed snapshot parking, counts and outcomes only.
         status.snapshots = worker_host::snapshot_status();
+        status.prepared_tails = worker_host::prepared_tail_status();
         status
     }
 }

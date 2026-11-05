@@ -54,34 +54,10 @@ impl Vault {
         }
         // The carried name alone does not prove this store is the CODE
         // anchor's: two vaults can serve different repos under one name,
-        // and the authority and publications below are the local store's.
-        // The anchor's stored local path names its own store
-        // (`bind_served_repo_anchor`), so anything else leaves the
-        // imported manifest as it stands.
-        {
-            let txn = self.store.env.read_txn()?;
-            let crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_CODE_ARTIFACT,
-                body,
-            } = crate::vault::live_entity_row_in_txn(&self.store, &txn, &code)?
-            else {
-                return Ok(());
-            };
-            let Some(crate::store::code_snapshot::RepoRef::LocalFolder { path, .. }) =
-                crate::code_artifact::decode_code_artifact_body(&body)
-                    .ok()
-                    .and_then(|artifact| {
-                        crate::store::code_snapshot::RepoRef::parse(&artifact.repo_ref).ok()
-                    })
-            else {
-                return Ok(());
-            };
-            let Ok(stored) = std::path::Path::new(&path).canonicalize() else {
-                return Ok(());
-            };
-            if stored != dir {
-                return Ok(());
-            }
+        // and the authority and publications below are the local store's,
+        // so anything else leaves the imported manifest as it stands.
+        if !self.code_serves_dir(code, &dir)? {
+            return Ok(());
         }
         // The writer standing is read here and the write lands below: an
         // authority change in between lets one stale-epoch write through,
@@ -145,12 +121,15 @@ impl Vault {
                 return Ok(false);
             }
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            current.version = super::REPO_MANIFEST_VERSION;
             current.visible_refs = refs;
             current.lfs_pointers = pointers;
             current.epoch = epoch;
             // A lamport tick: a refresh inside the held copy's millisecond
             // still replaces it under rule 7's (epoch, updated_at) order.
             current.updated_at = now.max(current.updated_at.saturating_add(1));
+            // The refs writer signs what it wrote (FIX 12765).
+            self.sign_repo_manifest_in_txn(txn, &mut current)?;
             MANIFESTS.put(&self.store, txn, &portable.0, &current)?;
             Ok(true)
         })?;
@@ -158,6 +137,54 @@ impl Vault {
             self.note_repo_manifest_written(code);
         }
         Ok(())
+    }
+
+    /// Whether CODE entity `code`'s stored local path names the served
+    /// store `dir` (`bind_served_repo_anchor`): only then are that store's
+    /// authority and publications the anchor's.
+    fn code_serves_dir(&self, code: EntityId, dir: &std::path::Path) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_CODE_ARTIFACT,
+            body,
+        } = crate::vault::live_entity_row_in_txn(&self.store, &txn, &code)?
+        else {
+            return Ok(false);
+        };
+        let Some(crate::store::code_snapshot::RepoRef::LocalFolder { path, .. }) =
+            crate::code_artifact::decode_code_artifact_body(&body)
+                .ok()
+                .and_then(|artifact| {
+                    crate::store::code_snapshot::RepoRef::parse(&artifact.repo_ref).ok()
+                })
+        else {
+            return Ok(false);
+        };
+        Ok(std::path::Path::new(&path)
+            .canonicalize()
+            .is_ok_and(|stored| stored == dir))
+    }
+
+    /// The authority key of the repo `manifest` names, where this host
+    /// serves that repo for its CODE anchor (FIX 12765): its origin
+    /// authority row, read in the transaction that would replace the
+    /// manifest, names the one refs writer a carried copy must come from
+    /// here. `None` where this host serves no such repo.
+    #[cfg(feature = "sync")]
+    pub(super) fn served_origin_repo_id(
+        &self,
+        manifest: &super::RepoManifest,
+    ) -> Result<Option<EntityId>> {
+        let Some(name) = manifest.origin_name.as_deref() else {
+            return Ok(None);
+        };
+        let Ok(dir) = crate::origin::smart_http::origin_repo_dir(self, name) else {
+            return Ok(None);
+        };
+        if !dir.exists() || !self.code_serves_dir(manifest.code, &dir)? {
+            return Ok(None);
+        }
+        self.served_repo_id(&dir).map(Some)
     }
 
     /// Refreshes each standing manifest that names served repo

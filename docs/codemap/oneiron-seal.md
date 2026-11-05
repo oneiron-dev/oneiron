@@ -33,16 +33,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
 | `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
-| `src/native/pdf/mod.rs` | src | s | 9 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
+| `src/native/pdf/mod.rs` | src | s | 15 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 16 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
 | `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared PDF revision discovery from the actual xref /Prev chain |
 | `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/pdf/walk.rs` | src | s | 7 crate-vis | — | Reference chains and the page tree, followed whole (Rule 5) |
+| `src/native/pdf/work.rs` | src | s | 5 crate-vis | — | Shared types for the ported prepare/inspect PDF pipeline (FIX 7980/8157) |
+| `src/native/pdf/work_burn.rs` | src | L | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
+| `src/native/pdf/work_evidence.rs` | src | m | 4 crate-vis | — | Ported certificate/complete-trail PDF appendices (FIX 7980/8157) |
+| `src/native/pdf/work_preflight.rs` | src | L | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
+| `src/native/pdf/work_prepare.rs` | src | m | 4 crate-vis | — | Ported esign PDF preparation orchestration (FIX 7980/8157) |
+| `src/native/pdf/work_present.rs` | src | m | 10 crate-vis | — | Ported page geometry, field marks, and Win1252 text encoding (FIX 7980/8157) |
+| `src/native/pdf/work_source.rs` | src | L | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_streams.rs` | src | s | 3 crate-vis | — | — |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
-| `src/native/profile/material.rs` | src | s | 4 crate-vis | — | B-LT validation material: working CRLs first, then OCSP for uncovered certificates |
+| `src/native/profile/material.rs` | src | m | 4 crate-vis | — | B-LT validation material: working CRLs first, then OCSP for uncovered certificates |
 | `src/native/profile/material/ocsp.rs` | src | s | 1 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
 | `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
@@ -65,7 +73,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_sig_shapes.rs` | src | m | — | — | Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch… |
 | `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
-| `src/organ.rs` | src | m | 1 struct · 8 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ… |
+| `src/organ.rs` | src | L | 1 struct · 12 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run… |
 | `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
 | `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |

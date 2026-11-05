@@ -5,7 +5,6 @@ mod fold;
 
 use std::collections::BTreeMap;
 
-use oneiron::dreamer_runner::maintenance::representation::PrematerializedDraft;
 use oneiron::dreamer_runner::maintenance::stewardship::{
     StewardshipDraftOutcome, StewardshipDraftRequest,
 };
@@ -15,7 +14,7 @@ use oneiron::{
 };
 
 use super::Drafter;
-use super::sources::DraftSources;
+use super::sources::{DraftSources, SourcedDraft};
 use crate::models::ModelRuntime;
 use oneiron::dreamer_runner::maintenance::representation::DestinationContext;
 
@@ -151,12 +150,15 @@ async fn draft_one(
     draft: &StewardshipDraftRequest,
 ) -> Result<StewardshipDraftOutcome, DraftFailure> {
     let generated = generate_draft(vault, runtime, drafter, draft, &[]).await?;
+    let GeneratedDraft {
+        text,
+        served,
+        snapshot,
+    } = generated;
     vault
         .schedule_stewardship_draft(
-            &generated.served,
-            &mut PrematerializedDraft {
-                text: generated.text,
-            },
+            &served,
+            &mut SourcedDraft::new(text, snapshot.context),
             now(),
         )
         .map_err(at(DraftStage::Schedule))

@@ -272,12 +272,20 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
     if call.header.shape.streams() {
         // The reply is checked as it streams, so the key is wiped only after
         // its last chunk.
-        let checked = call.header.check(&call.body);
+        let checked = if call.header.shape == crate::Shape::OpenAiResponses {
+            match call.whole.as_ref() {
+                Some(whole) => call.header.check_responses(&call.body, whole),
+                None => Err(crate::Refusal::Frame),
+            }
+        } else {
+            call.header.check(&call.body)
+        };
         sender
             .stream(
                 &call.header,
                 checked,
                 call.body,
+                call.whole,
                 &call.secret,
                 &mut stream,
                 deadline,

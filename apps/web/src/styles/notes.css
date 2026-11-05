@@ -1,0 +1,160 @@
+/* ── notes · office docs (the app-docs mock, rebuilt to §3c + the 08-18
+   rulings). ONE sheet, two columns: the tinted LIST (the only zone) and
+   the DOCUMENT, which is the main read AND the place you write (ruling
+   4: editable by default, no edit button). It must feel like writing on
+   paper: generous measure, no toolbar rows, no doc-app chrome. The
+   rhythm follows briefs.css, the sibling index-plus-document page. ── */
+main.pane.notes-pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+
+/* ── the list column · a tinted zone divides, not a line ── */
+.notes-pane .notes-list {
+  width: 280px; flex: none;
+  background: var(--bg-well);
+  padding: var(--pane-pad-y) 12px 32px 14px;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.notes-pane .notes-filter {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-elevated); border: 0; border-radius: 6px;
+  padding: 6px 10px; width: 100%; min-width: 0;
+  margin-bottom: 14px;
+}
+.notes-pane .notes-filter::placeholder { color: var(--silver-4); }
+.notes-pane .notes-filter:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+
+.notes-pane .ngroup { display: flex; flex-direction: column; gap: 1px; }
+.notes-pane .ngroup + .ngroup { margin-top: 16px; }   /* dividers are SPACE */
+.notes-pane .ngroup > .label { padding: 0 8px 6px; }
+/* one-line rows · title serif · by (seal for humans, name-in-ink for
+   agents) · updated is hover-tier and keeps its space (no shift) */
+.notes-pane .nrow {
+  display: flex; align-items: baseline; gap: 8px;
+  width: 100%; text-align: left;
+  padding: 6px 8px; border-radius: 5px;
+  transition: background 160ms ease;
+}
+.notes-pane .nrow:hover, .notes-pane .nrow:focus-visible { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.notes-pane .nrow.sel { background: var(--bg-elevated); }   /* the 5px highlight = the sheet's own tone */
+.notes-pane .nrow .ntitle {
+  font-family: var(--serif); font-size: 14px; line-height: 1.35; color: var(--silver-2);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notes-pane .nrow:hover .ntitle, .notes-pane .nrow.sel .ntitle { color: var(--silver-1); }
+.notes-pane .nrow .seal { align-self: center; }
+.notes-pane .nrow .aname { font-family: var(--mono); font-size: 11px; font-weight: 400; }
+.notes-pane .nrow .when {
+  font-family: var(--mono); font-size: 10.5px; color: var(--silver-4);
+  width: 40px; flex: none; text-align: right; font-feature-settings: "tnum" 1;
+  opacity: 0; transition: opacity 160ms ease;
+}
+.notes-pane .nrow:hover .when, .notes-pane .nrow:focus-visible .when, .notes-pane .nrow.sel .when { opacity: 1; }
+.notes-pane .nfoot { padding: 14px 8px 0; }
+.notes-pane .nnone { font-family: var(--serif); font-size: 13px; color: var(--silver-3); padding: 4px 8px; }
+
+/* the empty list (rule 40): the flock, one line, one door */
+.notes-pane .notes-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 6px 6px 0; }
+.notes-pane .notes-empty .spot { width: 150px; height: auto; margin-left: -6px; }
+.notes-pane .notes-empty .lead { font-family: var(--serif); font-size: 14px; line-height: 1.5; color: var(--silver-2); }
+
+/* ── the document · writing on paper ── */
+.notes-pane .pane-body {
+  --gutter: 96px;   /* the left margin where a block's provenance rests */
+  flex: 1; min-width: 0;
+  overflow-y: auto;
+  padding: var(--pane-pad-y) calc(var(--pane-pad-x) * 2) 48px calc(var(--pane-pad-x) + var(--gutter));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.notes-pane .doc {
+  display: flex; flex-direction: column; gap: 8px; max-width: 68ch;
+  animation: doc-in 200ms ease-out;
+}
+@keyframes doc-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.notes-pane .doc .pane-head { align-items: flex-start; }
+.notes-pane .doc .pane-head h2 {
+  font-family: var(--serif); font-size: 22px; font-weight: 550;
+  color: var(--silver-1); letter-spacing: -0.01em;
+  line-height: 1.3; outline: none; caret-color: var(--safelight);
+  flex: 1; min-width: 4ch;
+}
+.notes-pane .doc .pane-head .pane-tools { padding-top: 6px; align-items: center; }
+.notes-pane .doc .pane-head .pane-tools .act { padding: 0; }
+/* the share icon: an icon act, the house line, hover in red */
+.notes-pane .icon-act {
+  display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center;
+  color: var(--silver-3); transition: color 160ms ease;
+}
+.notes-pane .icon-act:hover, .notes-pane .icon-act:focus-visible { color: var(--safelight); }
+.notes-pane .share-done { font-size: 10.5px; }
+/* the byline is one mono data line: who wrote it, when it last moved,
+   how long the read is. the name in ink IS the mark; no dot beside it */
+.notes-pane .doc-by {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--silver-3);
+  font-feature-settings: "tnum" 1;
+}
+.notes-pane .doc-by .aname { font-size: 11.5px; cursor: default; }
+.notes-pane .doc-by .sep { color: var(--silver-4); }
+.notes-pane .doc .dial-why { padding: 2px 0 4px; }
+
+/* the trail: a fold under the head, mono when · who · what changed */
+.notes-pane .trail-fold { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 6px; }
+.notes-pane .trail-fold[hidden] { display: none; }
+.notes-pane .trow {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px; color: var(--silver-3); font-feature-settings: "tnum" 1;
+}
+.notes-pane .trow .twhen { width: 96px; flex: none; color: var(--silver-4); }
+.notes-pane .trow .aname { font-family: var(--mono); font-size: 11px; font-weight: 500; }
+.notes-pane .trow .twhat { color: var(--silver-2); }
+
+/* ── the block stack ── */
+.notes-pane .doc-body {
+  font-family: var(--serif); font-size: 15.5px; line-height: 1.65; color: var(--silver-2);
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 10px;
+}
+.notes-pane .doc-body ul { padding-left: 1.3em; display: flex; flex-direction: column; gap: 5px; list-style: disc; }
+.notes-pane .doc-body li::marker { color: var(--silver-4); }
+.notes-pane .blk { position: relative; display: flex; align-items: baseline; gap: 10px; }
+.notes-pane .blk .btext { flex: 1; min-width: 0; outline: none; caret-color: var(--safelight); min-height: 1.65em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes-pane .blk.k-h3 { margin-top: 8px; }
+.notes-pane .blk.k-h3 .btext { font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.notes-pane .blk.k-li { display: list-item; }   /* the marker stays with the item */
+.notes-pane .blk.k-li .btext { display: inline; }
+/* provenance rests in the left gutter, hidden until the hand or the caret
+   arrives: who wrote it, then who last touched it */
+.notes-pane .prov {
+  position: absolute; right: calc(100% + 18px); top: 0.25em;
+  width: calc(var(--gutter) - 22px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  opacity: 0; transition: opacity 160ms ease;
+  user-select: none;   /* the gutter takes the hover, so the full stamp reads */
+}
+.notes-pane .blk.k-li .prov { right: calc(100% + 18px + 1.3em); }
+.notes-pane .blk:hover .prov, .notes-pane .blk:focus-within .prov { opacity: 1; }
+.notes-pane .prov .pline { display: flex; align-items: center; gap: 5px; }
+.notes-pane .prov .pverb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); }
+.notes-pane .prov .aname { font-family: var(--mono); font-size: 10.5px; font-weight: 500; }
+.notes-pane .prov .seal { transform: scale(0.9); }
+/* an agent's touch you have not read wears the agent's ink; `read` settles it */
+.notes-pane .blk.unread .btext { color: var(--p-ink, var(--silver-2)); transition: color 240ms ease-out; }
+.notes-pane .read-act { padding: 0; font-size: 11px; flex: none; align-self: baseline; }
+.notes-pane .blk.k-li .read-act { display: inline; margin-left: 8px; }
+/* the claim citation: the sentence is backed; the phrase carries the
+   claim's confidence as its ink, dotted at rest, red under the hand */
+.notes-pane .cite {
+  text-decoration: underline dotted; text-decoration-color: var(--silver-4);
+  text-decoration-thickness: 1px; text-underline-offset: 3px;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+.notes-pane .cite:hover, .notes-pane .cite:focus-visible { color: var(--silver-1); text-decoration-color: var(--safelight); }
+.notes-pane .doc-body ::selection { background: color-mix(in srgb, var(--safelight) 22%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-pane .doc { animation: none; }
+  .notes-pane .prov, .notes-pane .nrow, .notes-pane .blk.unread .btext { transition: none; }
+}

@@ -136,7 +136,7 @@ impl Vault {
                         }),
                     )),
                     AgentGrantChange::Mint { .. } => None,
-                    AgentGrantChange::Revoke => Some((record.grant, None)),
+                    AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
                 AuthorityOp::SlipGrantRevoke { grant_ref } => Some((*grant_ref, None)),
                 _ => None,

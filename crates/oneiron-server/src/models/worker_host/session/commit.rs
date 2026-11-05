@@ -22,15 +22,18 @@ use serde_json::{Value as JsonValue, json};
 use super::lifecycle::{self, Admitted};
 use super::park;
 use super::policy::{self, SuffixPlan};
+use super::prepare;
 use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
-use super::{AuthorityVerdict, CheckpointAuthority, ReplyCommit};
+use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit};
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
-/// successor and advances it on a task of its own.
+/// successor and advances it on a task of its own; once it is published,
+/// the next turn's tail `source` knows is prepared beside it (I1 = C).
 pub(super) fn reply_committed(
     manifest: &SegmentManifest,
     commit: ReplyCommit,
     authority: Arc<dyn CheckpointAuthority>,
+    source: Option<Arc<dyn NextTurnSource>>,
 ) {
     // A vault a lock closed advances nothing: its sessions are going.
     if manifest
@@ -43,7 +46,7 @@ pub(super) fn reply_committed(
         return;
     };
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        runtime.spawn(advance(claimed, commit, authority));
+        runtime.spawn(advance(claimed, commit, authority, source));
     }
 }
 
@@ -159,7 +162,12 @@ fn successor(pending: PendingTurn, text: &str) -> JsonValue {
     conversation
 }
 
-async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn CheckpointAuthority>) {
+async fn advance(
+    claimed: Claimed,
+    commit: ReplyCommit,
+    authority: Arc<dyn CheckpointAuthority>,
+    source: Option<Arc<dyn NextTurnSource>>,
+) {
     let Claimed {
         worker_id,
         place,
@@ -276,6 +284,9 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
     // The successor is kept only where its session is still registered
     // under the admission the claim read; otherwise its handle is released.
     let candidate = basis.is_some();
+    // What the next turn's prepared tail extends (I1 = C).
+    let next = published.checkpoint.clone().zip(source);
+    let (next_target, next_generation) = (target.clone(), published.generation);
     let unkept = {
         let mut workers = registry::lock();
         let admits = lifecycle::admission(&vault) == Some(admitted);
@@ -306,10 +317,23 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
             None => Some(worker.owe(vault, target, published.residency)),
         }
     };
+    let kept = unkept.is_none();
     match unkept {
         Some((target, at)) => registry::release_later(target, at, SessionInvalidation::Evicted),
         None if candidate => park::wake(),
         None => {}
+    }
+    if kept && let Some((checkpoint, source)) = next {
+        prepare::after_publish(prepare::Published {
+            worker_id,
+            place,
+            binding,
+            target: next_target,
+            generation: next_generation,
+            checkpoint,
+            conversation,
+            source,
+        });
     }
 }
 

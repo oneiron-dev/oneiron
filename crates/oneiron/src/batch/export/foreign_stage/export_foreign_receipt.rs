@@ -90,8 +90,8 @@ pub struct VaultImportStageReceipt {
     pub receipt_id: [u8; 32],
     pub manifest_digest: [u8; 32],
     pub remote_update_digest: [u8; 32],
-    /// BLAKE3 of the ordered per-window admitted-update carrier, including
-    /// every destination key and its exact update bytes.
+    /// BLAKE3 of the ordered per-window admitted-content carrier, including
+    /// every destination key, its exact update bytes and admitted born-with text.
     pub admitted_update_digest: Option<[u8; 32]>,
     pub window_key: String,
     pub source: ForeignVaultImportSource,

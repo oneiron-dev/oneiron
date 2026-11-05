@@ -23,6 +23,7 @@ import type {
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
+  NativeLimitQuestion,
   QueryAffect,
   RecallMedia,
   RecallScope,
@@ -451,6 +452,7 @@ vaultOffRecordWitness(input: unknown): unknown
 vaultOffRecordDiscard(input: unknown): unknown
 vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
+vaultOffRecordArtifactsSave(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 selfOffRecordResultsList(input: unknown): unknown
@@ -1228,6 +1230,21 @@ vaultCustodyMembersDrainBegin(input: unknown): unknown
 vaultCustodyMembersDrainCommit(input: unknown): unknown
 vaultCustodyMembersDrainFolder(input: unknown): unknown
 vaultCustodyMembersReenrol(input: unknown): unknown
+vaultMailPackInstall(input: unknown): unknown
+vaultMailSourcesConnect(input: unknown): unknown
+vaultMailSourcesList(input: unknown): unknown
+vaultMailSourcesSettingsSet(input: unknown): unknown
+vaultMailSourcesMembersSet(input: unknown): unknown
+vaultMailSourcesAudienceEvents(input: unknown): unknown
+vaultMailThreadsShare(input: unknown): unknown
+vaultMailThreadsUnshare(input: unknown): unknown
+vaultMailComplianceSetting(input: unknown): unknown
+vaultMailComplianceSet(input: unknown): unknown
+vaultMailComplianceLog(input: unknown): unknown
+vaultMailSourcesSyncStatus(input: unknown): unknown
+vaultMailInbox(input: unknown): unknown
+vaultMailThreadsRead(input: unknown): unknown
+vaultMailComplianceSearch(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
@@ -1275,6 +1292,8 @@ selfFocusUnsubscribe(input: unknown): unknown
   lastReceiptRef(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
+  /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */
+  nativeLimitQuestions(): NativeLimitQuestion[] | null
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown

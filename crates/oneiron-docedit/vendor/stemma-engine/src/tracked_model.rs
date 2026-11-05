@@ -9720,8 +9720,27 @@ struct MoveDestinationDeletionPlan {
 /// away with the clone. Represent both transitions before the ordinary status
 /// projector sees the inner deletion in isolation.
 fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinationDeletionPlan> {
+    fn is_move_half(block: &TrackedBlock, identity: u32, inserted: bool) -> bool {
+        let matches = |status: &TrackingStatus| match status {
+            TrackingStatus::Inserted(revision) => inserted && revision.identity == identity,
+            TrackingStatus::Deleted(revision) => !inserted && revision.identity == identity,
+            TrackingStatus::InsertedThenDeleted(stacked) => {
+                let revision = if inserted {
+                    &stacked.inserted
+                } else {
+                    &stacked.deleted
+                };
+                revision.identity == identity
+            }
+            _ => false,
+        };
+        matches(&block.status)
+            || matches!(&block.block, BlockNode::Paragraph(paragraph)
+                if paragraph.para_mark_status.as_ref().is_some_and(matches))
+    }
+
     let mut plans = Vec::new();
-    for tracked in blocks {
+    for (destination_index, tracked) in blocks.iter().enumerate() {
         if tracked.move_id.is_none() {
             continue;
         }
@@ -9743,18 +9762,31 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
                 _ => None,
             })
             .collect();
-        let source_id = blocks.iter().find_map(|candidate| {
-            if candidate.move_id != tracked.move_id {
-                return None;
-            }
-            let BlockNode::Paragraph(source) = &candidate.block else {
-                return None;
-            };
-            matches!(&source.para_mark_status,
-                Some(TrackingStatus::Deleted(revision))
-                    if revision.identity == move_revision.identity)
-            .then(|| block_id(&candidate.block).clone())
-        });
+        // A move range keeps the relative order of its source and destination
+        // blocks. Count every sibling, not just paragraphs with inner deletions.
+        let position = blocks[..destination_index]
+            .iter()
+            .filter(|candidate| {
+                candidate.move_id == tracked.move_id
+                    && is_move_half(candidate, move_revision.identity, true)
+            })
+            .count();
+        let source_id = blocks
+            .iter()
+            .filter(|candidate| {
+                candidate.move_id == tracked.move_id
+                    && is_move_half(candidate, move_revision.identity, false)
+            })
+            .nth(position)
+            .and_then(|candidate| {
+                let BlockNode::Paragraph(source) = &candidate.block else {
+                    return None;
+                };
+                matches!(&source.para_mark_status,
+                    Some(TrackingStatus::Deleted(revision))
+                        if revision.identity == move_revision.identity)
+                .then(|| block_id(&candidate.block).clone())
+            });
         if !deletions.is_empty()
             && let Some(source_id) = source_id
         {
@@ -9883,6 +9915,13 @@ fn overlay_unique_text_status(
     for segment in std::mem::take(&mut paragraph.segments) {
         for inline in segment.inlines {
             let InlineNode::Text(text) = inline else {
+                // Match the placeholder widths used by extract_inlines_text.
+                if matches!(
+                    inline,
+                    InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)
+                ) {
+                    cursor += 1;
+                }
                 push(&mut rebuilt, inline, segment.status.clone());
                 continue;
             };
