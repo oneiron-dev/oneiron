@@ -131,7 +131,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let call = RoleCall {
                 backend: &backend,
                 model: role.model,
-                inference: role.inference.clone(),
+                inference: role.inference,
                 sourced: None,
             };
             let shell = LlmRequest {
