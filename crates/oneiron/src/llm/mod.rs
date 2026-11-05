@@ -103,6 +103,7 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+pub use oneiron_model::llm::{TokenScore, first_token_alternatives};
 // FIX 6567: the cache evidence a backend reports on a physical call.
 pub use oneiron_model::llm::{
     CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
