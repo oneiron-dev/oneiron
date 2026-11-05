@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4581 declarations.
-// Replies: 1113 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1300 code-mode rows (1260 host rows, 40 run rows), 4589 declarations.
+// Replies: 1114 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -2158,7 +2158,7 @@ declare namespace Sdk {
   type PolicySource = "user_stated" | "observed" | "inferred" | "generated" | "imported" | "tool_output";
   type SensitivityName = "public" | "private" | "internal" | "sensitive" | "restricted";
   type SensitivityBand = number | SensitivityName;
-  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean };
+  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; auto_checker?: string | null; receipted?: boolean; warned?: boolean };
   type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand;
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
@@ -2426,7 +2426,7 @@ declare namespace Sdk {
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[]; claim: RecordRef };
   type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
   type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
-  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "file"; char_start: number; char_end: number };
   type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
   type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
   type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
@@ -2750,7 +2750,7 @@ declare namespace Sdk {
   type QueueReviewPolicySetRequest = { policy?: QueueReviewPolicyInput | null };
   type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string; checkout: string; epoch: number; ref_name: string; expected_old_oid?: string | null; endpoint: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
-  type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
+  type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string; notices?: WorldRecipientNotice[] };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
   type AgentMcpInput = { key: string; min_version?: string | null };
   type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
@@ -2953,7 +2953,7 @@ declare namespace Sdk {
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null };
   type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null };
-  type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
+  type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[]; next_sheet_row?: number | null };
   type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
   type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null; project_ref?: string | null };
@@ -3504,7 +3504,7 @@ declare namespace Sdk {
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
   type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[]; next_sheet_row?: number | null };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
@@ -3855,6 +3855,12 @@ declare namespace Sdk {
   type EsignSigningImageView = { image_ref: string };
   type EsignSigningSignatureRequest = { token: string; image_ref: string };
   type EsignSigningSignatureView = { image_ref: string; image_base64: string };
+  type EsignSigningPreviewRequest = { token: string; item: number };
+  type PageGeometry = { crop: number[]; rotation: number; user_unit: number };
+  type PdfFieldRect = { x: number; y: number; width: number; height: number };
+  type FieldMark = { kind: "text"; value: string; x: number; y: number; size: number } | { kind: "rectangle"; x: number; y: number; width: number; height: number } | { kind: "line"; x1: number; y1: number; x2: number; y2: number } | { kind: "signature"; image_ref: string; rect: PdfFieldRect };
+  type FieldLayout = { presentation: FieldPresentation; rect: PdfFieldRect; marks: FieldMark[] };
+  type EsignSigningPreviewView = { pages: PageGeometry[]; fields: FieldLayout[] };
   type EsignSealGetRequest = { document_ref: string };
   type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
   type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string; profile: SealProfileEvidence };
@@ -3990,15 +3996,17 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
+  type OfficeRecalcFailure = { code: string; detail: string };
   type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_failure?: OfficeRecalcFailure | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
+  type XlsxCellRecalc = "cached_after_failure";
+  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null; recalc?: XlsxCellRecalc | null };
   type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility; rows?: XlsxLines[]; columns?: XlsxLines[] };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
-  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
+  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null; recalc_failure?: OfficeRecalcFailure | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
   type SeriesField = "name" | "values" | "family" | "plot" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence";
@@ -6168,6 +6176,8 @@ declare const vault: Sdk.VaultHost & {
       image(input: Sdk.EsignSigningImageRequest): Promise<Sdk.EsignSigningImageView | StoredResult>;
       /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
       pdf(input: Sdk.EsignSigningPdfRequest): Promise<Sdk.EsignSigningPdfView | StoredResult>;
+      /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
+      preview(input: Sdk.EsignSigningPreviewRequest): Promise<Sdk.EsignSigningPreviewView | StoredResult>;
       /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
       signature(input: Sdk.EsignSigningSignatureRequest): Promise<Sdk.EsignSigningSignatureView | StoredResult>;
     };

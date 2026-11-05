@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1248 facade rows, 4524 declarations.
-Inputs: 1179 of 1248 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1083 of 1248 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1249 facade rows, 4532 declarations.
+Inputs: 1180 of 1249 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1084 of 1249 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -10733,6 +10733,7 @@ class SourceTrustRow(TypedDict):
     actor_ref: NotRequired[str | None]
     max_auto_sensitivity: NotRequired[SensitivityBand | None]
     auto: NotRequired[bool | None]
+    auto_checker: NotRequired[str | None]
     receipted: NotRequired[bool]
     warned: NotRequired[bool]
 SourceTrust = SourceTrustRow | list[SourceTrustRow] | bool | SensitivityBand
@@ -11935,7 +11936,11 @@ class AnnotationLocatorHtml(TypedDict):
     part_id: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml
+class AnnotationLocatorFile(TypedDict):
+    format: Literal["file"]
+    char_start: int
+    char_end: int
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorFile
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -13603,6 +13608,7 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+    notices: NotRequired[list[WorldRecipientNotice]]
 class AgentSkillInput(TypedDict):
     skill_id: str
     min_version: NotRequired[str | None]
@@ -14686,6 +14692,7 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+    next_sheet_row: NotRequired[int | None]
 class ArtifactAdmitSubmit(TypedDict):
     ask: ArtifactAskSubmit
     decisions: list[TypedDecision]
@@ -17799,6 +17806,7 @@ class ArtifactAskRecord(TypedDict):
     parent_proposal_ref: NotRequired[str | None]
     details_omitted: NotRequired[bool]
     units: NotRequired[list[ArtifactUnitReceipt]]
+    next_sheet_row: NotRequired[int | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
@@ -19105,6 +19113,48 @@ class EsignSigningSignatureRequest(TypedDict):
 class EsignSigningSignatureView(TypedDict):
     image_ref: str
     image_base64: str
+class EsignSigningPreviewRequest(TypedDict):
+    token: str
+    item: int
+class PageGeometry(TypedDict):
+    crop: list[float]
+    rotation: int
+    user_unit: float
+class PdfFieldRect(TypedDict):
+    x: float
+    y: float
+    width: float
+    height: float
+class FieldMarkText(TypedDict):
+    kind: Literal["text"]
+    value: str
+    x: float
+    y: float
+    size: float
+class FieldMarkRectangle(TypedDict):
+    kind: Literal["rectangle"]
+    x: float
+    y: float
+    width: float
+    height: float
+class FieldMarkLine(TypedDict):
+    kind: Literal["line"]
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+class FieldMarkSignature(TypedDict):
+    kind: Literal["signature"]
+    image_ref: str
+    rect: PdfFieldRect
+FieldMark = FieldMarkText | FieldMarkRectangle | FieldMarkLine | FieldMarkSignature
+class FieldLayout(TypedDict):
+    presentation: FieldPresentation
+    rect: PdfFieldRect
+    marks: list[FieldMark]
+class EsignSigningPreviewView(TypedDict):
+    pages: list[PageGeometry]
+    fields: list[FieldLayout]
 class EsignSealGetRequest(TypedDict):
     document_ref: str
 class EsignSealAttemptView(TypedDict):
@@ -20134,6 +20184,9 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class OfficeRecalcFailure(TypedDict):
+    code: str
+    detail: str
 class OfficeRecalcZone(TypedDict):
     utc_offset_minutes: int
     iana_timezone: NotRequired[str | None]
@@ -20149,6 +20202,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
     recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
@@ -20158,6 +20212,7 @@ class OfficeBodyPreviewRequest(TypedDict):
     artifact_ref: str
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+XlsxCellRecalc = Literal["cached_after_failure"]
 class XlsxCell(TypedDict):
     col: int
     row: int
@@ -20165,6 +20220,7 @@ class XlsxCell(TypedDict):
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
     locked: NotRequired[XlsxLock | None]
+    recalc: NotRequired[XlsxCellRecalc | None]
 class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
@@ -20188,6 +20244,7 @@ class XlsxPreview(TypedDict):
     frontier: list[int]
     book: XlsxBook
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
 class NodeMove(TypedDict):
     node: NodeId
     old_parent: NotRequired[NodeId | None]

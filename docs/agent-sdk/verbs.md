@@ -1052,6 +1052,7 @@ both bindings and their export-census tests in one change.
 - `vault.esign.signing.pdf`
 - `vault.esign.signing.image`
 - `vault.esign.signing.signature`
+- `vault.esign.signing.preview`
 - `vault.esign.seal.get`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`

@@ -9556,6 +9556,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_esign_signing_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.signing.preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.signing.preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_esign_seal_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.esign.seal.get")?;
         let output = py
