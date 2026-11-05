@@ -54,7 +54,8 @@ pub use self::projector::{
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub(crate) use self::provenance::{
-    skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
+    skill_reliability_prior_rows, skill_reliability_prior_sourced, skill_reliability_sources,
+    skill_reliability_with_sources,
 };
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
