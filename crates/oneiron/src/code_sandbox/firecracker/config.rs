@@ -5,6 +5,7 @@ use crate::Result;
 use crate::code_sandbox::microvm::GuestImage;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -48,10 +49,26 @@ pub struct FirecrackerHostConfig {
     pub vcpus: u8,
     /// V2 hierarchy parent, e.g. `oneiron`. Controllers must be provisioned.
     pub cgroup_parent: String,
+    /// The host's artifact pins for a raw, non-OCI boot.
     pub pins: GuestArtifactPins,
+    /// Per-image pins for OCI boots, keyed by the exact selected reference.
+    pub oci_pins: BTreeMap<String, GuestArtifactPins>,
 }
 
 impl FirecrackerHostConfig {
+    /// One launch's immutable profile, including the selected image's pins.
+    #[cfg(target_os = "linux")]
+    pub(super) fn for_oci_image(&self, image: &str) -> Result<Self> {
+        Ok(Self {
+            pins: self
+                .oci_pins
+                .get(image)
+                .ok_or_else(|| refused("OCI digest has no pinned microVM rootfs"))?
+                .clone(),
+            ..self.clone()
+        })
+    }
+
     pub(super) fn validate(&self) -> Result<()> {
         if !cfg!(target_os = "linux") {
             return Err(refused("Firecracker requires Linux"));

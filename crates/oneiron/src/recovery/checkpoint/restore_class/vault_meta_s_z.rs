@@ -41,6 +41,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
     (&t::SECRET_HANDLE_LABEL, LIVE),
+    (&t::SECRET_HANDLE_PURPOSE, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
@@ -371,6 +372,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WEB_CONNECTOR_SETTING, CONTENT),
     (&t::WEB_CONNECTOR_USAGE, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT_FENCE, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),

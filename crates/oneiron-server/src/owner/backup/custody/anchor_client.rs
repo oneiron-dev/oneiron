@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use super::CustodyAnchorCredentials;
 use super::anchor_transport::AnchorPath;
 use crate::owner::vault_key::hex;
+use oneiron_vault_contract::BINDING_HEADER;
 
 const ROUTE: &str = "/v1/owner/custody-anchor";
 /// How long one call to the door may take before the pass leaves the
@@ -97,7 +98,7 @@ fn credentialed(
     };
     let binding = crate::commands::api::signed_binding_with_seed(credentials.bearer(), seed)
         .map_err(|_| failed("credential's binding seed does not sign its slip"))?;
-    Ok(request.header("x-oneiron-binding", binding))
+    Ok(request.header(BINDING_HEADER, binding))
 }
 
 impl HttpAnchor {
