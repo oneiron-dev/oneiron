@@ -8,6 +8,7 @@ use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, stri
 use crate::channel_identity_provider::EmailThreadHeaders;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
+use crate::outbound_intent_ledger::DeliveryReadBack;
 use crate::{EntityId, Result};
 
 pub const NATIVE_MAIL_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -101,46 +102,49 @@ impl<'a> StalwartSendSink<'a> {
     }
 }
 
+impl StalwartSendSink<'_> {
+    /// The mailbox and Message-ID the frozen send `request` drafts under,
+    /// after checking it is this sink's own message from its own identity.
+    fn prepared(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> Result<(StalwartMailbox, String)> {
+        let content_ref = self.message.content_ref()?;
+        if request.intent.channel != "email"
+            || request.intent.verb != "send"
+            || request.intent.content_ref.as_deref() != Some(content_ref.as_str())
+            || request.intent.target != self.message.to
+            || request.calendar_invite.is_some()
+        {
+            return Err(invalid(
+                "native mail message differs from the frozen send or uses unsupported fields",
+            ));
+        }
+        let identity = request
+            .channel_identity_ref
+            .ok_or_else(|| invalid("native mail send lacks an identity"))?;
+        if identity != self.sender {
+            return Err(invalid("native mail send names another identity"));
+        }
+        let mailbox = self.client.mailbox(identity, self.sender_address)?;
+        // Email's common contract correctly does not claim provider-native
+        // idempotency. This Message-ID is only a draft/reconciliation key;
+        // ambiguous sends still remain ambiguous in the ordinary ledger.
+        let key = request
+            .intent
+            .idempotency_key
+            .as_deref()
+            .unwrap_or(request.intent_ref);
+        if key.trim().is_empty() {
+            return Err(invalid("native mail send lacks a logical send reference"));
+        }
+        Ok((mailbox, self.client.message_id_for(key)))
+    }
+}
+
 impl OutboundExecutionSink for StalwartSendSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let prepare = || -> Result<(StalwartMailbox, String)> {
-            let content_ref = self.message.content_ref()?;
-            if request.intent.channel != "email"
-                || request.intent.verb != "send"
-                || request.intent.content_ref.as_deref() != Some(content_ref.as_str())
-                || request.intent.target != self.message.to
-                || request.calendar_invite.is_some()
-            {
-                return Err(invalid(
-                    "native mail message differs from the frozen send or uses unsupported fields",
-                ));
-            }
-            let identity = request
-                .channel_identity_ref
-                .ok_or_else(|| invalid("native mail send lacks an identity"))?;
-            if identity != self.sender {
-                return Err(invalid("native mail send names another identity"));
-            }
-            let mailbox = self.client.mailbox(identity, self.sender_address)?;
-            // Email's common contract correctly does not claim provider-native
-            // idempotency. This Message-ID is only a draft/reconciliation key;
-            // ambiguous sends still remain ambiguous in the ordinary ledger.
-            let key = request
-                .intent
-                .idempotency_key
-                .as_deref()
-                .unwrap_or(request.intent_ref);
-            if key.trim().is_empty() {
-                return Err(invalid("native mail send lacks a logical send reference"));
-            }
-            let message_id = format!(
-                "{}@{}",
-                blake3::hash(key.as_bytes()).to_hex(),
-                self.client.config.domain
-            );
-            Ok((mailbox, message_id))
-        };
-        let (mailbox, message_id) = match prepare() {
+        let (mailbox, message_id) = match self.prepared(request) {
             Ok(prepared) => prepared,
             Err(_) => return OutboundExecutionOutcome::failed("native_mail_fields_or_binding"),
         };
@@ -151,6 +155,15 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             &request.hygiene_headers,
             None,
         )
+    }
+
+    /// Reads back from the server the draft `request` would submit (FIX
+    /// 8814 follow-up), by its Message-ID.
+    fn read_back_delivery(&self, request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
+        match self.prepared(request) {
+            Ok((mailbox, message_id)) => self.client.read_back(&mailbox, &message_id),
+            Err(_) => DeliveryReadBack::Unknown,
+        }
     }
 }
 
@@ -177,12 +190,112 @@ impl StalwartClient {
             Ok(mailbox) => mailbox,
             Err(_) => return OutboundExecutionOutcome::failed("native_mail_fields_or_binding"),
         };
-        let message_id = format!(
-            "{}@{}",
-            blake3::hash(send_key.as_bytes()).to_hex(),
-            self.config.domain
-        );
+        let message_id = self.message_id_for(send_key);
         self.submit(&mailbox, message, &message_id, headers, answered)
+    }
+
+    /// The Message-ID a send whose logical reference is `key` drafts under
+    /// on this server: a retry, and a read-back, find the same draft.
+    fn message_id_for(&self, key: &str) -> String {
+        format!(
+            "{}@{}",
+            blake3::hash(key.as_bytes()).to_hex(),
+            self.config.domain
+        )
+    }
+
+    /// What the server's own record says became of the served send keyed
+    /// `send_key` from `identity`'s mailbox (FIX 8814 follow-up): the read-back
+    /// of [`Self::submit_served_text`]'s draft.
+    pub fn read_back_served(
+        &self,
+        identity: crate::EntityId,
+        address: &str,
+        send_key: &str,
+    ) -> DeliveryReadBack {
+        if send_key.trim().is_empty() {
+            return DeliveryReadBack::Unknown;
+        }
+        match self.mailbox(identity, address) {
+            Ok(mailbox) => self.read_back(&mailbox, &self.message_id_for(send_key)),
+            Err(_) => DeliveryReadBack::Unknown,
+        }
+    }
+
+    /// What the server's own record says became of the send whose draft
+    /// carries `message_id` in `mailbox` (FIX 8814 follow-up). A submission
+    /// of the draft, or a draft its submission moved to Sent (`$draft`
+    /// cleared), is a delivery; a draft still marked `$draft` in no
+    /// submission was never sent. No draft at all proves nothing (a sent
+    /// message can be deleted), nor does an ambiguous Message-ID or a failed
+    /// read: `Unknown`.
+    fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str) -> DeliveryReadBack {
+        self.read_back_checked(mailbox, message_id)
+            .unwrap_or(DeliveryReadBack::Unknown)
+    }
+
+    fn read_back_checked(
+        &self,
+        mailbox: &StalwartMailbox,
+        message_id: &str,
+    ) -> Result<DeliveryReadBack> {
+        let query = self.call(
+            "Email/query",
+            json!({
+                "accountId": &mailbox.account_id,
+                "filter": {"header": ["Message-ID", message_id]}, "limit": 2
+            }),
+        )?;
+        let email_id = match array(&query, "ids")?.as_slice() {
+            [id] => id
+                .as_str()
+                .ok_or_else(|| invalid("invalid JMAP email id"))?
+                .to_owned(),
+            _ => return Ok(DeliveryReadBack::Unknown),
+        };
+        let submissions = self.call(
+            "EmailSubmission/query",
+            json!({
+                "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}, "limit": 1
+            }),
+        )?;
+        if !array(&submissions, "ids")?.is_empty() {
+            return Ok(DeliveryReadBack::Delivered);
+        }
+        let emails = self.call(
+            "Email/get",
+            json!({
+                "accountId": &mailbox.account_id, "ids": [&email_id],
+                "properties": ["keywords", "mailboxIds"]
+            }),
+        )?;
+        let [email] = array(&emails, "list")?.as_slice() else {
+            return Ok(DeliveryReadBack::Unknown);
+        };
+        let boxes = self.mailboxes(mailbox)?;
+        let role_id = |role: &str| -> Option<String> {
+            boxes
+                .iter()
+                .find(|row| row.get("role").and_then(Value::as_str) == Some(role))
+                .and_then(|row| row.get("id").and_then(Value::as_str))
+                .map(str::to_owned)
+        };
+        let held_in = |role: &str| {
+            role_id(role).is_some_and(|id| {
+                email
+                    .pointer(&format!("/mailboxIds/{id}"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+        };
+        let draft = email.pointer("/keywords/$draft").and_then(Value::as_bool) == Some(true);
+        Ok(if draft && held_in("drafts") {
+            DeliveryReadBack::NotDelivered
+        } else if !draft && held_in("sent") {
+            DeliveryReadBack::Delivered
+        } else {
+            DeliveryReadBack::Unknown
+        })
     }
 
     fn submit(
