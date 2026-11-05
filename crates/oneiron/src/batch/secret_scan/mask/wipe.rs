@@ -76,6 +76,14 @@ impl PlanOps {
     pub(super) fn of(ops: &[BatchOp]) -> Self {
         Self(ops.to_vec())
     }
+
+    pub(super) fn from_owned(ops: Vec<BatchOp>) -> Self {
+        Self(ops)
+    }
+
+    pub(super) fn into_ops(mut self) -> Vec<BatchOp> {
+        std::mem::take(&mut self.0)
+    }
 }
 
 impl Deref for PlanOps {
