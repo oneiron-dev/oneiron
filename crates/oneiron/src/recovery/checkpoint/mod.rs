@@ -643,7 +643,11 @@ impl Vault {
         let erased = source.erased_ids();
         let expected = pad_objects::expected_of(&archive, &live.pad_objects);
         let (dropped_gate_decisions, erased_pads, credentials, landing) =
-            archive.store.activate_archived(&live, expected.as_ref())?;
+            archive.store.activate_archived(
+                &crate::secret_custody::CustodyWrite::of(&archive),
+                &live,
+                expected.as_ref(),
+            )?;
         let restored_at = archive.now_recorded_at();
         let pad_notes: Vec<_> = erased_pads.iter().map(PadRestoreNote::erased).collect();
         drop(archive);
