@@ -218,13 +218,38 @@ pub(crate) fn apply_actor_ops(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    apply_actor_ops_beside(
+        vault,
+        txn,
+        actor,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+        #[cfg(feature = "sync")]
+        None,
+    )
+}
+
+/// Carries selected transport data through the same actor-bound before and
+/// after checks. It supplies neither an actor nor native write permission.
+pub(super) fn apply_actor_ops_beside(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &WriteActor,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+) -> Result<()> {
     if !matches!(origin, BaseWriteOrigin::Ordinary) {
         return Err(Error::InvariantViolation(
             "actor content cannot be replay origin",
         ));
     }
     let effects = ContentWriteSet::before(vault, txn, actor, &ops)?;
-    apply_ops_with_origin(
+    apply_ops_with_authority_beside(
         &vault.store,
         &vault.config,
         &vault.analyzer,
@@ -233,6 +258,10 @@ pub(crate) fn apply_actor_ops(
         text_index_trusted,
         gate_mode,
         origin,
+        None,
+        None,
+        #[cfg(feature = "sync")]
+        record_document,
     )?;
     if let Some(effects) = effects {
         effects.after(vault, txn, actor)?;

@@ -149,6 +149,8 @@ pub(super) fn apply_claim_candidate(
                 posture: config.privacy.posture,
                 owner_authored,
                 pending_prompt: pending_prompt.as_deref(),
+                #[cfg(feature = "sync")]
+                record_document: None,
             },
         },
     )?;
