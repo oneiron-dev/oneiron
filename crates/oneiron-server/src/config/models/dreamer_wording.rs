@@ -24,12 +24,17 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
      objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
      confession never costs the score. Nothing follows the closing fence.";
 
+const DEFAULT_COACH_SESSION_DISTILL: &str =
+    include_str!("../../../prompts/coach-session-distill.md");
+
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DreamerWordingFile {
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    coach_session_distill_prompt: Option<String>,
+    coach_session_distill_prompt_file: Option<PathBuf>,
     commitment_reminder_prompt: Option<String>,
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
@@ -55,8 +60,16 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(default_reminder_instruction);
+        let coach_session_distill = super::levels::prompt_text(
+            "models.dreamer.wording.coach_session_distill_prompt",
+            self.coach_session_distill_prompt,
+            self.coach_session_distill_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_SESSION_DISTILL.to_owned());
         Ok(DreamerWording {
             confession,
+            coach_session_distill,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
         })
@@ -67,6 +80,7 @@ impl DreamerWordingFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerWording {
     confession: String,
+    coach_session_distill: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
 }
@@ -77,6 +91,12 @@ impl DreamerWording {
     #[must_use]
     pub fn confession(&self) -> &str {
         &self.confession
+    }
+
+    /// The Coach's system instruction for distilling an ended sitting.
+    #[must_use]
+    pub fn coach_session_distill(&self) -> &str {
+        &self.coach_session_distill
     }
 
     /// The instruction used to word commitment reminders, not to send them.
@@ -97,6 +117,7 @@ impl Default for DreamerWording {
     fn default() -> Self {
         Self {
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            coach_session_distill: DEFAULT_COACH_SESSION_DISTILL.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
         }
