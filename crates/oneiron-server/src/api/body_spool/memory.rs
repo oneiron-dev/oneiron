@@ -25,10 +25,10 @@ impl BodySpool {
         })
     }
 
-    /// Admits the sealed object's reader, base64 text and decoded output
-    /// together, before any buffer allocates or holds a partial lease.
+    /// Admits the sealed object's source reader, head writer, base64 text
+    /// and decoded output before any buffer allocates or holds a partial lease.
     pub(in crate::api) fn admit_sealed_decode_buffers(&self) -> Result<MemoryLease, MemoryRefusal> {
-        let bytes = SPOOL_PIECE
+        let bytes = 2 * SPOOL_PIECE
             + super::json::BASE64_TEXT_BUFFER_BYTES
             + super::json::BASE64_DECODE_BUFFER_BYTES;
         MachineMemory::process().lease_untimed(bytes as u64, &|| {
