@@ -313,6 +313,9 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
+/// The target of the owner's naming of a device key's successor (FIX 11135):
+/// derived from the predecessor's client id and device key.
+pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]

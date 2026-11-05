@@ -5,8 +5,10 @@
 //! receipts it made: it appends their completion and final rows, and the
 //! sweep's audit counts one of them dropped. The scrub itself is never
 //! restricted. A receipt is this device's when its `att_client` and `att_pk`
-//! are this install's cached client id and device key, and its signature
-//! verifies under that key over the transcript its signer signed (OD-6).
+//! are this install's cached client id and device key, or a predecessor's
+//! the owner named this install's machine to succeed (FIX 11135), and its
+//! signature verifies under that attested key over the transcript its signer
+//! signed (OD-6).
 
 use std::collections::BTreeMap;
 
@@ -19,14 +21,16 @@ use crate::error::{Error, Result};
 
 use super::receipt::{
     ATT_EMPTY_MAP_BYTE, ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, RECEIPT_ATT_DOMAIN,
-    RedactionAuditReceipt, hex_lower, receipt_attestation_splice, receipt_envelope_header,
+    RedactionAuditReceipt, receipt_attestation_splice, receipt_envelope_header,
 };
 use super::receipt_grammar::is_lower_hex;
 
 /// Whether this device attested the erase receipt `receipt`, stored at
 /// `receipt_id`. An install with no cached identity attested none. A receipt
 /// whose attestation names another client or key, or does not verify, is
-/// another device's.
+/// another device's, unless the owner named this install's machine the
+/// successor of that client and key (FIX 11135): it is then this device's,
+/// verified under the key it names.
 ///
 /// The signature is verified over the STORED bytes — the stored header and
 /// the stored body spliced at the `verification` value, exactly as the sync
@@ -63,10 +67,15 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
             let Some(parts) = receipt_attestation_splice(body) else {
                 return Ok(false);
             };
-            if parts.client_id != client_id || parts.pubkey != device_pk {
+            if !attesting_pair_is_this_device_in_txn(
+                vault,
+                txn,
+                (client_id, device_pk),
+                (parts.client_id, &parts.pubkey),
+            )? {
                 return Ok(false);
             }
-            let Ok(key) = VerifyingKey::from_bytes(&device_pk) else {
+            let Ok(key) = VerifyingKey::from_bytes(&parts.pubkey) else {
                 return Ok(false);
             };
             let mut message = Vec::with_capacity(
@@ -86,14 +95,23 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
         }
     }
     let attested = |key: &str| receipt.verification.get(key).map(String::as_str);
-    if attested(ATT_KEY_CLIENT) != Some(format!("{client_id:016x}").as_str())
-        || attested(ATT_KEY_PK) != Some(hex_lower(&device_pk).as_str())
-    {
+    let (Some(attested_client), Some(attested_pk)) = (
+        attested(ATT_KEY_CLIENT).and_then(client_from_hex),
+        attested(ATT_KEY_PK).and_then(key_from_hex),
+    ) else {
+        return Ok(false);
+    };
+    if !attesting_pair_is_this_device_in_txn(
+        vault,
+        txn,
+        (client_id, device_pk),
+        (attested_client, &attested_pk),
+    )? {
         return Ok(false);
     }
     let (Some(signature), Ok(key)) = (
         attested(ATT_KEY_SIG).and_then(signature_from_hex),
-        VerifyingKey::from_bytes(&device_pk),
+        VerifyingKey::from_bytes(&attested_pk),
     ) else {
         return Ok(false);
     };
@@ -113,6 +131,49 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     message.extend_from_slice(&header);
     message.extend_from_slice(&body);
     Ok(key.verify_strict(&message, &signature).is_ok())
+}
+
+/// Whether the attesting pair `attested` (client id, device key) is this
+/// device's: its own cached pair `own`, or a predecessor whose succession in
+/// force, as this install counts the owner's acts, names this install's
+/// machine (FIX 11135). An install with no machine id succeeds no one.
+fn attesting_pair_is_this_device_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    own: (u64, [u8; 32]),
+    attested: (u64, &[u8; 32]),
+) -> Result<bool> {
+    let (client, key) = attested;
+    if (client, *key) == own {
+        return Ok(true);
+    }
+    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+        return Ok(false);
+    };
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(fold.device_successor(client, key)? == Some(machine))
+}
+
+/// The client id a receipt's `att_client` spells: 16 lowercase hex digits,
+/// as the mint writes it; `None` for any other text.
+fn client_from_hex(hex: &str) -> Option<u64> {
+    if hex.len() != 16 || !is_lower_hex(hex) {
+        return None;
+    }
+    u64::from_str_radix(hex, 16).ok()
+}
+
+/// The device key a receipt's `att_pk` spells: 64 lowercase hex digits;
+/// `None` for any other text.
+fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
+    let mut bytes = [0u8; 32];
+    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
+        return None;
+    }
+    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(bytes)
 }
 
 /// The signature a lowercase-hex `att_sig` spells; `None` for any other text.
