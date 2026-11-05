@@ -97,6 +97,17 @@ impl CuratorRubric {
     }
 }
 impl Vault {
+    /// The actual stored curator rubric, or its validated shipped defaults,
+    /// read with the owner's current authority in this same snapshot.
+    pub fn curator_rubric_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<CuratorRubric> {
+        let txn = self.store.env.read_txn()?;
+        super::validate_owner_in_txn(self, &txn, owner)?;
+        rubric_in_txn(self, &txn)
+    }
+
     pub fn set_curator_rubric(
         &self,
         owner: &crate::consent::AuthenticatedOwner,

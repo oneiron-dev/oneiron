@@ -39,27 +39,7 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
             &doc.doc.oplog_vv().encode(),
         )?;
     }
-    let pins = doc.doc.get_map("pins");
-    let mut remove = Vec::new();
-    let entries: Vec<_> = pins
-        .keys()
-        .filter_map(|key| pins.get(&key).map(|value| (key, value)))
-        .collect();
-    for (key, value) in entries {
-        let loro::ValueOrContainer::Value(loro::LoroValue::String(value)) = value else {
-            return Err(invalid("invalid NOTE pin value"));
-        };
-        let pin: super::NotePin =
-            serde_json::from_str(&value).map_err(|_| invalid("invalid NOTE pin"))?;
-        pin.validate()?;
-        if super::citation_erase::pin_is_erased(vault, txn, &pin)? {
-            remove.push(key.to_string());
-        }
-    }
-    for key in remove {
-        pins.delete(&key)
-            .map_err(|_| invalid("NOTE citation erase"))?;
-    }
+    super::citation_erase::remove_erased_pins(vault, txn, &doc)?;
     doc.doc.commit();
     // A normal snapshot retains deleted map values in its oplog. StateOnly
     // removes those bytes while keeping live text op IDs/cursors and authorship.

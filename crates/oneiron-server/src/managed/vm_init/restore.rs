@@ -42,8 +42,8 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// How often the bootstrap looks at its engine while the input may still be
-/// lost.
+/// How often the bootstrap looks at its engine and companion, even after
+/// the input and credential pumps finish.
 const ENGINE_POLL: Duration = Duration::from_millis(100);
 
 /// Dials the restore channel and says hello for `vault`; the host's answer
@@ -162,31 +162,42 @@ pub(super) fn start(
 pub(super) fn supervise(
     engine: &mut Child,
     lost: &mpsc::Receiver<PipeWriter>,
+    mut refresh_companion: impl FnMut(),
 ) -> anyhow::Result<ExitStatus> {
+    let mut receiving = true;
     loop {
-        match lost.recv_timeout(ENGINE_POLL) {
-            Ok(input) => {
-                let _ = engine.kill();
-                let status = engine.wait().context("waiting for the engine");
-                drop(input);
-                return status;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return engine.wait().context("waiting for the engine");
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(status) = engine.try_wait().context("waiting for the engine")? {
-                    return Ok(status);
+        if receiving {
+            match lost.recv_timeout(ENGINE_POLL) {
+                Ok(input) => {
+                    let _ = engine.kill();
+                    let status = engine.wait().context("waiting for the engine");
+                    drop(input);
+                    return status;
                 }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    receiving = false;
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
+        } else {
+            std::thread::sleep(ENGINE_POLL);
         }
+        if let Some(status) = engine.try_wait().context("waiting for the engine")? {
+            return Ok(status);
+        }
+        refresh_companion();
     }
 }
 
 impl Restoring {
     /// Waits for the engine ([`supervise`]).
-    pub(super) fn wait(&mut self, lost: &mpsc::Receiver<PipeWriter>) -> anyhow::Result<ExitStatus> {
-        supervise(&mut self.engine, lost)
+    pub(super) fn wait(
+        &mut self,
+        lost: &mpsc::Receiver<PipeWriter>,
+        refresh_companion: impl FnMut(),
+    ) -> anyhow::Result<ExitStatus> {
+        supervise(&mut self.engine, lost, refresh_companion)
     }
 
     /// Waits until the result's last record is out, once nothing the
