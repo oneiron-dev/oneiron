@@ -150,12 +150,14 @@ pub(super) fn capture_note_envelope(
 }
 
 /// Called after the canonical snapshot and floor rows land, still under the
-/// same writer. Ordinary edits keep indexed; a cut never strands indexed below
-/// its actual stored slot's floor. Generic physical history is not a cut target.
+/// same writer. `indexed_before` was read before the caller replaced that slot,
+/// so source-identical cuts keep their vector. Ordinary edits keep indexed;
+/// generic physical history is not a cut target.
 pub(crate) fn capture_native_note_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
+    indexed_before: Option<&[u8]>,
 ) -> Result<NoteCapture> {
     let store = &vault.store;
     let slot = crate::note::documents::head_in(store, txn, id)?.0;
@@ -209,14 +211,10 @@ pub(crate) fn capture_native_note_in_txn(
     let same_input = if published {
         let selected =
             crate::note::revision::row_with_markdown_in_txn(store, txn, &raw, markdown.clone())?;
-        match super::read_entity_revision_in_txn(vault, txn, &id, super::super::ReadMode::Indexed) {
-            Ok(Some(before)) => {
-                before.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    == selected.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            }
-            Ok(None) | Err(Error::EntityNotFound) => false,
-            Err(error) => return Err(error),
-        }
+        indexed_before.is_some_and(|before| {
+            before.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                == selected.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        })
     } else {
         true
     };
