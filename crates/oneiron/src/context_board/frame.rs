@@ -1005,9 +1005,9 @@ fn rows_tok(rows: &[String]) -> usize {
 
 /// Tokens of one section as the frame renders it: its escaped name line and
 /// each escaped row, newline-joined.
-fn section_tok(name: &str, rows: impl Iterator<Item = &String>) -> usize {
+fn section_tok(name: &str, rows: impl Iterator<Item = impl AsRef<str>>) -> usize {
     let mut lines = vec![xml_text_token(name)];
-    lines.extend(rows.map(|row| xml_text_token(row)));
+    lines.extend(rows.map(|row| xml_text_token(row.as_ref())));
     count_context_pack_tokens(&lines.join("\n"))
 }
 
