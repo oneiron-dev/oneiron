@@ -29,11 +29,12 @@
 //! [`restore_checkpoint_windows`] joins each carrier from the copies that
 //! opened, erases the values none did and proves the join before any row is
 //! put back. A window the vendored capture or the families' codecs cannot
-//! split stays under the vault-wide seal, named. Nothing calls either before
-//! KS7-5, and nothing reaches them while CHECKPOINT_PAYLOADS_ENABLED is false.
+//! split stays under the vault-wide seal, named. KS7-5's port drives both on
+//! a capture and a restore (FIX 10277); each copy names the home its capture
+//! placed it in, and a restore takes a value only from that home (FIX 10283).
 #![allow(
     dead_code,
-    reason = "KS7-5 drives these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "a build without the KS7-5 port leaves some of these unread"
 )]
 
 mod documents;
@@ -316,11 +317,15 @@ pub(crate) struct LoroRow {
     pub(crate) slice: LoroSlice,
 }
 
-/// One copy of a value: where it rests and the ordinal `emit` gave it.
+/// One copy of a value: where it rests, the ordinal `emit` gave it, and the
+/// home its capture placed it in with the owners it holds only while they
+/// do (FIX 10283): a restore takes the copy only from that home.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SlotCopy {
     pub(crate) at: RowLocator,
     pub(crate) atom: AtomRef,
+    pub(crate) home: AtomHome,
+    pub(crate) dependencies: Vec<OwnerRef>,
 }
 
 /// One skeleton slot, by its vendored atom id: a copy per rightful holder,
@@ -423,6 +428,14 @@ pub(crate) trait OpenedSyncAtoms {
     /// form, and no actor is taken from anywhere else.
     fn actor_parts(&self, _atom: AtomRef) -> Vec<&ActorPart> {
         Vec::new()
+    }
+
+    /// The home whose opened compartment, or the image's own seal, gave
+    /// `atom`'s bytes, as the restore authenticated it (FIX 10283): a window
+    /// value is taken only from the home its capture placed the copy in.
+    /// None by default, so a window copy opens from nowhere.
+    fn opened_home(&self, _atom: AtomRef) -> Option<AtomHome> {
+        None
     }
 }
 
@@ -566,6 +579,13 @@ pub(crate) fn project_checkpoint_windows(
     emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
 ) -> Result<WindowProjection> {
     self::operations::project(&rows.rows, owners, emit)
+}
+
+/// The window a captured Loro row belongs to: its snapshot's, its pending
+/// update's or its queued update's. `None` for any other row, and for one
+/// that does not read.
+pub(crate) fn captured_row_window(row: &CapturedSyncRow<'_>) -> Option<String> {
+    self::operations::window_of(row)
 }
 
 /// Puts each of `carriers`' rows back (KS7-3b), each carrier joined from
