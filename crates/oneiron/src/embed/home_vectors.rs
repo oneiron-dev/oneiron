@@ -81,6 +81,9 @@ fn claim_source_in_txn(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<
     else {
         return Ok(None);
     };
+    if !crate::ports::raw_readable_in_txn(&vault.store, txn, id, &raw)? {
+        return Ok(None);
+    }
     if !EntityMetadataHeader::parse(&raw)
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
     {

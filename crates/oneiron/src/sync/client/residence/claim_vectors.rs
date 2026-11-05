@@ -23,6 +23,9 @@ pub(crate) async fn default_claim_vector(
     if !own_peer(vault, rpc.home)? {
         return Ok(None);
     }
+    if !vault.rows_may_leave_for(&[id], &crate::settings::ReadDestination::toward(rpc.home))? {
+        return Ok(None);
+    }
     let value = match rpc
         .call(
             "residence.claim.vector",
