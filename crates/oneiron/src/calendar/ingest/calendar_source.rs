@@ -114,11 +114,8 @@ pub(crate) fn apply_calendar_source_omissions(
     let record =
         archive_source_resource(vault, system, LISTING_ARCHIVE_KEY, omitted.as_bytes(), now)?
             .record;
-    let none = ParsedIcsFeed { events: Vec::new() };
-    for uid in uids {
-        super::sweep_connector_resource(vault, system, &record, &none, uid, now)?;
-    }
-    Ok(())
+    let uids: std::collections::BTreeSet<&str> = uids.iter().map(String::as_str).collect();
+    super::sweep_connector_uids(vault, system, &record, &uids, now)
 }
 
 /// The archive key of a whole feed, beside the per-UID resources.
