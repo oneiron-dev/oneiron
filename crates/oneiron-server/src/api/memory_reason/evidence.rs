@@ -60,6 +60,31 @@ fn backing_bytes(capacity: usize) -> u64 {
     (capacity as u64).saturating_mul(std::mem::size_of::<MemoryReasonEvidence>() as u64)
 }
 
+struct ProjectedFrame {
+    // Raw rows and bodies drop before their memory charge.
+    rows: Vec<Option<oneiron::claim::ReadRow>>,
+    memory: MemoryLease,
+}
+
+impl ProjectedFrame {
+    fn new(memory: &MachineMemory, rows: Vec<Option<oneiron::claim::ReadRow>>) -> Self {
+        let mut frame = Self {
+            rows,
+            memory: memory.empty_lease(),
+        };
+        let backing = (frame.rows.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<Option<oneiron::claim::ReadRow>>() as u64);
+        let bodies = frame
+            .rows
+            .iter()
+            .flatten()
+            .filter_map(|row| row.body.as_ref())
+            .fold(0u64, |bytes, body| bytes.saturating_add(body.capacity() as u64));
+        frame.memory.materialized(0, backing.saturating_add(bodies));
+        frame
+    }
+}
+
 struct EvidenceProjection {
     evidence: CollectedEvidence,
     actions: Vec<DeferredEvidenceAction>,
@@ -114,7 +139,8 @@ pub(super) fn collect_evidence(
                 actions: Vec::new(),
             },
             |offset, rows, state| {
-                for (read, row) in refs[offset..].iter().zip(rows) {
+                let mut frame = ProjectedFrame::new(memory, rows);
+                for (read, row) in refs[offset..].iter().zip(frame.rows.drain(..)) {
                     let Some(oneiron::claim::ReadRow {
                         id,
                         entity_type: kind,
