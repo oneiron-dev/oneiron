@@ -160,6 +160,60 @@ pub struct ResearchContinuation {
     pub updated_at: u64,
 }
 
+/// Present captures grouped by the actual spend scope of the campaign's
+/// recorded runs. Missing captures stay unknown; this is not a complete
+/// source inventory or a token total for an individual run.
+#[derive(Debug, Clone)]
+pub struct ResearchScopeProviderTokens {
+    pub scope: Option<crate::agent_dispatch::SpendScopeId>,
+    pub runs: Vec<AttemptId>,
+    pub snapshots: Option<Vec<crate::llm::ProviderTokenSnapshot>>,
+}
+
+/// Provider reports recorded for the campaign's native run scopes. These
+/// reads never charge, settle or infer completeness from the rows present.
+pub fn research_provider_token_observations(
+    vault: &Vault,
+    root: AttemptId,
+) -> Result<Vec<ResearchScopeProviderTokens>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut runs = BTreeSet::new();
+    for (_, row) in CONTINUATION.scan_from(&vault.store, &txn, root.as_bytes())? {
+        if row.root == root {
+            runs.extend(row.runs);
+            runs.extend(row.running.and_then(|running| running.run));
+        }
+    }
+    let dispatcher = AgentDispatcher::new(vault);
+    let mut scopes: BTreeMap<Option<crate::agent_dispatch::SpendScopeId>, Vec<AttemptId>> =
+        BTreeMap::new();
+    for run in runs {
+        let scope = match dispatcher.attempt_spend_scope_in_txn(&txn, run) {
+            Ok(scope) => scope.map(|row| row.scope),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), ?run, "a research run's provider scope was not read");
+                None
+            }
+        };
+        scopes.entry(scope).or_default().push(run);
+    }
+    Ok(scopes
+        .into_iter()
+        .map(|(scope, runs)| {
+            let snapshots = scope.as_ref().and_then(|scope| {
+                match dispatcher.provider_token_snapshots_in_txn(&txn, scope) {
+                    Ok(snapshots) => Some(snapshots),
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), scope = scope.as_str(), "a research scope's provider observations were not read");
+                        None
+                    }
+                }
+            });
+            ResearchScopeProviderTokens { scope, runs, snapshots }
+        })
+        .collect())
+}
+
 /// The experimenter's answer: the candidate it wrote, or why it could not.
 #[derive(Deserialize)]
 #[serde(untagged)]

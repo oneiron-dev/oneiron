@@ -171,6 +171,16 @@ impl<'a> LiveLease<'a> {
         let used = self.meter.read().used_units;
         AgentDispatcher::new(self.vault).record_guard_spend(scope, used.saturating_sub(*booked))?;
         *booked = used;
+        let snapshot = self.meter.provider_token_snapshot();
+        if let Err(error) =
+            AgentDispatcher::new(self.vault).record_provider_token_snapshot(scope, &snapshot)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                scope = scope.as_str(),
+                "a spend lease's provider observation was not recorded"
+            );
+        }
         Ok(())
     }
 }

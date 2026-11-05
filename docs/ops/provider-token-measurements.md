@@ -34,8 +34,8 @@ This is a provider-report observation, not proof that all physical requests or a
 whole spend scope were measured. It does not total partial or cancelled requests,
 join child scopes, or settle RSI reservations from these observations. Local
 runtimes, peers and captured external-agent runs still need their own real
-measurement suppliers. Durable guard-to-scope flushing and non-token budget
-accounting also remain separate work under FIX 3476 and FIX 9586. Existing native
+measurement suppliers. Complete guard-to-scope coverage and non-token budget
+accounting remain separate work under FIX 3476 and FIX 9586. Existing native
 inference receipts, physical publishers, admission and charges are unchanged.
 
 ## Reports on the issuing meter
@@ -57,8 +57,9 @@ This is an on-demand snapshot of admitted calls on one guard, not a count of
 socket sends, a final run or spend-scope total, or proof that every physical call
 was covered. Other guards, future calls, children, failed partial reports, and
 local, peer or BYOA suppliers still need their real source and coverage proof.
-No scope persistence or RSI settlement consumes this snapshot yet. Ordinary
-`BudgetRead` and the admission hot path are unchanged.
+The native lease end records the present snapshot separately from charged
+spend. No RSI settlement consumes it. Ordinary `BudgetRead` and the admission
+hot path are unchanged.
 
 ## Guard generations
 
@@ -69,13 +70,46 @@ identifier. Guard and run clones retain it because they share that state. A
 restarted guard mints another even if its attempt and lease strings repeat.
 The identifier is observation data, not an entity reference or authority.
 
-The generation is immutable. The snapshot getter copies it, drops that short
-lock, then reads the provider observation on the same guard. It does not add
-another observation fold to ordinary budget reads or admission. Existing
-provider observations, charges and the old snapshot-free getter are unchanged.
+The generation is immutable. The snapshot getter captures its observation
+and a native monotonic `observation_id` while holding that guard's lock. This
+orders captures within one generation without treating paid charges, token
+counts or call counts as a version. It also orders free calls whose paid
+charge stays zero. The old snapshot-free getter uses the same observation
+fold. Ordinary budget reads, admission and financial charges are unchanged.
 
-This identifies a source for future durable guard-to-scope records; it does
-not write those records. Reading every row that happens to be present would
+This identifies the source of a durable guard-to-scope record; the snapshot
+getter itself does not write it. Reading every row that happens to be present would
 still not prove that a crashed or unrecorded generation was covered. No
 whole-scope completeness or RSI settlement is inferred from the generation,
 lease strings, scope closure or a successful charged-spend flush.
+
+## Present scope records
+
+After its existing financial booking succeeds and its once-only booked
+watermark advances, `LiveLease::book_rest` records the actual guard capture on
+that lease's native scope. The record is best-effort: failure logs a warning
+without changing the booked watermark, recharging the scope or failing the
+completed money booking. These observations are not a second money ledger.
+
+Each scope and guard generation keeps its greatest native capture identifier.
+That identifier is minted under the guard lock with the observation, so a
+stale writer cannot replace a later capture. Paid charges, token counts and
+call counts do not order captures. Free calls therefore remain observable
+without inventing tokens from their zero charge. The new named side table is
+checkpointed as unclassified data and restored as historical content, like
+the spend-scope records; neither record grants authority.
+
+`vault.research.budget` keeps its existing controller check and adds
+`provider_token_observations`. It resolves the campaign's recorded native
+runs to their actual spend scopes in one read snapshot, grouping runs that
+share a scope so captures are not duplicated as per-run charges. Scope or
+snapshot absence is unknown. An empty recorded list is not a measured zero.
+Observation-read failures leave the original budget and reservation response
+available and do not change settle or refund behavior.
+
+These are present historical records, not a complete generation inventory,
+a physical-send count, exact per-run attribution, current health, or a final
+scope total. A crash before a flush, an unrecorded guard, an unsupported or
+partial provider report, a child scope or an unmetered run can remain unseen.
+Even all-present known rows do not prove completeness. No captured value or
+identifier settles RSI, overrides its reservation, or authorizes a call.

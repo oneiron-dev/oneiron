@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4544 declarations.
+// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4546 declarations.
 // Replies: 1097 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -1927,7 +1927,9 @@ declare namespace Sdk {
   type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number };
   type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
   type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };
-  type ResearchBudgetView = { budget: ResearchBudgetRead; reservations: ResearchReservationWire[]; rsi_work?: RsiBudgetRead | null; rsi_exploration?: RsiExplorationRead | null };
+  type ResearchProviderTokenSnapshotWire = { generation: string; observation_id: string; dispatched_calls: number; unsettled_calls: number; input?: number | null; output?: number | null };
+  type ResearchScopeProviderTokensWire = { scope?: SpendScopeId | null; runs: string[]; snapshots?: ResearchProviderTokenSnapshotWire[] | null };
+  type ResearchBudgetView = { budget: ResearchBudgetRead; reservations: ResearchReservationWire[]; rsi_work?: RsiBudgetRead | null; rsi_exploration?: RsiExplorationRead | null; provider_token_observations?: ResearchScopeProviderTokensWire[] | null };
   type ResearchBenchmarkWire = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[] };
   type SelectionBenchmark = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[]; recorded_at: number };
   type AuthorityHandoffAlarmAck = { by: string; at: number };

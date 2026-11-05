@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4488 generated types.
+// UniFFI census: 1232 facade rows, 4490 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -30224,6 +30224,34 @@ pub struct RsiExplorationRead {
     pub suspended: bool,
 }
 
+/// `oneiron::verbs::research::provider_tokens::ResearchProviderTokenSnapshotWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchProviderTokenSnapshotWire {
+    #[serde(rename = "generation")]
+    pub generation: String,
+    #[serde(rename = "observation_id")]
+    pub observation_id: String,
+    #[serde(rename = "dispatched_calls")]
+    pub dispatched_calls: u64,
+    #[serde(rename = "unsettled_calls")]
+    pub unsettled_calls: u64,
+    #[serde(rename = "input", default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
+/// `oneiron::verbs::research::provider_tokens::ResearchScopeProviderTokensWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchScopeProviderTokensWire {
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(rename = "runs")]
+    pub runs: Vec<String>,
+    #[serde(rename = "snapshots", default, skip_serializing_if = "Option::is_none")]
+    pub snapshots: Option<Vec<ResearchProviderTokenSnapshotWire>>,
+}
+
 /// `oneiron::verbs::research::ResearchBudgetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResearchBudgetView {
@@ -30239,6 +30267,12 @@ pub struct ResearchBudgetView {
         skip_serializing_if = "Option::is_none"
     )]
     pub rsi_exploration: Option<RsiExplorationRead>,
+    #[serde(
+        rename = "provider_token_observations",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_token_observations: Option<Vec<ResearchScopeProviderTokensWire>>,
 }
 
 /// `oneiron::verbs::research::ResearchBenchmarkWire`.
