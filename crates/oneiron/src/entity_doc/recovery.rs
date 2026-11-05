@@ -396,6 +396,15 @@ pub(crate) fn restore(
     txn: &mut RwTxn<'_>,
     row: &CanonicalEntityDocument,
 ) -> Result<()> {
+    restore_with_source(vault, txn, row, None)
+}
+
+pub(crate) fn restore_with_source(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &CanonicalEntityDocument,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
+) -> Result<()> {
     let store = &vault.store;
     let entity = EntityId::from_bytes(row.entity_id)?;
     let document_id = EntityId::from_bytes(row.document_id)?;
@@ -425,6 +434,17 @@ pub(crate) fn restore(
     if super::citation_floor::has_live_citer(store, txn, &entity)? {
         return Err(invalid("entity document recovery would drop cited history"));
     }
+    let native = match source {
+        Some(source) => Some(super::native_skill_state::CanonicalSkillState::from_source(
+            row, source,
+        )?),
+        None if super::native_skill_state::has_witness(row) => {
+            return Err(invalid(
+                "native SKILL state lacks its admitted restore source",
+            ));
+        }
+        None => None,
+    };
     super::citation_floor::erase_in_txn(store, txn, &entity)?;
     super::forks::erase_forks(store, txn, &entity)?;
     ENTITY_DOC_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
@@ -447,12 +467,15 @@ pub(crate) fn restore(
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
             summary_meta::write(&doc.doc, &row.summary_meta)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+            if let Some(native) = &native {
+                native.write_current(&doc.doc)?;
+            }
             super::document::restate_birth(&doc.doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
         Some(history) => {
-            let (doc, frontiers) = replay(entity, row, history)?;
+            let (doc, frontiers) = replay(entity, row, history, native.as_ref())?;
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             if history.shallow {
                 store.port_document_shallow_since_put(
@@ -463,7 +486,15 @@ pub(crate) fn restore(
             } else {
                 store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
             }
-            bind_rows(store, txn, &entity, history, &doc, &frontiers)?;
+            bind_rows(
+                store,
+                txn,
+                &entity,
+                history,
+                &doc,
+                &frontiers,
+                native.as_ref(),
+            )?;
         }
     }
     // With no head the text could not be read, so a MESSAGE or TURN whose
@@ -527,6 +558,7 @@ fn replay(
     entity: EntityId,
     row: &CanonicalEntityDocument,
     history: &CanonicalEntityDocumentHistory,
+    native: Option<&super::native_skill_state::CanonicalSkillState<'_>>,
 ) -> Result<(EntityDoc, Vec<Frontiers>)> {
     let texts = history.texts()?;
     let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
@@ -561,6 +593,9 @@ fn replay(
             .map_err(|_| invalid("entity document version replay"))?;
         EntityDoc::replace_metadata(&branch, &version.metadata)?;
         summary_meta::write(&branch, &version.summary_meta)?;
+        if let Some(native) = native {
+            native.write_version(&branch, index)?;
+        }
         branch
             .get_map("meta")
             .insert(
@@ -580,7 +615,16 @@ fn replay(
         if status.pending.is_some() {
             return Err(invalid("entity document version replay"));
         }
-        frontiers.push(branch.oplog_frontiers());
+        let frontier = branch.oplog_frontiers();
+        let replayed = doc.fork(&frontier.encode())?;
+        if super::native_skill_state::current_witness_bytes(&replayed)?
+            != version.native_skill_state
+        {
+            return Err(Error::InvariantViolation(
+                "replayed native SKILL state version differs",
+            ));
+        }
+        frontiers.push(frontier);
     }
     let head = frontiers
         .last()
@@ -589,12 +633,15 @@ fn replay(
         || doc.text() != row.text
         || doc.metadata_bytes()? != row.metadata
         || summary_meta::bytes(&doc.doc) != row.summary_meta
+        || super::native_skill_state::current_witness_bytes(&doc)? != row.native_skill_state
     {
         return Err(Error::InvariantViolation("replayed head differs"));
     }
     let doc = if history.shallow {
         let shallow = EntityDoc::from_snapshot(&doc.shallow_snapshot(&frontiers[0].encode())?)?;
-        if shallow.text() != row.text {
+        if shallow.text() != row.text
+            || super::native_skill_state::current_witness_bytes(&shallow)? != row.native_skill_state
+        {
             return Err(Error::InvariantViolation(
                 "replayed purge changed live state",
             ));
@@ -616,6 +663,7 @@ fn bind_rows(
     history: &CanonicalEntityDocumentHistory,
     doc: &EntityDoc,
     frontiers: &[Frontiers],
+    native: Option<&super::native_skill_state::CanonicalSkillState<'_>>,
 ) -> Result<()> {
     let frontier = |index: u32| -> Result<Vec<u8>> {
         Ok(frontiers
@@ -691,7 +739,7 @@ fn bind_rows(
             },
         )?;
     }
-    for fork in &history.forks {
+    for (index, fork) in history.forks.iter().enumerate() {
         // A settled fork whose base was purged names the empty frontier,
         // which a purged document never retains.
         let base = match fork.base {
@@ -737,14 +785,23 @@ fn bind_rows(
                     .as_ref()
                     .ok_or(invalid("entity document fork metadata"))?,
             )?;
+            if let Some(native) = native {
+                native.write_output(&branch.doc, index)?;
+            }
             super::document::restate_birth(&branch.doc);
             branch.doc.commit();
-            ENTITY_DOC_FORK_SNAPSHOT.put(
-                store,
-                txn,
-                &record.fork,
-                &branch.shallow_snapshot(&base)?,
-            )?;
+            let snapshot = branch.shallow_snapshot(&base)?;
+            if native.is_some() {
+                let replayed = EntityDoc::from_snapshot(&snapshot)?;
+                if super::native_skill_state::current_witness_bytes(&replayed)?
+                    != fork.output_native_skill_state
+                {
+                    return Err(Error::InvariantViolation(
+                        "replayed native SKILL state output differs",
+                    ));
+                }
+            }
+            ENTITY_DOC_FORK_SNAPSHOT.put(store, txn, &record.fork, &snapshot)?;
         }
     }
     Ok(())
