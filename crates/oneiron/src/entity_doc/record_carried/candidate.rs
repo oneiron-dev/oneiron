@@ -39,6 +39,7 @@ pub(crate) struct RecordDocumentCandidate<'selected, 'carrier> {
     prior_head: Option<Vec<u8>>,
     prior_documents: Vec<(DocumentSlot, [u8; 32])>,
     prior_logical: Option<Vec<u8>>,
+    local_snapshot: Option<Vec<u8>>,
     logical: Vec<u8>,
     head: Head,
     document: EntityDoc,
@@ -86,6 +87,7 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             .into_iter()
             .map(|slot| Ok((slot, document_rows_digest(store, txn, slot)?)))
             .collect::<Result<Vec<_>>>()?;
+        let mut local_snapshot = None;
         let (head, document, before, left_document, deferred_purge, prior_logical) = match local {
             None => {
                 // SKILL has no lazy native birth: its existing text may
@@ -174,6 +176,10 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 if switched && !shares_switch_base(native, &document, &incoming) {
                     return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
                 }
+                // Preserve the actual local retained operations before join
+                // or purge. A version vector and the current logical body
+                // cannot stand in for these source inputs later.
+                local_snapshot = Some(document.export_snapshot()?);
                 let before = document.doc.oplog_vv();
                 if !document
                     .doc
@@ -232,6 +238,7 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             prior_head,
             prior_documents,
             prior_logical,
+            local_snapshot,
             logical,
             head,
             document,
@@ -284,6 +291,28 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
 
     pub(crate) fn source(&self) -> &CarriedRecordDocument {
         self.selected.head()
+    }
+
+    /// Exact incoming retained bytes, still bound to the selected transport.
+    /// Decoding these bytes supplies data, not native write permission.
+    pub(crate) fn source_snapshot(&self) -> &[u8] {
+        self.selected.snapshot()
+    }
+
+    /// The actual local snapshot BEFORE join or purge, with all of its
+    /// retained operations. An absent local head supplies no native snapshot.
+    pub(crate) fn local_snapshot(&self) -> Option<&[u8]> {
+        self.local_snapshot.as_deref()
+    }
+
+    pub(crate) fn local_head_bytes(&self) -> Option<&[u8]> {
+        self.prior_head.as_deref()
+    }
+
+    /// A copy for retained-schema/source/secret admission. The caller gets
+    /// no interior-mutable handle to this candidate's joined document.
+    pub(crate) fn joined_snapshot(&self) -> Result<Vec<u8>> {
+        self.document.export_snapshot()
     }
 }
 
