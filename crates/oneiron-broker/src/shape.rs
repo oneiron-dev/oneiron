@@ -387,8 +387,9 @@ impl Shape {
         self.row().auth_prefix
     }
 
-    /// Whether the reply streams back in chunks, up to [`crate::MAX_STREAM`]
-    /// bytes, instead of one buffered body up to [`crate::MAX_BODY`]. A
+    /// Whether the reply streams back in chunks instead of one buffered body
+    /// up to [`crate::MAX_BODY`]. Ordinary HTTP streams have no cumulative byte
+    /// cap; the Responses transport keeps its own bound. A
     /// streamed body is a binary one, or a media JSON one (FIX 1896): each
     /// form of the key in it is redacted at its bytes as the chunks pass, and
     /// it is never cut for one (FIX 6103).

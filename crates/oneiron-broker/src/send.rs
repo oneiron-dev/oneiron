@@ -22,8 +22,7 @@ use crate::deadline::{CallDeadline, within};
 use crate::frame::{STREAM_CHUNK, write_chunk, write_reply, write_stream_end, write_stream_header};
 use crate::strip::{KeyWatch, admits, contains_key, strip};
 use crate::{
-    CallHeader, Failure, MAX_BODY, MAX_SECRET, MAX_STREAM, Outcome, PROTOCOL_VERSION, Refusal,
-    ReplyHeader,
+    CallHeader, Failure, MAX_BODY, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader,
 };
 
 /// The shortest key the broker injects. Stripping a shorter one would redact
@@ -195,16 +194,9 @@ impl Sender {
         within(deadline, write_stream_header(writer, &header)).await?;
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
-        let mut read = 0_usize;
         let cut = loop {
             let (passed, last) = match response.chunk().await {
-                Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
-                    break Some(Failure::ReplyTooLarge);
-                }
-                Ok(Some(chunk)) => {
-                    read += chunk.len();
-                    (watch.push(&chunk), false)
-                }
+                Ok(Some(chunk)) => (watch.push(&chunk), false),
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
             };
@@ -366,8 +358,8 @@ impl Sender {
                 .build()
                 .map(|request| (request, Some(body)))
                 .map_err(|_| Refusal::Header),
-            // The checked bytes themselves, moved, not copied: a body
-            // can run to `MAX_STREAM` (FIX 1895).
+            // The checked bytes themselves, moved, not copied, however
+            // large the chunked body was (FIX 1895).
             None => builder
                 .body(std::mem::take(&mut *body))
                 .build()
