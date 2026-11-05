@@ -332,18 +332,21 @@ fn id_key(key: &str) -> KeyClass {
 
 /// The value `no_one`, a split of the value under `key` in `root`, with
 /// each of `opened` (a field and its actor) back: `None` when its family
-/// drops it for an actor that did not open. A field the family does not
-/// spell refuses.
+/// drops it for an actor that did not open. `holes` is every field the
+/// split took out, opened or not: a family that drops what did not open
+/// tells it from what the stored value already named no one in (FIX 10282).
+/// A field the family does not spell refuses.
 pub(super) fn root_fill(
     root: &str,
     key: &str,
     no_one: &[u8],
     opened: &[(&str, EntityId)],
+    holes: &std::collections::BTreeSet<&str>,
 ) -> Result<Option<Vec<u8>>> {
     match root {
         ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::fill(no_one, opened),
         "head_move_receipts" | "note_forks" | "note_proposals" => {
-            crate::sync::note::checkpoint::fill(root, no_one, opened)
+            crate::sync::note::checkpoint::fill(root, no_one, opened, holes)
         }
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::fill(no_one, opened),
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::fill(key, no_one, opened),
