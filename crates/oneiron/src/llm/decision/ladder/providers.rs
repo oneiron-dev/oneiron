@@ -11,6 +11,7 @@ use crate::llm::decision::{
 use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
+use oneiron_model::llm::{CallPurpose, ExtractionEgressPredicate};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -76,6 +77,13 @@ impl<'a> DecisionPack<'a> {
     }
 }
 
+/// The original host purpose and egress predicate of a prepared read.
+/// The provider still resolves its own model binding; this carries no caller binding.
+pub struct DecisionCallContext<'a> {
+    pub purpose: &'a CallPurpose,
+    pub extraction_egress: Option<&'a dyn ExtractionEgressPredicate>,
+}
+
 /// A provider read's original result beside copies of its native settlements.
 /// Receipt usage stays optional; neither an empty inventory nor a receipt count
 /// establishes token use or a number of logical generations.
@@ -130,7 +138,11 @@ pub trait DecisionProvider: Send + Sync {
     /// A read with its native settlement inventory, when this provider can capture it.
     /// `None` means unsupported and MUST return before any read or send. A supported
     /// read retains its original result, including an error after paid work.
-    fn decide_captured(&self, _call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+    fn decide_captured(
+        &self,
+        _call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -233,7 +245,11 @@ pub trait DecisionModel: Send + Sync {
         None
     }
     /// See [`DecisionProvider::decide_captured`].
-    fn decide_captured(&self, _call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+    fn decide_captured(
+        &self,
+        _call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -289,8 +305,12 @@ impl DecisionProvider for ModelDecisionProvider {
     fn state_budget_bytes(&self) -> Option<usize> {
         self.model.state_budget_bytes()
     }
-    fn decide_captured(&self, call: &DecisionCall<'_>) -> Option<CapturedDecision> {
-        self.model.decide_captured(call)
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        self.model.decide_captured(call, context)
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
