@@ -2010,7 +2010,7 @@ declare namespace Sdk {
   type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKind[]; margin?: number | null; started_at: number; state: SpaceMoveState; last_check?: SpaceMoveCheck | null };
   type SwitchOwner = string;
   type TrainingOwner = string;
-  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner";
+  type ModelRole = "retrieval_embedder" | "media_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "decision_head" | "decision_band" | "decision_escalation" | "policy_safeguard" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner";
   type ModelTierRef = string;
   type ModelDisposition = "offline" | "served";
   type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
