@@ -424,6 +424,7 @@ pub(crate) fn ocsp_entry_valid<'a>(
             candidates.push(candidate);
         }
     }
+    memory.admit_len::<&[u8]>(basic.tbs_response_data.responses.len())?;
     ocsp_basic_valid(&basic, &candidates, embedded, anchors, at_unix, memory)
 }
 
