@@ -201,6 +201,23 @@ impl Oneiron {
         }))
     }
 
+    /// Returns a NEW handle whose every read runs under the credential a
+    /// delegated reader presented (FIX 647): the paired credential `pair`
+    /// returned, verified once against this vault as the server's door
+    /// verifies a served request's. Reads refuse when the slip's holder is
+    /// not this handle's actor; rebindings keep the same proof, so every
+    /// read still checks it against the bound actor. A handle without one
+    /// reads as before. Refuses when connected: a connected handle reads
+    /// under the credential it connected with.
+    pub fn with_read_credential(&self, credential: String) -> Result<Arc<Self>, OneironError> {
+        let inner = self.inner.with_read_credential(&credential)?;
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
+    }
+
     /// The lasting call receipt the last verb's reply stated, as
     /// `call:<32hex>`, whether it answered or refused.
     ///

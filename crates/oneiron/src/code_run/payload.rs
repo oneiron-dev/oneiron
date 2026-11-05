@@ -30,7 +30,7 @@ use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
 pub(crate) use self::observations::agent_verb_observations_of;
-pub(super) use self::request::self_call_request_value;
+pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
     serde_json::to_string(spec).map_err(|_| invalid_code_run_replay("context spec does not encode"))
