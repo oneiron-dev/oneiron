@@ -8,6 +8,12 @@ A full accepted hard purge carries its actual purge context even when that
 transaction writes the hard marker later. Marker-bound scrub-only callers keep
 their existing marker requirement. The other actor-scrub guards are unchanged.
 
+The accepted full purge also clears the target's spawn asks from live code-run
+replay rows and kept step starts before the other actor fields go, even when the
+marker is written later. The selective rewrite preserves unrelated calls and
+receipt metadata. Planned-pack revision cleanup keeps its original marker guard
+and post-marker caller; restore keeps its existing authenticated target sweep.
+
 The payload cursor records the exact original source set for each owned attempt.
 A direct task reference or typed development reference selects it. The original
 one-hop `CliAttempt` relation also carries that source set to the request row.

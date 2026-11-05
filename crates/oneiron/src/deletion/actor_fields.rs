@@ -99,17 +99,20 @@ pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
 ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let accepted_hard_purge = erase.payload_scope == PayloadEraseScope::AcceptedHardPurge;
     let (vault, wtxn, actor) = erase.parts();
     let actor = &actor;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
     let hard =
         HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
-    // The asks of the spawns it seated leave the code-run replay rows and
-    // their step starts before its other fields go (FIX 9180).
-    if hard {
+    // An accepted full purge may write its marker later. Its spawn asks leave
+    // the replay rows and step starts before its other fields go (FIX 9180).
+    if hard || accepted_hard_purge {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    if hard {
         crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
             &vault.store,
             wtxn,
@@ -132,7 +135,7 @@ pub(super) fn erase_actor_fields_in_txn(
         )?;
     }
     scrub_actor_fields_in_txn(&mut erase)?;
-    if hard || erase.payload_scope == PayloadEraseScope::AcceptedHardPurge {
+    if hard || accepted_hard_purge {
         return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
             &mut erase, act,
         );
