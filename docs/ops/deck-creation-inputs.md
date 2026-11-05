@@ -25,9 +25,18 @@ line count and paragraph spacing in the estimate. Adjacent wide characters keep
 zero gap between their measured pieces; whitespace-separated words keep the
 existing space estimate.
 
+Template font references use the same theme resolver as deck run inspection.
+The raw `a:latin/@typeface` stays available in `TextStyle.typeface`;
+`resolved_typeface` holds its resolved family when available. Layout metrics prefer
+that family, including the existing `+mj-ea`, `+mn-ea`, `+mj-cs` and `+mn-cs`
+references as well as the Latin references. Missing or unresolved references keep
+the prior raw-name and minor-font fallback. Faces still come only from the supplied
+font inputs, selected by family, bold and italic style.
+
 These estimates still choose layout candidates, not certify fit. `FitUnverified`,
-font shaping, font selection and the existing em-rule fallback remain unchanged.
-This does not add general Unicode line-breaking rules or cross-family font fallback.
+font shaping and the existing em-rule fallback remain unchanged. This does not
+select per-script `a:ea` or `a:cs` run fonts, add general Unicode line-breaking
+rules, or add cross-family font fallback.
 
 ## Reads and storage
 
