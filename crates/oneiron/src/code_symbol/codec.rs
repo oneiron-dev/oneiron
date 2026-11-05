@@ -19,8 +19,8 @@ use super::validate::{
 };
 use crate::error::CodeError;
 
-pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 4] =
-    ["repo_ref", "commit_hash", "chunks", "symbols"];
+pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 5] =
+    ["repo_ref", "commit_hash", "chunks", "symbols", "relations"];
 
 pub const CODE_SYMBOL_CHUNK_KEYS: [&str; 5] = [
     "path",
@@ -61,6 +61,8 @@ pub(super) const KEY_COMMIT_HASH: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[1];
 pub(super) const KEY_CHUNKS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[2];
 
 pub(super) const KEY_SYMBOLS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[3];
+
+pub(super) const KEY_RELATIONS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[4];
 
 pub(super) const KEY_PATH: &str = CODE_SYMBOL_CHUNK_KEYS[0];
 
@@ -198,6 +200,10 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
         ),
         (Value::from(KEY_CHUNKS), Value::Array(chunks)),
         (Value::from(KEY_SYMBOLS), Value::Array(symbols)),
+        (
+            Value::from(KEY_RELATIONS),
+            super::relations::encode_relations(&manifest.relations),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -231,6 +237,7 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
     let mut commit_hash: Option<Option<String>> = None;
     let mut chunks: Option<Vec<CodeChunk>> = None;
     let mut symbols: Option<Vec<CodeSymbolRevision>> = None;
+    let mut relations = None;
     let mut seen = [false; CODE_SYMBOL_MANIFEST_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -299,6 +306,7 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
                         .collect::<Result<Vec<_>>>()?,
                 );
             }
+            KEY_RELATIONS => relations = Some(super::relations::decode_relations(value)?),
             _ => unreachable!("index resolved from CODE_SYMBOL_MANIFEST_BODY_KEYS"),
         }
     }
@@ -315,6 +323,9 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
         )))?,
         symbols: symbols.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key symbols",
+        )))?,
+        relations: relations.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "missing required manifest key relations",
         )))?,
     };
     validate_code_symbol_manifest(&manifest)?;

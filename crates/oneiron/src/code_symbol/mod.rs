@@ -7,6 +7,8 @@ mod cjs_source;
 mod codec;
 mod document_view;
 mod keys;
+mod relations;
+pub use relations::CodeSymbolRelation;
 mod rust_source;
 mod secret_projection;
 mod semantic_diff;
