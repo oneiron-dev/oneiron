@@ -616,6 +616,11 @@ impl PipelineBuilder<'_> {
             // phonetic/temporal/PPR) AND runs BEFORE expand_ppr implicit
             // seed selection, so a dead claim never seeds the expansion.
             let before_status_gate = scores.len();
+            let suppressed_before = claim_gate
+                .decisions
+                .values()
+                .filter(|decision| decision.is_none())
+                .count();
             apply_claim_status_gate(
                 &mut scores,
                 &self.read,
@@ -623,7 +628,21 @@ impl PipelineBuilder<'_> {
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
-            if before_status_gate > 0 && scores.is_empty() {
+            // FIX 199: an unscoped search whose only matches are
+            // gate-rejected claims reaches this gate with an empty fused
+            // union (the fetch drops rejections before fusion, and their
+            // suppressions now arrive via import_claim_gate_decisions), so
+            // `before_status_gate > 0` never fires and the run reports
+            // NoData with 0. Suppressions newly observed during this
+            // attempt are the same evidence: report AllActivated. The delta
+            // keeps a retry that evaluates nothing new on today's NoData
+            // path.
+            let suppressed_now = claim_gate
+                .decisions
+                .values()
+                .filter(|decision| decision.is_none())
+                .count();
+            if scores.is_empty() && (before_status_gate > 0 || suppressed_now > suppressed_before) {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
             let mut blend_allowed_ids = score_id_set(&scores);
