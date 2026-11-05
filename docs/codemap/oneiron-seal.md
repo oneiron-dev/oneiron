@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/held_bytes.rs` | src | s | 7 crate-vis | — | What the seal's own copies and decodes allocate, for the holds that admit them to the operation's memory… |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
-| `src/native/pdf/admitted.rs` | src | s | 6 crate-vis | — | — |
+| `src/native/pdf/admitted.rs` | src | s | 7 crate-vis | — | — |
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
 | `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
-| `src/native/verify/verify_chain_gates.rs` | src | m | 10 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
+| `src/native/verify/verify_chain_gates.rs` | src | m | 11 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
 | `src/native/verify/verify_dss_core.rs` | src | m | 11 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
