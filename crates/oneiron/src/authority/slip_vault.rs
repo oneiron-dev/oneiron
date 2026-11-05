@@ -272,6 +272,7 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm: None,
+            trusted_contact: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -338,6 +339,27 @@ impl Vault {
         let verified = slip.verify(host_public_key, &fold, now, challenge, signature)?;
         let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
         Ok(verified)
+    }
+    /// Verifies a contact-bound slip and its holder proof (FIX 4325): the
+    /// same host, caveat and holder checks as
+    /// [`Self::verify_capability_slip`], admitting only a contact-bound slip
+    /// and returning only the opaque [`TrustedContactCredential`]. Its naming
+    /// still stands in this snapshot; the contact's doors recheck it in
+    /// their acting transaction.
+    pub fn verify_trusted_contact_slip(
+        &self,
+        host_public_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<TrustedContactCredential> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let credential =
+            slip.verify_trusted_contact(host_public_key, &fold, now, challenge, signature)?;
+        let credential = self.admitted_trusted_contact_view_in_txn(&txn, credential, now)?;
+        Ok(credential)
     }
     /// Verify a slip and its holder-signed caveats against the logged issuing host key.
     pub fn verify_capability_slip_with_host_key(
