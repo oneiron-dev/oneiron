@@ -13,6 +13,9 @@ pub struct CanonicalEntityDocument {
     /// None is a UTF-8 body; Some is the document's MessagePack body field.
     pub field: Option<String>,
     pub text: String,
+    /// Exact native SKILL witness at this value; None before its first
+    /// publication. These bytes alone are not admitted-source proof.
+    pub native_skill_state: Option<Vec<u8>>,
     /// Editable fields, each encoded as one MessagePack value.
     pub metadata: BTreeMap<String, Vec<u8>>,
     /// A scope summary's typed purpose and derivation, as its meta map holds
@@ -62,6 +65,8 @@ pub struct CanonicalDocumentVersion {
     /// Characters kept from its end.
     pub suffix: u32,
     pub middle: String,
+    /// This retained version's witness, never the current head's substitute.
+    pub native_skill_state: Option<Vec<u8>>,
     pub metadata: BTreeMap<String, Vec<u8>>,
     /// A scope summary's purpose and derivation at this version (FIX 756).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -132,6 +137,9 @@ pub struct CanonicalDocumentFork {
     /// The retained output text of a pending fork.
     pub output: Option<String>,
     pub output_metadata: Option<BTreeMap<String, Vec<u8>>>,
+    /// The actual pending output's witness. A pending output may genuinely
+    /// have none; a settled fork with no output carries none.
+    pub output_native_skill_state: Option<Vec<u8>>,
     /// Its place in its bundle, and the bundle's size: no count bounds a
     /// bundle (Rule 5, FIX 8822).
     pub proposal_index: u64,
@@ -205,6 +213,7 @@ impl CanonicalEntityDocumentHistory {
             prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
             suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
             middle: new[prefix..new.len() - suffix].iter().collect(),
+            native_skill_state: None,
             metadata: BTreeMap::new(),
             summary_meta: BTreeMap::new(),
         })

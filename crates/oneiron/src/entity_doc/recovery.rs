@@ -84,6 +84,7 @@ pub(crate) fn capture(
             storage::TextField::MapField(field) => Some(field),
         },
         text: doc.text(),
+        native_skill_state: super::native_skill_state::current_witness_bytes(&doc)?,
         metadata: doc.metadata_bytes()?,
         summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
@@ -128,7 +129,7 @@ impl Versions {
 struct ForkAt {
     record: ForkRecord,
     base: Option<usize>,
-    output: Option<(String, BTreeMap<String, Vec<u8>>)>,
+    output: Option<(String, BTreeMap<String, Vec<u8>>, Option<Vec<u8>>)>,
     index: u64,
     len: u64,
     settled: bool,
@@ -214,7 +215,11 @@ fn history(
                 .get(store, txn, &record.fork)?
                 .ok_or(invalid("entity document pending fork lost its output"))?;
             let fork = EntityDoc::from_snapshot(&bytes)?;
-            Some((fork.text(), fork.metadata_bytes()?))
+            Some((
+                fork.text(),
+                fork.metadata_bytes()?,
+                super::native_skill_state::current_witness_bytes(&fork)?,
+            ))
         } else {
             None
         };
@@ -245,11 +250,13 @@ fn history(
     let mut texts = Vec::with_capacity(versions.frontiers.len());
     let mut metadata = Vec::with_capacity(versions.frontiers.len());
     let mut summaries = Vec::with_capacity(versions.frontiers.len());
+    let mut native_witnesses = Vec::with_capacity(versions.frontiers.len());
     for frontier in &versions.frontiers {
         let version = doc.fork(&frontier.encode())?;
         texts.push(version.text());
         metadata.push(version.metadata_bytes()?);
         summaries.push(summary_meta::bytes(&version.doc));
+        native_witnesses.push(super::native_skill_state::current_witness_bytes(&version)?);
     }
     let parents = hasse(&versions.vvs);
     let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
@@ -274,6 +281,7 @@ fn history(
         version.parents = mapped;
         version.metadata = metadata[node].clone();
         version.summary_meta = summaries[node].clone();
+        version.native_skill_state = native_witnesses[node].clone();
         carried.push(version);
     }
     let at = |node: usize| order[node] as u32;
@@ -322,6 +330,10 @@ fn history(
     let mut forks: Vec<CanonicalDocumentFork> = forks
         .into_iter()
         .map(|fork| {
+            let (output, output_metadata, output_native_skill_state) = match fork.output {
+                Some((text, metadata, witness)) => (Some(text), Some(metadata), witness),
+                None => (None, None, None),
+            };
             Ok(CanonicalDocumentFork {
                 fork: raw(&fork.record.fork)?,
                 proposal: raw(&fork.record.proposal)?,
@@ -336,8 +348,9 @@ fn history(
                     ForkStatus::Rejected => CanonicalForkStatus::Rejected,
                 },
                 base: fork.base.map(at),
-                output: fork.output.as_ref().map(|(text, _)| text.clone()),
-                output_metadata: fork.output.map(|(_, metadata)| metadata),
+                output,
+                output_metadata,
+                output_native_skill_state,
                 proposal_index: fork.index,
                 proposal_len: fork.len,
                 proposal_settled: fork.settled,
