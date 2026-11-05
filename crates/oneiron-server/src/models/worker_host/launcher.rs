@@ -230,9 +230,19 @@ impl ProcessLauncher {
             .and_then(|record| record.native_socket.clone());
         // A llama worker's activity is read on its `/metrics` (FIX 9190):
         // only llama binds a route, never guessed from (None, None).
-        let llama_metrics = matches!(self.row.kind, WorkerKind::LlamaCpp).then(|| {
-            super::llama_metrics::MetricsRoute::new(self.route("/metrics"), &self.launch.args, &env)
-        });
+        let llama_metrics = if matches!(self.row.kind, WorkerKind::LlamaCpp) {
+            Some(
+                super::llama_metrics::MetricsRoute::new(
+                    self.route("/metrics"),
+                    &self.launch.args,
+                    &env,
+                    &installation.bundle_dir,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
         spawn(
             &program,
             &args,

@@ -47,11 +47,6 @@ const RESERVED_METADATA_KEYS: [&str; 7] = [
 /// unknown value and fails closed.
 const MAX_WITNESS_MESSAGE_TYPE_BYTES: usize = 128;
 
-/// The highest position a message may claim inside one turn. Ordering is a
-/// signal readers sort by; an unbounded one is a channel rather than a
-/// position.
-pub(crate) const MAX_WITNESS_MESSAGE_ORDER: u32 = 65_535;
-
 /// Metadata nesting bound. Depth beyond this is a structure no transcript
 /// reader consumes and a decode cost every reader pays.
 const MAX_WITNESS_METADATA_DEPTH: usize = 8;
@@ -71,6 +66,15 @@ const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
 
+/// One durable ordered MESSAGE part. Custody references carry no part bytes;
+/// revealing one still requires the existing secret entry grant.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum StoredMessagePart {
+    Inline(crate::ContentPart),
+    Custody { custody: String },
+}
+
 /// One MESSAGE envelope, exactly as the write door will encode it.
 ///
 /// `metadata` is the rmpv value the body carries (the engine converts JSON to
@@ -85,7 +89,7 @@ pub(crate) struct WitnessMessageEnvelope<'a> {
     /// Text content, BM25-indexed by the caller when non-empty.
     pub(crate) content: &'a str,
     /// Ordered terminal parts owned by the MESSAGE, never its editable text.
-    pub(crate) parts: Option<Vec<crate::ContentPart>>,
+    pub(crate) parts: Option<Vec<StoredMessagePart>>,
     /// Opaque passenger data, or `None`.
     pub(crate) metadata: Option<Value>,
     /// Whether the row is part of the visible transcript.
@@ -150,9 +154,6 @@ pub(crate) fn witness_message_envelope_denial(
     if !valid_message_type(envelope.message_type) {
         return malformed;
     }
-    if envelope.order > MAX_WITNESS_MESSAGE_ORDER {
-        return malformed;
-    }
     // A user's own words are never invisible. `companion`/`system` rows may be
     // hidden (an executor's kept-to-itself reasoning is a real, gated shape);
     // an invisible row attributed to the owner is a forgery with no reader.
@@ -208,7 +209,7 @@ pub(crate) enum WitnessMessageBodyAuthor {
 ///
 /// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody) when the bytes are not decodable, are
 /// not the canonical key set in canonical order, carry an unknown author or
-/// type token, exceed the order ceiling, hide a `user` row, carry malformed
+/// type token, hide a `user` row, carry malformed
 /// metadata, or do not re-encode byte-identically.
 pub(crate) fn validate_canonical_witness_message_body(
     body: &[u8],
@@ -228,7 +229,7 @@ pub(crate) fn validate_canonical_witness_message_body(
     let mut author: Option<&str> = None;
     let mut message_type: Option<&str> = None;
     let mut content: Option<&str> = None;
-    let mut parts: Option<Vec<crate::ContentPart>> = None;
+    let mut parts: Option<Vec<StoredMessagePart>> = None;
     let mut metadata: Option<Value> = None;
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;

@@ -393,6 +393,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.rules.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.code_auto_install.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.fit.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.skills.advisory_ask.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.permissions.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.start" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.result" => a.spec.clone().ok_or_else(invalid),
@@ -2308,6 +2309,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.fit.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skills.advisory_ask.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.permissions.approve" => {
@@ -5443,6 +5447,7 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
     let ran = execute_agent_verb_row(
         server,
         tool,
@@ -5452,6 +5457,7 @@ async fn execute_agent_verb_listing(
         surface,
         served,
         board_hooks,
+        pre_hooked_fold,
     )
     .await;
     // A row that fails after its pre chain ran keeps a session-only call's
@@ -5485,6 +5491,7 @@ async fn execute_agent_verb_row(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -5509,6 +5516,7 @@ async fn execute_agent_verb_row(
             surface,
             served,
             board_hooks,
+            pre_hooked_fold,
         ),
     )
     .await
@@ -5525,6 +5533,7 @@ async fn execute_agent_verb_row_on(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -9517,6 +9526,24 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_fit_set(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.advisory_ask.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.skills.advisory_ask.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SkillAdvisoryAskRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_advisory_ask_set(server, auth, input),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -26327,6 +26354,7 @@ async fn execute_agent_verb_row_on(
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
+                pre_hooked_fold,
             ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

@@ -35,13 +35,13 @@ pub struct EntityResolutionCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityResolutionRoute {
-    /// `>= 0.90` — link outright.
+    /// At or above the configured soft-link boundary — link outright.
     HardLink,
-    /// `[0.70, 0.90)` — link, but verify asynchronously.
+    /// Below the configured soft-link boundary — link, but verify asynchronously.
     SoftLink,
-    /// `[0.50, 0.70)` — link weakly, verify asynchronously.
+    /// Below the configured low soft-link boundary — link weakly, verify asynchronously.
     SoftLinkLow,
-    /// `< 0.50`, or no candidates at all — resolve to nothing here.
+    /// Below the configured provisional boundary, or no candidates — resolve to nothing here.
     ProvisionalEntity,
 }
 
@@ -257,13 +257,15 @@ pub(crate) fn score_entity_resolution_waterfall_in_txn(
             })
     });
 
+    let bands =
+        crate::gate::resolve_policy_manifest(&vault.store, &*wtxn)?.entity_resolution_bands();
     let top = ranked.first().copied();
     let top_effective = top.map_or(0.0, |scored| scored.effective_confidence);
-    let route = if top.is_none() || top_effective < 0.50 {
+    let route = if top.is_none() || top_effective < bands.provisional_below {
         EntityResolutionRoute::ProvisionalEntity
-    } else if top_effective < 0.70 {
+    } else if top_effective < bands.soft_link_low_below {
         EntityResolutionRoute::SoftLinkLow
-    } else if top_effective < 0.90 {
+    } else if top_effective < bands.soft_link_below {
         EntityResolutionRoute::SoftLink
     } else {
         EntityResolutionRoute::HardLink
