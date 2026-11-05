@@ -454,7 +454,7 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
                 Ok(true) => crate::batch::queue_proactivity_change(vault, txn),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    summary = %current,
+                    summary = %current.to_hex(),
                     kind = ?error.kind(),
                     "session summary re-derivation not queued"
                 ),
