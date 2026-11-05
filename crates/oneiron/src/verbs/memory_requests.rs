@@ -201,7 +201,7 @@ pub struct BlobContent {
 pub(super) fn append_blob(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
-) -> MemoryResult<crate::memory::BlobVersionView> {
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     use base64::Engine as _;
     if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
         return Err(MemoryError::bad_request(
