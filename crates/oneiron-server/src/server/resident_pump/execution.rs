@@ -338,6 +338,9 @@ pub(super) fn run_bound(
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
+        if door.take_media_trap() {
+            return Ok(BoundRun::Trapped);
+        }
         let outcome = outcome?;
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
@@ -616,6 +619,12 @@ fn enter_run(
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
+    door.bind_media_step(crate::server::RunMediaStep::new(
+        vault,
+        &status.attempt,
+        actor,
+        config.run_id,
+    ));
     let entered = enter_engine_native_run(
         vault,
         provider,
