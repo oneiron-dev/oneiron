@@ -90,6 +90,7 @@ pub(in crate::models) async fn open_turn(
         socket: socket.to_path_buf(),
         epoch: epoch.to_owned(),
         worker: route.worker.clone(),
+        ledger: super::super::session_device_ledger(&route.worker),
     };
     let Some(ops) = serves(&worker_id, &place).await else {
         return Ok(None);
@@ -148,7 +149,7 @@ pub(in crate::models) async fn open_turn(
         else {
             return Ok(None);
         };
-        session.residency = forked.residency;
+        session.observe(forked.residency);
         session.stale = stale;
         session.phase = Phase::Ready;
         // A restored session's first attach below the frontier it published
@@ -383,7 +384,7 @@ async fn resident(
             if let Some(session) = registry::current(&mut workers, worker_id, place)
                 .and_then(|worker| worker.sessions.get_mut(binding))
             {
-                session.residency = restored.residency;
+                session.observe(restored.residency);
             }
             Some(opened)
         }
@@ -417,12 +418,19 @@ async fn create(
         op_id: policy::next_op_id(),
     };
     let created: SessionCreated = send(place, SessionOp::Create, &body, None).await.ok()?;
+    let target = SessionTarget {
+        handle: created.handle,
+        binding: key.binding(),
+    };
     let session = Session {
         key: key.clone(),
         handle: created.handle,
         generation: created.generation,
         published: None,
         residency: SessionResidency::default(),
+        // No residency report was observed for it yet: its row starts
+        // unreported, never a fabricated default.
+        owner: registry::mint_owner(place, key.anchor.vault, target, None),
         pending: None,
         stale: None,
         path: Vec::new(),
@@ -443,7 +451,7 @@ async fn create(
             worker.sessions.insert(key.binding(), session);
             None
         } else {
-            Some(worker.owe(key.anchor.vault, session.target(), session.residency))
+            Some(worker.owe_session(session))
         }
     };
     if let Some((target, at)) = refused {

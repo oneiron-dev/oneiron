@@ -1,6 +1,5 @@
-//! The record hooks the store layer's write, erase and read paths run:
-//! identity-topology, federation, room, voice and secret-custody checks, supplied
-//! by the engine when a store opens.
+//! Native record behavior supplied by the engine when a store opens:
+//! identity, federation, room, voice, secret custody and campaign/query lifecycle.
 
 use std::collections::BTreeSet;
 
@@ -15,10 +14,146 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 /// The engine's record hooks. A store holds one implementation from the
-/// moment it is assembled (see [`crate::store::StoreHooks`]). The store layer
-/// calls each method at the point where it called the engine function of the
-/// same name, with the same arguments, and keeps its result.
+/// moment it is assembled (see [`crate::store::StoreHooks`]). Store and Memory
+/// callers keep their admission and ordering, while these hooks run the native
+/// behavior with the original arguments.
 pub trait StoreRecordHooks: Send + Sync {
+    /// The engine's `campaign::surface::create_campaign`.
+    fn create_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::CreateCampaignRequest,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord>;
+
+    /// The engine's `campaign::surface::launch_campaign`.
+    fn launch_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord>;
+
+    /// The engine's `campaign::surface::read_campaign`.
+    fn read_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+    ) -> Result<Option<crate::memory::campaign_records::CampaignRecord>>;
+
+    /// The engine's `campaign::surface::update_campaign`.
+    fn update_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+        request: &crate::memory::campaign_records::UpdateCampaignRequest,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord>;
+
+    /// The engine's `campaign::surface::archive_campaign`.
+    fn archive_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord>;
+
+    /// The engine's `saved_query::create_saved_query`.
+    fn create_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        owner_actor_class: crate::edge::EdgeActorClass,
+        request: &crate::memory::query_records::CreateSavedQueryRequest,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord>;
+
+    /// The engine's `saved_query::read_saved_query`.
+    fn read_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+    ) -> Result<Option<crate::memory::query_records::SavedQueryRecord>>;
+
+    /// The engine's `saved_query::update_saved_query`.
+    fn update_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+        request: &crate::memory::query_records::UpdateSavedQueryRequest,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord>;
+
+    /// The engine's `saved_query::archive_saved_query`.
+    fn archive_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord>;
+
+    /// The engine's `campaign::surface::read_campaign_members`.
+    fn read_campaign_members(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        req: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> Result<crate::memory::campaign_records::MembershipPage>;
+
+    /// The engine's `campaign::surface::read_saved_query_members`.
+    fn read_saved_query_members(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        req: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> Result<crate::memory::campaign_records::MembershipPage>;
+
+    /// The native program create and its record projection/step-body filing.
+    /// Evaluates `filer` once after creation, before the filing clock is read.
+    fn create_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::CreateCampaignProgramRequest,
+        filer: &dyn Fn() -> WriteActor,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord>;
+
+    /// The native program read and its record projection.
+    fn read_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::CampaignProgramReadRequest,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramReadResult>;
+
+    /// The native program update and its record projection/step-body filing.
+    /// Evaluates `filer` once before filing, which precedes the program write.
+    fn update_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::UpdateCampaignProgramRequest,
+        filer: &dyn Fn() -> WriteActor,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord>;
+
+    /// The native program archive and its record projection.
+    fn archive_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::ArchiveCampaignProgramRequest,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord>;
+
     /// The engine's `comm::resolve_party_ref_from_store_in_txn`.
     fn resolve_party_ref_from_store_in_txn(
         &self,
@@ -73,6 +208,19 @@ pub trait StoreRecordHooks: Send + Sync {
         target: EntityId,
         now: u64,
     ) -> Result<Vec<EntityId>>;
+
+    /// The engine's `campaign::enrollment::drive_enrollment_outbound_leg`.
+    fn drive_enrollment_outbound_leg(
+        &self,
+        vault: &crate::Vault,
+        local_node_id: u64,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        sender: &mut (dyn crate::outbound_consent::OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<
+        crate::campaign::enrollment::EnrollmentLegDrive,
+        crate::outbound_intent_ledger::IntentLedgerError,
+    >;
 
     /// The engine's `comm::record_comm_send_receipt`.
     fn record_comm_send_receipt(
@@ -191,6 +339,59 @@ pub trait StoreRecordHooks: Send + Sync {
         epoch_cutoff: u64,
         records: &[EntityId],
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)>;
+
+    /// The engine's `Vault::campaign_step_body_text`.
+    fn campaign_step_body_text(
+        &self,
+        vault: &crate::Vault,
+        content_ref: &str,
+    ) -> Result<Option<String>>;
+
+    /// The engine's `Memory::compliance_install_as`.
+    fn compliance_install_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_amend`.
+    fn compliance_amend(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_approve_as`.
+    fn compliance_approve_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_reject_as`.
+    fn compliance_reject_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_verify_as`.
+    fn compliance_verify_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceVerifyRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_result`.
+    fn compliance_result(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceResultRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceResult>;
 
     /// The engine's `federation::validate_federation_grant_body_bytes`.
     fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()>;
@@ -336,6 +537,33 @@ pub trait StoreRecordHooks: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `campaign::claims::do_not_contact_subjects_in_txn`.
+    fn do_not_contact_subjects_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        counterparty: &str,
+    ) -> Result<Vec<EntityId>>;
+
+    /// The engine's `campaign::claims::subjects_do_not_contact_in_txn`.
+    fn subjects_do_not_contact_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        subjects: &[EntityId],
+        channel: Option<&str>,
+        scope: &str,
+    ) -> Result<bool>;
+
+    /// The engine's `campaign::send_hygiene::apply_suppression_in_txn`.
+    fn apply_suppression_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        cause: crate::write_envelope::cohort_claims::suppression::SuppressionCause,
+        input: &crate::write_envelope::cohort_claims::suppression::SuppressionInput,
+    ) -> Result<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>;
 
     /// The engine's `comm::is_restrictive_comm_predicate`.
     fn is_restrictive_comm_predicate(
