@@ -193,6 +193,28 @@ pub(super) fn persist_native_skill(
     persist_scanned_inner(vault, txn, entity, h, doc, before, native_tokens, door_scan)
 }
 
+/// Persist only the document owned by the actual source-bound canonical
+/// producer. Rebuilt operation identities are not inherited old operation ids.
+pub(super) fn persist_canonical_skill(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    rebuilt: &super::native_skill_state::CanonicalRebuiltDocument<'_>,
+) -> Result<()> {
+    let native_tokens = rebuilt.require_document(entity, h)?;
+    persist_scanned_inner(
+        vault,
+        txn,
+        entity,
+        h,
+        rebuilt.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
 fn persist_scanned_inner(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
