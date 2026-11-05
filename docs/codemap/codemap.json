@@ -7491,7 +7491,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 3
      }
@@ -8420,7 +8420,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -21373,6 +21373,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/consent/answer_wake.rs",
+     "purpose": "A committed consent answer wakes the connector-call settler",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/consent/approval_proof.rs",
      "purpose": "Gate-attested owner approval carriers and retained proof families",
      "surface": {
@@ -29443,8 +29454,8 @@
      "path": "src/dreamer_runner/maintenance/code_fix/publisher_refs.rs",
      "purpose": "Local references to occurrences in the host's actual publisher inputs",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -69896,7 +69907,7 @@
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -89848,7 +89859,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91068,7 +91079,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6376,
+   "source_files": 6377,
    "test_files": 895
   },
   "oneiron-android": {
@@ -119394,7 +119405,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_call_settle.rs",
@@ -127687,7 +127698,7 @@
     "connector_call_settle": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
