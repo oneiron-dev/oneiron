@@ -224,13 +224,50 @@ impl BrokerConnection {
         body: &[u8],
         secret: Zeroizing<Vec<u8>>,
     ) -> Result<BrokerStream, BrokerError> {
-        call.check(body).map_err(BrokerError::Refused)?;
+        self.open_with_optional_whole(call, body, None, secret)
+            .await
+    }
+
+    /// Opens a Responses call, whose whole turn is one raw segment after the
+    /// planned create body. The broker uses it only for a same-socket full retry.
+    pub async fn open_with_whole(
+        mut self,
+        call: &CallHeader,
+        body: &[u8],
+        whole: &[u8],
+        secret: Zeroizing<Vec<u8>>,
+    ) -> Result<BrokerStream, BrokerError> {
+        self.open_with_optional_whole(call, body, Some(whole), secret)
+            .await
+    }
+
+    async fn open_with_optional_whole(
+        mut self,
+        call: &CallHeader,
+        body: &[u8],
+        whole: Option<&[u8]>,
+        secret: Zeroizing<Vec<u8>>,
+    ) -> Result<BrokerStream, BrokerError> {
+        if call.shape == crate::Shape::OpenAiResponses {
+            let whole = whole.ok_or(BrokerError::Refused(crate::Refusal::Frame))?;
+            call.check_responses(body, whole)
+                .map_err(BrokerError::Refused)?;
+        } else {
+            call.check(body).map_err(BrokerError::Refused)?;
+        }
         // One deadline covers the frame's write, the wait and the reply's
         // read (FIX 8559).
         let deadline = Instant::now() + self.reply_timeout;
-        let written =
+        let written = if let Some(whole) = whole {
+            tokio::time::timeout_at(
+                deadline,
+                crate::frame::write_call_with_whole(&mut self.stream, call, body, whole, &secret),
+            )
+            .await
+        } else {
             tokio::time::timeout_at(deadline, write_call(&mut self.stream, call, body, &secret))
-                .await;
+                .await
+        };
         drop(secret);
         written
             .map_err(|_| BrokerError::Lost)?

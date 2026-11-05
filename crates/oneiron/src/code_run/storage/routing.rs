@@ -200,9 +200,9 @@ impl SessionBinding<'_> {
                     replay_generation_matches(current.as_ref(), expected)?;
                     match write {
                         RoutedDbs::Base(vault) => {
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)?;
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
                         }
                         RoutedDbs::Session(_) => {
                             REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
@@ -810,6 +810,14 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.code_run_output_sink(),
             Self::Session(binding) => binding.output_sink(),
+        }
+    }
+
+    /// A bound execution's result body, including its delivered PERSON values.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_output_sink_for(exec_run),
+            Self::Session(binding) => binding.output_sink_for(exec_run),
         }
     }
 
