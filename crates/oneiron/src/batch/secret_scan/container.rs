@@ -93,8 +93,7 @@ pub(super) fn walk_retained_repo_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
 ) -> Walked<()> {
-    let mut budget = Budget::of(ContainerReadMode::RetainedRepo);
-    retained_iterative::walk(bytes, &mut budget, visit)
+    ContainerReader::default().walk_retained_repo_members(bytes, visit)
 }
 
 /// The write door over each member under `bytes`, each read as the door
@@ -224,12 +223,7 @@ pub(crate) fn live_content_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Optio
 /// ([`walk_retained_repo_members`]). The stop is the caller's to read: a
 /// container no reader here rebuilds is not an engine failure.
 pub(super) fn masked_retained_repo_copy(bytes: &[u8], places: &KeyPlaces) -> Walked<Vec<u8>> {
-    masked_copy_in(
-        bytes,
-        places,
-        None,
-        Budget::of(ContainerReadMode::RetainedRepo),
-    )
+    ContainerReader::default().masked_retained_repo_copy(bytes, places)
 }
 
 fn masked_copy_in(
@@ -253,6 +247,29 @@ pub(crate) struct ContainerReader {
 }
 
 impl ContainerReader {
+    pub(crate) fn walk_retained_repo_members(
+        &self,
+        bytes: &[u8],
+        visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    ) -> Walked<()> {
+        let mut budget =
+            Budget::of(ContainerReadMode::RetainedRepo).with_pacing(self.pacing.clone());
+        retained_iterative::walk(bytes, &mut budget, visit)
+    }
+
+    pub(crate) fn masked_retained_repo_copy(
+        &self,
+        bytes: &[u8],
+        places: &KeyPlaces,
+    ) -> Walked<Vec<u8>> {
+        masked_copy_in(
+            bytes,
+            places,
+            None,
+            Budget::of(ContainerReadMode::RetainedRepo).with_pacing(self.pacing.clone()),
+        )
+    }
+
     fn budget(&self, digest: Option<&[u8; 32]>) -> Budget {
         Budget::new()
             .with_pacing(self.pacing.clone())
