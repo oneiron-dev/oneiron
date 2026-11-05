@@ -88,6 +88,7 @@ fn names_selected_put(operation: &BatchOp, selected: &SelectedRecordDocument<'_>
         entity_type,
         occurred,
         learned_at,
+        row_version,
         data,
         ..
     } = operation
@@ -104,5 +105,6 @@ fn names_selected_put(operation: &BatchOp, selected: &SelectedRecordDocument<'_>
         && occurred.start == header.occurred_start
         && occurred.end == header.occurred_end
         && *learned_at == header.learned_at
+        && *row_version == Some(header.row_version)
         && data.as_slice() == &selected.raw()[ENTITY_METADATA_HEADER_LEN..])
 }
