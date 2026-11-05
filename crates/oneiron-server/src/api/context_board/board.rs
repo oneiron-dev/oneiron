@@ -600,9 +600,19 @@ pub(super) fn board_parts(
 
     let mut sections = vec![worlds.clone()];
     if let Some(memories) = memories {
+        let assembled = oneiron::context_board::assemble_memories_sections(memories)
+            .map_err(board_frame_error)?;
         sections.extend(
-            oneiron::context_board::assemble_memories_sections(memories)
-                .map_err(board_frame_error)?,
+            super::filter_memories_sections(
+                vault,
+                read,
+                people,
+                layout_actor,
+                layout,
+                memories,
+                assembled,
+            )
+            .map_err(|error| core_engine_error("board memories filter failed", error))?,
         );
     }
     sections.push(tasks_section.clone());

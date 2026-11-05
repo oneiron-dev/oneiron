@@ -25,6 +25,11 @@ Each section may have:
   stay open under the line.
 - `filter`: which rows the section shows, by `who` (`mine`, one `actor`,
   one actor `class`, or one `group`: a project's roster) and by `status`.
+  TASKS filters by `who` (the assignee) and `status`; INBOX by `who` (the
+  sender); MEMORIES by `who` (the row's writer: the actor its stamped birth
+  names, else a CLAIM's write-envelope producer, else a NOTE's author). A
+  writer the caller cannot read, or a row with none, matches no `who`; a row
+  the fold keeps open stays. PINNED MEMORIES always stay.
 
 A pinned section (VERBS, ROOM) takes no layout. A section's own pinned rows
 (PINNED MEMORIES, loaded SKILLS) and the legend never fold. A fold is a view
@@ -127,7 +132,4 @@ exactly what the connector may see.
 
 - An owner override of one agent's layout alone (the override applies to
   every agent).
-- MEMORIES filters: a memory row names no author yet, so `who` cannot
-  narrow it. TASKS filters by `who` and `status`; INBOX filters by `who`
-  (the sender).
 

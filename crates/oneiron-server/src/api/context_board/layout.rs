@@ -13,10 +13,10 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use oneiron::EntityId;
 use oneiron::context_board::{
-    BoardActorClass, BoardLayout, BoardLayoutCandidate, PeopleView, PersonKind, SectionFilter,
-    TasksSectionRows,
+    BoardActorClass, BoardLayout, BoardLayoutCandidate, BoardSection, PeopleView, PersonKind,
+    SectionFilter, TasksSectionRows,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The layout one board renders under, the actor it belongs to, and the
 /// candidate the board's turn activates.
@@ -110,4 +110,71 @@ pub(crate) fn filter_task_rows(
             filter.matches(who, actor, &members, |id| people.kind(id).map(person_class))
         })
     }))
+}
+
+/// The MEMORIES `sections` of `actor`'s board narrowed by its layout's
+/// MEMORIES `who` filter (BOARD-LAYOUT add-on 2): a detail row stays while
+/// the actor who wrote it matches, or while the fold keeps it open by id.
+/// The writer is the row's stamped maker ([`oneiron::Vault::memory_row_writers`]),
+/// and, as an INBOX sender (FIX 9745), it counts only while `read` reads it
+/// or it is `actor` itself; a row with no such writer matches no `who`.
+/// Pinned rows and each section's count and fold summary stay. The filter
+/// narrows the rendered board only: the typed MEMORIES section and the
+/// replay's admission sources are unchanged.
+pub(crate) fn filter_memories_sections(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    people: &PeopleView<'_>,
+    actor: Option<EntityId>,
+    layout: &BoardLayout,
+    memories: &oneiron::MemoriesSection,
+    sections: Vec<BoardSection>,
+) -> Result<Vec<BoardSection>, oneiron::Error> {
+    let Some(who) = layout
+        .filter("memories")
+        .and_then(|filter| filter.who.as_ref())
+    else {
+        return Ok(sections);
+    };
+    let keep = layout
+        .fold("memories")
+        .map(|fold| fold.keep.as_slice())
+        .unwrap_or_default();
+    let rows: Vec<EntityId> = memories
+        .rows
+        .iter()
+        .filter_map(|row| EntityId::from_hex(&row.id).ok())
+        .collect();
+    let mut readable = BTreeMap::new();
+    let mut writers = BTreeMap::new();
+    for (row, writer) in vault.memory_row_writers(&rows)? {
+        let shown = match readable.get(&writer) {
+            Some(shown) => *shown,
+            None => {
+                let shown = Some(writer) == actor || read.is_entity_readable(&writer)?;
+                readable.insert(writer, shown);
+                shown
+            }
+        };
+        if shown {
+            writers.insert(row, writer);
+        }
+    }
+    let members = match who.group() {
+        Some(group) if read.is_entity_readable(&group)? => {
+            vault.board_filter_group_members(group)?
+        }
+        _ => BTreeSet::new(),
+    };
+    Ok(sections
+        .into_iter()
+        .map(|section| {
+            section.narrowed(|row| {
+                keep.contains(&row)
+                    || who.matches(writers.get(&row).copied(), actor, &members, |id| {
+                        people.kind(id).map(person_class)
+                    })
+            })
+        })
+        .collect())
 }
