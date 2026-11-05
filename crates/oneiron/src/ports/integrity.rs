@@ -100,6 +100,18 @@ pub(crate) fn stale_in_txn(
 fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
+/// The room's explicit withdrawal mark in this exact overlay snapshot.
+pub(crate) fn marked_stale_in_overlay(
+    snapshot: &crate::session_overlay::OverlaySnapshot,
+    id: &EntityId,
+) -> bool {
+    snapshot
+        .staged_value(
+            crate::session_overlay::OverlayKeyspace::VaultMeta,
+            &stale_key(id),
+        )
+        .is_some()
+}
 /// Whether a source `dependent` is recorded as derived from no longer stands
 /// in this snapshot. It needs no mark from the deletion, so a failed or
 /// rolled-back mark still withdraws (I2). Only `dependent`'s own reverse rows
