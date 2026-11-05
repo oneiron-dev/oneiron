@@ -5,6 +5,7 @@
 //! record admission before installing either view in its parent writer.
 
 mod candidate;
+mod retained;
 pub(crate) use candidate::{RecordDocumentCandidate, RecordDocumentPreparation};
 
 use heed::RoTxn;
@@ -108,6 +109,7 @@ impl CarriedRecordDocument {
             return Err(invalid("record document names another pointer"));
         }
         let doc = EntityDoc::from_snapshot(snapshot)?;
+        retained::require_current_state(&doc)?;
         let floor = if doc.doc.is_shallow() {
             doc.doc.shallow_since_vv().to_vv().encode()
         } else {
