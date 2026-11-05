@@ -410,7 +410,7 @@ impl<'v> ScopedRead<'v> {
             self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
         })?;
         let withheld =
-            self.point_suppression_in(txn, policy, &id, admitted.suppression(), authority);
+            self.point_suppression_in(txn, policy, &id, mode, admitted.suppression(), authority);
         let row = admitted
             .into_option()
             .map(|revision| ReadRow::from_revision(id, revision))
@@ -425,6 +425,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
         id: &EntityId,
+        mode: ReadMode,
         suppressed: usize,
         authority: &HeldAuthority<'v>,
     ) -> usize {
@@ -433,7 +434,8 @@ impl<'v> ScopedRead<'v> {
         }
         let floor_authority = authority.for_peer();
         let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
-            self.is_entity_readable_held_in(txn, policy, id, &floor, &floor_authority)
+            self.admitted_raw_in(txn, policy, &floor, id, mode, &floor_authority)
+                .map(|raw| raw.is_some())
         });
         if readable.unwrap_or(false) {
             suppressed
@@ -485,37 +487,44 @@ impl<'v> ScopedRead<'v> {
             return Ok((row.map(|row| ReadRow { deletion, ..row }), withheld));
         }
         // Erased relationship/private bodies cannot prove a scope.
-        let revealed = hydrated.deletion.is_some()
-            && self.audience_readable_in(txn, &hydrated.id)?
-            && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-            && !(self.relationship_gated_in(txn)?
-                && matches!(
-                    hydrated.entity_type,
-                    crate::registry::ENTITY_TYPE_CLAIM
-                        | crate::registry::ENTITY_TYPE_MESSAGE
-                        | crate::registry::ENTITY_TYPE_SUMMARY
+        let reveals = |filter: &crate::gate::ResolvedRetrievalFilter| -> Result<bool> {
+            Ok(hydrated.deletion.is_some()
+                && self.audience_readable_in(txn, &hydrated.id)?
+                && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
+                && !(self.relationship_gated_in(txn)?
+                    && matches!(
+                        hydrated.entity_type,
+                        crate::registry::ENTITY_TYPE_CLAIM
+                            | crate::registry::ENTITY_TYPE_MESSAGE
+                            | crate::registry::ENTITY_TYPE_SUMMARY
+                    ))
+                && !filter.deny_all
+                && filter.read_scope().bands.contains(&hydrated.entity_type)
+                // Only authority covering every possible old position may reveal
+                // deletion metadata, never a narrow grant.
+                && self.credential_allows_id(&hydrated.id)
+                && self.facets_allow_shell_in(txn, &hydrated.id)?
+                && crate::gate::scoped_read_record_allowed(
+                    policy,
+                    &self.actor_key,
+                    &oneiron_authority::federation::scope_codec::read_preset(),
                 ))
-            && !filter.deny_all
-            && filter.read_scope().bands.contains(&hydrated.entity_type)
-            // Only authority covering every possible old position may reveal
-            // deletion metadata, never a narrow grant.
-            && self.credential_allows_id(&hydrated.id)
-            && self.facets_allow_shell_in(txn, &hydrated.id)?
-            && crate::gate::scoped_read_record_allowed(
-                policy,
-                &self.actor_key,
-                &oneiron_authority::federation::scope_codec::read_preset(),
-            );
-        if !revealed {
+        };
+        if !reveals(filter)? {
             // A withheld private NOTE shell counts exactly like a missing row.
             let admitted = self.admit_in(txn, &hydrated.id, || Ok(None::<()>))?;
-            let withheld = self.point_suppression_in(
-                txn,
-                policy,
-                &hydrated.id,
-                admitted.suppression(),
-                authority,
-            );
+            let suppressed = admitted.suppression();
+            let withheld = if suppressed == 0 {
+                0
+            } else if self
+                .actor_retrieval_floor(policy)
+                .and_then(|floor| reveals(&floor))
+                .unwrap_or(false)
+            {
+                suppressed
+            } else {
+                0
+            };
             return Ok((None, withheld));
         }
         let occurred = self
