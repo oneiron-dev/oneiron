@@ -17,7 +17,8 @@
 //! contact, or brief grant is a path of its own (see
 //! [`super::outbound_reach`]).
 use super::outbound_reach::{
-    ReachOutbound, contact_brief_paths, outbound_after_plan, outbound_covers, scoped_mcp_paths,
+    BRIEF_CHANNEL, CONTACT_CHANNEL, ReachOutbound, contact_brief_paths, outbound_after_plan,
+    outbound_covers, scoped_mcp_paths,
 };
 use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
@@ -30,7 +31,7 @@ use crate::reaction::person_name_in;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The verb class an outbound send is consented under, as the send door
 /// composes it (`gate::effect::external_effect_action_requirement`).
@@ -76,9 +77,12 @@ pub struct ShapeReachFact {
     pub verb: String,
     /// The channel class, e.g. `email`, or `connector`.
     pub channel: String,
-    /// The sending identity's address or handle, or the connector's name:
-    /// the credential the path rides.
+    /// The sending identity's address or handle, the connector's name, or
+    /// the contact/brief reference the path rides.
     pub sender: String,
+    /// The contact or brief's stored name, when visible to the caller.
+    #[serde(default)]
+    pub sender_name: Option<String>,
     /// The sending identity or the connector key, by entity id hex.
     pub identity: String,
     /// A data class a standing disclosure grant lets reach `audience`, e.g.
@@ -126,7 +130,11 @@ impl ShapeReachFact {
     }
 
     fn through(&self) -> String {
-        format!("through {} {}", self.channel, self.sender)
+        format!(
+            "through {} {}",
+            self.channel,
+            self.sender_name.as_deref().unwrap_or(&self.sender)
+        )
     }
 
     /// The path as it stands.
@@ -247,14 +255,16 @@ impl ShapeReach {
     /// The facts with a name on each audience member and on each actor the
     /// roster leaves unnamed, where `name` finds one; a line reads a short
     /// id otherwise. Runs after [`Self::visible`], so a hidden path's names
-    /// are never read.
+    /// are never read. Contact and brief senders are named only when
+    /// `visible` admits them; other senders keep their raw value.
     ///
     /// # Errors
     ///
-    /// `name`'s own.
+    /// `name`'s or `visible`'s own.
     pub(super) fn named(
         mut self,
         name: &mut dyn FnMut(&str) -> Result<Option<String>>,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Self> {
         for fact in &mut self.facts {
             if fact.actor_name.is_none() {
@@ -267,6 +277,14 @@ impl ShapeReach {
                     Ok(name(member)?.unwrap_or_else(|| label(member)))
                 })
                 .collect::<Result<_>>()?;
+            fact.sender_name = if matches!(fact.channel.as_str(), CONTACT_CHANNEL | BRIEF_CHANNEL)
+                && let Ok(id) = EntityId::from_hex(&fact.sender)
+                && visible(&id)?
+            {
+                name(&fact.sender)?
+            } else {
+                None
+            };
         }
         Ok(self)
     }
@@ -281,11 +299,17 @@ impl ShapeReach {
     }
 }
 
-/// Phrases joined into one sentence, capped at [`REACH_LINE_MAX_CHANGES`].
-fn sentence(mut phrases: Vec<String>) -> String {
-    let rest = phrases.len().saturating_sub(REACH_LINE_MAX_CHANGES);
-    phrases.truncate(REACH_LINE_MAX_CHANGES);
-    let mut line = phrases.join("; ");
+/// Distinct phrases joined in order, capped at [`REACH_LINE_MAX_CHANGES`].
+fn sentence(phrases: Vec<String>) -> String {
+    let mut seen = BTreeSet::new();
+    let mut distinct: Vec<&str> = phrases
+        .iter()
+        .map(String::as_str)
+        .filter(|phrase| seen.insert(*phrase))
+        .collect();
+    let rest = distinct.len().saturating_sub(REACH_LINE_MAX_CHANGES);
+    distinct.truncate(REACH_LINE_MAX_CHANGES);
+    let mut line = distinct.join("; ");
     if rest > 0 {
         line.push_str(&format!("; and {rest} more"));
     }
@@ -653,6 +677,7 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
             verb: SEND_VERB.to_owned(),
             channel: sender.channel.clone(),
             sender: sender.address.clone(),
+            sender_name: None,
             identity: sender.entity.to_hex(),
             class: None,
             audience: Vec::new(),
@@ -703,6 +728,7 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
                 verb: tool.tool.clone(),
                 channel: CONNECTOR_CHANNEL.to_owned(),
                 sender: tool.connector.clone(),
+                sender_name: None,
                 identity: tool.key.to_hex(),
                 class: None,
                 audience: Vec::new(),

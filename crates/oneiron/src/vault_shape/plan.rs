@@ -458,10 +458,10 @@ impl Vault {
         let reach = ShapePlanReach::of(
             reach_projection(&live.reach)
                 .visible(visible)?
-                .named(&mut name)?,
+                .named(&mut name, visible)?,
             reach_projection(&after)
                 .visible(visible)?
-                .named(&mut name)?,
+                .named(&mut name, visible)?,
             unresolved,
         );
         let pin = approval_dependencies(&live);

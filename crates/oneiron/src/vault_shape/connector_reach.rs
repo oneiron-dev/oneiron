@@ -145,8 +145,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut name = |reference: &str| self.reach_name_in(&txn, reference);
         Ok(ShapePlanReach::of(
-            reach_projection(&live.reach).named(&mut name)?,
-            reach_projection(&after).named(&mut name)?,
+            reach_projection(&live.reach).named(&mut name, &mut |_| Ok(true))?,
+            reach_projection(&after).named(&mut name, &mut |_| Ok(true))?,
             Vec::new(),
         ))
     }
@@ -168,8 +168,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut name = |reference: &str| self.reach_name_in(&txn, reference);
         Ok(ShapePlanReach::of(
-            reach_projection(&live.reach).named(&mut name)?,
-            reach_projection(&after).named(&mut name)?,
+            reach_projection(&live.reach).named(&mut name, &mut |_| Ok(true))?,
+            reach_projection(&after).named(&mut name, &mut |_| Ok(true))?,
             Vec::new(),
         ))
     }
