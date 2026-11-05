@@ -18,7 +18,11 @@ sent. The same sources are read again after any wait and before dispatch. A
 missing or changed pin is never replaced with the live row or a text lookup.
 The response includes the host's destination-bound read receipts alongside the
 retrieval and evidence-projection receipts. The existing answer boundary still
-checks every returned citation.
+checks every returned citation. Rerank text comes from the same credential-filtered
+projection as ordinary evidence, including admitted claims when the write scan
+was off. Claims still validate their pinned kind, predicate and value before
+projection. Their predicate/value text uses only projected fields; neither the
+raw claim value nor a changed pin is used as a fallback.
 
 The explicit request token budget remains the whole read's budget. Its capacity
 lease and native per-rung policy meter have separate state, so native permits

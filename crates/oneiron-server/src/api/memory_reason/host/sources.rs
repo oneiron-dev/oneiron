@@ -64,45 +64,45 @@ pub(super) fn rerank_pins(
             return Err(invalid("memory reason rerank pin is not readable"));
         };
         let body_hash = *blake3::hash(&body).as_bytes();
-        let text = match candidate.claim {
-            Some(admitted) => {
-                if entity_type != oneiron::registry::ENTITY_TYPE_CLAIM {
-                    return Err(invalid("memory reason rerank claim has the wrong kind"));
-                }
-                let expected = format!(
-                    "{}: {}",
-                    admitted.predicate,
-                    oneiron::serialize::msgpack_value_to_json(&admitted.value)
-                );
-                let decoded = decode_claim_body(&body, true)?;
-                if decoded.predicate != admitted.predicate
-                    || oneiron::serialize::msgpack_value_to_json(&decoded.value)
-                        != oneiron::serialize::msgpack_value_to_json(&admitted.value)
-                {
-                    return Err(invalid("memory reason rerank claim changed"));
-                }
-                let actual = format!(
-                    "{}: {}",
-                    decoded.predicate,
-                    oneiron::serialize::msgpack_value_to_json(&decoded.value)
-                );
-                if actual != expected {
-                    return Err(invalid("memory reason rerank claim changed"));
-                }
-                expected
+        if let Some(admitted) = candidate.claim {
+            if entity_type != oneiron::registry::ENTITY_TYPE_CLAIM {
+                return Err(invalid("memory reason rerank claim has the wrong kind"));
             }
-            None => {
-                let Value::Object(fields) = crate::projection::project_entity_parts(
-                    &candidate.id,
-                    entity_type,
-                    learned_at,
-                    &body,
-                    crate::projection::View::Full,
-                ) else {
-                    return Err(invalid("memory reason rerank pin projection failed"));
-                };
-                super::super::evidence_text(&fields)
+            let expected = format!(
+                "{}: {}",
+                admitted.predicate,
+                oneiron::serialize::msgpack_value_to_json(&admitted.value)
+            );
+            let decoded = decode_claim_body(&body, true)?;
+            if decoded.predicate != admitted.predicate
+                || oneiron::serialize::msgpack_value_to_json(&decoded.value)
+                    != oneiron::serialize::msgpack_value_to_json(&admitted.value)
+            {
+                return Err(invalid("memory reason rerank claim changed"));
             }
+            let actual = format!(
+                "{}: {}",
+                decoded.predicate,
+                oneiron::serialize::msgpack_value_to_json(&decoded.value)
+            );
+            if actual != expected {
+                return Err(invalid("memory reason rerank claim changed"));
+            }
+        }
+        let Value::Object(fields) = crate::projection::project_entity_parts(
+            &candidate.id,
+            entity_type,
+            learned_at,
+            &body,
+            crate::projection::View::Full,
+        ) else {
+            return Err(invalid("memory reason rerank pin projection failed"));
+        };
+        let text = match (candidate.claim, fields.get("pred"), fields.get("val")) {
+            (Some(_), Some(Value::String(predicate)), Some(value)) => {
+                format!("{predicate}: {value}")
+            }
+            _ => super::super::evidence_text(&fields),
         };
         pins.push(Pin {
             id: candidate.id,
