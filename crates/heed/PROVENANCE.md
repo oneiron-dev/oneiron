@@ -287,9 +287,20 @@ transaction account, never a cached acquire context. Child initialization,
 parent merges and root commit/abort use that current account. Lists allocated
 before account attachment are not retroactively charged.
 
+Raw dirty-list `MDB_ID2` arrays use a separate native-aligned physical prefix.
+The nested writer's original malloc uses the inherited current account; the
+environment's original startup calloc remains unaccounted. Element counts,
+zeroed versus uninitialized payloads and borrowed parent/root aliases remain
+unchanged. Every array-owning free uses its physical prefix; the existing
+`mdb_dlist_free` still frees pages only. A child-setup error clears the array
+pointer after its first free, preserving the outer cleanup without a second
+free. The standalone `mid2l` capacity-slot API and the environment's separate
+integer scratch array stay unchanged.
+
 This is not complete FIX8125, native disk accounting, whole-heap coverage or
-runtime proof. ID2/ID3 control arrays, transaction control, decrypted-read
-stash, mmap and other metadata copies remain outside this allocation scope.
+runtime proof. Other ID2/ID3 control arrays, startup scratch, transaction
+control, decrypted-read stash, mmap and other metadata copies remain outside
+this allocation scope.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
