@@ -5,7 +5,10 @@ It uses the configured HTTP hub's origin and the documented `/api/v1/search` pat
 The configured endpoint stays unchanged. This verb does not turn a static index
 into a ClawHub API, or change the hub's ordinary discovery and package fetching.
 The caller selects a compatible origin, such as `https://clawhub.ai`, when
-configuring the HTTP hub.
+configuring the HTTP hub. HTTP configuration stores the parsed URL's canonical
+form, including the trailing slash of a bare origin. The adapter and the stored
+source therefore bind the same endpoint; the import's exact source-binding
+check is not weakened.
 
 ## Owner door and request
 
