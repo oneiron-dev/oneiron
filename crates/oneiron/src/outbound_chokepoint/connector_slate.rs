@@ -44,9 +44,15 @@ pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
 enum Release {
     Send,
     Spent,
-    Ask(Option<(EffectDigest, Option<EntityId>)>),
+    Ask(
+        Box<IntentLedgerRecord>,
+        Option<(EffectDigest, Option<EntityId>)>,
+    ),
     Current(Box<IntentLedgerRecord>),
-    CampaignHold(crate::campaign::enrollment::CampaignLegHold),
+    CampaignHold(
+        Box<IntentLedgerRecord>,
+        crate::campaign::enrollment::CampaignLegHold,
+    ),
 }
 
 struct Candidate {
@@ -156,18 +162,21 @@ fn always_ask(
             return Ok(Release::Current(Box::new(current)));
         }
         let Some(candidate) = candidate_in_txn(vault, wtxn, &current)? else {
-            return Ok(Release::Ask(None));
+            return Ok(Release::Ask(Box::new(current), None));
         };
         let digest = candidate.digest;
         if let Some(hold) =
             super::campaign_leg::hold_in_txn(vault, wtxn, (&current).into(), campaign_node)?
         {
-            return Ok(Release::CampaignHold(hold));
+            return Ok(Release::CampaignHold(Box::new(current), hold));
         }
         match setting_in_txn(vault, wtxn, &current)? {
             SlateDisposition::AlwaysAsk => {}
             SlateDisposition::NeverAllow => {
-                return Ok(Release::Ask(Some((digest, candidate.actor))));
+                return Ok(Release::Ask(
+                    Box::new(current),
+                    Some((digest, candidate.actor)),
+                ));
             }
             SlateDisposition::Auto | SlateDisposition::AlwaysAllow => return Ok(Release::Send),
         }
@@ -196,15 +205,18 @@ fn always_ask(
                 ) {
                     super::ordinary_slate::queue_owner_ask_in_txn(vault, wtxn, &current)?;
                 }
-                Ok(Release::Ask(Some((digest, candidate.actor))))
+                Ok(Release::Ask(
+                    Box::new(current),
+                    Some((digest, candidate.actor)),
+                ))
             }
             Err(error) => Err(error.into()),
         }
     })?;
     match release {
         Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
-        Release::CampaignHold(hold) => Ok(Some(super::campaign_leg::held_result(
-            record, hold, replayed,
+        Release::CampaignHold(current, hold) => Ok(Some(super::campaign_leg::held_result(
+            &current, hold, replayed,
         ))),
         Release::Send => Ok(None),
         Release::Spent => {
@@ -216,7 +228,7 @@ fn always_ask(
             );
             Ok(None)
         }
-        Release::Ask(target) => Ok(Some(held(record, replayed, target))),
+        Release::Ask(current, target) => Ok(Some(held(&current, replayed, target))),
     }
 }
 
