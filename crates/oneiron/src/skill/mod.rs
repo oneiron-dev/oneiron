@@ -17,8 +17,6 @@ use oneiron_base::skill_invocations as invocation;
 pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
-#[cfg(feature = "sync")]
-mod native_state;
 mod pack_load;
 mod record;
 pub(crate) mod resident;
@@ -36,6 +34,8 @@ pub(crate) use self::call::{
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+#[cfg(feature = "sync")]
+pub(crate) use self::doors::{SkillStateWrite, SkillSupersessionRead};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
     GraphSkillStage, execute_graph_workflow_skill,
@@ -49,8 +49,6 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
     pin_loaded_in_txn, pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
-#[cfg(feature = "sync")]
-pub(crate) use self::native_state::{SkillStateWrite, SkillSupersessionRead};
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{

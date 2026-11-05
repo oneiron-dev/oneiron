@@ -1,11 +1,11 @@
 //! Target-bound requests constructible only inside the typed SKILL doors.
 
-use super::{SkillLifecycle, SkillRecord, decode_skill_record, encode_skill_record};
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_doc::SkillStateSnapshot;
 use crate::error::{ArtifactError, Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::skill::{SkillLifecycle, SkillRecord, decode_skill_record, encode_skill_record};
 use crate::store::Store;
 use heed::RoTxn;
 
@@ -116,7 +116,7 @@ impl SkillStateWrite {
         let Some(snapshot) = SkillStateSnapshot::capture(store, txn, entity, &requested)? else {
             return Ok(None);
         };
-        super::doors::validate_skill_update_door(
+        super::validate_skill_update_door(
             &decode_skill_record(snapshot.logical_prior_body())?,
             record,
         )?;
@@ -144,7 +144,7 @@ impl SkillStateWrite {
             return Ok(None);
         };
         let successor = SkillSupersessionRead::capture(store, txn, successor)?;
-        super::doors::validate_skill_successor(
+        super::validate_skill_successor(
             &decode_skill_record(snapshot.logical_prior_body())?,
             &decode_skill_record(&successor.body)?,
         )?;
@@ -180,14 +180,14 @@ impl SkillStateWrite {
         }
         match &self.door {
             SkillStateDoor::Update => {
-                super::doors::validate_skill_update_door(
+                super::validate_skill_update_door(
                     &decode_skill_record(self.snapshot.logical_prior_body())?,
                     &record,
                 )?;
             }
             SkillStateDoor::Supersede(successor) => {
                 let new = successor.recheck(store, txn)?;
-                super::doors::validate_skill_successor(
+                super::validate_skill_successor(
                     &decode_skill_record(self.snapshot.logical_prior_body())?,
                     &new,
                 )?;
