@@ -476,7 +476,9 @@ pub struct CaptureSummary {
     pub missed_messages: Vec<[u8; 16]>,
     /// Selected messages whose result attachment names a body the message
     /// no longer holds, or that no row holds: their rows are captured, the
-    /// body is not and is never claimed. Empty for every other capture.
+    /// body is not and is never claimed. A held body is component 11
+    /// (`MessageResultBody`), revision the BLAKE3 of that message's full
+    /// stored entity row. Empty for every other capture.
     pub absent_result_bodies: Vec<[u8; 16]>,
     pub extent: CaptureExtent,
     pub components: u64,
