@@ -210,9 +210,7 @@ impl LiveQuerySource for BoundSource {
                 // Loro, so the view also follows the local path the refresh
                 // re-derives on its local cadence.
                 dependencies.insert(subscriptions::NOTIFICATIONS_PATH.to_owned());
-                let page = memory
-                    .inbox_list(None, limit.min(oneiron::inbox::INBOX_PAGE_MAX))
-                    .map_err(AppError::from)?;
+                let page = memory.inbox_list(None, limit).map_err(AppError::from)?;
                 // A row names its notification: the view follows it, and a
                 // mark synced from another device re-derives it.
                 for row in &page.rows {
