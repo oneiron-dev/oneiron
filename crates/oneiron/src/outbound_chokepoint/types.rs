@@ -172,11 +172,11 @@ pub(crate) type CoActorKeepPress = Box<
         + Send,
 >;
 
-/// FIX 6424 part 2a: keeps the presses the committed admission of
-/// `intent_id` spent, for its retry: the primary's beside its Pending row,
-/// the co-actor's where its binding keeps it, each in a writer of its own
-/// after that admission committed. A press that does not write is logged and
-/// the admission stands (CALLS `FIX 6424 kept press write failure`).
+/// FIX 6424 part 2a: keeps presses not already retained in the admission
+/// writer: the remaining primary proof beside its Pending row, the co-actor's
+/// where its binding keeps it, each in a writer of its own after admission
+/// committed. A press that does not write is logged and the admission stands
+/// (CALLS `FIX 6424 kept press write failure`).
 ///
 /// # Errors
 /// None while that call stands; else a keeper's storage failure.

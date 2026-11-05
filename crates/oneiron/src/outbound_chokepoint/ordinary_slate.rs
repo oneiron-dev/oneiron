@@ -22,8 +22,8 @@ pub(super) struct OrdinaryCandidate {
     pub(super) family: PinnedApprovalFamily,
 }
 
-/// Only the common adapter's positively reconstructed ordinary targets enter
-/// this path. A raw payload or another family's request keeps its old path.
+/// Only positively reconstructed common-adapter or native campaign targets
+/// enter this path. Raw payloads and unsupported families keep their old path.
 pub(super) fn candidate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -37,12 +37,16 @@ pub(super) fn candidate_in_txn(
     {
         return Ok(None);
     }
-    let Some(gate) = crate::outbound::connector_slate_effect_from_frozen_payload(
+    let gate = match crate::outbound::connector_slate_effect_from_frozen_payload(
         record.payload(),
         &record.server,
         &record.tool,
-    ) else {
-        return Ok(None);
+    ) {
+        Some(gate) => gate,
+        None => match crate::campaign::enrollment::frozen_campaign_effect(record)? {
+            Some(gate) => gate,
+            None => return Ok(None),
+        },
     };
     let Some(family) = gate
         .provenance

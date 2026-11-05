@@ -278,9 +278,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
             .and_then(gate::ApprovalTarget::pinned_family);
         let ordinary_target = family
             == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate)
-            || (family
-                == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch)
-                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
+            || (matches!(
+                family,
+                Some(
+                    crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                        | crate::outbound_intent_ledger::PinnedApprovalFamily::CampaignLeg
+                )
+            ) && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
         let retry = if ordinary_target {
             super::ordinary_slate::retry_approval_in_txn(vault, &wtxn, &record, &prepared.gate)?
         } else {

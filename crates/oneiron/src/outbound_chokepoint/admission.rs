@@ -663,9 +663,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             Some(approval)
         }
         Some(approval)
-            if approval.family
-                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
-                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
+            if matches!(
+                approval.family,
+                crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                    | crate::outbound_intent_ledger::PinnedApprovalFamily::CampaignLeg
+            ) && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
         {
             Some(approval)
         }

@@ -41,15 +41,11 @@ use crate::outbound_intent_ledger::{
 pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
 
 /// What the writer found for an `always ask` call.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Release {
-    /// A press already proved for this row, or the setting moved off ask.
     Send,
-    /// An available exact marker, spent in this writer.
     Spent,
-    /// No press: the call waits for the owner.
-    Ask,
-    /// Native send readiness changed; leave the attempt's handoff intact.
+    Ask(Option<(EffectDigest, Option<EntityId>)>),
+    Current(Box<IntentLedgerRecord>),
     CampaignHold(crate::campaign::enrollment::CampaignLegHold),
 }
 
@@ -153,33 +149,29 @@ fn always_ask(
     replayed: bool,
     campaign_node: Option<u64>,
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
-    let candidate = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        candidate_in_txn(vault, &txn, record)?
-    };
-    let Some(candidate) = candidate else {
-        return Ok(Some(held(record, replayed, None)));
-    };
-    let digest = candidate.digest;
     let release = vault.try_with_write_txn(|wtxn| -> Result<Release, IntentLedgerError> {
-        let current = read_intent_record_in_txn(vault, wtxn, &record.id)?;
-        let Some(current) = current
-            .filter(|row| row.state == IntentState::Pending && row.payload() == record.payload())
-        else {
-            return Ok(Release::Ask);
+        let current =
+            read_intent_record_in_txn(vault, wtxn, &record.id)?.ok_or(Error::EntityNotFound)?;
+        if current.state != IntentState::Pending || current.payload() != record.payload() {
+            return Ok(Release::Current(Box::new(current)));
+        }
+        let Some(candidate) = candidate_in_txn(vault, wtxn, &current)? else {
+            return Ok(Release::Ask(None));
         };
+        let digest = candidate.digest;
         if let Some(hold) =
             super::campaign_leg::hold_in_txn(vault, wtxn, (&current).into(), campaign_node)?
         {
             return Ok(Release::CampaignHold(hold));
         }
-        match setting_in_txn(vault, wtxn, record)? {
+        match setting_in_txn(vault, wtxn, &current)? {
             SlateDisposition::AlwaysAsk => {}
-            // A later pass stops it.
-            SlateDisposition::NeverAllow => return Ok(Release::Ask),
+            SlateDisposition::NeverAllow => {
+                return Ok(Release::Ask(Some((digest, candidate.actor))));
+            }
             SlateDisposition::Auto | SlateDisposition::AlwaysAllow => return Ok(Release::Send),
         }
-        if pinned_retry_approval(vault, wtxn, record.id, &candidate.gate)
+        if pinned_retry_approval(vault, wtxn, current.id, &candidate.gate)
             .is_some_and(|kept| kept.effect_digest() == digest)
         {
             return Ok(Release::Send);
@@ -187,12 +179,10 @@ fn always_ask(
         match crate::consent::approve_once_authorization_in_txn(&vault.store, wtxn, &digest) {
             Ok(Some(tap)) => {
                 crate::consent::spend_approve_once_in_txn(&vault.store, wtxn, &tap)?;
-                // The keep rides the spend's writer (FIX 9229): a failed keep
-                // aborts the spend too, so the marker stays available and the
-                // owner can press again.
+                // A failed keep aborts this writer, leaving the press available.
                 let kept = PinnedApproval::new(
                     candidate.family,
-                    AdmittedApproval::from_gate(record.id, digest),
+                    AdmittedApproval::from_gate(current.id, digest),
                 );
                 keep_pinned_approval_in_txn(vault, wtxn, Some(kept))?;
                 Ok(Release::Spent)
@@ -200,16 +190,19 @@ fn always_ask(
             Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => {
                 if matches!(
                     candidate.family,
-                    PinnedApprovalFamily::ConnectorSlate | PinnedApprovalFamily::LinearDispatch
+                    PinnedApprovalFamily::ConnectorSlate
+                        | PinnedApprovalFamily::LinearDispatch
+                        | PinnedApprovalFamily::CampaignLeg
                 ) {
                     super::ordinary_slate::queue_owner_ask_in_txn(vault, wtxn, &current)?;
                 }
-                Ok(Release::Ask)
+                Ok(Release::Ask(Some((digest, candidate.actor))))
             }
             Err(error) => Err(error.into()),
         }
     })?;
     match release {
+        Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
         Release::CampaignHold(hold) => Ok(Some(super::campaign_leg::held_result(
             record, hold, replayed,
         ))),
@@ -223,11 +216,7 @@ fn always_ask(
             );
             Ok(None)
         }
-        Release::Ask => Ok(Some(held(
-            record,
-            replayed,
-            Some((digest, candidate.actor)),
-        ))),
+        Release::Ask(target) => Ok(Some(held(record, replayed, target))),
     }
 }
 
