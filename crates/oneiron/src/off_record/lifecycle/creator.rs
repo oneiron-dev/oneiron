@@ -221,3 +221,20 @@ impl OffRecordSession<'_> {
         )
     }
 }
+
+impl<'vault> super::session::OffRecordSessionVault<'vault> {
+    /// Resolve the name inside this principal's creator namespace, then bind
+    /// the exact live instance without entering or re-minting a session.
+    pub(crate) fn bind_caller_session(
+        &self,
+        session_ref: &str,
+        principal: EntityId,
+    ) -> Result<OffRecordSession<'vault>> {
+        let created = self
+            .vault
+            .store
+            .off_record_sessions
+            .created_key(session_ref, principal);
+        self.bind_for(created.as_deref().unwrap_or(session_ref), principal)
+    }
+}

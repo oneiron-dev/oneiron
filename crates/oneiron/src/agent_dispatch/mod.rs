@@ -145,6 +145,7 @@ pub use self::task_type_tree::{
 pub(crate) use self::task_type_tree::{
     load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,
 };
+pub(crate) use self::team_shape::team_shape_root_in_txn;
 pub use self::team_shape::{
     CoordinationPattern, TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, team_shape_skill,
 };
