@@ -813,6 +813,18 @@ manifest the `[models]` ladder is the role's binding.
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
 
+### What the status route says about the vault's sessions
+
+`GET /v1/ai/status` lists, under `models.session_allocations` (FIX10370),
+one row per device worker that holds this vault's sessions: the device, the
+worker, how many sessions stand, how many the worker has reported, and the
+summed reported bytes. A row's bytes stay null until every session on it is
+both reported and measured; an unreported session is counted, never zeroed
+in. The rows name no handle, binding, epoch or conversation, cover only the
+vault the server has mounted, and are non-additive facts: they neither
+alter the worker's own row nor any quota or admission, and a row's bytes
+mix device pages with host snapshots.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
