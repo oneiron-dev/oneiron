@@ -24,7 +24,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::value::{Open, Value};
+use crate::value::{AllocationChildren, Open, Value};
 
 mod de;
 mod ser;
@@ -134,7 +134,14 @@ pub fn read_cost<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> {
 /// # Errors
 /// The bytes are not one encoded value.
 pub fn decode_cost(bytes: &[u8]) -> Result<u64, CodecError> {
-    Ok(shape(bytes)?.decoded())
+    let shape = shape(bytes)?;
+    // The retained-value capacity walk runs after decoding. Its depth-first
+    // stack holds at most one frame per nonempty container, with Vec slack.
+    let walk = shape
+        .containers
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<AllocationChildren<'_>>() as u64);
+    Ok(shape.decoded().saturating_add(walk))
 }
 
 /// Where an encoder writes.

@@ -13,8 +13,8 @@ share one transaction. The call bytes do not pass through a Named byte-array
 encoding. There is no old-format reader or migration.
 
 Listings and the redrive census read metadata. Each redrive borrows one payload,
-checks its exact length and digest, and uses the organ protocol's existing shape
-bound before decoding. The memory-floor wait ends its read transaction first.
+checks its exact length and digest, and admits the organ protocol's shape bound
+and the capacity walk's depth-first iterator frames before decoding. The memory-floor wait ends its read transaction first.
 Conversion allocations grow the same lease. Actual owned capacities replace
 pending reservations. The lease survives dispatch and landing. A fresh preflight
 checks that the held call and artifact are still current after admission waits.
