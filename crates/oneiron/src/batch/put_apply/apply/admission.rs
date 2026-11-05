@@ -3,6 +3,7 @@ use super::*;
 /// Inputs to `apply_put` that no phase mutates: the row identity, the admit
 /// flags, and the borrowed context the put is judged against.
 pub(super) struct FixedPut<'a> {
+    pub(super) skill_state: Option<&'a crate::skill::SkillStateWrite>,
     pub(super) id: EntityId,
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
@@ -94,6 +95,7 @@ pub(super) fn admit_put<'a>(
         options,
         context:
             PutContext {
+                skill_state,
                 origin,
                 write_policy,
                 write_envelope,
@@ -135,6 +137,7 @@ pub(super) fn admit_put<'a>(
         replicated,
         origin,
         posture,
+        skill_state,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
@@ -221,6 +224,7 @@ pub(super) fn admit_put<'a>(
     crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     Ok(Admission {
         fixed: FixedPut {
+            skill_state,
             id,
             entity_type,
             occurred,

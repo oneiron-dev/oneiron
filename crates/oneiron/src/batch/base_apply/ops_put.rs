@@ -151,6 +151,10 @@ pub(super) fn apply_put_arm(
             },
             options: put_options,
             context: PutContext {
+                skill_state: gate_mode
+                    .skill_state
+                    .as_ref()
+                    .filter(|proof| proof.entity() == id),
                 origin,
                 write_policy: state.write_policy.as_ref(),
                 write_envelope: materialization

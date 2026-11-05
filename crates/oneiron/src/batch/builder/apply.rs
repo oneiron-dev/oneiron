@@ -27,6 +27,22 @@ impl BatchBuilder<'_> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
     }
 
+    /// The typed SKILL door's state put and its optional succession edge,
+    /// through the ordinary caller-transaction terminal.
+    pub(crate) fn apply_skill_state(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        proof: crate::skill::SkillStateWrite,
+    ) -> Result<()> {
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true).with_skill_state(proof),
+            None,
+            None,
+            None,
+        )
+    }
+
     /// [`Self::apply`] for the replicated put a sync window's ingest door
     /// admitted, with what that door judged beside it. A replicated
     /// AUTHORITY_LOG put is judged beside `authority_beside`, the other

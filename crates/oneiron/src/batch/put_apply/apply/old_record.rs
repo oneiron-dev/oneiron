@@ -18,6 +18,7 @@ pub(super) fn apply_old_record(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
+    stored_data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &super::admission::Dispatch,
     portable_agent_source: &mut Option<(EntityId, Vec<u8>)>,
@@ -38,7 +39,18 @@ pub(super) fn apply_old_record(
     {
         stored_before = true;
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        previous_skill_record = super::super::decode_previous_skill_record(old_type, &old_record)?;
+        let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+        #[cfg(feature = "sync")]
+        let resolved_prior = if old_type == ENTITY_TYPE_SKILL {
+            Some(crate::entity_doc::resolve_record_body(
+                store, wtxn, &fixed.id, prior_body,
+            )?)
+        } else {
+            None
+        };
+        #[cfg(feature = "sync")]
+        let prior_body = resolved_prior.as_deref().unwrap_or(prior_body);
+        previous_skill_record = super::super::decode_previous_skill_record(old_type, prior_body)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -50,7 +62,7 @@ pub(super) fn apply_old_record(
         // and is a no-op for never-indexed entities. Byte-compare guard:
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
-        body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *stored_data;
         consolidation_dirty = body_changed || old_learned != fixed.learned_at;
         // Retaining an indexed text revision is not permission to retain a
         // withdrawn claim or a replicated LWW loser in the search index.
@@ -113,7 +125,7 @@ pub(super) fn apply_old_record(
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             validate_skill_body_overwrite(
                 &fixed.id,
-                &old_record[ENTITY_METADATA_HEADER_LEN..],
+                prior_body,
                 updated,
                 fixed.hub_sync_imported,
                 fixed.replicated,

@@ -12,6 +12,7 @@ pub(super) fn guard_storage_owned_body(
     metadata: (u8, TimeRange, u64),
     data: &[u8],
     replicated: bool,
+    skill_state: Option<&crate::skill::SkillStateWrite>,
 ) -> Result<()> {
     let (entity_type, _, _) = metadata;
     crate::conversation_dag::guard_record_put(store, wtxn, id, metadata, data, replicated)?;
@@ -22,7 +23,10 @@ pub(super) fn guard_storage_owned_body(
     }
     crate::scope_summary::validate_summary_put(store, wtxn, id, entity_type, data, replicated)?;
     crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
-    crate::entity_doc::guard_record_put(store, wtxn, id, metadata, data)?;
+    match skill_state {
+        Some(proof) => proof.validate_carrier(store, wtxn, id, metadata, data)?,
+        None => crate::entity_doc::guard_record_put(store, wtxn, id, metadata, data)?,
+    }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::conversation::validate_put_in_txn(store, wtxn, *id, data, replicated)?;
     }

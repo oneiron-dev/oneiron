@@ -14,6 +14,7 @@ pub(super) fn audit_and_stage_body(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
+    stored_data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &super::admission::Dispatch,
     body_changed: bool,
@@ -70,7 +71,7 @@ pub(super) fn audit_and_stage_body(
             entity_type: fixed.entity_type,
             occurred: fixed.occurred,
             learned_at: fixed.learned_at,
-            data,
+            data: stored_data,
             envelope: fixed.write_envelope,
             transition: fixed.transition,
         },
@@ -80,7 +81,7 @@ pub(super) fn audit_and_stage_body(
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        data,
+        stored_data,
         fixed.replicated,
     )?;
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, &fixed.id)?;
@@ -135,6 +136,9 @@ pub(super) fn audit_and_stage_body(
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
     }
+    if let Some(proof) = fixed.skill_state {
+        proof.revalidate(store, wtxn, &fixed.id)?;
+    }
     stage_entity_body_row(
         store,
         wtxn,
@@ -142,7 +146,7 @@ pub(super) fn audit_and_stage_body(
         fixed.entity_type,
         fixed.occurred,
         fixed.learned_at,
-        data,
+        stored_data,
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(

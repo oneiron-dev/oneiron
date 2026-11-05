@@ -381,6 +381,12 @@ impl Vault {
         let mut frozen = old;
         frozen.lifecycle_status = SkillLifecycle::Superseded;
         let data = encode_skill_record(&frozen)?;
+        #[cfg(feature = "sync")]
+        if let Some(proof) =
+            super::native_state::SkillStateWrite::prepare(&self.store, wtxn, *old_id, &frozen)?
+        {
+            return proof.apply(self, wtxn, data, Some(*new_id));
+        }
         self.batch_in()
             .put(old_id, ENTITY_TYPE_SKILL, occurred, learned_at, &data)
             .edge(
@@ -423,7 +429,20 @@ impl Vault {
         // this door is. A second consult on this path would only re-derive the
         // stamp the chokepoint is about to set.
         let data = encode_skill_record(record)?;
-        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
+        #[cfg(feature = "sync")]
+        let native_state =
+            super::native_state::SkillStateWrite::prepare(&self.store, &wtxn, *id, record)?;
+        #[cfg(not(feature = "sync"))]
+        let native_state: Option<super::native_state::SkillStateWrite> = None;
+        match native_state {
+            #[cfg(feature = "sync")]
+            Some(proof) => proof.apply(self, &mut wtxn, data, None)?,
+            #[cfg(not(feature = "sync"))]
+            Some(proof) => match proof {},
+            None => {
+                self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?
+            }
+        }
         wtxn.commit()?;
         Ok(())
     }

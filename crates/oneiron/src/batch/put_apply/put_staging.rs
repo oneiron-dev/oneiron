@@ -235,6 +235,7 @@ pub(super) fn stage_claim_projection_indexes(
 
 /// The caller's write stamps and origin for the three carrier guards.
 pub(super) struct PutCarrierContext<'a> {
+    skill_state: Option<&'a crate::skill::SkillStateWrite>,
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
@@ -251,8 +252,10 @@ impl<'a> PutCarrierContext<'a> {
         replicated: bool,
         origin: super::BaseWriteOrigin<'a>,
         posture: crate::HostingPrivacyPosture,
+        skill_state: Option<&'a crate::skill::SkillStateWrite>,
     ) -> Self {
         Self {
+            skill_state,
             entity_type,
             occurred,
             learned_at,
@@ -319,6 +322,7 @@ pub(super) fn validate_put_carriers(
         (context.entity_type, context.occurred, context.learned_at),
         data,
         context.replicated,
+        context.skill_state,
     )?;
     validate_domain_carriers(
         store,

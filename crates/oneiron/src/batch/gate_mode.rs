@@ -6,6 +6,7 @@ use super::ClaimMaterialization;
 
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
+    pub(super) skill_state: Option<crate::skill::SkillStateWrite>,
     pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
     pub(super) refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     pub(super) record_decisions: bool,
@@ -53,6 +54,7 @@ pub(crate) struct ApplyOpsGateMode {
 impl ApplyOpsGateMode {
     pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
+            skill_state: None,
             hub_admission: None,
             refinement_admission: None,
             record_decisions,
@@ -148,6 +150,11 @@ impl ApplyOpsGateMode {
     pub(super) fn with_prepared(mut self, prepared: super::PreparedIndexWork) -> Self {
         self.pre_analyzed_text = prepared.text;
         self.nsw_plans = prepared.vectors;
+        self
+    }
+
+    pub(crate) fn with_skill_state(mut self, proof: crate::skill::SkillStateWrite) -> Self {
+        self.skill_state = Some(proof);
         self
     }
 
