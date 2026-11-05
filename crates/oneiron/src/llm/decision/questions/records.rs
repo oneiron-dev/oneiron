@@ -255,6 +255,8 @@ pub struct AnswerProposal {
     /// The host rule row the answer was read from, as id@revision (FIX 2974); none when no
     /// rule row answered.
     pub rule: Option<HostRuleRef>,
+    /// Provider-reported cost at the answered rung, when known.
+    pub cost_per_thousand: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
