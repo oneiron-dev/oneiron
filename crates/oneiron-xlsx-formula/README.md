@@ -234,7 +234,7 @@ lookups remain at the original comparison sites; no volatile callable path is
 changed. Individual comparison/read/clone work, allocation and boxing still
 have unpolled spans; native work-budget and hard-time coverage remain partial.
 
-GROUPBY and PIVOTBY capture the full caller token once at entry. Their first
+GROUPBY and PIVOTBY capture the full caller token once at entry. Their loop-entry
 poll follows the original grid, shape, callable, header, sort/filter and
 relative-selection checks. Selected key, membership, aggregation and output
 walks poll that borrowed token, and the non-sort aggregation calls keep raw
@@ -267,7 +267,16 @@ Optional-number and sort-order coercion errors keep the value channel, as do
 stored error cells and every ordinary error. Validation order, omitted values,
 header/filter/relative settings and numeric rules are unchanged. Range-row
 iteration, individual materialization/read/clone/allocation work and volatile
-sort invocation remain outside this intake slice.
+sort invocation remain outside this native-error intake slice.
+
+GROUPBY and PIVOTBY also borrow that same token through all five grid-intake
+calls. After the same range conversion, they poll before allocating the row
+collection and once per buffered row before its existing clone and push. These
+direct checkpoint errors enter the native channel; stored cells remain data
+and ordinary errors remain boxed. The original row reader, per-row clone,
+uncancelled argument and validation order, both sorts and numeric rules remain
+unchanged. One wide row's reads, an individual clone or allocation, and sort-path
+work still have unpolled spans.
 
 GCD and LCM poll the same full token through argument reduction and their
 Euclidean recursion. COMBIN, PERMUT, FACTDOUBLE and COMBINA poll their product
@@ -483,7 +492,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.42): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.43): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -534,7 +543,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.42`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.43`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
