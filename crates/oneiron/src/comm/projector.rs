@@ -7,11 +7,13 @@ use super::claims::{
     PREDICATE_COMM_THREAD_MEMBER,
 };
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
+use super::head_admission::HeadAdmission;
 use super::parties::{
     reconcile_comm_party_twins, resolve_actor_party_in_txn, resolve_or_create_party_in_txn,
 };
 use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn, put_projected_comm_claim_in_txn,
+    latest_claim_transition_boundary, matching_claims_in_txn,
+    put_projected_comm_claim_with_admission_in_txn as put_projected_comm_claim_in_txn,
 };
 use super::receipt_import::import_delivered_send_receipts;
 use super::records::{
@@ -185,6 +187,7 @@ impl RecordedEventProjection {
         wtxn: &mut heed::RwTxn<'_>,
         event_id: EntityId,
         kind: CommEventKind,
+        admission: &mut HeadAdmission<'_>,
     ) -> CommResult<()> {
         self.written.insert(event_id);
         let rows = if rule_reads_index(kind) {
@@ -192,12 +195,12 @@ impl RecordedEventProjection {
                 Some(index) => index,
                 None => projector_index_in_txn(vault, &*wtxn)?,
             };
-            let projected = project_in_savepoint(vault, wtxn, event_id, &mut index);
+            let projected = project_in_savepoint(vault, wtxn, event_id, &mut index, admission);
             self.index = Some(index);
             projected?
         } else {
             let mut unread = CommProjectorIndex::default();
-            project_in_savepoint(vault, wtxn, event_id, &mut unread)?
+            project_in_savepoint(vault, wtxn, event_id, &mut unread, admission)?
         };
         self.written.extend(rows);
         Ok(())
@@ -222,15 +225,18 @@ fn project_in_savepoint(
     wtxn: &mut heed::RwTxn<'_>,
     event_id: EntityId,
     index: &mut CommProjectorIndex,
+    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<BTreeSet<EntityId>> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-    match project_event_in_txn(vault, &mut savepoint, event_id, index) {
+    match project_event_in_txn(vault, &mut savepoint, event_id, index, admission) {
         Ok(delta) => {
             savepoint.commit()?;
+            admission.projected(&delta.heads);
             let rows = delta.written_rows(event_id);
             index.apply_committed(delta);
             Ok(rows)
         }
+        Err(error) if admission.failed() => Err(error),
         Err(CommError::Engine(error)) if storage_failure(&error) => Err(CommError::Engine(error)),
         Err(_) => {
             index.forget_accounted_txn();
@@ -443,7 +449,8 @@ pub(super) fn project_event(
     // A write group of its own, so the index can tell its own commit from
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
     vault.try_with_write_txn(|wtxn| {
-        let delta = project_event_in_txn(vault, wtxn, event_id, index)?;
+        let delta =
+            project_event_in_txn(vault, wtxn, event_id, index, &mut HeadAdmission::default())?;
         #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(vault, wtxn, delta.written_rows(event_id));
         Ok(delta)
@@ -457,6 +464,7 @@ fn project_event_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     event_id: EntityId,
     index: &CommProjectorIndex,
+    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<ProjectorIndexDelta> {
     index.begin_event_txn(vault);
     let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
@@ -530,11 +538,11 @@ fn project_event_in_txn(
         match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
             // Still in flight: the event keeps holding and waits.
             None => return Ok(ProjectorIndexDelta::default()),
-            Some(true) => apply_projector_rule_in_txn(vault, wtxn, index, &event)?,
+            Some(true) => apply_projector_rule_in_txn(vault, wtxn, index, &event, admission)?,
             Some(false) => ProjectorIndexDelta::default(),
         }
     } else {
-        apply_projector_rule_in_txn(vault, wtxn, index, &event)?
+        apply_projector_rule_in_txn(vault, wtxn, index, &event, admission)?
     };
     if !projected {
         let consumed = CommRecord::Event {
@@ -561,6 +569,7 @@ fn apply_projector_rule_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     index: &CommProjectorIndex,
     event: &ProjectedCommEvent<'_>,
+    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<ProjectorIndexDelta> {
     let &ProjectedCommEvent {
         rule,
@@ -587,8 +596,14 @@ fn apply_projector_rule_in_txn(
                 channel_class: channel.to_owned(),
                 occurred_at,
             };
-            let (new_id, minted) =
-                put_projected_comm_claim_in_txn(vault, wtxn, source_event_id, &value, occurred_at)?;
+            let (new_id, minted) = put_projected_comm_claim_in_txn(
+                vault,
+                wtxn,
+                source_event_id,
+                &value,
+                occurred_at,
+                admission,
+            )?;
             if !minted {
                 return Ok(ProjectorIndexDelta::default());
             }
@@ -611,7 +626,10 @@ fn apply_projector_rule_in_txn(
                 .unwrap_or((new_id, occurred_at));
             for &(id, _) in &heads {
                 if id != winner {
-                    vault.supersede_claim_in_txn(wtxn, &winner, &id, close_at)?;
+                    admission.write(vault, wtxn, &[winner, id], &[id], |txn| {
+                        vault.supersede_claim_in_txn(txn, &winner, &id, close_at)?;
+                        Ok(())
+                    })?;
                 }
             }
             // Each head on the slot was written: minted, superseded, or the
@@ -658,12 +676,16 @@ fn apply_projector_rule_in_txn(
                     source_event_id,
                     &value,
                     occurred_at,
+                    admission,
                 )?;
                 if minted
                     && let Some(boundary) =
                         latest_transition.filter(|boundary| occurred_at < *boundary)
                 {
-                    vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
+                    admission.write(vault, wtxn, &[claim_id], &[claim_id], |txn| {
+                        vault.retract_claim_in_txn(txn, &claim_id, boundary)?;
+                        Ok(())
+                    })?;
                 }
                 let contacts = rematerialize_party_channel_contact_cache_in_txn(
                     vault,
@@ -741,7 +763,7 @@ fn apply_projector_rule_in_txn(
             }
         }
         ProjectorAction::JoinThread | ProjectorAction::LeaveThread => {
-            apply_thread_membership_in_txn(vault, wtxn, index, event)
+            apply_thread_membership_in_txn(vault, wtxn, index, event, admission)
         }
     }
 }

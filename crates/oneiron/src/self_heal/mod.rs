@@ -157,3 +157,4 @@ use std::io::Cursor;
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::healer_host::self_heal_healer_proposal_accepts_masked;
+pub(crate) use self::healer_host::self_heal_healer_run_accepts_masked;

@@ -67,7 +67,7 @@ mod unlocked_open;
 pub(super) use self::fresh_restore::{RestoreWrap, restore_fresh};
 pub(crate) use self::host_unlock::HostUnlock;
 pub(super) use self::unlocked_open::{
-    KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets,
+    KeyNeed, UnlockRequest, open_with_unlock, open_with_unlock_for_secret, refuse_two_stdin_secrets,
 };
 
 /// What a command that runs on a stopped vault does instead while a server
@@ -385,14 +385,17 @@ pub(crate) fn wrap_sealed_vault(
 
 fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
-    refuse_two_stdin_secrets(
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock_for_secret(
+        &config,
         &unlock,
+        KeyNeed::Held,
+        INSTEAD,
         args.secret.secret_file.is_none(),
         "the new password",
         "--secret-file",
     )?;
     let password = read_secret(&args.secret, "the new password")?;
-    let vault = open(&args.serve, &unlock, KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(
         &owner,
@@ -405,8 +408,12 @@ fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
 
 fn add_passkey(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
-    refuse_two_stdin_secrets(
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock_for_secret(
+        &config,
         &unlock,
+        KeyNeed::Held,
+        INSTEAD,
         args.secret.secret_file.is_none(),
         "the new passkey's PRF output",
         "--secret-file",
@@ -415,7 +422,6 @@ fn add_passkey(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
         &read_secret(&args.secret, "the new passkey's PRF output")?,
         "a PRF output",
     )?;
-    let vault = open(&args.serve, &unlock, KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(
         &owner,

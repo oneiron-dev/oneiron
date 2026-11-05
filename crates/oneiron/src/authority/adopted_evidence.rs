@@ -19,7 +19,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use super::checkpoint_adopt::adopted_authority_checkpoint_in_txn;
 use super::*;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -34,13 +33,9 @@ pub(crate) struct AdoptedEvidence {
 }
 
 impl AdoptedEvidence {
-    /// The evidence of the image this vault adopted, verified again in `txn`;
-    /// None when it adopted none. A stored adoption that no longer verifies is
-    /// corruption, never "not adopted".
-    pub(super) fn read_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Option<Self>> {
-        let Some(checkpoint) = adopted_authority_checkpoint_in_txn(store, txn)? else {
-            return Ok(None);
-        };
+    /// The evidence of `checkpoint`: its carried bodies decoded by hash and
+    /// the store id each covered row would have.
+    pub(crate) fn of_verified(checkpoint: &VerifiedAuthorityCheckpoint) -> Result<Self> {
         let mut bodies = BTreeMap::new();
         let mut ids = BTreeSet::new();
         for (hash, row) in &checkpoint.image().rows {
@@ -49,35 +44,46 @@ impl AdoptedEvidence {
                 bodies.insert(*hash, decode_authority_log_entry_body(body)?);
             }
         }
-        Ok(Some(Self {
-            checkpoint,
+        Ok(Self {
+            checkpoint: checkpoint.clone(),
             bodies,
             ids,
-        }))
+        })
+    }
+
+    /// The checkpoint this evidence was built from.
+    pub(crate) fn checkpoint(&self) -> &VerifiedAuthorityCheckpoint {
+        &self.checkpoint
+    }
+
+    /// The image's fold, which already holds the image's retired keys,
+    /// closed handoffs and valid rows.
+    pub(crate) fn fold(&self) -> &crate::authority::AuthorityFold {
+        self.checkpoint.image().fold()
     }
 
     /// The image this vault adopted.
-    pub(super) fn image(&self) -> &AuthorityCheckpointV2 {
+    pub(crate) fn image(&self) -> &AuthorityCheckpointV2 {
         self.checkpoint.image()
     }
 
     /// Each covered row's summary, by hash.
-    pub(super) fn rows(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityCheckpointRow> {
+    pub(crate) fn rows(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityCheckpointRow> {
         &self.checkpoint.image().rows
     }
 
     /// Every carried body, decoded, by hash.
-    pub(super) fn bodies(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityLogEntry> {
+    pub(crate) fn bodies(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityLogEntry> {
         &self.bodies
     }
 
     /// The carried body of the covered row `hash`, decoded.
-    pub(super) fn body(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
+    pub(crate) fn body(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
         self.bodies.get(hash)
     }
 
     /// Whether the image covers the row stored at `id`.
-    pub(super) fn covers_id(&self, id: &crate::EntityId) -> bool {
+    pub(crate) fn covers_id(&self, id: &crate::EntityId) -> bool {
         self.ids.contains(id)
     }
 
@@ -132,13 +138,15 @@ impl AdoptedEvidence {
     }
 }
 
-/// The evidence of the image this vault adopted, as the store doors' view of
-/// `txn`'s authority generation read it; None when it adopted none.
+/// The evidence of the image this vault adopted, verified once per stored
+/// rows and shared across readers (FIX 2987/3006/3415/3449); None when it
+/// adopted none. No longer tied to the door view's authority generation:
+/// the image is immutable while the generation moves on every staged row.
 pub(crate) fn adopted_evidence_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<Arc<AdoptedEvidence>>> {
-    Ok(super::log_budget::door_view(store, txn)?.evidence.clone())
+    super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)
 }
 
 /// The residence directives and results the image this vault adopted carries

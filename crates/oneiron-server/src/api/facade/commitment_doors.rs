@@ -6,8 +6,10 @@ use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::memory::commitment_doors::{
     CommitmentCloseRequest, CommitmentCreateReceipt, CommitmentCreateRequest,
-    CommitmentFulfillRequest, CommitmentRefRequest, CommitmentView, CommitmentWakeProposal,
+    CommitmentFulfillRequest, CommitmentRefRequest, CommitmentReminderRouteReply,
+    CommitmentReminderRouteSetRequest, CommitmentView, CommitmentWakeProposal,
 };
+use oneiron::task_verb::sdk::EmptyRequest;
 use std::sync::Arc;
 
 pub(crate) async fn vault_commitments_create(
@@ -104,6 +106,34 @@ pub(crate) async fn vault_commitments_supersede(
         auth,
         "vault.commitments.supersede",
         move |memory, owner| memory.commitments_supersede_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_commitments_reminder_route_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<CommitmentReminderRouteReply> {
+    as_owner(
+        server,
+        auth,
+        "vault.commitments.reminder_route.get",
+        move |memory, owner| memory.commitments_reminder_route_get_as(owner),
+    )
+    .await
+}
+
+pub(crate) async fn vault_commitments_reminder_route_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CommitmentReminderRouteSetRequest,
+) -> Listed<CommitmentReminderRouteReply> {
+    as_owner(
+        server,
+        auth,
+        "vault.commitments.reminder_route.set",
+        move |memory, owner| memory.commitments_reminder_route_set_as(owner, input),
     )
     .await
 }

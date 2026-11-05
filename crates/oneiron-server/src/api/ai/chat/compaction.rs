@@ -34,6 +34,7 @@ use oneiron::{
     LlmStreamEvent, Vault, WriteActor,
 };
 
+use super::model_call::Recorder;
 use super::{CONTINUE_INSTRUCTION, TurnSources, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE, ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
@@ -303,9 +304,10 @@ pub(super) fn open_stream(
     admitted: RoleCall,
     today: Option<RoleCall>,
     pending: Option<&PendingSeed>,
+    recorder: &Recorder,
 ) -> LlmResult<LlmStream<'static>> {
     let Some(today) = today else {
-        return admitted.ladder.stream(run, admitted.request, None);
+        return recorder.stream(run, admitted);
     };
     let live = pending.map_or_else(
         || Arc::new(AtomicBool::new(true)),
@@ -314,10 +316,16 @@ pub(super) fn open_stream(
     if let Err(reason) = live_attempt_headroom(run) {
         live.store(false, Ordering::Release);
         live_fork_unavailable(reason);
-        return today.ladder.stream(today_run, today.request, None);
+        return recorder.stream(today_run, today);
     }
-    match admitted.ladder.stream(run, admitted.request, None) {
-        Ok(stream) => Ok(first_or_today(stream, today_run.clone(), today, live)),
+    match recorder.stream(run, admitted) {
+        Ok(stream) => Ok(first_or_today(
+            stream,
+            today_run.clone(),
+            today,
+            live,
+            recorder.clone(),
+        )),
         Err(error)
             if matches!(
                 &error,
@@ -328,7 +336,7 @@ pub(super) fn open_stream(
         }
         Err(_) => {
             live.store(false, Ordering::Release);
-            today.ladder.stream(today_run, today.request, None)
+            recorder.stream(today_run, today)
         }
     }
 }
@@ -369,6 +377,7 @@ struct FirstLeg {
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 }
 
 /// `live`, unless its first event is a failure: then `today`'s stream.
@@ -377,12 +386,14 @@ fn first_or_today(
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 ) -> LlmStream<'static> {
     let first = Leg::First(Box::new(FirstLeg {
         live,
         run,
         today,
         used,
+        recorder,
     }));
     LlmStream::new(futures_util::stream::unfold(first, |leg| async move {
         match leg {
@@ -392,6 +403,7 @@ fn first_or_today(
                     run,
                     today,
                     used,
+                    recorder,
                 } = *first;
                 match live.next().await {
                     Some(Ok(event)) => Some((Ok::<LlmStreamEvent, _>(event), Leg::Rest(live))),
@@ -408,7 +420,7 @@ fn first_or_today(
                     _ => {
                         used.store(false, Ordering::Release);
                         drop(live);
-                        match today.ladder.stream(&run, today.request, None) {
+                        match recorder.stream(&run, today) {
                             Ok(mut stream) => {
                                 stream.next().await.map(|item| (item, Leg::Rest(stream)))
                             }
@@ -497,7 +509,7 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mode) = ai.chat_self_mode(vault, context.agent) else {
         return ChatReuse::Today;
     };
-    let seed = match chat_breakpoint(vault, action.conversation, action.message) {
+    let mut seed = match chat_breakpoint(vault, action.conversation, action.message) {
         Ok(Some(seed)) => seed,
         Ok(None) => return ChatReuse::Unavailable("breakpoint_missing"),
         Err(_) => return ChatReuse::Unavailable("breakpoint_unreadable"),
@@ -523,11 +535,36 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mut request) = seed.captured_request() else {
         return ChatReuse::Unavailable("request_changed");
     };
-    let asks = request.messages.last().is_some_and(|last| {
-        last.role == LlmMessageRole::User && message_text(last) == context.user_text
-    });
+    // The captured call closes with the user's words, or with its opener
+    // right after them (FIX 14676).
+    let opened = captured_opener(&request.messages, &context.user_text);
+    let asks = opened
+        || request
+            .messages
+            .last()
+            .is_some_and(|last| asks_with(last, &context.user_text));
     if !asks {
         return ChatReuse::Unavailable("user_turn_changed");
+    }
+    // A Retry answers now, so it closes with today's opener, never the
+    // captured one; a Continue keeps the one its saved reply followed.
+    if opened && action.action == TurnAction::Retry {
+        request.messages.pop();
+        if let Some(opener) = super::turn_opener(ai.chat_settings().turn_opener, vault) {
+            request
+                .messages
+                .push(text_message(LlmMessageRole::User, opener));
+        }
+        // The Retry's reply follows the opener sent now, so the breakpoint
+        // that reply keeps names this request and its digest, and a later
+        // Continue of it resends the same opener. The original reply's own
+        // breakpoint row is left as it was.
+        let (Ok(text), Ok(digest)) = (serde_json::to_string(&request), request.canonical_hash())
+        else {
+            return ChatReuse::Unavailable("request_changed");
+        };
+        seed.request = text;
+        seed.request_digest = hex(&digest);
     }
     // The craft it showed is what the host kept with it, never what its
     // user text reads as (FIX 9439).
@@ -614,7 +651,23 @@ fn readmit_rung(
     admitted.ladder.live_fork_ladder(&rung)
 }
 
-fn message_text(message: &LlmMessage) -> String {
+/// Whether `message` is the user's turn whose words are `user_text`.
+fn asks_with(message: &LlmMessage, user_text: &str) -> bool {
+    message.role == LlmMessageRole::User && message_text(message) == user_text
+}
+
+/// Whether `messages` close with the turn's opener alone right after the
+/// user's turn whose words are `user_text` (FIX 14676).
+pub(super) fn captured_opener(messages: &[LlmMessage], user_text: &str) -> bool {
+    let [.., user, opener] = messages else {
+        return false;
+    };
+    asks_with(user, user_text)
+        && opener.role == LlmMessageRole::User
+        && oneiron::context_board::is_turn_opener_line(&message_text(opener))
+}
+
+pub(super) fn message_text(message: &LlmMessage) -> String {
     message
         .content
         .iter()

@@ -5,8 +5,7 @@ use oneiron_contracts::memory::MemoryError;
 /// Maximum query string, in bytes: 8 KiB.
 pub const MAX_QUERY_BYTES: usize = 8 * 1024;
 
-/// The shared 1,000-row window: the floor a narrowed read fetches,
-/// and the ceiling a clamped door serves at.
+/// The 1,000-row candidate floor a narrowed read fetches.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
 /// How many candidates a read that narrows its rows after ranking fetches
@@ -31,9 +30,6 @@ pub const MAX_BATCH_ENTITIES: usize = 10_000;
 /// Maximum files in one legacy codebase-snapshot call: 100,000.
 pub const MAX_CODEBASE_FILES: usize = 100_000;
 
-/// Maximum embedding vector dimensions: 16,384.
-pub const MAX_DIMENSIONS: usize = 16_384;
-
 /// Maximum RAW blob content, in bytes: 32 MiB.
 ///
 /// The base64 length of an encoded blob is bounded against
@@ -54,14 +50,6 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// A ranked retrieval's row count served at [`MAX_SEARCH_LIMIT`]: the
-/// effective limit, and whether the caller's was lowered to it. An
-/// over-large limit is served and says so, never refused (rule 5).
-#[must_use]
-pub fn clamp_search_limit(limit: usize) -> (usize, bool) {
-    (limit.min(MAX_SEARCH_LIMIT), limit > MAX_SEARCH_LIMIT)
-}
 
 /// Rejects an over-long query before it reaches retrieval.
 pub fn check_query(query: &str) -> Result<(), MemoryError> {
@@ -161,9 +149,9 @@ pub fn check_batch_len(label: &str, len: usize) -> Result<(), MemoryError> {
 
 /// Rejects an unusable embedding dimension count.
 pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
-    if dimensions == 0 || dimensions > MAX_DIMENSIONS {
+    if dimensions == 0 {
         return Err(MemoryError::bad_request_with(
-            format!("dimensions must be between 1 and {MAX_DIMENSIONS}"),
+            "dimensions must be at least 1",
             &["Open the vault with the dimension count its embedding model produces."],
         ));
     }

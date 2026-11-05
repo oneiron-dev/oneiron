@@ -1,7 +1,7 @@
 //! The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a
-//! CRL only, each fetch inside the fetch timeout as well as the call's
+//! CRL/OCSP reply, each fetch inside the fetch timeout as well as the call's
 //! deadline. A body is read whole whatever its size (Rule 5): past the
-//! seal's own row for its purpose (`seal_crl_bytes`, `seal_tsa_bytes`) the
+//! seal's own row for its purpose (`seal_crl_bytes`, `seal_ocsp_bytes`, `seal_tsa_bytes`) the
 //! vault asks whether everything is okay.
 
 use std::time::Duration;
@@ -32,11 +32,12 @@ impl AskHandler for TimedFetch<'_> {
         });
         let row = match purpose {
             Some("crl") => EngineLimit::SealCrlBytes,
+            Some("ocsp") => EngineLimit::SealOcspBytes,
             Some("tsa") => EngineLimit::SealTsaBytes,
             _ => {
                 return Err(AskRefusal::new(
                     AskCode::NotGranted,
-                    "the seal fetches only timestamps and CRLs",
+                    "the seal fetches only timestamps, CRLs and OCSP replies",
                 ));
             }
         };

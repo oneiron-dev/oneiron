@@ -45,10 +45,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/wave_lane.rs` | src | s | 5 crate-vis | — | The wave lane's quantum: the vault's operational pump limits, resolved afresh, one bounded pump step, and… |
 | `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | HybridTick | Hybrid tick: deadline and push lanes taking turns, a deadline rest that leaves pushes flowing, and… |
 | `src/tick/mod.rs` | src | s | 1 type · 5 re-export · 3 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
-| `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 3 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
+| `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 6 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, QueuedSessionHint, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
 | `src/tick/policy.rs` | src | s | 1 struct · 1 fn · 1 type | WakePolicyTicks | One cancellable quiet sleep per tick source, driven by the vault's row policy |
-| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 8 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
-| `src/tick/queue.rs` | src | s | 7 crate-vis | — | The ordered SESSION-hint queue (FIX 8602): every lifecycle fact a producer handed in, in arrival order… |
+| `src/tick/push.rs` | src | m | 4 struct · 1 enum · 11 fn · 3 crate-vis | AppOpenApplyHandle, HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
+| `src/tick/queue.rs` | src | s | 9 crate-vis | — | The ordered SESSION-hint queue (FIX 8602): every lifecycle fact a producer handed in, in arrival order… |
 | `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | s | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |

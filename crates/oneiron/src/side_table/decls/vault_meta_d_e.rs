@@ -146,7 +146,7 @@ side_tables! {
     /// FIX 4453: one free-time cycle: its policy snapshot, period, root spend scope, items, the
     /// agent's note to its human (its own words, admitted at the wall) and its own-time choice.
     /// Key: id16 (agent) + u64be (boundary).
-    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored;
+    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored [accepts: crate::dreamer_runner::dreamer_free_time_cycle_accepts_masked];
     /// FIX 4453: the immutable binding of one free-time item attempt to its agent, cycle, item,
     /// label and spend scope, stamped when its cycle opened. Key: id16 (attempt).
     DREAMER_FREE_TIME_ITEM: VaultMeta b"dreamer:free_time:item:v1:" Named;
@@ -245,7 +245,7 @@ side_tables! {
     /// Prefilter skip receipt. Key: bytes32 + id16.
     PREFILTER_SKIP: VaultMeta b"dreamer:prefilter:skip:v1:" Named;
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
-    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored;
+    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_digest_accepts_masked];
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
@@ -330,7 +330,7 @@ side_tables! {
     DREAMER_STEP_RESPONSE_PIN: VaultMeta b"dreamer:step_response_pin:v1:" Named Engine;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
-    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;
+    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored [accepts: crate::llm::dreamer_step_state_accepts_masked];
     /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
     /// value: u64be.
     DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;

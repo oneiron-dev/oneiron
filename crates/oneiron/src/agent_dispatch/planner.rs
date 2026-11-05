@@ -623,6 +623,7 @@ fn plan_from_quotes(
         .collect();
     let receipt = SpawnPlanReceipt {
         asked: need.clone(),
+        owner_choices: Vec::new(),
         plan,
         alternatives,
         why,
@@ -630,6 +631,7 @@ fn plan_from_quotes(
         rung_skill: None,
         rung_providers: Vec::new(),
         asker_ref: None,
+        type_tree_root_lookup: None,
     };
     receipt.validate()?;
     Ok(receipt)

@@ -216,14 +216,18 @@ impl DecisionModel for LocalVisionModel {
             Some(run) => run.sourced(Some(call.evidence.to_vec())),
             None => self.run.sourced(Some(call.evidence.to_vec())),
         };
-        // A rested offer is waited for within the call's own time, not the
-        // vault's longest wait.
+        // Cooling waits also keep the vault's limit; sends keep the full work time.
+        let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted
-                    .ladder
-                    .generate_within(&run, admitted.request, None, &|| true, time_left),
+                admitted.ladder.generate_within(
+                    &run,
+                    admitted.request,
+                    None,
+                    &|| true,
+                    wait_budget,
+                ),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))

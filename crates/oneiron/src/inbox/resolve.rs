@@ -496,6 +496,7 @@ fn accept_member_with_amendment_in_txn(
                 end: raw.occurred.end,
             },
             learned_at: raw.learned_at,
+            row_version: None,
             data: approved,
             allow_maintenance: false,
             allow_reserved_predicate: false,

@@ -67,9 +67,9 @@ pub use loro_internal::json::{
 /// See [`LoroDoc::export_root_map_checkpoint`] and [`LoroDoc::join_root_map_checkpoint`].
 pub mod checkpoint {
     pub use loro_internal::encoding::checkpoint_parts::{
-        Atom, AtomId, Capture, CheckpointError, Classify, Field, JoinReport, Joined, OwnerId,
-        Parts, Payload, ShallowRoot, Site, SkelChange, SkelOp, Skeleton, Slot, SlotKind,
-        Unsupported, Winner,
+        key_placeholder, placeholder_atom, Atom, AtomId, Capture, CheckpointError, Classify, Field,
+        JoinReport, Joined, OwnerId, Parts, Payload, ShallowRoot, Site, SkelChange, SkelOp,
+        Skeleton, Slot, SlotKind, Unsupported, Winner, KEY_PLACEHOLDER_PREFIX,
     };
 }
 pub use loro_internal::kv_store::{KvStore, MemKvStore};

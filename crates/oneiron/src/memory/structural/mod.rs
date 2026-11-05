@@ -15,8 +15,9 @@ pub use self::productivity::{
     ProductivityTree, ProductivityTreeRequest,
 };
 pub use self::types::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
-    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
+    TextIndexField,
 };
 
 pub(crate) use self::affiliated::append_agent_diary_in_txn;

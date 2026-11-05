@@ -13,13 +13,14 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
-/// Raw stored-entity record: the 25-byte metadata header (type byte,
-/// occurred start/end, learned_at — all big-endian u64s, per the
-/// `batch::ENTITY_*_OFFSET` layout) followed by `body`.
+/// Raw stored-entity record: the 33-byte metadata header (type byte,
+/// occurred start/end, learned_at, row_version — all big-endian u64s, per
+/// the `batch::ENTITY_*_OFFSET` layout) followed by `body`.
 pub(crate) fn entity_record(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     body: &[u8],
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
@@ -27,6 +28,7 @@ pub(crate) fn entity_record(
     out.extend_from_slice(&occurred.start.to_be_bytes());
     out.extend_from_slice(&occurred.end.to_be_bytes());
     out.extend_from_slice(&learned_at.to_be_bytes());
+    out.extend_from_slice(&row_version.to_be_bytes());
     out.extend_from_slice(body);
     out
 }
@@ -46,6 +48,7 @@ pub fn put_policy_manifest_bytes(vault: &Vault, id: EntityId, data: &[u8]) -> cr
         ENTITY_TYPE_POLICY_MANIFEST,
         TimeRange { start: 1, end: 1 },
         1,
+        0,
         data,
     );
     vault.with_write_txn(|wtxn| {

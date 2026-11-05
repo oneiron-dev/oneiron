@@ -197,10 +197,10 @@ fn list_changes(
 }
 
 impl Vault {
-    /// [`BlobStore::port_blob_get`] with its file-plane bytes admitted before
-    /// they allocate: `admit` runs after the manifest admits, before the file
-    /// reads, and its guard rides with the bytes. Type and hash checks stay.
-    pub(crate) fn blob_get_with_file_admission<G, E>(
+    /// [`BlobStore::port_blob_get`] with file-plane and plain inline ASSET
+    /// bytes admitted before their output allocation. Record-head projection
+    /// keeps its read path; the guard rides through the same type/hash checks.
+    pub(crate) fn blob_get_with_body_admission<G, E>(
         &self,
         txn: &RoTxn<'_>,
         hash: &[u8; 32],
@@ -208,7 +208,7 @@ impl Vault {
     ) -> std::result::Result<Option<(Vec<u8>, Option<G>)>, super::BodyReadError<E>> {
         let id = blob_artifact_asset_entity_id(hash)?;
         let Some(pair) =
-            self.live_entity_in_txn_with_file_admission(&self.store, txn, &id, admit)?
+            self.live_entity_in_txn_with_body_admission(&self.store, txn, &id, admit)?
         else {
             return Ok(None);
         };
@@ -245,6 +245,7 @@ impl BlobStore for Vault {
                 entity_type: crate::registry::ENTITY_TYPE_ASSET,
                 occurred,
                 learned_at,
+                row_version: 0,
                 body: bytes.to_vec(),
             },
         )?;
@@ -254,7 +255,7 @@ impl BlobStore for Vault {
         Ok(hash)
     }
     fn port_blob_get(&self, txn: &RoTxn<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
-        match self.blob_get_with_file_admission(txn, hash, |_| Ok::<(), Error>(())) {
+        match self.blob_get_with_body_admission(txn, hash, |_| Ok::<(), Error>(())) {
             Ok(Some((bytes, _guard))) => Ok(Some(bytes)),
             Ok(None) => Ok(None),
             Err(super::BodyReadError::Store(error)) => Err(error),

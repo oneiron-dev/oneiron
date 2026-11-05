@@ -12,10 +12,10 @@
 //! whichever retained revision of the turn's row it named. Each source is
 //! found again among the states its own history retains: a row-backed
 //! message's retained row revisions, and a document-backed one's retained
-//! document states, never its rows from before the move, which a purge of
-//! the document's history does not reach. The row revisions its document
-//! took over at its birth stand for it as their rows did, their words read
-//! from the document at the state each names. Every retained state of every
+//! document states and any generic rows whose bindings it still retains.
+//! Lightweight row aliases created at common birth read their words from
+//! the document at the state each names. An admitted common history purge
+//! removes foreign generic bindings too. Every retained state of every
 //! source is searched. A message the turn gained since, or one that showed
 //! no text at some state, may read as absent. A source that was erased,
 //! archived or purged since is not found, and the revision then resolves to
@@ -27,7 +27,7 @@
 //! had, is refused before any source is read.
 
 use super::storage::{
-    entity_owns_revision_in_txn, reference, retained_rows_in_txn, row_aliases_in_txn,
+    entity_owns_revision_in_txn, reference, retained_row_sources_in_txn, retained_rows_in_txn,
     row_revisions_starting_with_in_txn, state,
 };
 use super::{ReadMode, RevisionRef};
@@ -371,8 +371,8 @@ pub(crate) fn message_has_document_in_txn(
 /// The member `message` as a search may pick it: every state it retains in
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its
-/// document's retained states, and the row revisions its birth took over
-/// read at the states they name. Each keeps its body for `release`.
+/// document's retained states, retained generic rows, and lightweight row
+/// aliases read at the states they name. Each keeps its body for `release`.
 fn source_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
@@ -403,9 +403,9 @@ fn source_in_txn(
             }
             None => source.may_be_absent = true,
         };
-    // Once its text lives in its document, its rows from before the move
-    // never stand for it: a row revision its birth took over is read from
-    // the document, at the state it names there (FIX 8802).
+    // Common states keep their document commitments. Only retained generic
+    // rows keep their original raw-row commitments; lightweight birth aliases
+    // read the common document at the state they name (FIX 8802).
     if DOCUMENT_HEADS.contains(&vault.store, txn, &HexId(message))? {
         if let Some(raw) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
@@ -424,7 +424,15 @@ fn source_in_txn(
                     state.body,
                 );
             }
-            let aliases = row_aliases_in_txn(&vault.store, txn, &message)?;
+            let (rows, aliases) = retained_row_sources_in_txn(&vault.store, txn, &message)?;
+            for raw in rows {
+                push(
+                    row_commitment(&message, &raw),
+                    raw.get(ENTITY_METADATA_HEADER_LEN..)
+                        .unwrap_or_default()
+                        .to_vec(),
+                );
+            }
             for (revision, body) in crate::entity_doc::record_bodies_at_in_txn(
                 &vault.store,
                 txn,
@@ -453,8 +461,7 @@ fn row_commitment(id: &EntityId, raw: &[u8]) -> Vec<u8> {
     revision_commitment(reference(id, raw))
 }
 
-/// The row of a message at `revision`, its reference: a document's birth
-/// keeps the revision of the row it took over, never the row's bytes.
+/// The original row revision, read from raw bytes or a lightweight common alias.
 fn revision_commitment(revision: RevisionRef) -> Vec<u8> {
     let mut commitment = vec![b'r'];
     commitment.extend_from_slice(&revision.0);

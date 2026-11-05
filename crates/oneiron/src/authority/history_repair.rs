@@ -183,9 +183,13 @@ impl Vault {
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
         let adopted =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
-        page_root(&merged, &resident, adopted.as_ref().map(AdoptedPrefix::of))?
-            .ok_or_else(invalid_authority)?;
+            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
+        page_root(
+            &merged,
+            &resident,
+            adopted.as_deref().map(AdoptedPrefix::of),
+        )?
+        .ok_or_else(invalid_authority)?;
         for (hash, bytes, entry) in decoded {
             if resident.contains(hash) {
                 continue;

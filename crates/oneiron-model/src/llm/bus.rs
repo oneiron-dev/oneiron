@@ -259,6 +259,14 @@ impl LlmEventBus {
                     value.push_str(text);
                 }
             }
+            LlmStreamEvent::ReasoningEnd { part_id, signature } => {
+                if let Some(ContentPart::Reasoning {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id).and_then(Option::as_mut)
+                {
+                    shown.clone_from(signature);
+                }
+            }
             LlmStreamEvent::ToolCallStart { part_id, .. }
             | LlmStreamEvent::ToolResultStart { part_id, .. }
             | LlmStreamEvent::ImageStart { part_id, .. } => {

@@ -21,27 +21,9 @@
 use super::{
     IDENTITIES, INCARNATIONS, OWNER_INDEX, PACKS, RENDER_CONSENT, RENDER_EVENTS, TARGETS, TargetKey,
 };
-use crate::side_table::{SideKey, SideTableDecl};
+use crate::side_table::SideKey;
 use crate::store::{ResponseCarriage, ResponseOwners, ResponseScan, Store};
 use crate::{EntityId, Result};
-
-/// The bank's seven tables, by declaration.
-fn tables() -> [&'static SideTableDecl; 7] {
-    [
-        PACKS.decl(),
-        IDENTITIES.decl(),
-        INCARNATIONS.decl(),
-        TARGETS.decl(),
-        RENDER_CONSENT.decl(),
-        RENDER_EVENTS.decl(),
-        OWNER_INDEX.decl(),
-    ]
-}
-
-/// Whether the full `vault_meta` key `key` is a row of the bank.
-pub(crate) fn voice_bank_row(key: &[u8]) -> bool {
-    tables().iter().any(|decl| key.starts_with(decl.prefix))
-}
 
 /// The owner the bank row `key` holding `value` names in its own bytes or
 /// key, once it decodes: `Some(None)` for a row that decodes and names its

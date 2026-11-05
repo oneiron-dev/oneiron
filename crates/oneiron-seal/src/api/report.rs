@@ -44,7 +44,9 @@ pub enum VerifyFindingCode {
     InvalidUnsignedGap,
     InvalidCms,
     InvalidSignedAttributes,
+    #[serde(rename = "HASH_FAILURE")]
     DigestMismatch,
+    #[serde(rename = "SIG_CRYPTO_FAILURE")]
     SignatureMismatch,
     CertificateBindingMismatch,
     CertificatePathInvalid,

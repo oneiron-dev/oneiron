@@ -5,8 +5,9 @@
 //! receipt's ref, a retrieval run's id and an authorization's judged time are
 //! all minted before it queues. It takes its place in the group commit's one
 //! arrival order, beside the writes whose threads wait for their turn, and
-//! returns at once: no wait for the writer, its stage or its commit. The
-//! group's leader runs its closure on the leader's own thread, in a
+//! normally returns after enqueueing, without waiting for its stage or commit.
+//! Queue backpressure and the leader-start fallback below can still block the
+//! calling thread. The group's leader runs its closure on its own thread, in a
 //! transaction nested in the shared one, when its turn comes: a writer
 //! already leading, or the store's deferred-commit leader, which takes the
 //! writer for it when no group is open. A closure that fails rolls back its
@@ -18,8 +19,12 @@
 //! detached write still queued before either closes, and a reader that must
 //! see their rows waits until those queued so far are decided
 //! ([`Store::wait_for_deferred_commits`]). Memory stays bounded without a
-//! refusal: past [`DETACHED_WRITES_WAITING_MAX`] queued, an enqueuer waits for
-//! the drain rather than drop its write.
+//! refusal: at [`DETACHED_WRITES_WAITING_MAX`] (4096) queued while a group is
+//! led, an enqueuer outside an active write waits for the drain rather than
+//! dropping its write. That wait is on the caller's thread, including a call
+//! receipt's or recall telemetry's reply thread: it can wait behind the writer.
+//! If the deferred-commit leader cannot start, the caller leads the group
+//! itself and can also wait for the writer, stage and commit.
 //!
 //! Most closures write over the store's core alone, which the store's own
 //! leader holds ([`DetachedWrite::of_core`]). One that writes through the
@@ -365,15 +370,18 @@ impl GroupCommit {
 
 impl Store {
     /// Queues `write` in this vault's group commit, in arrival order with
-    /// every other write, and returns at once (FIX 12023): it waits for
-    /// neither the writer nor its stage nor its commit. When no group is
+    /// every other write, and normally returns without waiting for the writer,
+    /// stage or commit (FIX 12023). When no group is
     /// open, the store's deferred-commit leader takes the writer for it; when
     /// that leader cannot start, this thread leads the group itself and only
     /// then waits for the writer.
     ///
-    /// Past [`DETACHED_WRITES_WAITING_MAX`] queued while a group is led, it
-    /// first waits for the drain, never refusing the write. A thread inside a
-    /// write may be the one that drains the queue, and never waits for it.
+    /// At [`DETACHED_WRITES_WAITING_MAX`] (4096) queued while a group is led,
+    /// it first waits for the drain on this caller's thread, including call
+    /// receipt and recall-telemetry reply threads. No write is refused or
+    /// dropped. A thread inside a write may drain the queue and never waits
+    /// for it. These backpressure and leader-start waits are not nonblocking
+    /// reply-path enqueueing (FIX 12739, FIX 12748).
     pub(crate) fn group_write_detached(&self, write: DetachedWrite) {
         let group = &self.group_commit;
         let idle = {

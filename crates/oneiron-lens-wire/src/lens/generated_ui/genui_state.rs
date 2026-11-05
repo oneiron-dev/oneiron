@@ -222,23 +222,115 @@ impl<'de> Deserialize<'de> for GeneratedUiStateSnapshot {
 }
 
 /// JSON-Pointer patch over `/$state/`. Paths are exact and never healed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiStatePatch {
     Add {
-        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
         value: SelfUiStateValue,
     },
     Replace {
-        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
         value: SelfUiStateValue,
     },
     Remove {
-        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
     },
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiStatePatch {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Operation {
+            Add,
+            Replace,
+            Remove,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Op,
+            Path,
+            Value,
+        }
+
+        struct StatePatchPath(String);
+
+        impl<'de> Deserialize<'de> for StatePatchPath {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserialize_state_patch_path(deserializer).map(StatePatchPath)
+            }
+        }
+
+        struct GeneratedUiStatePatchVisitor;
+
+        impl<'de> de::Visitor<'de> for GeneratedUiStatePatchVisitor {
+            type Value = GeneratedUiStatePatch;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a generated-ui state patch with op, path, and value")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut op: Option<Operation> = None;
+                let mut path: Option<String> = None;
+                let mut value: Option<SelfUiStateValue> = None;
+                while let Some(key) = map.next_key::<Field>()? {
+                    match key {
+                        Field::Op => {
+                            if op.is_some() {
+                                return Err(de::Error::duplicate_field("op"));
+                            }
+                            op = Some(map.next_value()?);
+                        }
+                        Field::Path => {
+                            if path.is_some() {
+                                return Err(de::Error::duplicate_field("path"));
+                            }
+                            path = Some(map.next_value::<StatePatchPath>()?.0);
+                        }
+                        Field::Value => {
+                            if value.is_some() {
+                                return Err(de::Error::duplicate_field("value"));
+                            }
+                            value = Some(map.next_value::<SelfUiStateValue>()?);
+                        }
+                    }
+                }
+                let op = op.ok_or_else(|| de::Error::missing_field("op"))?;
+                let path = path.ok_or_else(|| de::Error::missing_field("path"))?;
+                match op {
+                    Operation::Add => {
+                        let value = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        Ok(GeneratedUiStatePatch::Add { path, value })
+                    }
+                    Operation::Replace => {
+                        let value = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        Ok(GeneratedUiStatePatch::Replace { path, value })
+                    }
+                    Operation::Remove => {
+                        if value.is_some() {
+                            return Err(de::Error::unknown_field("value", &["op", "path"]));
+                        }
+                        Ok(GeneratedUiStatePatch::Remove { path })
+                    }
+                }
+            }
+        }
+
+        deserializer.deserialize_map(GeneratedUiStatePatchVisitor)
+    }
 }
 
 /// Refuses a patch path longer than any pointer the key grammar admits while it is

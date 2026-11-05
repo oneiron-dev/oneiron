@@ -64,6 +64,12 @@ impl StepStateOwners {
 pub(super) const STEP_STATE: SideTable<(AttemptId, [u8; 32]), StepStateRow, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_STATE);
 
+/// Whether a masked copy of a `DREAMER_STEP_STATE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_step_state_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StepStateRow, Raw>(bytes)
+}
+
 fn id_value(id: EntityId) -> Value {
     Value::Binary(id.as_bytes().to_vec())
 }
@@ -360,8 +366,18 @@ pub(super) fn step_state_read(
     step_hash: &[u8; 32],
 ) -> Result<Option<StepStateRow>> {
     let rtxn = vault.store.env.read_txn()?;
+    step_state_read_in_txn(vault, &rtxn, attempt_id, step_hash)
+}
+
+/// The same typed, erase-aware row in the caller's snapshot.
+pub(super) fn step_state_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<StepStateRow>> {
     let key = (attempt_id, *step_hash);
-    let Some(raw) = STEP_STATE.get_borrowed(&vault.store, &rtxn, &key)? else {
+    let Some(raw) = STEP_STATE.get_borrowed(&vault.store, txn, &key)? else {
         return Ok(None);
     };
     let raw =

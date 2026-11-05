@@ -93,9 +93,11 @@ pub(crate) fn stored_entity_type(
 /// stays derivable BY CONSTRUCTION now that the selector mirrors this very
 /// pair predicate: widening or narrowing the table here moves both doors and
 /// the gate table together. This function is the hook: it validates types,
-/// and it refuses a restamp of a NOTE or ASSET, and any stamp but its birth
-/// one on an ASSET_TEXT, whose one stamp is set at birth
-/// ([`RegistryError::FacetStampImmutable`]).
+/// and it refuses a restamp of a NOTE, ASSET, CLAIM, TURN or EVENT, and any
+/// stamp but its birth one on an ASSET_TEXT, whose one stamp is set at birth
+/// ([`RegistryError::FacetStampImmutable`]). A refused move is a fork with a
+/// new id through the claim-supersession fork machinery (FIX 9596), never an
+/// in-place replacement.
 pub(crate) fn validate_facet_of_edge(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -136,9 +138,18 @@ fn validate_facet_of_edge_at(
     if let (Some(src_type), Some(tgt_type)) = (src_type, tgt_type)
         && facet_of_endpoint_types_on_table(src_type, tgt_type)
     {
-        if matches!(src_type, ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET)
-            && crate::federation::record_scope::birth_facet(store, rtxn, src)?
-                .is_some_and(|stamp| stamp != tgt)
+        // FIX 9596: a live CLAIM, TURN or EVENT keeps the one facet it was
+        // born with, like a NOTE or ASSET. A move is a new-record fork (the
+        // claim-supersession fork machinery), never a second stamp in place.
+        if matches!(
+            src_type,
+            ENTITY_TYPE_NOTE
+                | ENTITY_TYPE_ASSET
+                | ENTITY_TYPE_CLAIM
+                | ENTITY_TYPE_TURN
+                | ENTITY_TYPE_EVENT
+        ) && crate::federation::record_scope::birth_facet(store, rtxn, src)?
+            .is_some_and(|stamp| stamp != tgt)
         {
             return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
         }

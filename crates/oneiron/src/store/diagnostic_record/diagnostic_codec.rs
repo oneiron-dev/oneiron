@@ -1,8 +1,7 @@
-//! MessagePack codec and validators for diagnostic event bodies, refs, and tokens.
+//! Core half of `store::diagnostic_record::diagnostic_codec`: its store-layer items live in `oneiron_store::diagnostic_record::diagnostic_codec` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::io::Cursor;
-
-use rmpv::Value;
+pub(crate) use oneiron_store::diagnostic_record::diagnostic_codec::*;
 
 use super::admission::validate_detector_id;
 use super::event::{
@@ -14,6 +13,8 @@ use super::invariant_canonical::{canonical_invariant_value, stored_invariant_fie
 use super::untrusted_text::{is_forbidden_text_scalar, validate_untrusted_detail};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use rmpv::Value;
+use std::io::Cursor;
 
 /// Canonicalizes and encodes one DIAGNOSTIC body.
 ///
@@ -306,10 +307,6 @@ fn decode_u64(value: &Value, reason: &'static str) -> Result<u64> {
     value.as_u64().ok_or_else(|| invalid_diagnostic(reason))
 }
 
-fn entity_ref_value(entity: &EntityId) -> Value {
-    Value::from(entity.to_hex())
-}
-
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = decode_str(value, "entity ref must be a hex string")?;
     // Lowercase-only, matching `hex_nibble` above and `EntityId::to_hex`, so
@@ -345,15 +342,6 @@ fn decode_content_hash(value: &Value) -> Result<[u8; 32]> {
         *slot = (hi << 4) | lo;
     }
     Ok(out)
-}
-
-/// Lowercase-only, so one hash has exactly one spelling on the wire.
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
 }
 
 /// A stored invariant value; text a body stored before the owner ruling of
@@ -427,10 +415,6 @@ pub(crate) fn validate_ref(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn is_ref_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/' | b'@')
-}
-
 pub(crate) fn validate_token(token: &str, reason: &'static str) -> Result<()> {
     if token.is_empty() || token.len() > MAX_TOKEN_LEN {
         return Err(Error::InvariantViolation(reason));
@@ -439,8 +423,4 @@ pub(crate) fn validate_token(token: &str, reason: &'static str) -> Result<()> {
         return Err(Error::InvariantViolation(reason));
     }
     Ok(())
-}
-
-fn is_token_byte(byte: u8) -> bool {
-    byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'.'
 }

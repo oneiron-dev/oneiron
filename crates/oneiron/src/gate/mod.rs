@@ -23,6 +23,7 @@ mod confirm;
 mod connector_admission;
 mod consolidation_readers;
 mod constants;
+mod entity_resolution_bands;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
@@ -249,11 +250,10 @@ pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
-    MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
-    WitnessMessageEnvelope, check_witness_message_ceiling,
-    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
-    validate_own_device_witness_message_body,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
+    WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
+    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
+    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

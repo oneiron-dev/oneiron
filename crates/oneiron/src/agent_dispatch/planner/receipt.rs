@@ -7,6 +7,10 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnPlanReceipt {
     pub asked: SpawnNeed,
+    /// Owner rows that supplied fields of `asked`, captured when those
+    /// values were selected. Call-only fields name no owner row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner_choices: Vec<crate::learning_setting_choice::SpawnChoiceSource>,
     pub plan: TeamPlan,
     /// The runner-up candidates with payoff and cost, best first — the
     /// CEO's top-shapes view rides the same rows.
@@ -27,6 +31,13 @@ pub struct SpawnPlanReceipt {
     /// linked to their intent by their dedupe keys instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asker_ref: Option<EntityId>,
+    /// The actual default-hub alias and pin the initial task-type-tree root
+    /// selection consulted in the plan's snapshot: `Some` even when no
+    /// installed holder matched that alias, `None` when no lookup occurred
+    /// (no live hub, or a pure/unsourced plan). Audit metadata only, never
+    /// a complete entity-source set, a read grant, or a freshness proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_tree_root_lookup: Option<crate::skill_hub::HubRef>,
 }
 
 impl SpawnPlanReceipt {

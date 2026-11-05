@@ -51,10 +51,12 @@ pub use failure_policy::{
 };
 pub mod image;
 mod label_read;
+mod logprobs;
 pub mod media;
 pub use label_read::{
     LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
+pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;
 mod protocol;
 mod reply_assertions;
@@ -63,6 +65,7 @@ mod scheduling;
 mod segments;
 mod session;
 
+pub use budget::BudgetCheckpoint;
 pub use budget::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
@@ -153,6 +156,8 @@ pub use self::session::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// I1 = C: the prepared tail of the worker session wire.
+pub use self::session::{PreparedUse, SessionPrepare, SessionPrepared};
 // DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
 pub use self::scheduling::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,

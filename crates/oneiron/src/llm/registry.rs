@@ -11,6 +11,7 @@ pub(crate) use source_erase::erase_registry_source_in_txn;
 mod stale_mark;
 mod stored_rows;
 use stored_rows::StoredRows;
+pub(crate) use stored_rows::llm_registry_row_accepts_masked;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;

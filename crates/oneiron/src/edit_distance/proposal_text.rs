@@ -56,6 +56,7 @@ use super::{
     put_finalized_proposal_text,
 };
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::entity_doc::EntityDoc;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -70,6 +71,7 @@ const TEXT_CONTAINER: &str = "body";
 const META_CONTAINER: &str = "meta";
 const META_KEY_ARTIFACT: &str = "artifact";
 const META_KEY_SOURCE_TURN: &str = "source_turn";
+const META_KEY_BIRTH_ATTEMPT: &str = "birth_attempt";
 
 /// Commit-message segment carrying the actor.
 const STAMP_ACTOR_PREFIX: &str = "actor=";
@@ -109,6 +111,7 @@ pub struct ProposalTextArtifact {
     doc: EntityDoc,
     artifact_ref: ProposalArtifactRef,
     source_turn_ref: Option<EntityId>,
+    birth_attempt: Option<AttemptId>,
 }
 
 impl ProposalTextArtifact {
@@ -138,6 +141,8 @@ impl ProposalTextArtifact {
         source_turn_ref: Option<EntityId>,
         receipt: Option<crate::provenance::made_by::MadeBy>,
     ) -> Result<Self> {
+        let birth_attempt =
+            crate::skill_attribution::current_run_write_token().map(|token| token.attempt());
         let doc = LoroDoc::new();
         // Bind the fresh peer before choosing the birth timestamp, even when
         // registration crosses a second boundary.
@@ -172,6 +177,9 @@ impl ProposalTextArtifact {
                 if let Some(turn) = source_turn_ref {
                     map_insert_bytes(&meta, META_KEY_SOURCE_TURN, turn.as_bytes())?;
                 }
+                if let Some(attempt) = birth_attempt {
+                    map_insert_bytes(&meta, META_KEY_BIRTH_ATTEMPT, attempt.as_bytes())?;
+                }
                 Ok(())
             },
             &message,
@@ -180,6 +188,7 @@ impl ProposalTextArtifact {
             doc,
             artifact_ref,
             source_turn_ref,
+            birth_attempt,
         })
     }
 
@@ -196,6 +205,10 @@ impl ProposalTextArtifact {
             doc,
             artifact_ref,
             source_turn_ref: meta_entity_id(&meta, META_KEY_SOURCE_TURN)?,
+            birth_attempt: map_get_bytes(&meta, META_KEY_BIRTH_ATTEMPT)
+                .as_deref()
+                .map(AttemptId::from_bytes)
+                .transpose()?,
         })
     }
 
@@ -285,6 +298,7 @@ impl ProposalTextArtifact {
             final_ref: LoroOpRef::from_bytes(final_frontiers.encode()),
             ops_by_actor,
             source_turn_ref: self.source_turn_ref,
+            birth_attempt: self.birth_attempt,
             made_by_inputs,
         };
         put_finalized_proposal_text(vault, &record, &self.doc)?;

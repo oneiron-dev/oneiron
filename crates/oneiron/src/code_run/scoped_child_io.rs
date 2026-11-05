@@ -19,9 +19,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::code_run::{
-    CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, DelegatedSource, ReaderJob,
-    ReaderJobs, ScopedChildPorts, TaskWaitPolicy, TaskWaitSet, TaskWaitSetResult, reader_wait_id,
-    reduce_task_wait_set,
+    CodeRunRawOutput, DelegatedSource, ReaderJob, ReaderJobs, ScopedChildPorts, TaskWaitPolicy,
+    TaskWaitSet, TaskWaitSetResult, reader_wait_id, reduce_task_wait_set,
 };
 use crate::engine_executor::EngineExecutorConfig;
 use crate::llm::{BudgetGuard, LlmBackend, ModelId, ModelLocality};
@@ -47,6 +46,10 @@ pub struct HostInput {
 /// holds answers the occurrence it holds. The record is `actor`'s run's
 /// (FIX 9019): its owner row is stamped with its put, so an erase of that
 /// actor, and its outputs' retention, reach a run that only holds outputs.
+/// Each new body and its replay membership commit together in a fresh
+/// writer; separate inputs may commit separately. Each input's source rows
+/// are frozen with its first stored occurrence;
+/// a reused path lends that occurrence's sources, never a new label for it.
 ///
 /// # Errors
 ///
@@ -57,26 +60,18 @@ pub fn commit_host_inputs(
     actor: EntityId,
     inputs: Vec<HostInput>,
 ) -> Result<BTreeMap<String, DelegatedSource>> {
-    let stored = vault.get_code_run_replay_record(&parent_run)?;
-    let mut published = stored.is_none();
-    let mut record = stored.unwrap_or_else(|| {
-        CodeRunReplayRecord::new(parent_run, CodeRunDeterminism::new(0, [0; 32]))
-    });
+    if inputs.is_empty() {
+        vault.ensure_host_run_record(parent_run, actor)?;
+    }
     let mut lent = BTreeMap::new();
     for input in inputs {
-        let output = match record
-            .outputs
-            .iter()
-            .find(|output| output.path == input.path)
-        {
-            Some(output) => output.clone(),
-            None => {
-                let output = publish(vault, parent_run, input.path, &input.body)?;
-                record.outputs.push(output.clone());
-                published = true;
-                output
-            }
-        };
+        let output = vault.publish_host_run_output(
+            parent_run,
+            Some(actor),
+            input.path,
+            &input.body,
+            input.rows,
+        )?;
         lent.insert(
             input.name,
             DelegatedSource {
@@ -84,12 +79,9 @@ pub fn commit_host_inputs(
                 path: output.path,
                 handle: output.handle,
                 range: (0, output.raw_len),
-                rows: input.rows,
+                rows: output.input_rows,
             },
         );
-    }
-    if published {
-        vault.put_host_run_record(&record, actor)?;
     }
     Ok(lent)
 }
@@ -107,16 +99,7 @@ pub fn stage_host_output(
     path: String,
     body: &[u8],
 ) -> Result<CodeRunRawOutput> {
-    let mut record = vault
-        .get_code_run_replay_record(&parent_run)?
-        .ok_or_else(|| Error::InvalidConfig("a staged output needs its run's record".to_owned()))?;
-    if let Some(output) = record.outputs.iter().find(|output| output.path == path) {
-        return Ok(output.clone());
-    }
-    let output = publish(vault, parent_run, path, body)?;
-    record.outputs.push(output.clone());
-    vault.put_code_run_replay_record(&record)?;
-    Ok(output)
+    vault.publish_host_run_output(parent_run, None, path, body, None)
 }
 
 /// Run `parent_run`'s output at `path`, read whole, when it has one.
@@ -193,7 +176,7 @@ pub fn collect_scoped_child(
         settled_at_ms: None,
         settled: None,
     };
-    let result = reduce_task_wait_set(&set, &[(task, job)], now_ms);
+    let result = reduce_task_wait_set(&set, &[(task, job)], now_ms)?;
     Ok(result.done.then_some((row, result)))
 }
 
@@ -219,13 +202,6 @@ pub fn read_scoped_finding(vault: &Vault, job: &ReaderJob) -> Result<Option<Vec<
         return Ok(None);
     };
     read_whole(vault, &output)
-}
-
-/// Publishes `body` as `owner`'s complete output at `path`.
-fn publish(vault: &Vault, owner: EntityId, path: String, body: &[u8]) -> Result<CodeRunRawOutput> {
-    let mut sink = vault.code_run_output_sink()?;
-    sink.write(body)?;
-    vault.publish_code_run_output(path, sink, true, Some(owner))
 }
 
 /// `output`'s whole body.

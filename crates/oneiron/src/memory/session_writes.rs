@@ -90,8 +90,9 @@ impl Memory<'_> {
         evidence: &[String],
     ) -> MemoryResult<EntityRefReceipt> {
         let route = self.session_write_route(session, "vault.notes.create")?;
-        self.prepare_note_in_session(session, &route, kind, markdown, evidence)?
-            .stage(session, &route)
+        let session = session.for_participant(self.actor())?;
+        self.prepare_note_in_session(&session, &route, kind, markdown, evidence)?
+            .stage(&session, &route)
             .map_err(MemoryError::from)
     }
 
@@ -114,8 +115,9 @@ impl Memory<'_> {
         input: &ScopedClaimInput,
     ) -> MemoryResult<CommitReceipt> {
         let route = self.session_write_route(session, "vault.claims.upsert")?;
-        self.prepare_claim_in_session(session, &route, None, input)?
-            .stage(session, &route)
+        let session = session.for_participant(self.actor())?;
+        self.prepare_claim_in_session(&session, &route, None, input)?
+            .stage(&session, &route)
             .map_err(MemoryError::from)
     }
 }

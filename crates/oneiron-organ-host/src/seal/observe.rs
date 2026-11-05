@@ -30,17 +30,26 @@ impl HostedSealer<'_> {
         lent: Vec<LentInput>,
         handlers: &AskHandlers<'_>,
     ) -> Result<(Value, OrganOutcome), EsignSealerError> {
+        self.sized_call_measured(call, lent, handlers, &mut CallMeasure::default())
+    }
+
+    pub(super) fn sized_call_measured(
+        &self,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        handlers: &AskHandlers<'_>,
+        measure: &mut CallMeasure,
+    ) -> Result<(Value, OrganOutcome), EsignSealerError> {
         let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
-        let mut measure = CallMeasure::default();
         let called = self.host.call_sized_with(
             self.vault,
             call,
             lent,
             handlers,
             call_size(lent_bytes),
-            &mut measure,
+            measure,
         );
-        measure_frames(self.vault, &measure);
+        measure_frames(self.vault, measure);
         let mut outcome = called.map_err(super::host_failure)?;
         let report = std::mem::replace(&mut outcome.report, Value::Nil);
         let (reply, observed) = Observed::split(report);
@@ -60,7 +69,7 @@ const CALL_BASE_BYTES: u64 = 256 << 20;
 
 /// The size of a call that lends `lent` bytes. The host never gives it
 /// less than the install grant.
-fn call_size(lent: u64) -> CallSize {
+pub(super) fn call_size(lent: u64) -> CallSize {
     let bytes = lent
         .saturating_mul(CALL_BYTES_PER_LENT_BYTE)
         .saturating_add(CALL_BASE_BYTES);
@@ -74,7 +83,7 @@ fn call_size(lent: u64) -> CallSize {
 /// (`observed`). A report without one counted nothing.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct Observed {
+pub(super) struct Observed {
     pdf_objects: u64,
     raw_definitions: u64,
     structural_work: u64,
@@ -93,7 +102,7 @@ struct Observed {
 
 impl Observed {
     /// The report's outcome, with the `observed` entry beside it taken out.
-    fn split(report: Value) -> (Value, Self) {
+    pub(super) fn split(report: Value) -> (Value, Self) {
         match report.into_map() {
             Ok(entries) => {
                 let (observed, outcome): (Vec<_>, Vec<_>) = entries
@@ -110,7 +119,7 @@ impl Observed {
     }
 
     /// Asks each row the counts crossed.
-    fn measure(&self, vault: &Vault) {
+    pub(super) fn measure(&self, vault: &Vault) {
         for (row, measured) in [
             (EngineLimit::SealPdfObjects, self.pdf_objects),
             (EngineLimit::SealRawDefinitions, self.raw_definitions),
@@ -137,7 +146,7 @@ impl Observed {
 
 /// Asks the frame rows what the call's frames carried, as encoded: the
 /// largest the host sent, and the largest the organ sent back.
-fn measure_frames(vault: &Vault, measure: &CallMeasure) {
+pub(super) fn measure_frames(vault: &Vault, measure: &CallMeasure) {
     vault.measure_limit(EngineLimit::SealCallFrameBytes, measure.largest_sent_frame);
     vault.measure_limit(
         EngineLimit::SealReplyFrameBytes,

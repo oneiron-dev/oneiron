@@ -272,6 +272,8 @@ pub struct SyncServer {
     pub(crate) hyde_host: Arc<super::recall_hyde::HydeHost>,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    /// Host-native permission for each actual tagger POST, separate from LLM requests.
+    pub(crate) tagger_egress: Option<Arc<dyn oneiron::llm::TaggerEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
@@ -334,7 +336,7 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() || session_id.len() > 256 {
+        if state.self_ref != actor || session_id.is_empty() {
             return Err(oneiron::Error::InvariantViolation(
                 "self brief actor or session mismatch",
             ));
@@ -373,7 +375,8 @@ impl SyncServer {
                 runs,
                 Arc::clone(self.wire_telemetry.limit_questions()),
             )
-            .with_reader_seats(self.reader_runner.seats()),
+            .with_reader_seats(self.reader_runner.seats())
+            .with_git_door_base(self.config.git_door_base.clone()),
         );
         // Reader children run on the same provider and pool.
         self.reader_runner.bind_host(Arc::clone(&host));
@@ -572,6 +575,16 @@ impl SyncServer {
         predicate: Arc<dyn oneiron::llm::ExtractionEgressPredicate>,
     ) -> Self {
         self.extraction_egress = Some(predicate);
+        self
+    }
+
+    /// Install the host's native tagger predicate; an LLM-only predicate
+    /// does not authorize a different payload type.
+    pub fn with_tagger_egress(
+        mut self,
+        predicate: Arc<dyn oneiron::llm::TaggerEgressPredicate>,
+    ) -> Self {
+        self.tagger_egress = Some(predicate);
         self
     }
 

@@ -7,6 +7,7 @@ use crate::result_body::ResultBodyPin;
 use crate::store::result_body_rows::body_handle;
 pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
+mod context;
 mod host_occurrence;
 mod reader;
 
@@ -15,6 +16,13 @@ impl Vault {
     /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
         Ok(self.code_run_script_sink()?.sweeping(self.known_source()?))
+    }
+
+    /// A result of the actual execution that received PERSON reveals.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        Ok(self
+            .code_run_script_sink()?
+            .sweeping_run(self.run_known_source(exec_run)?))
     }
 
     /// [`Self::code_run_output_sink`] with no sweep, for a step's program:

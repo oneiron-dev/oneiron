@@ -503,10 +503,11 @@ impl Vault {
     }
 
     /// The skill's resident when the live attempt runs as that very agent,
-    /// its leased row decoded in the load's own transaction (FIX 10153). The
-    /// lease itself is fenced later in that transaction. Any other attempt,
-    /// or a row the dispatch decoder does not read, loads as before: shared
-    /// skills only.
+    /// from its dispatch input or its native resident/program stamp in the
+    /// load's own transaction. A valid dispatch wins; only the matching
+    /// queued resident/free-time or turn-program kind tries its optional
+    /// native stamp. No valid binding means shared skills only. The lease
+    /// itself is fenced later in the same transaction.
     fn attempt_resident_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -516,11 +517,24 @@ impl Vault {
         let Some(owner) = super::resident_of(record)? else {
             return Ok(None);
         };
-        let actor = AttemptQueue::new(self)
-            .get_in_txn(txn, attempt)?
+        let queued = AttemptQueue::new(self).get_in_txn(txn, attempt)?;
+        let actor = queued
             .as_ref()
             .and_then(crate::agent_dispatch::record_dispatch_input)
             .and_then(|input| crate::agent_dispatch::agent_dispatch_actor(&input).ok());
+        let actor = match actor {
+            Some(actor) => Some(actor),
+            None => match queued.as_ref().map(|queued| queued.kind.as_str()) {
+                Some(
+                    crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+                    | crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND,
+                ) => self.resident_actor_for_attempt_in_txn(txn, attempt)?,
+                Some(crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND) => {
+                    self.program_actor_for_attempt_in_txn(txn, attempt)?
+                }
+                _ => None,
+            },
+        };
         Ok(actor
             .map(|actor| actor.entity_ref())
             .filter(|actor| *actor == owner))

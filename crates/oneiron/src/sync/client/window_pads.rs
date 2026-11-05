@@ -138,11 +138,39 @@ impl SyncClient {
                 .continued
                 .insert(window_key.to_owned(), (id, payload));
         }
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok(frames)
+    }
+
+    pub(crate) fn window_send_batch_frames(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+    ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
+        let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
+        // Each batch draw checks the buffered whole update; no standalone
+        // continuation copy is needed for these frames.
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok((frames, binding))
+    }
+
+    fn record_window_send(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+        binding: WindowPadBinding,
+    ) {
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
             None if sealed => SentKey::Update(window_key.to_owned(), binding.payload_digest),
-            None => return Ok(frames),
+            None => return,
         };
         self.window_pad_ledger().sent.insert(
             key,
@@ -154,7 +182,34 @@ impl SyncClient {
                 queued: *blake3::hash(raw).as_bytes(),
             },
         );
-        Ok(frames)
+    }
+
+    /// Forgets only this unfinished send, never a newer binding or envelope.
+    pub(crate) fn forget_window_send(
+        &self,
+        window_key: &str,
+        binding: &WindowPadBinding,
+        first_id: Option<[u8; 32]>,
+    ) {
+        let mut ledger = self.window_pad_ledger();
+        let key = match binding.queue_seq {
+            Some(seq) => SentKey::Residence(seq),
+            None => SentKey::Update(window_key.to_owned(), binding.payload_digest),
+        };
+        if ledger
+            .sent
+            .get(&key)
+            .is_some_and(|sent| sent.window == window_key && sent.binding == *binding)
+        {
+            ledger.sent.remove(&key);
+        }
+        if ledger
+            .continued
+            .get(window_key)
+            .is_some_and(|(id, _)| Some(*id) == first_id)
+        {
+            ledger.continued.remove(window_key);
+        }
     }
 
     /// [`Self::prepare_window_send`] and [`Self::window_send_frames`] at once,
@@ -298,7 +353,21 @@ impl SyncClient {
             }
             WindowPadArrival::Envelope(sub_tag, envelope) => (sub_tag, envelope),
         };
-        let receipt = admit_window_pads(&self.vault, key, &envelope);
+        // FIX 10480: a sealed update's pads are read over the document it
+        // imports into, with the world updates still staged for its window.
+        let receipt = {
+            let window = (envelope.form == WindowPadForm::Sealed
+                && envelope.kind == WindowPadKind::Update)
+                .then(|| self.ensure_window(key.as_str()))
+                .transpose()?;
+            let staged = window
+                .as_ref()
+                .and_then(|window| self.staged_pad_context(key, &window.doc));
+            let context = staged
+                .as_ref()
+                .or(window.as_ref().map(|window| &window.doc));
+            admit_window_pads(&self.vault, key, &envelope, context)
+        };
         if receipt.readiness != WindowPadReadiness::NotReady {
             // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
             return Ok(match self.admitted_window_payload(key, envelope.payload)? {
@@ -347,8 +416,18 @@ impl SyncClient {
         if envelope.kind != WindowPadKind::BulkState {
             return Err(invalid("bulk state outside its envelope"));
         }
-        if admit_window_pads(&self.vault, key, &envelope).readiness == WindowPadReadiness::NotReady
-        {
+        // A bulk state is read over the window it lands in, when that is open.
+        let readiness = {
+            let window = self.window(key.as_str());
+            admit_window_pads(
+                &self.vault,
+                key,
+                &envelope,
+                window.as_ref().map(|window| &window.doc),
+            )
+            .readiness
+        };
+        if readiness == WindowPadReadiness::NotReady {
             return Err(TransportError::Storage(
                 "bulk window pads not installed".into(),
             ));
@@ -373,13 +452,32 @@ impl SyncClient {
         if envelope.kind != WindowPadKind::Promotion {
             return Err(invalid("promotion snapshot outside its envelope"));
         }
-        if admit_window_pads(&self.vault, window, &envelope).readiness
+        // A promotion's snapshot holds its own history.
+        if admit_window_pads(&self.vault, window, &envelope, None).readiness
             == WindowPadReadiness::NotReady
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
         // FIX 7608 slice 4: copy rows land on the sources this device holds.
         self.admitted_whole_payload(window, envelope.payload)
+    }
+
+    /// `doc` with each world update still staged for `key` imported over a
+    /// fork of it, when one is: an update that follows a staged one builds
+    /// on it (FIX 10480). One that does not import adds nothing to read
+    /// over; nothing here is kept.
+    fn staged_pad_context(&self, key: &WindowKey, doc: &LoroDoc) -> Option<LoroDoc> {
+        let mut staged = self
+            .staged_world_updates
+            .iter()
+            .filter(|(staged, ..)| staged == key)
+            .peekable();
+        staged.peek()?;
+        let scratch = doc.fork();
+        for (_, bytes, _) in staged {
+            let _ = scratch.import(bytes);
+        }
+        Some(scratch)
     }
 
     /// Whether a window frame of `key` about to leave carries what a

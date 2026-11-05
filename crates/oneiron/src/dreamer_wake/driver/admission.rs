@@ -1,6 +1,6 @@
 //! The priority admission of one wake-pass iteration: cleanup, note review,
-//! free time, resident dreaming, skill optimization, maintenance, recipe
-//! wakes, TASKs, turn programs, the weave lens, then recipes and connector
+//! free time, resident dreaming, skill optimization, maintenance, host-lent
+//! Coach work, recipe wakes, TASKs, turn programs, the weave lens, then recipes and connector
 //! events in the policy's order. Consolidation is admitted after, by the loop.
 
 use super::super::policy::DreamerWakePolicy;
@@ -116,6 +116,40 @@ impl DreamerWakeDriver<'_> {
         let priority = match priority {
             DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                 self.store.admit_next_maintenance(AdmitDreamerAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                    budget_id: self.budget_id.clone(),
+                    budget_total_units: input.budget_total_units,
+                    reserve_units: input.reserve_units,
+                    started_milestone: self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                })?
+            }
+            outcome => outcome,
+        };
+        // Host-lent Coach work enters only when this executor implements
+        // that queue. Default executors leave both separate consumers alone.
+        let priority = match priority {
+            DreamerAdmissionOutcome::Empty
+                if !self.consolidation_only && exec.runs_coach_host_jobs() =>
+            {
+                self.store.admit_next_coach_host_job(AdmitDreamerAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                    budget_id: self.budget_id.clone(),
+                    budget_total_units: input.budget_total_units,
+                    reserve_units: input.reserve_units,
+                    started_milestone: self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                })?
+            }
+            outcome => outcome,
+        };
+        let priority = match priority {
+            DreamerAdmissionOutcome::Empty
+                if !self.consolidation_only && exec.runs_coach_heals() =>
+            {
+                self.store.admit_next_coach_heal(AdmitDreamerAttempt {
                     lease_owner: input.lease_owner.clone(),
                     now: input.now,
                     budget_id: self.budget_id.clone(),

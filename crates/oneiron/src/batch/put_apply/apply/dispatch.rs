@@ -131,7 +131,7 @@ pub(super) fn dispatch_put_type(
                     crate::gate::check_reserved_claim_policy(&body, fixed.write_envelope, policy)?;
                 }
             } else {
-                crate::gate::check_claim_policy_for_write_with_preflight_decision(
+                let verdict = crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
                     wtxn,
                     &fixed.id,
@@ -142,7 +142,21 @@ pub(super) fn dispatch_put_type(
                     policy,
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,
-                )?;
+                );
+                match verdict {
+                    Err(Error::Gate(crate::error::GateError::GateWriteRejected {
+                        outcome: "pending",
+                        ..
+                    })) if body.approval == crate::claim::ClaimApprovalStatus::Auto
+                        && fixed
+                            .options
+                            .decision
+                            .pending_auto_probe
+                            .is_some_and(|probe| {
+                                probe.matches(&fixed.id, fixed.options.decision.preflight)
+                            }) => {}
+                    verdict => verdict?,
+                }
             }
         }
         dispatch.decoded_claim_body = Some(body);

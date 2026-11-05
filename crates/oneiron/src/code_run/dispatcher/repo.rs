@@ -144,6 +144,10 @@ impl HostSelfDispatcher<'_> {
                 memory.repo_merge_queue_enqueue_for_run(&binding, input),
             ),
             RepoRunCall::CheckoutBind(input) => {
+                let input = crate::memory::repo_doors::with_host_door_base(
+                    input,
+                    self.git_door_base.as_deref(),
+                );
                 answered(effect, memory.repo_checkout_bind_for_run(&binding, input))
             }
             RepoRunCall::Export(input) => {
@@ -159,6 +163,15 @@ impl HostSelfDispatcher<'_> {
     #[must_use]
     pub fn with_repo_review_policy(mut self, policy: Arc<dyn RepoReviewPolicy>) -> Self {
         self.repo_review_policy = Some(policy);
+        self
+    }
+
+    /// Binds the host's own Git door base (FIX 7181): a checkout this run
+    /// binds points its remote there, whatever base the run names. `None`
+    /// leaves the run's own base, as before. No guest call reaches it.
+    #[must_use]
+    pub fn with_git_door_base(mut self, base: Option<String>) -> Self {
+        self.git_door_base = base;
         self
     }
 
@@ -323,6 +336,8 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Failed(SelfFailedResult {
         effect,
         error: error.code.clone(),
+        code: None,
+        disk_floor: None,
     })
 }
 

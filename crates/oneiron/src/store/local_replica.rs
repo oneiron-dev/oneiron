@@ -72,11 +72,13 @@ const PENDING_DOCUMENT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> =
 const PENDING_NOTE_REQUESTS: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
-/// Authority, grant, policy, key, consent, receipt and identity-ledger kinds,
-/// plus the machine, world and agent-definition rows they govern.
+/// Authority, grant, policy, claim-class vocabulary, key, consent, receipt and
+/// identity-ledger kinds, plus the machine, world and agent-definition rows
+/// they govern.
 const KEPT_KINDS: &[u8] = &[
     registry::ENTITY_TYPE_AUTHORITY_LOG,
     registry::ENTITY_TYPE_POLICY_MANIFEST,
+    registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
     registry::ENTITY_TYPE_FEDERATION_GRANT,
     registry::ENTITY_TYPE_ACCESS_GRANT,
     registry::ENTITY_TYPE_SECRET_CUSTODY,

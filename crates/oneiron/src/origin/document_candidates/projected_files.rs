@@ -1,21 +1,12 @@
-//! A projected candidate's files translated onto the ORIGINAL (FIX 7608
-//! slice 2b-ii-A, ASK E VisibleDiff, CALL H).
-//!
-//! Each file the agent changed in its masked copy is mapped onto the
-//! ORIGINAL it stood for. A file the agent got as stored (no mark) takes
-//! the submitted bytes and mode as authored. A masked file takes its
-//! uniquely mapped edit, every protected span the agent did not touch kept
-//! as stored; an unchanged one keeps the original. A sealed-file
-//! placeholder changed, replaced or deleted holds with
-//! `sealed_file_edited`; an edit with no unique mapping holds with
-//! `projection_edit_conflict`. Untouched files never enter: they stay the
-//! original inventory's. The submitted change is recorded beside the
-//! canonical one, never in its place.
+//! Core half of `origin::document_candidates::projected_files`: its store-layer items live in `oneiron_store::origin::document_candidates::projected_files` and are
+//! re-exported here; the items below stay in the engine.
 
 #![allow(
     dead_code,
     reason = "FIX 7608 2b-ii-A: the candidate intake calls it in 2b-ii-B"
 )]
+
+pub(crate) use oneiron_store::origin::document_candidates::projected_files::*;
 
 use super::projected::RepoProjectedCandidateFilePin;
 use crate::error::{Error, Result};
@@ -24,17 +15,6 @@ use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
-
-/// One changed file of a projected push, as its preparation read it: the
-/// ORIGINAL blob and bytes at the base, the copy the agent was given when
-/// it differed from the original, and the blob and bytes it submitted
-/// (none for a deletion).
-pub(crate) struct ProjectedFileInput<'f> {
-    pub(crate) path: String,
-    pub(crate) original: Option<(GitOid, &'f [u8])>,
-    pub(crate) copy: Option<(GitOid, RepoProjectedFileCopy<'f>)>,
-    pub(crate) submitted: Option<(GitOid, &'f [u8])>,
-}
 
 /// What one file's canonical after-state is.
 #[derive(Debug, Clone, PartialEq, Eq)]

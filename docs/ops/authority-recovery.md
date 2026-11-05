@@ -38,6 +38,28 @@ The core-only authority-transcript signer is for the existing same-vault
 `re_root_authority` writer's callback. It does not expose a general signing door
 or implement the checkpoint-root signer trait.
 
-This is the crypto/material supplier slice of FIX3934. Counted enrollment and
-lost-owner consume integration, plus CLI/HTTP surfaces, are separate lane work.
-This document does not claim those paths are implemented by the supplier alone.
+The signer is the crypto/material supplier slice of FIX3934. It does not by
+itself implement counted enrollment, lost-owner consumption or CLI/HTTP surfaces.
+
+## Public Vault operations
+
+Before loss, call `Vault::enrol_recovery_authority_key_as` with the live owner's
+act, a live holding machine, the recovery seed and the existing predecessor's
+signer. `enrol_recovery_authority_key_as_host` uses the normal host predecessor.
+Both derive the key from this vault's actual authority identity and return only
+a committed, counted `OwnerKeyEnrollmentReceipt`. They do not publish a kit or
+make the separate kit-issue operation atomic with enrollment. Publish successful
+recovery setup only after enrollment succeeds.
+
+After loss, pass the existing `RestoredKitSecret` for a RecoveryRoot kit and the
+fresh successor's `DeviceAuthority` to `Vault::recover_owner_authority_from_kit`.
+It derives the same key using this vault's actual identity and runs the existing
+ReRoot frontier joins and counted transition in one write transaction. It needs
+neither the lost host's secret nor a current-owner proof. Unenrolled or revoked
+keys and successors that fail the existing ReRoot rules still fail; no failed
+call commits a recovery or a partial frontier join. The old roster retires under
+the same normal ReRoot transition.
+
+CLI/HTTP wiring is separate lane work. These public Rust operations do not claim
+that those surfaces are implemented, nor do they change kit confirmation,
+piece-count options, kit replacement or ordinary key revocation.

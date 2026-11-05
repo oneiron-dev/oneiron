@@ -8,6 +8,7 @@ use super::claims::{
     KEY_OCCURRED_AT, KEY_OPTED_OUT, KEY_PARTY_REF, KEY_SCHEMA_VERSION,
     PREDICATE_COMM_THREAD_MEMBER, is_comm_claim_predicate,
 };
+use super::head_admission::HeadAdmission;
 use super::parties::resolve_party;
 use super::records::encode_value;
 use super::thread_membership::{active_thread_refs_in_txn, matching_thread_memberships_in_txn};
@@ -153,6 +154,24 @@ pub(super) fn put_projected_comm_claim_in_txn(
     value: &CommClaimValue,
     occurred_at: u64,
 ) -> CommResult<(EntityId, bool)> {
+    put_projected_comm_claim_with_admission_in_txn(
+        vault,
+        wtxn,
+        source_event_id,
+        value,
+        occurred_at,
+        &mut HeadAdmission::default(),
+    )
+}
+
+pub(super) fn put_projected_comm_claim_with_admission_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    source_event_id: EntityId,
+    value: &CommClaimValue,
+    occurred_at: u64,
+    admission: &mut HeadAdmission<'_>,
+) -> CommResult<(EntityId, bool)> {
     let id = projected_comm_claim_id(source_event_id, value)?;
     if let Some(raw) = vault.store.port_entity_record(&*wtxn, &id)? {
         let projected_body = encode_claim_body(&value.claim_body()?)?;
@@ -171,7 +190,9 @@ pub(super) fn put_projected_comm_claim_in_txn(
     // engine-owned setting: the criticality ladder never refuses a restriction
     // (F06 H160). Body validation and the source-trust check still run.
     let restrictive = matches!(value, CommClaimValue::OptOut { .. });
-    put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, restrictive)?;
+    admission.write(vault, wtxn, &[id], &[id], |txn| {
+        put_comm_claim_with_id_in_txn_inner(vault, txn, id, value, occurred_at, restrictive)
+    })?;
     Ok((id, true))
 }
 
@@ -244,6 +265,7 @@ fn put_comm_claim_with_id_in_txn_inner(
                     end: occurred_at,
                 },
                 learned_at: mutation_recorded_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: engine_owned,

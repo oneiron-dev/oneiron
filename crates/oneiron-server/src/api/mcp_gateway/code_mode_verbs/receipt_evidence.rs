@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
-use oneiron::memory::{HostWriteOrigin, Memory};
+use oneiron::memory::{BlobVersionAppendOutcome, HostWriteOrigin, Memory};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron_browser::{EffectReceipt, ReceiptEvidence, ReceiptEvidenceSink};
 
@@ -83,11 +83,17 @@ impl ReceiptEvidenceSink for ReceiptWriter {
             png,
         );
         match kept {
-            Ok(version) => ReceiptEvidence::Kept {
+            Ok(BlobVersionAppendOutcome::Landed(version)) => ReceiptEvidence::Kept {
                 artifact_ref: version.artifact_ref,
                 version: version.version,
                 content_hash: version.content_hash_hex,
             },
+            Ok(BlobVersionAppendOutcome::Proposed(proposal)) => {
+                tracing::warn!(proposal_ref = %proposal.proposal_ref, seq = receipt.seq, "an effect receipt's screenshot waits as a proposal");
+                ReceiptEvidence::NotKept {
+                    code: "PROPOSED".to_owned(),
+                }
+            }
             Err(error) => {
                 tracing::warn!(%error, seq = receipt.seq, "an effect receipt's screenshot stays on its session");
                 ReceiptEvidence::NotKept { code: error.code }

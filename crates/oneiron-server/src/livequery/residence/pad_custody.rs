@@ -105,6 +105,24 @@ pub(super) fn pad_fetch(
     peer: PeerMachine,
     params: Value,
 ) -> Result<Answer, AppError> {
+    pad_fetch_inner(server, Some(auth), peer, params)
+}
+
+/// One exact-key page for the machine this unbound socket proved.
+pub(super) fn pad_fetch_keys(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    pad_fetch_inner(server, None, peer, params)
+}
+
+fn pad_fetch_inner(
+    server: &SyncServer,
+    auth: Option<&CoreAuth>,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
     let input: PadFetchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let recipient = EntityId::from_hex(&input.recipient).map_err(|_| AppError::invalid_params())?;
@@ -128,6 +146,7 @@ pub(super) fn pad_fetch(
             world_pad_capsule(&server.vault, peer, &fetch, None).map_err(missing)?
         }
         (None, Some(selector), Some(entity_id)) => {
+            let auth = auth.ok_or_else(AppError::invalid_params)?;
             let (window, admission) =
                 promoted(server, auth, peer, &input.window, &selector, &entity_id)?;
             let fetch = WorldPadFetch {

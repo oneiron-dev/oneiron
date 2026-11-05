@@ -5,35 +5,36 @@ use oneiron::{ClaimInput, MemoryError};
 
 use super::NapiClaimInput;
 
-/// Refuses fractional, non-finite and out-of-range dimensions before casting.
+/// Refuses fractional, non-finite and out-of-range dimensions before narrowing.
 pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
+    let out_of_range = || MemoryError {
+        code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+        message: "dimensions must be a finite whole number between 1 and 9007199254740991"
+            .to_owned(),
+        suggestions: vec![
+            "Open the vault with the dimension count its embedding model produces.".to_owned(),
+        ],
+        successor_short_id: None,
+        gate_denial: None,
+        read_receipt: None,
+        policy_denial: None,
+        wrong_root: None,
+        hook: None,
+        retry_after: None,
+        resets_at: Vec::new(),
+        reason_codes: Vec::new(),
+        legal_hold: None,
+    };
     if !value.is_finite()
         || value.fract() != 0.0
-        || !(1.0..=oneiron_remote::MAX_DIMENSIONS as f64).contains(&value)
+        || !(1.0..=9_007_199_254_740_991.0).contains(&value)
     {
-        return Err(MemoryError {
-            code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
-            message: format!(
-                "dimensions must be a finite integer between 1 and {}",
-                oneiron_remote::MAX_DIMENSIONS
-            ),
-            suggestions: vec![
-                "Open the vault with the dimension count its embedding model produces.".to_owned(),
-            ],
-            successor_short_id: None,
-            gate_denial: None,
-            read_receipt: None,
-            policy_denial: None,
-            wrong_root: None,
-            hook: None,
-            retry_after: None,
-            resets_at: Vec::new(),
-            reason_codes: Vec::new(),
-            legal_hold: None,
-        });
+        return Err(out_of_range());
     }
-    // The whole number is positive and at most MAX_DIMENSIONS (16,384).
-    Ok(value as usize)
+    // Proven finite, whole and within 1..=2^53-1 above: an exact integer,
+    // narrowed only where the host width holds it.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    usize::try_from(value as u64).map_err(|_| out_of_range())
 }
 
 /// Validates the original JS count into a positive engine limit: a finite

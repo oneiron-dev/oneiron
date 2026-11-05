@@ -351,6 +351,7 @@ impl LimitsConfig {
             seal_answer_bytes,
             seal_memory_asks,
             seal_crl_bytes,
+            seal_ocsp_bytes,
             seal_tsa_bytes,
             seal_report_json_bytes,
             seal_prepared_stream_bytes,
@@ -404,7 +405,12 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            codebase_manifest_files,
             requested_result_rows,
+            embedding_dimensions,
+            shared_merge_evidence_rows,
+            memory_reason_evidence_rows,
+            memory_reason_tokens,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -559,6 +565,7 @@ impl LimitsConfig {
             (EngineLimit::SealAnswerBytes, seal_answer_bytes),
             (EngineLimit::SealMemoryAsks, seal_memory_asks),
             (EngineLimit::SealCrlBytes, seal_crl_bytes),
+            (EngineLimit::SealOcspBytes, seal_ocsp_bytes),
             (EngineLimit::SealTsaBytes, seal_tsa_bytes),
             (EngineLimit::SealReportJsonBytes, seal_report_json_bytes),
             (
@@ -654,7 +661,18 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::EmbeddingDimensions, embedding_dimensions),
+            (
+                EngineLimit::SharedMergeEvidenceRows,
+                shared_merge_evidence_rows,
+            ),
+            (
+                EngineLimit::MemoryReasonEvidenceRows,
+                memory_reason_evidence_rows,
+            ),
+            (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

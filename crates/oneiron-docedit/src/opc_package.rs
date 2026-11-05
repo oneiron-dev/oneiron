@@ -9,10 +9,10 @@
 //! runnable in CI) rather than behind the external-binary seam.
 //!
 //! Scope is deliberately narrow: read STORED and DEFLATE ZIP entries via the
-//! central directory, and write STORED entries. We never re-compress a
-//! session's output — the pipeline reads the session bytes to verify and diff
-//! them, it does not repackage them. Writing exists only to build the copy
-//! handed to a session and to construct test fixtures.
+//! central directory, and write STORED entries. The pipeline retains session
+//! bytes unless it restores missing worksheet XML. That repair repackages the
+//! decompressed parts without changing their order or other part bytes.
+//! Writing also builds copies handed to sessions and test fixtures.
 //!
 //! Every entry is bounded and verified before it is trusted: the reader
 //! rejects a declared uncompressed size over a per-entry or per-package cap
@@ -116,10 +116,7 @@ impl OpcPackage {
         self.parts.iter().map(|part| part.name.as_str())
     }
 
-    /// Inserts or replaces a part, preserving position for replacements. Used
-    /// by the write side (fixture sessions today; a production Rust-side
-    /// session that repackages parts will promote it).
-    #[cfg(any(test, feature = "test-support"))]
+    /// Inserts or replaces a part, preserving position for replacements.
     pub fn upsert(&mut self, name: impl Into<String>, data: Vec<u8>) {
         let name = name.into();
         if let Some(existing) = self.parts.iter_mut().find(|part| part.name == name) {
@@ -293,11 +290,8 @@ fn read_bounded(
 
 /// Serializes a package to ZIP bytes using STORED (method 0) entries.
 ///
-/// The pipeline only *reads* the bytes a session produced; writing exists to
-/// build the copy handed to a session and to construct test fixtures. Until a
-/// production Rust-side session (e.g. umya-spreadsheet) or copy-materialization
-/// path lands, only the fixture session exercises it.
-#[cfg(any(test, feature = "test-support"))]
+/// Production repairs use [`write_checked`] to check the ZIP32 field widths.
+/// Part order and decompressed bytes are retained; ZIP metadata is rebuilt.
 pub fn write(package: &OpcPackage) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
@@ -357,6 +351,47 @@ pub fn write(package: &OpcPackage) -> Vec<u8> {
     out.extend_from_slice(&cd_offset.to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // comment len
     out
+}
+
+/// Serializes a repaired package after checking the existing ZIP32 widths.
+pub fn write_checked(package: &OpcPackage) -> Result<Vec<u8>> {
+    let invalid = || {
+        Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "repaired opc package does not fit ZIP32 fields",
+        ))
+    };
+    if package.parts().len() >= usize::from(u16::MAX) {
+        return Err(invalid());
+    }
+    let mut local_bytes = 0u64;
+    let mut central_bytes = 0u64;
+    for part in package.parts() {
+        let name_bytes = u64::from(u16::try_from(part.name.len()).map_err(|_| invalid())?);
+        let data_bytes = u32::try_from(part.data.len()).map_err(|_| invalid())?;
+        if data_bytes == u32::MAX {
+            return Err(invalid());
+        }
+        local_bytes = local_bytes
+            .checked_add(LOCAL_FILE_MIN_LEN as u64 + name_bytes + u64::from(data_bytes))
+            .ok_or_else(invalid)?;
+        central_bytes = central_bytes
+            .checked_add(CENTRAL_DIR_MIN_LEN as u64 + name_bytes)
+            .ok_or_else(invalid)?;
+    }
+    if local_bytes >= u64::from(u32::MAX) || central_bytes >= u64::from(u32::MAX) {
+        return Err(invalid());
+    }
+    let mut out = write(package);
+    let utf8_flags = 0x0800u16.to_le_bytes();
+    let mut local = 0usize;
+    let mut central = local_bytes as usize;
+    for part in package.parts() {
+        out[local + 6..local + 8].copy_from_slice(&utf8_flags);
+        out[central + 8..central + 10].copy_from_slice(&utf8_flags);
+        local += LOCAL_FILE_MIN_LEN + part.name.len() + part.data.len();
+        central += CENTRAL_DIR_MIN_LEN + part.name.len();
+    }
+    Ok(out)
 }
 
 /// Classifies a part for the fidelity law. Unknown-forcing families (macros,

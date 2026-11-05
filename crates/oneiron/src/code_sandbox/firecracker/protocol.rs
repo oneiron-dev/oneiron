@@ -92,6 +92,10 @@ enum HostFrame<'a> {
     Receipt {
         accepted: bool,
     },
+    Failure {
+        code: &'a str,
+        detail: &'a str,
+    },
 }
 
 pub(in crate::code_sandbox) struct GuestProgram<'a> {
@@ -348,8 +352,13 @@ fn receive_proposals_cancellable(
                 // The host call is admitted only while the step runs, and a
                 // cancel that lands while it runs drops its answer.
                 cancel.check()?;
-                let accepted = transport
-                    .is_some_and(|transport| proxy.forward_read(vm, &call, transport).is_ok());
+                let accepted = match transport {
+                    Some(transport) => proxy.forward_read(vm, &call, transport).is_ok(),
+                    None => {
+                        proxy.record_transport_unavailable(vm, &call);
+                        false
+                    }
+                };
                 cancel.check()?;
                 write_frame(&mut stream, &HostFrame::Receipt { accepted }, deadline)?;
             }
@@ -378,7 +387,41 @@ fn receive_proposals_cancellable(
                 let Some((_, body)) = open.as_mut() else {
                     return Err(refused("guest file frame outside a file proposal"));
                 };
-                body.append(&bytes)?;
+                if let Err(error) = body.append(&bytes) {
+                    if matches!(
+                        &error,
+                        crate::Error::Code(
+                            crate::error::CodeError::SandboxProposalDiskFloor { .. }
+                        )
+                    ) {
+                        drop(open.take());
+                        writes.clear();
+                        drop(bytes);
+                        cancel.check()?;
+                        if write_frame(
+                            &mut stream,
+                            &HostFrame::Failure {
+                                code: oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
+                                detail: &error.to_string(),
+                            },
+                            deadline,
+                        )
+                        .is_ok()
+                        {
+                            // Returning now would let the backend kill the guest before
+                            // its chunk call receives the reason. Drop proposals first,
+                            // then wait for one frame under the original step bound.
+                            cancel.check()?;
+                            let _ = read_frame(&mut stream, deadline);
+                        }
+                    }
+                    return Err(error);
+                }
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
             }
             GuestFrame::WriteClose => {
                 let Some((path, body)) = open.take() else {

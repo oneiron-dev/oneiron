@@ -262,6 +262,52 @@ pub(crate) fn verify_code_consent_consumed(
     Ok(())
 }
 
+/// Whether this record consumed an actual foreign connector reply. The
+/// settled reply's classification and the consuming replay commit must both
+/// exist, and the inherited step, result and settlement must still match.
+/// No reply body is read, and a continuation need not have the original run id.
+pub(crate) fn consumed_external_code_reply(
+    vault: &Vault,
+    record: &CodeRunReplayRecord,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    for call in &record.bridge_calls {
+        let Some(wait_id) = super::super::wait_rows::parked_wait_id(&call.outcome) else {
+            continue;
+        };
+        let Some(row) = read_code_consent_wait_in_txn(vault, &txn, wait_id)? else {
+            continue;
+        };
+        let (Some(settlement), Some(consumed)) = (&row.settlement, &row.consumption) else {
+            continue;
+        };
+        if !settlement.external_reply
+            || row.binding.bridge_seq != call.seq
+            || row.binding.pending.connector_call().is_none()
+        {
+            continue;
+        }
+        let resume = CodeConsentResume {
+            record,
+            key: WaitKey {
+                run: row.binding.run_id,
+                wait_id,
+                generation: consumed.wait_generation,
+            },
+            step_seq: consumed.step_seq,
+            resumed_path: &consumed.resumed_path,
+        };
+        let sealed = sealed_step(&row, record, &resume.key, resume.step_seq)?;
+        if !resumed_result(&resume, sealed, settlement)?.is(consumed) {
+            return Err(Error::CorruptedIndex(
+                "a code consent wait was consumed by another result",
+            ));
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// The seal of `row`, checked against a record's history: it was sealed by
 /// the step at `step_seq` (that step's checkpoint hash, which chains every
 /// step before it, with that step the last one then) at the key's

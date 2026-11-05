@@ -1,111 +1,23 @@
-//! World pad compartments (KS-5, FIX 6706, L04 half): one world's pads,
-//! live and retired, sealed apart from every other world's and wrapped only
-//! to that world's admitted machines and recovery roots, never to the vault
-//! data key, the generic root wrap or every linked machine.
-//!
-//! Two forms share one codec. A head's world compartment, once
-//! [`WORLD_PAD_COMPARTMENTS`] is on, sits among the head's others under the
-//! control compartment's root. A capsule ([`SealedWorldPads`]) stands
-//! alone: what a machine's pad hydration carries to another of the owner's
-//! machines, bound to its custody position, its world, the exact set of pads
-//! it holds and the set of recipients it is wrapped to. Its BLAKE3 is what
-//! the carrier's authenticated admission names; the capsule's own fields are
-//! claims until [`open_world_pad_compartment`] checks them against that.
+//! Core half of `store::key_custody::head::pad_scope`: its store-layer items live in `oneiron_store::key_custody::head::pad_scope` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use getrandom::SysRng;
-use oneiron_crypto::{
-    Envelope, HybridSecretKey, Kek, OpenKey, Purpose, SealKey, SealParams, WrapType, seal,
-};
-use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
-
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use oneiron_authority::authority::RecoveryRootId;
-use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
-use oneiron_crypto::HybridPublicKey;
+pub(crate) use oneiron_store::key_custody::head::pad_scope::*;
 
 use super::super::identity::{CustodyKind, CustodySubject};
 use super::super::log::{AEAD, CRYPTO_EPOCH, CustodyPosition, open_sym, seal_refused, seal_sym};
 use super::{BodyWire, EntryWire, FactWire, KEM, TO_ROOT, WrapWire, serde_bytes_vec, wrap_policy};
-
-/// Whether a head seals its worlds' pads in world compartments: on (FIX
-/// 9178; DEC-0005 #world-privacy-bundle-erase, ARCH-0038 #key-store). A
-/// world's pads open only with the key of a machine admitted to it or a kit
-/// root it admits, never the vault data key alone; a restore opened with the
-/// data key alone lands its worlds' pad rows locked, named, for the kit or
-/// an admitted machine. The scoped capsule API works either way.
-pub(crate) const WORLD_PAD_COMPARTMENTS: bool = true;
-
-/// A world compartment key's wrap to an admitted machine; a root's is
-/// [`TO_ROOT`] under the tagged recipient, apart from the generic root wrap.
-const TO_MACHINE: u8 = 3;
-const CAPSULE_MAGIC: &[u8; 4] = b"OCWP";
-const CAPSULE_VERSION: u16 = 1;
-const CAPSULE_RECIPIENT: &[u8] = b"oneiron/custody-pads/capsule/v1";
-/// The derive-key context of a capsule's envelope key id.
-const CAPSULE_KEY_ID_CONTEXT: &str = "oneiron/custody-pads/capsule-key-id/v1";
-/// A pad's full id: world (16) ‖ key generation (8, big-endian) ‖ mint (16).
-const FULL: usize = 40;
-
-fn pads_corrupt() -> Error {
-    Error::CorruptedIndex("world pad compartment")
-}
-
-/// A world's admitted machines and recovery roots, by their hybrid public
-/// keys: ordered and deduplicated, so its wraps and the publication policy's
-/// digest are canonical.
-pub(crate) type PadRecipients = BTreeMap<WrapRecipient, HybridPublicKey>;
-
-/// One world's compartment scope: every pad of the world, live and retired.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct WorldPadScope(EntityId);
-
-impl WorldPadScope {
-    pub(super) fn new(world: EntityId) -> Self {
-        Self(world)
-    }
-
-    /// The scope of the world pad `subject`.
-    ///
-    /// # Errors
-    ///
-    /// A subject that is no world pad, or whose item names no world.
-    pub(crate) fn of(subject: &CustodySubject) -> Result<Self> {
-        if subject.kind() != CustodyKind::WorldPad {
-            return Err(pads_corrupt());
-        }
-        world_of(subject.item()).map(Self)
-    }
-
-    pub(crate) fn world(self) -> EntityId {
-        self.0
-    }
-}
-
-/// The world a pad's full id names.
-pub(super) fn world_of(item: &[u8]) -> Result<EntityId> {
-    if item.len() != FULL {
-        return Err(pads_corrupt());
-    }
-    let world = <[u8; 16]>::try_from(&item[..16]).map_err(|_| pads_corrupt())?;
-    EntityId::from_bytes(world).map_err(|_| pads_corrupt())
-}
-
-/// The world key a pad's full id names.
-fn key_of(full: &[u8; FULL]) -> Result<WorldKeyId> {
-    let mut generation = [0u8; 8];
-    let mut mint = [0u8; 16];
-    generation.copy_from_slice(&full[16..24]);
-    mint.copy_from_slice(&full[24..]);
-    Ok(WorldKeyId {
-        world: world_of(full)?,
-        generation: u64::from_be_bytes(generation),
-        mint,
-    })
-}
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use getrandom::SysRng;
+use oneiron_authority::authority::RecoveryRootId;
+use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
+use oneiron_crypto::HybridPublicKey;
+use oneiron_crypto::{
+    Envelope, HybridSecretKey, Kek, OpenKey, Purpose, SealKey, SealParams, WrapType, seal,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use zeroize::Zeroizing;
 
 /// Wraps a compartment `key` bound to `key_id` to each of `admitted`, by its
 /// tagged envelope recipient.
@@ -277,21 +189,6 @@ impl OpenedWorldPads {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CapsuleWire {
-    version: u16,
-    #[serde(with = "serde_bytes_vec")]
-    position: Vec<u8>,
-    world: [u8; 16],
-    /// Every pad's full id, ascending, end to end.
-    #[serde(with = "serde_bytes_vec")]
-    keys: Vec<u8>,
-    #[serde(with = "serde_bytes_vec")]
-    sealed: Vec<u8>,
-    wraps: Vec<WrapWire>,
-}
-
 /// What a capsule's envelopes are bound to: its position, world, pads and
 /// recipients, each counted, so none moves, joins or leaves unseen.
 fn capsule_key_id(
@@ -312,30 +209,6 @@ fn capsule_key_id(
         hasher.update(&tagged);
     }
     *hasher.finalize().as_bytes()
-}
-
-/// Every pad of `world` among `live` and `retired`, ascending and end to
-/// end, checked: each of the world, none both live and retired.
-fn pad_ids(
-    world: EntityId,
-    live: impl IntoIterator<Item = [u8; FULL]>,
-    retired: impl IntoIterator<Item = [u8; FULL]>,
-) -> Result<Vec<u8>> {
-    let live: BTreeSet<[u8; FULL]> = live.into_iter().collect();
-    let mut all = live.clone();
-    for full in retired {
-        if live.contains(&full) || !all.insert(full) {
-            return Err(pads_corrupt());
-        }
-    }
-    let mut out = Vec::with_capacity(all.len() * FULL);
-    for full in &all {
-        if world_of(full)? != world {
-            return Err(pads_corrupt());
-        }
-        out.extend_from_slice(full);
-    }
-    Ok(out)
 }
 
 /// A capsule's wire and the claims its unauthenticated fields make: its

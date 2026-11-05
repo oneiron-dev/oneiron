@@ -1356,6 +1356,47 @@ pub(crate) fn mark_whole_block_deleted(
         BlockNode::OpaqueBlock(_) => {}
     }
 }
+/// Paragraph deletion that can keep earlier inline revisions without a
+/// block-level deletion flattening their authors. Final marks are checked by
+/// the delete verb, before this shape is admitted.
+pub(crate) fn can_preserve_paragraph_delete(block: &TrackedBlock) -> bool {
+    let BlockNode::Paragraph(paragraph) = &block.block else {
+        return false;
+    };
+    matches!(block.status, TrackingStatus::Normal)
+        && block.move_id.is_none()
+        && matches!(
+            paragraph.para_mark_status,
+            None | Some(TrackingStatus::Normal)
+        )
+        && paragraph.section_properties.is_none()
+        && paragraph.numbering.is_none()
+        && paragraph.literal_prefix.is_none()
+        && paragraph
+            .segments
+            .iter()
+            .any(|segment| !segment.inlines.is_empty())
+        && paragraph
+            .segments
+            .iter()
+            .any(|segment| segment.status != TrackingStatus::Normal)
+}
+
+pub(crate) fn mark_paragraph_deleted_preserving_revisions(
+    block: &mut TrackedBlock,
+    revision: &RevisionInfo,
+    rev_counter: &mut u32,
+) {
+    let BlockNode::Paragraph(paragraph) = &mut block.block else {
+        unreachable!("validated paragraph deletion");
+    };
+    mark_final_paragraph_runs_deleted(paragraph, revision, rev_counter);
+    paragraph.para_mark_status = Some(TrackingStatus::Deleted(next_revision(
+        revision,
+        rev_counter,
+    )));
+}
+
 fn effective_text_prefix(p: &ParagraphNode) -> Option<&str> {
     if let Some(n) = &p.numbering
         && !n.synthesized_text.is_empty()
@@ -2649,6 +2690,9 @@ fn normalize_deleted_final_mark(
             final_paragraph.numbering_suppressed = accepted_final_properties.numbering_suppressed;
             final_paragraph.materialized_numbering =
                 accepted_final_properties.materialized_numbering.clone();
+            // The final section lives in body/sectPr, not on this carrier.
+            final_paragraph.section_properties = None;
+            final_paragraph.section_property_change = None;
 
             let current =
                 crate::edit::snapshot_paragraph_formatting(final_paragraph, &deleted_revision);
@@ -9676,8 +9720,27 @@ struct MoveDestinationDeletionPlan {
 /// away with the clone. Represent both transitions before the ordinary status
 /// projector sees the inner deletion in isolation.
 fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinationDeletionPlan> {
+    fn is_move_half(block: &TrackedBlock, identity: u32, inserted: bool) -> bool {
+        let matches = |status: &TrackingStatus| match status {
+            TrackingStatus::Inserted(revision) => inserted && revision.identity == identity,
+            TrackingStatus::Deleted(revision) => !inserted && revision.identity == identity,
+            TrackingStatus::InsertedThenDeleted(stacked) => {
+                let revision = if inserted {
+                    &stacked.inserted
+                } else {
+                    &stacked.deleted
+                };
+                revision.identity == identity
+            }
+            _ => false,
+        };
+        matches(&block.status)
+            || matches!(&block.block, BlockNode::Paragraph(paragraph)
+                if paragraph.para_mark_status.as_ref().is_some_and(matches))
+    }
+
     let mut plans = Vec::new();
-    for tracked in blocks {
+    for (destination_index, tracked) in blocks.iter().enumerate() {
         if tracked.move_id.is_none() {
             continue;
         }
@@ -9699,18 +9762,31 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
                 _ => None,
             })
             .collect();
-        let source_id = blocks.iter().find_map(|candidate| {
-            if candidate.move_id != tracked.move_id {
-                return None;
-            }
-            let BlockNode::Paragraph(source) = &candidate.block else {
-                return None;
-            };
-            matches!(&source.para_mark_status,
-                Some(TrackingStatus::Deleted(revision))
-                    if revision.identity == move_revision.identity)
-            .then(|| block_id(&candidate.block).clone())
-        });
+        // A move range keeps the relative order of its source and destination
+        // blocks. Count every sibling, not just paragraphs with inner deletions.
+        let position = blocks[..destination_index]
+            .iter()
+            .filter(|candidate| {
+                candidate.move_id == tracked.move_id
+                    && is_move_half(candidate, move_revision.identity, true)
+            })
+            .count();
+        let source_id = blocks
+            .iter()
+            .filter(|candidate| {
+                candidate.move_id == tracked.move_id
+                    && is_move_half(candidate, move_revision.identity, false)
+            })
+            .nth(position)
+            .and_then(|candidate| {
+                let BlockNode::Paragraph(source) = &candidate.block else {
+                    return None;
+                };
+                matches!(&source.para_mark_status,
+                    Some(TrackingStatus::Deleted(revision))
+                        if revision.identity == move_revision.identity)
+                .then(|| block_id(&candidate.block).clone())
+            });
         if !deletions.is_empty()
             && let Some(source_id) = source_id
         {
@@ -9839,6 +9915,13 @@ fn overlay_unique_text_status(
     for segment in std::mem::take(&mut paragraph.segments) {
         for inline in segment.inlines {
             let InlineNode::Text(text) = inline else {
+                // Match the placeholder widths used by extract_inlines_text.
+                if matches!(
+                    inline,
+                    InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)
+                ) {
+                    cursor += 1;
+                }
                 push(&mut rebuilt, inline, segment.status.clone());
                 continue;
             };

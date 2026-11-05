@@ -318,6 +318,7 @@ impl Child {
                         listed,
                         worlds: Vec::new(),
                         served: None,
+                        learning: None,
                     };
                     let provider = self.provider.as_ref();
                     // No read scope is threaded here: the birth inherits (FIX 11768).

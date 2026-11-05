@@ -67,7 +67,7 @@ pub(crate) const LIVE_RUN_BUSY: &str = "live_run_busy";
 pub(crate) const LIVE_RUN_ATTACHED: &str = "live_run_attached";
 
 /// The version tag every handle opens with.
-const HANDLE_TAG: &str = "lr1";
+const HANDLE_TAG: &str = oneiron::code_run::live_run::LIVE_RUN_HANDLE_TAG;
 
 /// How long an attach or action waits for the run's guard while an entry or
 /// another action holds it, before it answers [`LIVE_RUN_BUSY`].
@@ -641,17 +641,7 @@ fn handle_text(run: EntityId, binding: &CodeRunLiveRunBinding) -> String {
 }
 
 fn parse_handle(text: &str) -> Option<(EntityId, [u8; LIVE_RUN_ISSUED_LEN])> {
-    let mut parts = text.split('.');
-    let (Some(HANDLE_TAG), Some(run), Some(issued), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return None;
-    };
-    if issued.len() != 32 || !issued.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let issued = u128::from_str_radix(issued, 16).ok()?.to_be_bytes();
-    Some((EntityId::from_hex(run).ok()?, issued))
+    oneiron::code_run::live_run::parse_live_run_handle(text)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

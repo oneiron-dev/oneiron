@@ -193,8 +193,8 @@ impl Restore<'_> {
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
-        // Keep the existing pre-open screen; account for retained capacity below.
-        let peak = bytes.saturating_mul(2);
+        // The canonical wire body and plaintext overlap while the body opens.
+        let peak = bytes.saturating_add(self.record.sealed_bytes);
         let mut host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
@@ -317,6 +317,8 @@ impl Restore<'_> {
         let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
         let opened_capacity = u64::try_from(opened.capacity()).unwrap_or(u64::MAX);
         let plaintext = host_reserved.hold(self.key.anchor.vault, opened, opened_capacity);
+        // The wire body has dropped; only the upcoming region needs reserved credit.
+        host_reserved.release_excess(opened_len);
         // Count the buffer before awaiting more credit; its region is not allocated yet.
         host_reserved.ensure(opened_len).await?;
         Some(plaintext)

@@ -192,13 +192,33 @@ impl Vault {
     where
         E: From<Error>,
     {
+        self.read_blob_artifact_version_in_txn_with_record(
+            rtxn,
+            artifact_id,
+            version,
+            |rtxn, record| read(rtxn, &record.content_hash),
+        )
+    }
+
+    /// The same version read, lending the stored metadata that selects its
+    /// bytes to `read` in the same snapshot.
+    pub(crate) fn read_blob_artifact_version_in_txn_with_record<R, E>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+        read: impl FnOnce(&RoTxn<'_>, &BlobArtifactVersion) -> std::result::Result<R, E>,
+    ) -> std::result::Result<Option<R>, E>
+    where
+        E: From<Error>,
+    {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
         if !compaction_response_readable_in(self, rtxn, artifact_id)? {
             return Ok(None);
         }
-        read(rtxn, &record.content_hash).map(Some)
+        read(rtxn, &record).map(Some)
     }
 
     /// Whether `artifact_id`'s version bytes may leave

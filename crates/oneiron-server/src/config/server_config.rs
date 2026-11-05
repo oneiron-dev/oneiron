@@ -77,6 +77,11 @@ pub struct SyncServerConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// The host's own Git door base (`https://<host>/git`, or loopback
+    /// `http`), as the operator configures it (FIX 7181, ARCH-0068 RC4). When
+    /// set, a run's checkout bind names this base and never the caller's
+    /// endpoint; unset, the caller's explicit endpoint stands as before.
+    pub git_door_base: Option<String>,
     /// Every public URL a kit fetch may be signed for, as for a home behind
     /// several tunnel aliases (FIX 4404). Empty: `oauth_resource_indicator`.
     pub kit_bundle_public_urls: Vec<String>,
@@ -210,6 +215,7 @@ impl Default for SyncServerConfig {
             oauth_issuer: None,
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
+            git_door_base: None,
             kit_bundle_public_urls: Vec::new(),
             cloud_registration_pins: None,
             native_mail: None,
@@ -279,6 +285,24 @@ impl SyncServerConfig {
     }
 }
 
+/// The explicit vault inputs an embedded binding resolved over its config file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedHolderOverrides {
+    pub vault_path: PathBuf,
+    pub dimensions: Option<usize>,
+}
+
+impl EmbeddedHolderOverrides {
+    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
+        super::ServeArgs {
+            config,
+            vault_path: Some(self.vault_path.clone()),
+            dimensions: self.dimensions,
+            ..Default::default()
+        }
+    }
+}
+
 /// Fully resolved serve configuration after defaults, config file, env vars,
 /// and flags have been merged.
 ///
@@ -290,6 +314,10 @@ pub struct ServeConfig {
     /// The resolved file first-run model setup may rewrite, `None` for managed
     /// argv/settings-only serving or a binding started without a file.
     pub config_path: Option<PathBuf>,
+    /// Original embedded holder inputs for first-run setup replay. Unset for
+    /// configs that did not declare these overrides; resolved file values
+    /// must not be copied here because that would hide later file changes.
+    pub embedded_holder_overrides: Option<EmbeddedHolderOverrides>,
     pub host: String,
     pub port: u16,
     /// The artifact-only listener's port on `host`; `0` takes any free one,
@@ -299,6 +327,9 @@ pub struct ServeConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// `--git-door-base` / `ONEIRON_GIT_DOOR_BASE` / `git_door_base`: the
+    /// host-resolved Git door a run's checkout bind names (FIX 7181).
+    pub git_door_base: Option<String>,
     pub kit_bundle_public_urls: Vec<String>,
     /// `--cloud-registration-pins`, argv only, plain or managed: the public
     /// pins the native cloud registration client trusts (G7). Unset, that
@@ -407,6 +438,9 @@ pub struct ServeConfig {
     pub linear: Option<LinearConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
+    /// Operator-only enterprise/advanced checkpoint selection capability.
+    /// Managed argv supplies it; the owner's settings file never does.
+    pub allow_host_checkpoint_opt_out: bool,
     /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
     /// deployment's default, on for our managed serve and off on every plain
     /// serve ([`oneiron::config::failure_signals::default_exports`]).
@@ -465,6 +499,7 @@ impl Default for ServeConfig {
         Self {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             config_path: None,
+            embedded_holder_overrides: None,
             host: "0.0.0.0".to_owned(),
             port: 9090,
             artifact_port: 0,
@@ -472,6 +507,7 @@ impl Default for ServeConfig {
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
             oauth_resource_indicator: server.oauth_resource_indicator,
+            git_door_base: server.git_door_base,
             kit_bundle_public_urls: server.kit_bundle_public_urls,
             cloud_registration_pins: server.cloud_registration_pins,
             allow_unauthenticated: server.allow_unauthenticated,
@@ -529,6 +565,7 @@ impl Default for ServeConfig {
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
+            allow_host_checkpoint_opt_out: false,
             failure_signal_export: None,
             failure_signal_training: None,
             hosted_kms_key_ref: None,
@@ -557,6 +594,7 @@ impl ServeConfig {
             oauth_issuer: self.oauth_issuer.clone(),
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
+            git_door_base: self.git_door_base.clone(),
             kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
             cloud_registration_pins: self.cloud_registration_pins.clone(),
             native_mail: self.native_mail.clone(),
@@ -629,6 +667,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);

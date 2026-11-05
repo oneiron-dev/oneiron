@@ -391,7 +391,7 @@ fn patch_byterange(out: &mut [u8], pos: usize, br: [u64; 4]) -> Result<(), SealE
 pub(crate) fn patch_contents(
     draft: &mut DraftRevision,
     der: &[u8],
-    limits: &SealResourceLimits,
+    _limits: &SealResourceLimits,
 ) -> Result<(), SealError> {
     let (lt, gt) = draft
         .contents_gap
@@ -406,13 +406,13 @@ pub(crate) fn patch_contents(
             code: FatalCode::ContentsCapacityExceeded,
         });
     }
-    let mut hex: Vec<u8> = admitted::vec(limits, gap).map_err(memory_error)?;
-    for &b in der {
-        hex.push(HEX_UPPER[(b >> 4) as usize]);
-        hex.push(HEX_UPPER[(b & 0xF) as usize]);
+    // The draft already owns this gap's allocation.
+    let slot = &mut draft.bytes[lt + 1..gt];
+    for (i, &b) in der.iter().enumerate() {
+        slot[2 * i] = HEX_UPPER[(b >> 4) as usize];
+        slot[2 * i + 1] = HEX_UPPER[(b & 0xF) as usize];
     }
-    hex.resize(gap, b'0');
-    draft.bytes[lt + 1..gt].copy_from_slice(&hex);
+    slot[der.len() * 2..].fill(b'0');
     Ok(())
 }
 

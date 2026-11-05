@@ -101,11 +101,9 @@ impl A1Range {
 
 /// A format-typed anchor locator.
 ///
-/// Only the xlsx locator is parsed and re-anchored in P1. The docx and pptx
-/// variants are registered locator TYPES (OF-368 D9 P2/P3) so anchors carry
-/// them losslessly, but their span parsing and re-anchoring are deferred; a
-/// version bump treats a non-xlsx locator as non-mappable (drifted) rather than
-/// guessing a new position.
+/// The format-specific fields identify XLSX ranges, DOCX character spans,
+/// PPTX shapes and HTML character spans. Readers resolve them against one
+/// version's bytes rather than guessing a location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Locator {
@@ -116,7 +114,7 @@ pub enum Locator {
         /// Cell range.
         range: A1Range,
     },
-    /// docx `{para_path, char_span}` — TYPE registered, parsing deferred.
+    /// docx `{para_path, char_span}` in document paragraph text.
     Docx {
         /// Paragraph path within the document body.
         para_path: String,
@@ -125,7 +123,7 @@ pub enum Locator {
         /// Exclusive character-span end.
         char_end: u64,
     },
-    /// pptx `{slide, shape_id}` — TYPE registered, parsing deferred.
+    /// pptx `{slide, shape_id}` in slide or shape text.
     Pptx {
         /// 1-based slide index.
         slide: u64,
@@ -159,7 +157,7 @@ impl Locator {
         Ok(Self::Xlsx { sheet, range })
     }
 
-    /// Builds a docx locator (span parsing deferred; bounds validated only).
+    /// Builds a docx locator, validating its path and character-span bounds.
     pub fn docx(para_path: impl Into<String>, char_start: u64, char_end: u64) -> Result<Self> {
         let para_path = para_path.into();
         validate_locator_text(&para_path, "docx locator para_path")?;
@@ -175,7 +173,7 @@ impl Locator {
         })
     }
 
-    /// Builds a pptx locator (shape resolution deferred; fields validated only).
+    /// Builds a pptx locator, validating its slide number and shape identifier.
     pub fn pptx(slide: u64, shape_id: impl Into<String>) -> Result<Self> {
         let shape_id = shape_id.into();
         validate_locator_text(&shape_id, "pptx locator shape_id")?;

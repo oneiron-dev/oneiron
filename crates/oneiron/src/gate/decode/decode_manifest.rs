@@ -180,6 +180,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(in crate::gate) entity_resolution_bands:
+        Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:

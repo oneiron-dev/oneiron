@@ -274,6 +274,25 @@ pub(crate) async fn vault_skills_fit_set(
     .await
 }
 
+pub(crate) async fn vault_skills_advisory_ask_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillAdvisoryAskRequest,
+) -> Listed<HubConsentReceipt> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.advisory_ask.set",
+        move |server, owner| {
+            Ok((
+                sdk::skill_advisory_ask_set_as_owner(server.vault(), owner, &input)?,
+                Vec::new(),
+            ))
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_skills_convert(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

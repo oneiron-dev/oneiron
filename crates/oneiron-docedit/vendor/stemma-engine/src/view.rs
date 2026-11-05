@@ -1342,6 +1342,19 @@ pub fn build_document_view_from_canon(canonical: &CanonDoc) -> DocumentView {
     DocumentView { blocks }
 }
 
+/// Project one non-body story's locally identified blocks. Body role tokens
+/// cannot be looked up by these ids: separate stories reuse the same id
+/// namespace, and the body vocabulary does not describe their paragraphs.
+pub fn build_story_blocks_view(blocks: &[TrackedBlock]) -> DocumentView {
+    let role_ids = HashMap::new();
+    DocumentView {
+        blocks: blocks
+            .iter()
+            .map(|block| block_to_view(block, &role_ids))
+            .collect(),
+    }
+}
+
 /// Render a [`DocumentView`] as a single plain-text string.
 ///
 /// This is the **human-readable consumption surface** (what a reader, or Word,

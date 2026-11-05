@@ -1,10 +1,12 @@
 //! The route's fitness grades as typed decisions through the host's ladder, and the note
 //! seam beside a routed seat.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::agent_dispatch::MeasuredRate;
 use crate::llm::decision::catalogue::DESCRIPTION_FIT;
 use crate::llm::decision::{
     AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility, cut_text,
@@ -63,6 +65,7 @@ impl DescriptionDecisions<'_> {
         &self,
         task: &str,
         type_ref: Option<&TaskTypeRef>,
+        learned: &BTreeMap<ModelId, MeasuredRate>,
         candidates: &[Candidate<'_>],
     ) -> Result<DescriptionFitnessReadings> {
         if candidates.is_empty() {
@@ -89,12 +92,16 @@ impl DescriptionDecisions<'_> {
                 .iter()
                 .zip(&questions)
                 .map(|(candidate, question)| {
-                    json!({
+                    let mut row = json!({
                         "question": question.id.to_hex(),
                         "model": candidate.model,
                         "description": cut_text(candidate.description, cut),
                         "effort": candidate.effort,
-                    })
+                    });
+                    if let Some(rate) = learned.get(candidate.model) {
+                        row["learned"] = json!(rate);
+                    }
+                    row
                 })
                 .collect();
             json!({

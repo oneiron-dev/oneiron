@@ -7,8 +7,9 @@ use super::native_recalc::NativeFirst;
 use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
-    OfficeDoc, OfficeFormat, RecalcPolicy, SheetAnswerBundle, StructureSummary, ValidationReport,
+    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, EditWarning,
+    MutationMode, OfficeDoc, OfficeFormat, RecalcPolicy, SheetAnswerBundle, StructureSummary,
+    ValidationReport, WarningCode,
 };
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
@@ -223,6 +224,30 @@ fn run_pipeline<S: EditSession>(
                 "edit output is not a readable OPC package",
             );
             return Ok(EditOutcome::Rejected { inspection, report });
+        }
+    };
+
+    let (current, after) = if serialized_plan.ops.iter().any(EditOp::is_structural) {
+        warnings.push(EditWarning::new(
+            WarningCode::WorksheetPreservationIncomplete,
+            "worksheet extension preservation does not yet relocate structural edits",
+        ));
+        (current, after)
+    } else {
+        let mut repaired = after;
+        let preservation = oneiron_docedit::worksheet_preserve::preserve_missing_root_extensions(
+            before,
+            &mut repaired,
+        );
+        warnings.extend(
+            preservation.warnings.into_iter().map(|detail| {
+                EditWarning::new(WarningCode::WorksheetPreservationIncomplete, detail)
+            }),
+        );
+        if preservation.changed {
+            (opc::write_checked(&repaired)?, repaired)
+        } else {
+            (current, repaired)
         }
     };
 

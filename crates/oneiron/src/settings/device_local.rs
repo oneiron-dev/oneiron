@@ -94,24 +94,34 @@ impl Vault {
         endpoint: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
+        self.model_call_hold_in_txn(&rtxn, world, endpoint)
+    }
+
+    /// The same model-world verdict in the caller's snapshot.
+    pub(crate) fn model_call_hold_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+        endpoint: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        let flagged = device_local_worlds_for(self, rtxn, endpoint)?;
         let Some(world) = world else {
             return Ok(
-                (!flagged.is_empty()).then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint))
+                (!flagged.is_empty()).then(|| worlds_hold_in(self, rtxn, &flagged, endpoint))
             );
         };
         if flagged.contains(&world) {
             let world = std::collections::BTreeSet::from([world]);
-            return Ok(Some(worlds_hold_in(self, &rtxn, &world, endpoint)));
+            return Ok(Some(worlds_hold_in(self, rtxn, &world, endpoint)));
         }
         if world == oneiron_contracts::claim::base_world_id() {
             return Ok(None);
         }
-        if self.get_entity_type_in_txn(&rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
+        if self.get_entity_type_in_txn(rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
             return Ok(Some(ReleaseHold::Placement));
         }
         let visibility =
-            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
+            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &world)?;
         Ok(
             (visibility.deleted || visibility.archived || visibility.stale)
                 .then_some(ReleaseHold::Placement),

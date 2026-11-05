@@ -242,6 +242,7 @@ pub(super) fn provenance_materialization_op(
             entity_type: ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,

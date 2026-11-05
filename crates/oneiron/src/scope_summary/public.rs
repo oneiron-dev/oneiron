@@ -118,9 +118,34 @@ impl Memory<'_> {
             target,
             requester: self.write_actor(),
         };
-        let queued = match &input.purpose {
-            Some(purpose) => self.vault().request_scope_summary_for(&request, purpose)?,
-            None => self.vault().request_scope_summary(&request)?,
+        let plain_queue = || match &input.purpose {
+            Some(purpose) => self.vault().request_scope_summary_for(&request, purpose),
+            None => self.vault().request_scope_summary(&request),
+        };
+        let queued = if matches!(
+            &request.target,
+            super::ScopeSummaryTarget::Sources { scope: None, .. }
+        ) {
+            let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+            if lane.actor_key().room_turn().is_some() {
+                // A room turn has no frozen form; keep this door's current queue.
+                plain_queue()?
+            } else {
+                match self.vault().request_scope_summary_in_lane(
+                    &request,
+                    input.purpose.as_deref(),
+                    &lane,
+                ) {
+                    // Narrowed guests likewise have no portable lane. This door
+                    // keeps its existing admission rather than adding a refusal.
+                    Err(error) if crate::claim::FrozenReadLane::is_guest_lane_refusal(&error) => {
+                        plain_queue()?
+                    }
+                    outcome => outcome?,
+                }
+            }
+        } else {
+            plain_queue()?
         };
         let attempt = crate::entity_id::bytes_to_hex_lower(queued.attempt.as_bytes());
         Ok(SummaryQueued {

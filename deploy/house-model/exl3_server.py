@@ -1676,6 +1676,7 @@ def serve(args, state):
                 created = int(time.time())
                 model = body.get("model") or state.model_id
                 reasoning, content = [], []
+                req = state.prepare(body, request_id, accepted_ns)
                 if streaming:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1689,7 +1690,6 @@ def serve(args, state):
                     return {"id": request_id, "object": "chat.completion.chunk", "created": created,
                             "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
 
-                req = state.prepare(body, request_id, accepted_ns)
                 # A streamed answer to a request with tools is held from its
                 # first tool-call marker on (FIX 8328).
                 splitter = exl3_tools.StreamSplitter(req.tools) if streaming and req.tools else None

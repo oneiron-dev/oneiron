@@ -9,7 +9,7 @@ use crate::api::{
     Anomaly, Counter, ModificationLevel, Modifications, RevisionKind, RevisionReport,
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
-use crate::memory::{MemoryLedger, SealMemoryRefusal};
+use crate::memory::SealMemoryRefusal;
 use lopdf::xref::XrefEntry;
 use lopdf::{Document, Object, ObjectId};
 
@@ -41,7 +41,7 @@ fn same_entry(before: Option<&XrefEntry>, after: Option<&XrefEntry>) -> bool {
 fn changed(
     before: &Document,
     after: &Document,
-    ledger: &MemoryLedger,
+    limits: &SealResourceLimits,
 ) -> Result<Option<BTreeSet<ObjectId>>, SealMemoryRefusal> {
     if before
         .objects
@@ -50,12 +50,13 @@ fn changed(
     {
         return Ok(None);
     }
+    let ledger = limits.memory.ledger()?;
     let mut out = BTreeSet::new();
     for (id, old) in &before.objects {
         let Some(current) = after.objects.get(id) else {
             return Ok(None);
         };
-        let equal = current.eq_admitted(old, ledger).map_err(|error| {
+        let equal = current.eq_admitted(old, ledger.as_ref()).map_err(|error| {
             ledger
                 .refusal_of(&lopdf::Error::DecodeAdmission(error))
                 .expect("a DecodeAdmission error always carries a memory refusal")
@@ -67,12 +68,12 @@ fn changed(
                 after.reference_table.get(id.0),
             )
         {
-            out.insert(*id);
+            pdf::admitted::btree_insert(limits, &mut out, *id)?;
         }
     }
     for id in after.objects.keys() {
         if !before.objects.contains_key(id) {
-            out.insert(*id);
+            pdf::admitted::btree_insert(limits, &mut out, *id)?;
         }
     }
     Ok(Some(out))
@@ -120,17 +121,26 @@ fn is_written_xref_stream(before: &Document, after: &Document, id: ObjectId) -> 
                 && index.iter().all(|v| matches!(v, Object::Integer(n) if *n >= 0)))
 }
 
-fn without(dict: &lopdf::Dictionary, keys: &[&[u8]]) -> lopdf::Dictionary {
+fn without(
+    dict: &lopdf::Dictionary,
+    keys: &[&[u8]],
+    limits: &SealResourceLimits,
+) -> Result<lopdf::Dictionary, SealMemoryRefusal> {
+    pdf::admitted::dictionary(limits, dict)?;
     let mut clone = dict.clone();
     for key in keys {
         clone.remove(key);
     }
-    clone
+    Ok(clone)
 }
 /// Native incremental appends preserve effective document metadata. `/Size`
 /// and xref-stream decoding/index fields are structural; every other trailer
 /// entry (notably `/Root`, `/Info`, `/ID`) must remain byte-for-byte equal.
-fn preserves_trailer(before: &Document, after: &Document) -> bool {
+fn preserves_trailer(
+    before: &Document,
+    after: &Document,
+    limits: &SealResourceLimits,
+) -> Result<bool, SealMemoryRefusal> {
     let structural = [
         b"Size".as_slice(),
         b"Prev",
@@ -141,13 +151,15 @@ fn preserves_trailer(before: &Document, after: &Document) -> bool {
         b"Filter",
         b"DecodeParms",
     ];
+    pdf::admitted::dictionary(limits, &before.trailer)?;
     let mut old = before.trailer.clone();
+    pdf::admitted::dictionary(limits, &after.trailer)?;
     let mut new = after.trailer.clone();
     for key in structural {
         old.remove(key);
         new.remove(key);
     }
-    old == new
+    Ok(old == new)
 }
 
 fn ref_id(obj: &Object) -> Option<ObjectId> {
@@ -157,59 +169,65 @@ fn catalog_id(doc: &Document) -> Option<ObjectId> {
     ref_id(doc.trailer.get(b"Root").ok()?)
 }
 
-fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) -> bool {
+fn dss_allowed(
+    before: &Document,
+    after: &Document,
+    ids: &BTreeSet<ObjectId>,
+    limits: &SealResourceLimits,
+) -> Result<bool, SealMemoryRefusal> {
     let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
-        return false;
+        return Ok(false);
     };
-    if !preserves_trailer(before, after)
-        || without(old_catalog, &[b"DSS"]) != without(new_catalog, &[b"DSS"])
+    if !preserves_trailer(before, after, limits)?
+        || without(old_catalog, &[b"DSS"], limits)? != without(new_catalog, &[b"DSS"], limits)?
     {
-        return false;
+        return Ok(false);
     }
     let Some(dss_ref) = new_catalog.get(b"DSS").ok().and_then(ref_id) else {
-        return false;
+        return Ok(false);
     };
     if !ids.contains(&dss_ref)
         || before.objects.contains_key(&dss_ref)
         || !catalog_id(after).is_some_and(|id| ids.contains(&id))
     {
-        return false;
+        return Ok(false);
     }
     let Some(dss) = pdf::resolve_id(after, dss_ref).and_then(|o| o.as_dict().ok()) else {
-        return false;
+        return Ok(false);
     };
     if !matches!(dss.get(b"Type"), Ok(Object::Name(n)) if n == b"DSS") {
-        return false;
+        return Ok(false);
     }
     if dss
         .iter()
         .any(|(k, _)| ![b"Type".as_slice(), b"Certs", b"OCSPs", b"CRLs"].contains(&k.as_slice()))
     {
-        return false;
+        return Ok(false);
     }
-    let mut allowed = BTreeSet::from([dss_ref]);
+    let mut allowed = BTreeSet::new();
+    pdf::admitted::btree_insert(limits, &mut allowed, dss_ref)?;
     if let Some(id) = catalog_id(after) {
-        allowed.insert(id);
+        pdf::admitted::btree_insert(limits, &mut allowed, id)?;
     }
     for key in [b"Certs".as_slice(), b"OCSPs", b"CRLs"] {
         let Ok(value) = dss.get(key) else {
             continue;
         };
         let Some(arr) = pdf::resolve(after, value).and_then(|o| o.as_array().ok()) else {
-            return false;
+            return Ok(false);
         };
         if let Some(id) = ref_id(value) {
-            allowed.insert(id);
+            pdf::admitted::btree_insert(limits, &mut allowed, id)?;
         }
         for entry in arr {
             let Some(id) = ref_id(entry) else {
-                return false;
+                return Ok(false);
             };
             let Some(obj) = pdf::resolve_id(after, id) else {
-                return false;
+                return Ok(false);
             };
             let Object::Stream(stream) = obj else {
-                return false;
+                return Ok(false);
             };
             // The native DSS writer emits only an exact-length stream.
             // An extra dictionary key is not an engine renewal shape.
@@ -217,16 +235,16 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
                 || !matches!(stream.dict.get(b"Length"), Ok(Object::Integer(n))
                     if usize::try_from(*n).ok() == Some(stream.content.len()))
             {
-                return false;
+                return Ok(false);
             }
-            allowed.insert(id);
+            pdf::admitted::btree_insert(limits, &mut allowed, id)?;
         }
     }
-    ids.iter().all(|id| {
+    Ok(ids.iter().all(|id| {
         (allowed.contains(id)
             && (!before.objects.contains_key(id) || Some(*id) == catalog_id(after)))
             || (!before.objects.contains_key(id) && is_written_xref_stream(before, after, *id))
-    })
+    }))
 }
 
 fn doc_timestamp_allowed(
@@ -235,27 +253,29 @@ fn doc_timestamp_allowed(
     ids: &BTreeSet<ObjectId>,
     sig_kind: SignatureKind,
     sig_checks: &[VerifyCheck],
-) -> bool {
+    limits: &SealResourceLimits,
+) -> Result<bool, SealMemoryRefusal> {
     if sig_kind != SignatureKind::DocumentTimestamp
         || sig_checks.iter().all(|c| {
             c.kind != VerifyCheckKind::DocumentTimestamp || c.status != VerifyCheckStatus::Pass
         })
     {
-        return false;
+        return Ok(false);
     }
     let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
-        return false;
+        return Ok(false);
     };
-    if !preserves_trailer(before, after)
-        || without(old_catalog, &[b"AcroForm"]) != without(new_catalog, &[b"AcroForm"])
+    if !preserves_trailer(before, after, limits)?
+        || without(old_catalog, &[b"AcroForm"], limits)?
+            != without(new_catalog, &[b"AcroForm"], limits)?
     {
-        return false;
+        return Ok(false);
     }
     let Some(af_obj) = new_catalog.get(b"AcroForm").ok() else {
-        return false;
+        return Ok(false);
     };
     let Some(af) = pdf::resolve(after, af_obj).and_then(|o| o.as_dict().ok()) else {
-        return false;
+        return Ok(false);
     };
     let Some(fields) = af
         .get(b"Fields")
@@ -263,17 +283,19 @@ fn doc_timestamp_allowed(
         .and_then(|o| pdf::resolve(after, o))
         .and_then(|o| o.as_array().ok())
     else {
-        return false;
+        return Ok(false);
     };
     let Some(last_field) = fields.last().and_then(ref_id) else {
-        return false;
+        return Ok(false);
     };
     if let Ok(old_af_obj) = old_catalog.get(b"AcroForm") {
         let Some(old_af) = pdf::resolve(before, old_af_obj).and_then(|o| o.as_dict().ok()) else {
-            return false;
+            return Ok(false);
         };
-        if without(old_af, &[b"Fields", b"SigFlags"]) != without(af, &[b"Fields", b"SigFlags"]) {
-            return false;
+        if without(old_af, &[b"Fields", b"SigFlags"], limits)?
+            != without(af, &[b"Fields", b"SigFlags"], limits)?
+        {
+            return Ok(false);
         }
         let Some(old_fields) = old_af
             .get(b"Fields")
@@ -281,29 +303,29 @@ fn doc_timestamp_allowed(
             .and_then(|o| pdf::resolve(before, o))
             .and_then(|o| o.as_array().ok())
         else {
-            return false;
+            return Ok(false);
         };
         if fields.len() != old_fields.len() + 1 || fields[..old_fields.len()] != old_fields[..] {
-            return false;
+            return Ok(false);
         }
     } else if fields.len() != 1 {
-        return false;
+        return Ok(false);
     }
     let Some(field) = pdf::resolve_id(after, last_field).and_then(|o| o.as_dict().ok()) else {
-        return false;
+        return Ok(false);
     };
     if field
         .iter()
         .any(|(k, _)| ![b"FT".as_slice(), b"T", b"V"].contains(&k.as_slice()))
         || !matches!(field.get(b"FT"), Ok(Object::Name(n)) if n == b"Sig")
     {
-        return false;
+        return Ok(false);
     }
     let Some(ts_id) = field.get(b"V").ok().and_then(ref_id) else {
-        return false;
+        return Ok(false);
     };
     let Some(ts) = pdf::resolve_id(after, ts_id).and_then(|o| o.as_dict().ok()) else {
-        return false;
+        return Ok(false);
     };
     if ts.len() != 5
         || !matches!(ts.get(b"Type"), Ok(Object::Name(n)) if n == b"DocTimeStamp")
@@ -312,22 +334,24 @@ fn doc_timestamp_allowed(
         || !matches!(ts.get(b"ByteRange"), Ok(Object::Array(items)) if items.len() == 4)
         || !matches!(ts.get(b"Contents"), Ok(Object::String(..)))
     {
-        return false;
+        return Ok(false);
     }
-    let mut allowed = BTreeSet::from([last_field, ts_id]);
+    let mut allowed = BTreeSet::new();
+    pdf::admitted::btree_insert(limits, &mut allowed, last_field)?;
+    pdf::admitted::btree_insert(limits, &mut allowed, ts_id)?;
     if let Some(id) = catalog_id(after) {
-        allowed.insert(id);
+        pdf::admitted::btree_insert(limits, &mut allowed, id)?;
     }
     if let Some(id) = ref_id(af_obj) {
-        allowed.insert(id);
+        pdf::admitted::btree_insert(limits, &mut allowed, id)?;
     }
-    ids.iter().all(|id| {
+    Ok(ids.iter().all(|id| {
         (allowed.contains(id)
             && (!before.objects.contains_key(id)
                 || Some(*id) == catalog_id(after)
                 || Some(*id) == ref_id(af_obj)))
             || (!before.objects.contains_key(id) && is_written_xref_stream(before, after, *id))
-    })
+    }))
 }
 
 /// A classification failure is NotRun, never Clean. Unknown changed objects
@@ -346,21 +370,16 @@ pub(super) fn classify(
     let Some(facts) = facts else {
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
-    let Ok(computed) = facts.ends(limits) else {
-        return Ok((vec![], Modifications::NotRun, vec![]));
-    };
+    let computed = facts.ends(limits)?;
     if computed != ends {
         return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
-    let Ok(dup) = facts.has_duplicates(limits) else {
-        return Ok((vec![], Modifications::NotRun, vec![]));
-    };
+    let dup = facts.has_duplicates(limits)?;
     if dup {
-        anomalies.push(Anomaly::DuplicateObjectNumber);
+        pdf::admitted::push(limits, &mut anomalies, Anomaly::DuplicateObjectNumber)?;
     }
-    let ledger = limits.memory.ledger()?;
     let mut previous: Option<Document> = None;
     let mut first_signer = None;
     let mut modification = ModificationLevel::None;
@@ -393,11 +412,11 @@ pub(super) fn classify(
             RevisionKind::Other
         };
         if let Some(before) = &previous {
-            let Some(ids) = changed(before, &doc, &ledger)? else {
+            let Some(ids) = changed(before, &doc, limits)? else {
                 return Ok((revisions, Modifications::NotRun, anomalies));
             };
             if ids.is_empty() {
-                anomalies.push(Anomaly::PointerOnlyRevision);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::PointerOnlyRevision)?;
             }
             if ids.iter().any(|id| {
                 before
@@ -408,15 +427,21 @@ pub(super) fn classify(
                         std::mem::discriminant(old) != std::mem::discriminant(new)
                     })
             }) {
-                anomalies.push(Anomaly::RetypedObject);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::RetypedObject)?;
             }
             if first_signer.is_some() {
-                let allowed = facts.accounts_for(limits, index, &ids).unwrap_or(false)
+                let allowed = facts.accounts_for(limits, index, &ids)?
                     && match kind {
-                        RevisionKind::Dss => dss_allowed(before, &doc, &ids),
-                        RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {
-                            doc_timestamp_allowed(before, &doc, &ids, s.kind, &s.checks)
-                        }),
+                        RevisionKind::Dss => dss_allowed(before, &doc, &ids, limits)?,
+                        RevisionKind::DocumentTimestamp => {
+                            if let Some(s) = signed {
+                                doc_timestamp_allowed(
+                                    before, &doc, &ids, s.kind, &s.checks, limits,
+                                )?
+                            } else {
+                                false
+                            }
+                        }
                         _ => false,
                     };
                 if allowed {
@@ -430,18 +455,25 @@ pub(super) fn classify(
             // signed/archival revision. Flag only unexpected rewrites, not
             // every lawful incremental update as a duplicate anomaly.
             if kind == RevisionKind::Other && ids.iter().any(|id| before.objects.contains_key(id)) {
-                anomalies.push(Anomaly::DuplicateObjectNumber);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::DuplicateObjectNumber)?;
             }
         }
         if signed.is_some_and(|s| s.kind == SignatureKind::Signature) && first_signer.is_none() {
             first_signer = Some(index);
         }
-        revisions.push(RevisionReport {
-            index,
-            kind,
-            byte_end: end as u64,
-            signed_by: signed.map(|s| s.id.clone()),
-        });
+        if let Some(sig) = signed {
+            limits.memory.admit::<u8>(sig.id.len())?;
+        }
+        pdf::admitted::push(
+            limits,
+            &mut revisions,
+            RevisionReport {
+                index,
+                kind,
+                byte_end: end as u64,
+                signed_by: signed.map(|s| s.id.clone()),
+            },
+        )?;
         previous = Some(doc);
     }
     // Missing ownership cannot mean "no modifications". A valid discovered

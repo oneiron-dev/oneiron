@@ -24,6 +24,10 @@ pub struct FoldMarkRequest {
     pub through: u64,
     #[serde(default)]
     pub note: Option<String>,
+    /// Folds only this kind of content in each step of the span, such as
+    /// `repl_output`; absent folds whole steps.
+    #[serde(default)]
+    pub kind: Option<crate::compaction::FoldKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

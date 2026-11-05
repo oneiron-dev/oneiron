@@ -5,6 +5,9 @@ use std::time::Instant;
 
 mod decisions;
 pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
+mod learning;
+pub use learning::SeatLearningContext;
+pub(crate) use learning::learned_models;
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 mod run;
@@ -322,6 +325,11 @@ pub struct SeatTask {
     /// the current set.
     #[serde(skip)]
     pub served: Option<BTreeMap<ModelId, ModelLocality>>,
+    /// Native dispatch context for the pick's scoped measured reads (FIX 6037).
+    /// Read-only input, not authority or durable pin identity. None keeps an
+    /// unprojected birth's decision state unchanged.
+    #[serde(skip)]
+    pub learning: Option<SeatLearningContext>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -634,7 +642,13 @@ impl SeatPool {
             decisions.budget.min(at.saturating_duration_since(started))
         });
         let deadline = RetrievalDeadline::hard(started, budget);
-        let (index, picked, readings) = decisions.pick_before(task, &candidates, &deadline)?;
+        let learned = learned_models(
+            vault,
+            task.learning.as_ref(),
+            candidates.iter().map(|candidate| candidate.model.clone()),
+        );
+        let (index, picked, readings) =
+            decisions.pick_before(task, &candidates, &learned, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,

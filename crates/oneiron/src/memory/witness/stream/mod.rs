@@ -12,6 +12,7 @@ mod presence;
 mod reader;
 mod refused;
 mod reply_assertions;
+mod session;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,10 @@ pub use completion::MessageCompletion;
 pub(crate) use completion::message_completion_in_txn;
 pub use lifecycle::MessageStreamPump;
 pub use refused::StreamRecoveryRefusal;
+pub(in crate::memory::witness) use session::SessionStreamTerminal;
+pub use session::{
+    SessionMessageStream, SessionStreamEnd, SessionStreamOutcome, SessionStreamPartial,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use storage::Seed;
@@ -32,12 +37,15 @@ pub(crate) use storage::{
     erase_stream_seeds_in_txn, message_stream_finality_in_txn, redact_receipt_assertions_in_txn,
     scrub_stream_seed_actor_in_txn,
 };
+pub(in crate::memory::witness) use storage::{
+    generation_receipt_in, keep_session_terminal_in_txn, receipt_in,
+};
 pub use types::*;
 
 /// Registry lock never spans storage work. A per-handle lock serializes its
 /// append/finalize transaction; no storage callback acquires that lock.
 pub(crate) struct MessageStreamRuntime {
-    entries: Mutex<BTreeMap<EntityId, Arc<Mutex<State>>>>,
+    entries: Arc<Mutex<BTreeMap<EntityId, Resident>>>,
     /// The fair line past the vault's message-stream row.
     line: crate::live_rows::LiveLine,
     /// The refusals the vault's last open met replaying surviving seeds
@@ -49,7 +57,7 @@ pub(crate) struct MessageStreamRuntime {
 impl Default for MessageStreamRuntime {
     fn default() -> Self {
         Self {
-            entries: Mutex::new(BTreeMap::new()),
+            entries: Arc::new(Mutex::new(BTreeMap::new())),
             line: crate::live_rows::LiveLine::new(crate::live_rows::LiveRow::MessageStreams),
             refused: Mutex::new(Vec::new()),
             #[cfg(feature = "sync")]
@@ -57,6 +65,12 @@ impl Default for MessageStreamRuntime {
         }
     }
 }
+#[derive(Clone)]
+enum Resident {
+    Recorded(Arc<Mutex<State>>),
+    Session(Arc<Mutex<session::SessionState>>),
+}
+
 struct State {
     seed: Seed,
     base: String,
@@ -120,7 +134,10 @@ impl MessageStreamRuntime {
     fn entry(&self, handle: MessageStreamHandle) -> MessageStreamResult<Arc<Mutex<State>>> {
         lock(&self.entries)?
             .get(&handle.message)
-            .cloned()
+            .and_then(|entry| match entry {
+                Resident::Recorded(entry) => Some(Arc::clone(entry)),
+                Resident::Session(_) => None,
+            })
             .ok_or(MessageStreamError::StreamNotFound)
     }
     /// Streams waiting for a turn past the vault's row.

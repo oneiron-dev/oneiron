@@ -435,6 +435,17 @@ impl EgressRelay for OpenEgressProxy {
             None,
         )
     }
+    /// One credential forwarding/resolution decision, through the SAME vault
+    /// and run id as every other receipt this proxy writes.
+    fn record_credential(
+        &self,
+        record: &oneiron_container::CredentialEgressRecord,
+    ) -> io::Result<()> {
+        self.vault
+            .append_credential_egress_receipt(self.run_id, record)
+            .map(|_| ())
+            .map_err(io::Error::other)
+    }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
         let allowed = target.port() == 53 || self.raw_authority(target, RawProtocol::Udp).is_some();
         self.record(

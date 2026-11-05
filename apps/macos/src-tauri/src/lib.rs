@@ -60,6 +60,12 @@ const DESKTOP_ROOT_SECRET_SOURCE: &[RootSecretSource] = &[
 ];
 /// What the engine's log names this open.
 const DESKTOP_OPEN: &str = "desktop app open";
+/// Hook (FIX 4730 item 6/B1): the pending-root marker's file name, the one
+/// constant that names it. It stands in the vault dir only between a first
+/// open that brought a new local-origin store into existence and the open
+/// whose profile moots rooting; its presence carries that original intent
+/// across launches whose dir is no longer empty. The engine never reads it.
+const PENDING_ROOT_MARKER: &str = ".pending-root";
 
 /// One place the desktop may find its vault's host root secret.
 #[derive(Clone, Copy)]
@@ -106,6 +112,10 @@ pub fn run() {
                 wrong_root,
             });
             app.manage(root_rekey::RekeyState::new(vault, vault_dir));
+            #[cfg(target_os = "macos")]
+            if let Err(error) = root_rekey::clipboard::start(&handle) {
+                tracing::warn!(reason = %error, "Clipboard watcher did not start");
+            }
             install_menu_bar(&handle)?;
 
             // A menu-bar app, not a Dock app: no icon bounces when a
@@ -122,7 +132,25 @@ pub fn run() {
             start_recording,
             stop_recording,
             root_rekey::root_rekey_prepare,
-            root_rekey::root_rekey_confirm
+            root_rekey::root_rekey_confirm,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::private_copy_view,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::private_copy_view_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::set_private_copy_view_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_entries,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_erase,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_secret_purpose_questions,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::set_secret_handle_purpose,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::set_clipboard_settings
         ])
         .run(tauri::generate_context!())
         .expect("the recorder could not start");
@@ -230,17 +258,28 @@ fn open_vault(path: &std::path::Path) -> Result<(Arc<Vault>, bool), Box<dyn std:
 /// [`open_vault_at`], then this install's own machine profile from the host
 /// root secret the first of `sources` holds (FIX 4730), so the owner's acts
 /// carry from this Mac. With `initialize_root`, a store this open created is
-/// a new local-origin vault, rooted through the engine's own door. Every
-/// failure is logged with its reason and the app opens as before. The
-/// `bool` is the wrong-root fact ([`profile_from`]).
+/// a new local-origin vault, rooted through the engine's own door; a
+/// pending-root marker ([`PENDING_ROOT_MARKER`]) from an earlier first open
+/// that failed before its root carries that same intent, so the retry roots
+/// (FIX 4730 item 6/B1). Every failure is logged with its reason and the app
+/// opens as before. The `bool` is the wrong-root fact ([`profile_from`]).
 fn open_vault_at_with_host_root(
     path: &std::path::Path,
     sources: &[RootSecretSource],
     initialize_root: bool,
 ) -> Result<(Arc<Vault>, bool), Box<dyn std::error::Error>> {
     // Read before the open creates anything: only a store this open brings
-    // into existence may root.
-    let new_local_origin = initialize_root && Vault::is_unstarted_vault_dir(path);
+    // into existence may root, or a pending retry of one that did.
+    let initially_new = initialize_root && Vault::is_unstarted_vault_dir(path);
+    let marker_present = initialize_root && pending_root_marker_present(path);
+    if initially_new {
+        write_pending_root_marker(path);
+    }
+    // Both gates below, the engine's `initialize_root` and the retained
+    // slot's creation, follow this one flag. A store another flow created
+    // never roots here, and the engine's `authority_is_unstarted` guard
+    // still refuses anything but an unstarted vault.
+    let new_local_origin = initially_new || marker_present;
     let vault = open_vault_at(path)?;
     let wrong_root = profile_install(&vault, path, sources, new_local_origin);
     Ok((vault, wrong_root))
@@ -249,7 +288,9 @@ fn open_vault_at_with_host_root(
 /// Profiles `vault` from the first secret `sources` holds, or logs why not,
 /// and says whether that secret was the wrong root ([`profile_from`]).
 /// A source that fails stops the search: a secret the owner may have
-/// configured is never stood in for by one made here.
+/// configured is never stood in for by one made here. A profile that moots
+/// rooting clears the pending-root marker ([`PENDING_ROOT_MARKER`]); a skip,
+/// a refusal, or a source failure keeps it, so the next launch retries.
 fn profile_install(
     vault: &Vault,
     path: &std::path::Path,
@@ -267,7 +308,17 @@ fn profile_install(
         },
     );
     match profiled {
-        Ok(wrong_root) => wrong_root,
+        Ok(outcome) => {
+            // Only the effective secret's outcome decides the marker: an
+            // earlier source that skipped to reach it leaves no trace.
+            let Some(profile) = outcome else {
+                return false;
+            };
+            if !matches!(profile, oneiron::authority::LocalOpenProfile::Skipped) {
+                clear_pending_root_marker(path);
+            }
+            profile.wrong_root()
+        }
         Err(SourceFailure::ServerConfig(reason)) => {
             tracing::warn!(
                 reason = %reason,
@@ -340,13 +391,69 @@ fn configured_auth_secret(path: &std::path::Path) -> Result<Option<String>, Stri
 }
 
 /// The engine's profile door for this open; it logs its own outcome, and the
-/// app opens whatever it says. `true` is the wrong-root fact: the secret is
-/// not the vault's settled root and went unused, so the window warns (FIX
-/// 5346); a refusal or a skip is `false`, as the open goes on either way.
-fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) -> bool {
+/// app opens whatever it says. `Some` is the profile it reached, whose
+/// `wrong_root` is the wrong-root fact: the secret is not the vault's
+/// settled root and went unused, so the window warns (FIX 5346). `None` is a
+/// refusal or fault, logged where it happened; the open goes on either way,
+/// and the pending-root marker stays for the retry.
+fn profile_from(
+    vault: &Vault,
+    secret: Option<&[u8]>,
+    new_local_origin: bool,
+) -> Option<oneiron::authority::LocalOpenProfile> {
     vault
         .profile_local_open_logged(secret, new_local_origin, DESKTOP_OPEN)
-        .is_ok_and(oneiron::authority::LocalOpenProfile::wrong_root)
+        .ok()
+}
+
+/// Whether the pending-root marker ([`PENDING_ROOT_MARKER`]) stands in
+/// `dir`: an earlier first open brought a new local-origin store into
+/// existence and failed before its root. Anything unreadable counts as
+/// absent, so today's opens go on.
+fn pending_root_marker_present(dir: &std::path::Path) -> bool {
+    dir.join(PENDING_ROOT_MARKER).exists()
+}
+
+/// Records the pending-root marker in `dir` for a store this open brings
+/// into existence as a new local-origin vault, before the open creates it.
+/// A write failure only warns: the open goes on as if unmarked, which is
+/// today's first-open behaviour, without its retry.
+fn write_pending_root_marker(dir: &std::path::Path) {
+    // A first-ever launch has no dir yet; the open repeats this, so a
+    // failure here only warns and the open itself decides.
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        tracing::warn!(
+            reason = %error,
+            "the vault dir could not be prepared for the pending-root marker, \
+             so this open roots without one and the app opens on"
+        );
+        return;
+    }
+    // Presence is the signal; the content is never read.
+    if let Err(error) = std::fs::write(dir.join(PENDING_ROOT_MARKER), b"") {
+        tracing::warn!(
+            reason = %error,
+            "the pending-root marker could not be written, so this open roots \
+             without one and the app opens on"
+        );
+    }
+}
+
+/// Clears the pending-root marker in `dir` once a profile moots rooting.
+/// A missing marker is nothing to clear; any other failure only warns, and
+/// the app opens on.
+fn clear_pending_root_marker(dir: &std::path::Path) {
+    match std::fs::remove_file(dir.join(PENDING_ROOT_MARKER)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(
+                reason = %error,
+                "the pending-root marker could not be cleared, so the next \
+                 launch retries a root the engine will refuse, and the app opens on"
+            );
+        }
+    }
 }
 
 /// Opens the recorder's vault at `path`. Crash output never carries world

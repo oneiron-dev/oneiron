@@ -8,8 +8,9 @@ use super::{
 use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
 
-/// A preview read's vault error or input-memory refusal. File-plane bytes
-/// reserve memory before the read; inline and record-head bytes lease it after.
+/// A preview read's vault error or input-memory refusal. File-plane and plain
+/// inline ASSET bytes reserve memory before their output allocation; record-head
+/// bytes lease it after the read.
 #[derive(Debug)]
 pub enum EsignLeasedReadError {
     Vault(crate::Error),
@@ -218,9 +219,9 @@ impl Vault {
     }
 
     /// [`Self::esign_preview_for_capability_as`] with its PDF bytes leased
-    /// from this machine's memory: a file-plane body reserves its manifest
-    /// length before it reads, an inline or record-head body leases its read
-    /// length after, and the lease rides with the bytes through inspection.
+    /// from this machine's memory: file-plane and plain inline ASSET bodies
+    /// reserve their exact output length before allocating it. Record-head
+    /// bodies lease their length after reading. The lease rides through inspection.
     pub fn esign_preview_for_capability_leased_as(
         &self,
         token: &EsignCapability,
@@ -255,7 +256,7 @@ impl Vault {
             |txn, artifact, version| {
                 self.read_blob_artifact_version_in_txn_with(txn, artifact, version, |txn, hash| {
                     let leased = self
-                        .blob_get_with_file_admission(txn, hash, |len| {
+                        .blob_get_with_body_admission(txn, hash, |len| {
                             memory
                                 .lease(len, deadline)
                                 .map(|lease| (lease, len))

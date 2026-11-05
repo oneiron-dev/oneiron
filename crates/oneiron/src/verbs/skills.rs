@@ -287,6 +287,11 @@ pub(crate) fn skill_library_view(
             return Err(MemoryError::bad_request("cyclic skill fork ancestry"));
         }
         let provenance = crate::msgpack_value_to_json(&child.provenance);
+        let (parent_document, parent_frontier) =
+            crate::write_envelope::skill_record::fork_parent_pin(&child)?
+                .map_or((None, None), |(document, frontier)| {
+                    (Some(document), Some(frontier))
+                });
         let parent_record = vault.get_skill_record(&parent)?;
         lineage.push(SkillForkLineage {
             parent,
@@ -294,9 +299,8 @@ pub(crate) fn skill_library_view(
                 .get("forkOfVersion")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
-            // The existing fork law retains a row/version, not a document pin.
-            parent_document: None,
-            parent_frontier: None,
+            parent_document,
+            parent_frontier,
             parent_available: parent_record.is_some(),
             hub_sources: vault.skill_hub_sources(&parent)?,
         });
@@ -594,6 +598,23 @@ pub fn skill_code_auto_install_as_owner(
         .into())
 }
 
+/// The owner's existing dependency-advisory ask setting.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAdvisoryAskRequest {
+    pub enabled: bool,
+}
+
+pub fn skill_advisory_ask_set_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &SkillAdvisoryAskRequest,
+) -> MemoryResult<HubConsentReceipt> {
+    Ok(vault
+        .set_marketplace_advisory_ask(owner, input.enabled)?
+        .into())
+}
+
 /// The governance axis of one stored skill, resolved fail-closed.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillGovernanceView {
@@ -685,8 +706,8 @@ pub fn skill_governance_set_as_owner(
 }
 
 /// `vault.skills.optimize.start`'s input: one Coach skill_optimize attempt.
-/// `skill` names the skill whose governance is checked before enqueue; the
-/// attempt itself ranks tier-filtered candidates as the engine job does.
+/// `skill` restricts drafting and pending-proposal resume to that exact skill;
+/// without it, the attempt ranks the engine's tier-filtered candidates.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeStartRequest {
@@ -722,20 +743,32 @@ impl SkillOptimizeStartReceipt {
 
 /// Starts one skill_optimize attempt through the existing Dreamer queue.
 /// A named identity/alignment (or ambiguous) skill is excluded inside the
-/// same write transaction and never enqueued; drafting and held-out
-/// admission stay the wake job's and the gate's acts.
+/// same write transaction and never enqueued. An admitted named target is
+/// carried through the queued work; drafting and held-out admission stay the
+/// wake job's and the gate's acts.
 pub fn skill_optimize_start_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SkillOptimizeStartRequest,
 ) -> MemoryResult<SkillOptimizeStartReceipt> {
     let now = input.now.unwrap_or_else(|| vault.now_recorded_at());
-    let payload = match input.resident {
-        Some(resident) => rmpv::Value::Map(vec![(
+    let mut selectors = Vec::new();
+    if let Some(resident) = input.resident {
+        selectors.push((
             rmpv::Value::from("resident"),
             rmpv::Value::from(resident.to_hex()),
-        )]),
-        None => rmpv::Value::Nil,
+        ));
+    }
+    if let Some(skill) = input.skill {
+        selectors.push((
+            rmpv::Value::from("skill"),
+            rmpv::Value::from(skill.to_hex()),
+        ));
+    }
+    let payload = if selectors.is_empty() {
+        rmpv::Value::Nil
+    } else {
+        rmpv::Value::Map(selectors)
     };
     let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
     let outcome = vault.with_write_txn_grouped(|txn| {
@@ -764,17 +797,16 @@ pub fn skill_optimize_start_as_owner(
             )
             .map(Some)
     })?;
-    let governance = match input.skill {
-        Some(skill_entity) => Some(governance_view(vault, &skill_entity)?),
-        None => None,
-    };
     match outcome {
         None => Ok(SkillOptimizeStartReceipt {
             outcome: "excluded".to_owned(),
             job_ref: None,
             state: None,
             skill: input.skill,
-            governance,
+            governance: input
+                .skill
+                .map(|skill| governance_view(vault, &skill))
+                .transpose()?,
         }),
         Some(outcome) => {
             let (status, existing) = match outcome {
@@ -785,14 +817,20 @@ pub fn skill_optimize_start_as_owner(
                     (status, true)
                 }
             };
+            let (_, skill) = crate::skill_optimize::optimize_target_input(&status.payload.input)
+                .ok_or_else(|| {
+                    Error::InvalidConfig("invalid Coach skill optimization input".into())
+                })?;
             Ok(SkillOptimizeStartReceipt {
                 outcome: if existing { "existing" } else { "enqueued" }.to_owned(),
                 job_ref: Some(crate::entity_id::bytes_to_hex_lower(
                     status.attempt.id.as_bytes(),
                 )),
                 state: Some(attempt_state_name(status.attempt.state)),
-                skill: input.skill,
-                governance,
+                skill,
+                governance: skill
+                    .map(|skill| governance_view(vault, &skill))
+                    .transpose()?,
             })
         }
     }

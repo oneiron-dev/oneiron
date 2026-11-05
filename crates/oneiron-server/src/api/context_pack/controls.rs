@@ -13,12 +13,6 @@ use utoipa::ToSchema;
 /// capped like the crate's other request-controlled collections.
 pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 
-/// Engine invariant for counterparty keys (`counterparty_contact`'s private
-/// `MAX_COUNTERPARTY_BYTES`): stored keys are trimmed and at most 512 bytes.
-/// Enforced at the DTO boundary so caller input surfaces as a typed 400
-/// instead of an engine error.
-pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {

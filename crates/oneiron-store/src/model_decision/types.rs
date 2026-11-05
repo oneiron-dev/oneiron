@@ -172,6 +172,9 @@ impl ImagePoint {
     }
 }
 
+/// Maximum UTF-8 byte length of a typed decision question's text.
+pub const MAX_DECISION_QUESTION_TEXT_BYTES: usize = 16_384;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionQuestion {
@@ -188,7 +191,10 @@ pub struct DecisionQuestion {
 
 impl DecisionQuestion {
     pub fn validate(&self) -> oneiron_contracts::error::Result<()> {
-        if self.version == 0 || self.text.trim().is_empty() || self.text.len() > 16_384 {
+        if self.version == 0
+            || self.text.trim().is_empty()
+            || self.text.len() > MAX_DECISION_QUESTION_TEXT_BYTES
+        {
             return Err(invalid("invalid typed question"));
         }
         if self.class == DecisionClass::Provenance {

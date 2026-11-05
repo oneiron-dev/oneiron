@@ -48,7 +48,8 @@ use oneiron::failure_signals::CodeFixSource;
 use oneiron::memory::OutboundScheduleContext;
 use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::{MintedRegistration, ReviewedFinding};
-use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, OfferSwitchReceipt, TrainingOffer};
+use oneiron::skill_optimize::offer_doors::OfferAnswerReply;
+use oneiron::skill_optimize::{OfferAnswer, OfferSwitchReceipt, TrainingOffer};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -392,22 +393,22 @@ struct AnswerTrainingOffer {
 }
 
 /// `POST /v1/owner/coach/training-offers/answer`: the owner's answer to the
-/// exact offer they saw.
+/// exact offer they saw, beside the current staged embedder state.
 async fn answer_training_offer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AnswerTrainingOffer>,
-) -> OwnerReply<OfferAnswerRecord> {
+) -> OwnerReply<OfferAnswerReply> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let record = blocking(move || -> OwnerResult<OfferAnswerRecord> {
+    let reply = blocking(move || -> OwnerResult<OfferAnswerReply> {
         let offer = entity_id("offer", &request.offer)?;
         let training = request
             .training
             .as_ref()
             .map(|choice| training_runs::training_choice(&server, &choice.run, &choice.spec))
             .transpose()?;
-        Ok(oneiron::skill_optimize::settle_training_offer(
+        let answer = oneiron::skill_optimize::settle_training_offer(
             server.vault(),
             &owner,
             &offer,
@@ -415,10 +416,11 @@ async fn answer_training_offer(
             request.answer,
             training.as_ref(),
             now_secs(),
-        )?)
+        )?;
+        Ok(OfferAnswerReply::current(server.vault(), answer)?)
     })
     .await?;
-    Ok(Json(record))
+    Ok(Json(reply))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

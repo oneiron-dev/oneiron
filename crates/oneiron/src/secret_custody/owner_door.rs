@@ -37,6 +37,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::origin::secret_manifest::OriginSecretManifest;
+use crate::ports::ShortIdStoreRead;
 use crate::secret_manifest::{
     SecretManifestEntry, parse_secret_manifest, validate_secret_manifest,
 };
@@ -154,6 +155,16 @@ pub struct SecretRegistered {
     pub custody: SecretCustodyWork,
 }
 
+/// A private copy stored as a secret, with the actual vault handle returned
+/// in the same commit. Contains no copy of the value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateCopySecret {
+    /// The ordinary owner-registration metadata and custody outcome.
+    pub registration: SecretRegistered,
+    /// The record's native `scN` short id.
+    pub handle: String,
+}
+
 impl Vault {
     /// Registers a secret on the vault owner's behalf, rechecking the owner
     /// proof in the transaction that stores the value: this install the
@@ -175,6 +186,41 @@ impl Vault {
             &CustodyPlan::default(),
             at,
         )
+    }
+
+    /// Stores an owner-provided private copy as a secret and returns its
+    /// native handle, never the value. Agents may use the owner's actual
+    /// effector bindings, but may not reveal this copy into model context.
+    /// Its class, device-only dial, bindings and manifest remain the caller's;
+    /// portable custody follows the ordinary owner-registration path.
+    ///
+    /// The host must classify the private copy before calling this door and
+    /// keep its bytes out of ordinary text capture. This is not an OS viewing
+    /// authorization: the host still owns its Touch ID or password step.
+    ///
+    /// # Errors
+    /// Those of [`Vault::register_secret_as_owner`], and a missing native
+    /// handle aborts the registration before it commits.
+    pub fn register_private_copy_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &OwnerSecretRegistration<'_>,
+        at: u64,
+    ) -> Result<PrivateCopySecret> {
+        let (registration, handle) = self.register_secret_with_reveal_policy(
+            owner,
+            ActSurface::ThisInstall,
+            request,
+            &CustodyPlan::default(),
+            false,
+            at,
+        )?;
+        Ok(PrivateCopySecret {
+            registration,
+            handle: handle.ok_or(Error::InvariantViolation(
+                "a private copy's registration returned no handle",
+            ))?,
+        })
     }
 
     /// Registers a secret on the vault owner's behalf, rechecking the owner
@@ -208,6 +254,19 @@ impl Vault {
         plan: &CustodyPlan,
         at: u64,
     ) -> Result<SecretRegistered> {
+        self.register_secret_with_reveal_policy(owner, surface, request, plan, true, at)
+            .map(|(registration, _)| registration)
+    }
+
+    fn register_secret_with_reveal_policy(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        request: &OwnerSecretRegistration<'_>,
+        plan: &CustodyPlan,
+        model_reveal_allowed: bool,
+        at: u64,
+    ) -> Result<(SecretRegistered, Option<String>)> {
         if request.value.is_empty() {
             return Err(invalid("a registered secret needs a value"));
         }
@@ -261,6 +320,7 @@ impl Vault {
             name: request.name.to_owned(),
             class: request.class,
             device_only: request.device_only,
+            model_reveal_allowed,
             value_bytes: request.value.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: at,
@@ -309,21 +369,36 @@ impl Vault {
             register_secret_in_txn(self, &mut wtxn, &id, &mut rec.0)?;
             SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
         };
+        let handle = if model_reveal_allowed {
+            None
+        } else {
+            Some(
+                self.store
+                    .port_short_id_reference(&wtxn, &id)?
+                    .map(|(short_id, _)| short_id)
+                    .ok_or(Error::InvariantViolation(
+                        "a private copy's record has no handle",
+                    ))?,
+            )
+        };
         wtxn.commit()?;
         self.mirror_custody_change(&custody);
         let rec = &rec.0;
-        Ok(SecretRegistered {
-            secret_id: id,
-            name: rec.name.clone(),
-            class: rec.class,
-            device_only: rec.device_only,
-            rotation_generation: rec.rotation_generation,
-            registered_at: rec.registered_at,
-            bindings: rec.bindings.clone(),
-            manifest_ref: rec.manifest_ref.clone(),
-            declared_paths: rec.declared_paths.clone(),
-            custody,
-        })
+        Ok((
+            SecretRegistered {
+                secret_id: id,
+                name: rec.name.clone(),
+                class: rec.class,
+                device_only: rec.device_only,
+                rotation_generation: rec.rotation_generation,
+                registered_at: rec.registered_at,
+                bindings: rec.bindings.clone(),
+                manifest_ref: rec.manifest_ref.clone(),
+                declared_paths: rec.declared_paths.clone(),
+                custody,
+            },
+            handle,
+        ))
     }
 }
 

@@ -192,3 +192,62 @@ pub(super) fn admitted(
         .iter_mut()
         .find(|candidate| candidate.skill.skill == skill)
 }
+
+/// The planner's scoped solo cells for a native task seat (FIX 6037).
+/// The task keeps its original type stamp; an unavailable kept tree adds
+/// no evidence. Donor failure leaves the successfully read primary cells.
+pub(crate) fn seat_model_rates_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+    agent: EntityId,
+    stamp: &crate::task_type::TaskTypeRef,
+    models: &[ModelId],
+) -> Result<BTreeMap<ModelId, MeasuredRate>> {
+    let Some(tree) = super::super::task_type_tree::load_team_type_tree_at_in_txn(
+        vault,
+        txn,
+        Some(project),
+        stamp.tree_version,
+    )?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    if tree.validate_current_ref(stamp).is_err() {
+        return Ok(BTreeMap::new());
+    }
+    let own = TypeRef::from(stamp);
+    let donor = Donor::for_stamp(vault, txn, &tree, Some(project), &own);
+    let parents = crate::task_type::TypeTree::from(tree).ancestors(&own);
+    let mut reads = Vec::with_capacity(models.len());
+    for model in models {
+        let cell = LearningCell::new(crate::learning::LearningPredicate::Reliability, agent)
+            .executor(model.as_str())
+            .type_ref(own.clone())
+            .axis(crate::team::PAYOFF_AXIS)
+            .project(Some(project));
+        let read = crate::learning::read::read_learning_in_txn(vault, txn, &cell, &parents)?;
+        reads.push((model.clone(), cell, read));
+    }
+    let primary = reads
+        .iter()
+        .map(|(model, _, read)| (model.clone(), measured(read)))
+        .collect();
+    let Some(donor) = donor else {
+        return Ok(primary);
+    };
+    let lent: Result<BTreeMap<_, _>> = reads
+        .iter()
+        .map(|(model, cell, read)| {
+            let rate = donor.rate(vault, txn, cell, read)?;
+            Ok((model.clone(), rate.unwrap_or_else(|| measured(read))))
+        })
+        .collect();
+    match lent {
+        Ok(rates) => Ok(rates),
+        Err(error) => {
+            tracing::warn!(%error, "a thin project leaf borrowed nothing for its seat");
+            Ok(primary)
+        }
+    }
+}

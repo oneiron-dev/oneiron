@@ -20,7 +20,7 @@ use self::redelivery::PendingSettlements;
 use crate::byte_line::ByteLine;
 use crate::usage::{
     UnpricedReason, UsageAllocation, UsageCostRates, UsageError, UsageEvent, UsageEventType,
-    UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
+    UsageLedger, UsageMode, UsageRun, UsageServiceCost, UsageTokenCounts,
 };
 use crate::wire_telemetry::LimitQuestions;
 
@@ -59,9 +59,25 @@ struct AdmittedCall {
     price_sources: Option<Vec<EntityId>>,
     /// The billing owner the call's usage lands on, fixed at admission.
     owner: String,
+    service_cost: Option<UsageServiceCost>,
 }
 
 impl VaultUsage {
+    /// Adds a known provider cost to the already admitted physical service call.
+    pub(crate) fn record_service_cost(
+        &self,
+        instance: EntityId,
+        lease: &str,
+        cost: UsageServiceCost,
+    ) {
+        let mut calls = self.calls.lock().expect("usage calls lock poisoned");
+        if let Some(call) = calls.get_mut(&(instance, lease.to_owned()))
+            && call.facts.model.is_none()
+        {
+            call.service_cost = Some(cost);
+        }
+    }
+
     /// `catalog` is the vault whose model registry prices each admitted call.
     pub(crate) fn new(
         ledger: UsageLedger,
