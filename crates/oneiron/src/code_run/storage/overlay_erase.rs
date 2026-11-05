@@ -27,6 +27,7 @@
 //! Lock order is the vault writer, then the overlay's segment permit, as a
 //! routed write takes them. No session entry lock is taken.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -35,46 +36,51 @@ use super::replay_bodies::erase_replies;
 use super::replay_capsule::actor_gone_in_store;
 use super::response_owners::{ResponseOwner, mark_response_erased_in_txn, response_owner_in_txn};
 use super::wait_delivery::canonical_store;
+use crate::code_run::CodeRunReplayRecord;
 use crate::session_overlay::{OverlayKeyspace, SessionOverlay, SnapshotMergeRow};
 use crate::side_table::{Erased, RoutedDbs, SideKey};
 use crate::store::executor_wait_delivery::{DELIVERIES, HOLDERS, WaitHolder};
 use crate::{EntityId, Result, Vault};
 
-/// Rewrites the replay record `record_id` that a room's run just put along
-/// `dbs`, an overlay route, to its erased form when its replies are
-/// erased: its owner row says so, or the actor that row or its live run
-/// binding names is gone in the vault. Its owner row then says Erased. A
-/// record that does not decode keeps its row, as the vault's erase keeps
-/// one.
+/// `record` as a room's run may put it along `dbs`, an overlay route, read
+/// in that writer (FIX 7366): as given while its replies are kept, else its
+/// erased form, its owner row then marked Erased. Its replies are erased
+/// once its owner row says so, or once the actor that row, `stamped` (the
+/// run and actor this writer stamped it for, which the writer's view does
+/// not show yet) or its live run binding names is gone in the vault. The caller puts
+/// what this returns: the view reads the snapshot before this writer's
+/// own puts, so the record is fenced as supplied, never read back.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn fence_overlay_replay_in_txn(
+pub(super) fn fence_overlay_replay_in_txn<'r>(
     dbs: &RoutedDbs<'_>,
     txn: &mut heed::RwTxn<'_>,
-    record_id: EntityId,
-) -> Result<()> {
+    mut record: Cow<'r, CodeRunReplayRecord>,
+    stamped: Option<(EntityId, EntityId)>,
+) -> Result<Cow<'r, CodeRunReplayRecord>> {
     let base = canonical_store(dbs);
-    let Some(mut record) = REPLAY_RECORDS.get_lenient(dbs, txn, &record_id)? else {
-        return Ok(());
-    };
-    let owner = response_owner_in_txn(dbs, txn, &record_id)?;
-    let stamped = owner.and_then(ResponseOwner::actor);
+    let owner = response_owner_in_txn(dbs, txn, &record.run_id)?;
     let live = record.live_run.as_ref().map(|live| live.actor);
     let read: &heed::RoTxn<'_> = txn;
     let erased = owner.is_some_and(ResponseOwner::erased)
-        || stamped
+        || owner
+            .and_then(ResponseOwner::actor)
             .into_iter()
+            .chain(stamped.map(|(_, actor)| actor))
             .chain(live)
             .any(|actor| actor_gone_in_store(base, read, &actor));
     if !erased {
-        return Ok(());
+        return Ok(record);
     }
-    let run = owner.map_or(record.run_id, |owner| owner.run);
-    erase_replies(&mut record)?;
-    REPLAY_RECORDS.put(dbs, txn, &record_id, &record)?;
-    mark_response_erased_in_txn(dbs, txn, record_id, run)
+    let run = owner.map_or_else(
+        || stamped.map_or(record.run_id, |(run, _)| run),
+        |owner| owner.run,
+    );
+    erase_replies(record.to_mut())?;
+    mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
+    Ok(record)
 }
 
 /// Erases, in every live room's overlay, what it holds of the runs of each
