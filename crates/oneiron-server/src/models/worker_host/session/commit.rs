@@ -3,8 +3,9 @@
 //! appended and verified, only its new suffix is computed against the
 //! retained prefix, the turn's authority is rechecked, and the successor is
 //! published by compare-and-swap on the base checkpoint's token digest and
-//! HEAD, all on a task of its own. Any step that does not hold drops the
-//! session; the next turn then starts cold, never from unverified state.
+//! HEAD, all on a task of its own. A live dispatch condition that ends
+//! staging leaves the published base unchanged. A verification failure drops
+//! the session; the next turn then starts cold, never from unverified state.
 //! A commit runs under the snapshot admission its claim read: a lock since
 //! then publishes nothing, and a successor the worker published anyway is
 //! released. A successor published under a whole dependency set makes its
@@ -23,7 +24,7 @@ use super::lifecycle::{self, Admitted};
 use super::park;
 use super::policy::{self, SuffixPlan};
 use super::prepare;
-use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
+use super::registry::{self, Basis, PendingTurn, Phase, Place, ReleasedSessionFault, send};
 use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit};
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
@@ -179,6 +180,7 @@ async fn advance(
         admitted,
     } = claimed;
     let base = pending.base.clone();
+    let dispatch_lease = pending.dispatch_lease.clone();
     let conversation = successor(pending, &commit.text);
     let path = policy::stamps(&conversation);
     let outcome = stage(
@@ -188,13 +190,18 @@ async fn advance(
         base.as_ref(),
         &commit,
         &conversation,
+        dispatch_lease.as_ref(),
     )
     .await;
     let staged = match outcome {
         Ok(Some(staged)) => staged,
         Ok(None) => return,
-        Err(reason) => {
+        Err(ReleasedSessionFault::Invalidation(reason)) => {
             registry::drop_session(&worker_id, &place.epoch, &binding, reason);
+            return;
+        }
+        Err(ReleasedSessionFault::Release(error)) => {
+            tracing::debug!(?error, "a model session's successor dispatch ended");
             return;
         }
     };
@@ -333,6 +340,7 @@ async fn advance(
             checkpoint,
             conversation,
             source,
+            dispatch_lease,
         });
     }
 }
@@ -346,7 +354,8 @@ async fn stage(
     base: Option<&CanonicalCheckpointRef>,
     commit: &ReplyCommit,
     path: &JsonValue,
-) -> Result<Option<CanonicalCheckpointRef>, SessionInvalidation> {
+    dispatch_lease: Option<&oneiron::BudgetLease>,
+) -> Result<Option<CanonicalCheckpointRef>, ReleasedSessionFault> {
     let append = SessionAppend {
         target: target.clone(),
         stamp: SessionOpStamp {
@@ -356,11 +365,18 @@ async fn stage(
         base: base.cloned(),
         head: Some(commit.head),
     };
-    let appended: SessionAppended = send(place, SessionOp::Append, &append, Some(path)).await?;
+    let appended: SessionAppended = match dispatch_lease {
+        Some(lease) => {
+            registry::send_released(place, SessionOp::Append, &append, path, lease).await
+        }
+        None => send(place, SessionOp::Append, &append, Some(path))
+            .await
+            .map_err(ReleasedSessionFault::Invalidation),
+    }?;
     match policy::suffix_plan(base, &appended) {
         SuffixPlan::Compute => {}
         SuffixPlan::Nothing => return Ok(None),
-        SuffixPlan::Drop(reason) => return Err(reason),
+        SuffixPlan::Drop(reason) => return Err(ReleasedSessionFault::Invalidation(reason)),
     }
     let suffix = SessionSuffixCommit {
         target: target.clone(),
@@ -369,14 +385,18 @@ async fn stage(
             generation,
         },
     };
-    let staged: SessionSuffixStaged = send(place, SessionOp::SuffixCommit, &suffix, None).await?;
+    let staged: SessionSuffixStaged = send(place, SessionOp::SuffixCommit, &suffix, None)
+        .await
+        .map_err(ReleasedSessionFault::Invalidation)?;
     // The chain: a successor names its base and ends at the reply's HEAD;
     // one that does not is stale, repaired by dropping it, never trusted.
     let chained = staged.staged.parent == base.map(|base| base.digest)
         && staged.staged.head == Some(commit.head)
         && staged.staged.frontier_tokens == appended.staged_tokens;
     if !chained {
-        return Err(SessionInvalidation::StaleHead);
+        return Err(ReleasedSessionFault::Invalidation(
+            SessionInvalidation::StaleHead,
+        ));
     }
     tracing::debug!(
         computed_tokens = staged.computed_tokens,

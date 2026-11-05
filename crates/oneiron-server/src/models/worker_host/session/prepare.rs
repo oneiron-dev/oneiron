@@ -203,6 +203,7 @@ pub(super) struct Published {
     /// The published path as the wire carries it: its messages and tools.
     pub(super) conversation: JsonValue,
     pub(super) source: Arc<dyn NextTurnSource>,
+    pub(super) dispatch_lease: Option<oneiron::BudgetLease>,
 }
 
 /// Prepares `published`'s next tail on a task of its own, when the policy
@@ -223,6 +224,7 @@ async fn prepare(published: Published) {
         checkpoint,
         mut conversation,
         source,
+        dispatch_lease,
     } = published;
     let policy = policy_now();
     if !policy.prepare_tail {
@@ -275,8 +277,14 @@ async fn prepare(published: Published) {
     add(&COUNTS.started, 1);
     // A refusal is no fault of the session: the turn arrived, another
     // publish moved it, or it stopped serving. It goes on as it was.
-    let prepared: Result<SessionPrepared, _> =
-        send(&place, SessionOp::Prepare, &body, Some(&conversation)).await;
+    let prepared: Result<SessionPrepared, registry::ReleasedSessionFault> = match &dispatch_lease {
+        Some(lease) => {
+            registry::send_released(&place, SessionOp::Prepare, &body, &conversation, lease).await
+        }
+        None => send(&place, SessionOp::Prepare, &body, Some(&conversation))
+            .await
+            .map_err(registry::ReleasedSessionFault::Invalidation),
+    };
     match prepared {
         Ok(prepared) => {
             add(&COUNTS.ready, 1);
@@ -287,9 +295,13 @@ async fn prepare(published: Published) {
                 "a model session prepared its next turn's tail"
             );
         }
-        Err(reason) => {
+        Err(registry::ReleasedSessionFault::Invalidation(reason)) => {
             add(&COUNTS.stopped, 1);
             tracing::debug!(?reason, "a model session's tail preparation stopped");
+        }
+        Err(registry::ReleasedSessionFault::Release(error)) => {
+            add(&COUNTS.stopped, 1);
+            tracing::debug!(?error, "a model session's tail dispatch ended");
         }
     }
 }

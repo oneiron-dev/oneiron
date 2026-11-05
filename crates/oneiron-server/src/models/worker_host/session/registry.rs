@@ -156,13 +156,15 @@ impl Session {
 
 /// A turn that ran on a session, kept until its reply is committed: its
 /// manifest, the canonical path it forked at (wire messages), its newest
-/// user message, its tools, and the checkpoint it forked from.
+/// user message, its tools, the checkpoint it forked from, and any live
+/// dispatch conditions the admitted turn carried.
 pub(super) struct PendingTurn {
     pub(super) manifest: ManifestDigest,
     pub(super) canonical: Vec<JsonValue>,
     pub(super) newest: JsonValue,
     pub(super) tools: Option<JsonValue>,
     pub(super) base: Option<CanonicalCheckpointRef>,
+    pub(super) dispatch_lease: Option<oneiron::BudgetLease>,
 }
 
 pub(super) fn lock() -> MutexGuard<'static, BTreeMap<String, Worker>> {
