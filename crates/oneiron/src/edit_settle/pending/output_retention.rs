@@ -25,7 +25,7 @@ pub(super) fn validate_native_output(
             "a native output must export the artifact's own media type",
         )));
     }
-    if (!authorize_content_write && output.bytes.is_empty()) || output.name.trim().is_empty() {
+    if !authorize_content_write && (output.bytes.is_empty() || output.name.trim().is_empty()) {
         return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "a native output needs a file name and non-empty bytes",
         )));
