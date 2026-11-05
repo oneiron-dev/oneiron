@@ -465,6 +465,13 @@ impl VoiceHost {
             undelivered |= outputs.control.submit(update.control).is_err();
         }
         for notice in notices {
+            if self
+                .phone
+                .as_ref()
+                .is_some_and(|phone| !phone.accepts_notice(generation, &notice))
+            {
+                continue;
+            }
             undelivered |= outputs.brain.notice(generation, &notice).is_err();
             undelivered |= outputs
                 .control

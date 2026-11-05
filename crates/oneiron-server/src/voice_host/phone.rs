@@ -123,15 +123,35 @@ impl PhoneCallRead {
     /// Called again by the existing weak playout fence at every dequeue,
     /// including a saved HTTP journal page. No prepared input means no audio.
     pub(super) fn accepts_output(&self, generation: GenerationEpoch) -> bool {
-        let prepared = match self.prepared.lock() {
-            Ok(prepared) => prepared.clone(),
-            Err(_) => return false,
-        };
-        let Some(prepared) = prepared.filter(|prepared| prepared.generation == generation) else {
+        let Some(prepared) = self.prepared_output(generation) else {
             return false;
         };
         self.output_is_current(&prepared.scope, &prepared.sources, &prepared.interlocutors)
             .unwrap_or(false)
+    }
+
+    /// A notice is made from its turn and the additional row it names.
+    /// Its body must pass before either history or the control stream hears it.
+    pub(super) fn accepts_notice(
+        &self,
+        generation: GenerationEpoch,
+        notice: &oneiron::store::GateSystemNoticeRecord,
+    ) -> bool {
+        let Some(mut prepared) = self.prepared_output(generation) else {
+            return false;
+        };
+        prepared.sources.extend(super::speech::notice_rows(notice));
+        self.output_is_current(&prepared.scope, &prepared.sources, &prepared.interlocutors)
+            .unwrap_or(false)
+    }
+
+    fn prepared_output(&self, generation: GenerationEpoch) -> Option<PreparedPhoneOutput> {
+        self.prepared
+            .lock()
+            .ok()?
+            .as_ref()
+            .filter(|prepared| prepared.generation == generation)
+            .cloned()
     }
 
     /// Consent, source admission and the native disclosure closure share

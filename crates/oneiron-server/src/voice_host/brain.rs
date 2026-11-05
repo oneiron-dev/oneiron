@@ -662,7 +662,7 @@ impl Brain for ChatBrain {
             .bindings
             .phone
             .as_ref()
-            .is_some_and(|phone| !phone.accepts_output(generation))
+            .is_some_and(|phone| !phone.accepts_notice(generation, notice))
         {
             return Ok(());
         }
