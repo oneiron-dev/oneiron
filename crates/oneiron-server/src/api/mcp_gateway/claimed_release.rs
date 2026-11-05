@@ -13,6 +13,7 @@ use oneiron::runtime_hooks::verb::{InvocationOutcome, InvocationRelease};
 use serde_json::{Value, json};
 
 use super::{McpCallContext, mcp_text_content};
+use crate::api::call_receipt::CallStamp;
 use crate::server::SyncServer;
 
 /// A result as a release was about to judge it, beside the rows it judged by.
@@ -42,6 +43,16 @@ pub(super) async fn capturing<T>(call: impl Future<Output = T>) -> (T, Option<Ju
 pub(super) fn record(result: &Value, rows: Option<&[EntityId]>) {
     let _ = JUDGED.try_with(|judged| {
         *judged.borrow_mut() = Some((result.clone(), rows.map(<[EntityId]>::to_vec)));
+    });
+}
+
+/// Mirrors the call's actual receipt stamp on its captured value, leaving
+/// the producer rows unchanged for the waiter's release check.
+pub(super) fn stamp_receipt(stamp: &CallStamp) {
+    let _ = JUDGED.try_with(|judged| {
+        if let Some((value, _)) = judged.borrow_mut().as_mut() {
+            crate::mcp::mcp_stamp_call_receipt(value, stamp);
+        }
     });
 }
 

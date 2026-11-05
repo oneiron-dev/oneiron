@@ -91,8 +91,7 @@ fn loaded_oneironer(
     guards: &OneironerBind,
 ) -> MemoryResult<(ModelId, ModelTierRef, OneironerBundleReceipt)> {
     let slot = server
-        .tagger
-        .as_ref()
+        .tagger_slot()
         .ok_or_else(|| unavailable("no oneironer slot is loaded"))?;
     let config = slot.config();
     if config.provider != OneironerProvider::Local {
@@ -243,8 +242,7 @@ fn host_section_serves(role: ModelRole) -> bool {
 /// attests it.
 fn host_section_receipt(server: &SyncServer, role: ModelRole) -> MemoryResult<ModelRoleReceipt> {
     let slot = server
-        .tagger
-        .as_ref()
+        .tagger_slot()
         .ok_or_else(|| unavailable("no extraction encoder is configured"))?;
     let config = slot.config();
     let encoder = slot.tagger().as_ref();
@@ -345,8 +343,7 @@ async fn invoke(
             let embedding_server = Arc::clone(server);
             let vector = super::clock_ingress::run_blocking(move || {
                 let slot = embedding_server
-                    .embedder
-                    .as_ref()
+                    .embedder_slot()
                     .ok_or_else(|| unavailable("no retrieval embedder is configured"))?;
                 let provider = slot
                     .admitted_provider()
@@ -363,7 +360,7 @@ async fn invoke(
             })
             .await
             .map_err(|_| internal(VERB))??;
-            if let Some(slot) = &server.embedder {
+            if let Some(slot) = server.embedder_slot() {
                 receipt.provider = slot.provider().as_str().to_owned();
             }
             ModelRoleOutput::Embedded { vector }
@@ -381,8 +378,7 @@ async fn invoke(
             let server = Arc::clone(server);
             let (output, execution, provider) = super::clock_ingress::run_blocking(move || {
                 let slot = server
-                    .tagger
-                    .as_ref()
+                    .tagger_slot()
                     .ok_or_else(|| unavailable("no extraction encoder is configured"))?;
                 slot.selected_by(server.vault()).map_err(|_| {
                     unavailable("the configured encoder is not selected by the manifest")
