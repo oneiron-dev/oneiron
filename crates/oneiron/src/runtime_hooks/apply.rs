@@ -304,7 +304,7 @@ fn land(
     input: &ClaimInput,
 ) -> std::result::Result<Landed, String> {
     memory
-        .claim_propose(input)
+        .claim_propose_for_hook_replay(input)
         .map(|receipt| Landed {
             row: Some(*id.as_bytes()),
             reference: receipt.receipt_ref,

@@ -186,6 +186,7 @@ impl Store {
             federation_stale_sweep_owed: std::sync::atomic::AtomicBool::new(true),
             authority_fold_cache: Mutex::new(None),
             authority_door_view: Mutex::new(None),
+            adopted_image_cache: Mutex::new(None),
             act_causal_points: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
