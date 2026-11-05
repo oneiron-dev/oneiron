@@ -1,8 +1,8 @@
 # Ordinary outbound connector approvals
 
 A keyed ordinary dispatch with a frozen communication, calendar or feedback
-HTTP-bundle target, a native non-mirror Linear target, or a native campaign leg
-observes the owner's current `always ask` setting on replay. Common and Linear
+HTTP-bundle target, a native Linear target (including a verified mirrored
+TASK mutation), or a native campaign leg observes the owner's current `always ask` setting on replay. Common and Linear
 calls keep their live and hostless replay paths. Campaign sends keep the
 existing enrollment driver; this adds no hostless campaign recovery worker.
 `never allow` keeps its existing terminal behavior. Other ordinary payload
@@ -47,8 +47,8 @@ Send-boundary spend and proof retention also share one writer. A live retry
 reuses the proof only for the same ledger intent, frozen request and actor,
 and the same target recomposed by the current Gate. It does not spend again.
 
-Native-mail, e-sign, failure-signal, mirror-present Linear and scoped-MCP
-proof paths are retained. Campaign legs retain their native family and target.
+Native-mail, e-sign, failure-signal and scoped-MCP proof paths are retained.
+Linear mirrors retain their native two-principal proof family and checks. Campaign legs retain their native family and target.
 Keyless and no-slate defaults, issuer
 holds, charters, current policy and permissions, budget accounting, retry permits, idempotency,
 delivery certainty and transport outcomes remain in their existing paths.
@@ -72,9 +72,46 @@ proof checks described above. First-admission spend, Pending insertion and
 retention of this normal Linear proof share one writer; the old post-commit
 retention path does not run for that same proof. A retry spends no second tap.
 
-Mirror-present requests freeze no new reference and remain in their existing
-path. Both existing policy-risk values are preserved; non-mirror is not a new
-risk classification or permission. There is no new proof family or numeric tag.
+Mirrored requests use their separate original native request metadata, not
+`linear_approval_send_ref`. Both existing policy-risk values are preserved;
+non-mirror is not a new risk classification or permission. There is no new
+proof family or numeric tag.
+
+## Native mirrored Linear sends
+
+The frozen payload retains the original operation ID, TASK, scheduler, issue,
+mutation kind, full fields and logical send reference. These are request data,
+not either actor's authority. Recomposition checks the original stored ledger
+actor and full payload, then previews the already bound native operation without
+writing a binding or spending a press. It never replaces the original request
+with today's TASK fields or guesses its writer class.
+
+At an `always ask` send boundary, one writer validates the original operation
+against the current TASK revision, dirty state, link, verified writer and both
+actors' liveness. It runs the existing current-policy pair for scheduler and
+writer, without charging the original mutation's budgets again. A held pair
+spends neither actor's unadmitted tap. Both pending actor/digest questions are
+queued separately; the single result uses the native scheduler-first selection.
+The specific intent approval door still releases only its scheduler's exact
+ask. The writer's independent digest uses the existing authenticated
+`vault.consent.approve_once` door. One answer never approves both principals.
+
+The first send also carries the actual co-actor input and press from its own
+committed admission. Only that exact input and digest can reuse the co-actor's
+press at the current pair check; neither the payload nor a primary press can
+supply it. The original best-effort post-commit keeper contract stays intact:
+a failed keeper does not cancel the already admitted first send. Later replay
+uses only the native kept proofs and current checks. New boundary taps and both
+of their native proof writes share the same writer and commit only on joint
+Allow. These checks are last-observed state, not network-atomic authorization.
+
+The stored payload envelope is current-only version 3. It also names the native
+admission's verified co-actor and copied TASK source. Their erase uses the same
+full payload wipe, custody-key retirement, remote-handle removal and budget
+settlement as the existing actor/recipient erase. A source erase reports the
+existing binding-invalid outcome; no new erase authority, table, migration or
+old-format reader is added. No whole-vault privacy or runtime proof is implied.
+Unsupported mirror payloads retain their old path; this is not full FIX 990.
 
 ## Native campaign legs
 

@@ -20,6 +20,7 @@ pub(super) struct OrdinaryCandidate {
     pub(super) digest: EffectDigest,
     pub(super) actor: Option<EntityId>,
     pub(super) family: PinnedApprovalFamily,
+    pub(super) mirror: Option<crate::linear_sync::LinearEffectRequest>,
 }
 
 /// Only positively reconstructed common-adapter or native campaign targets
@@ -37,14 +38,14 @@ pub(super) fn candidate_in_txn(
     {
         return Ok(None);
     }
-    let gate = match crate::outbound::connector_slate_effect_from_frozen_payload(
+    let (gate, mirror) = match crate::outbound::connector_slate_effect_from_frozen_payload(
         record.payload(),
         &record.server,
         &record.tool,
     ) {
-        Some(gate) => gate,
+        Some(candidate) => candidate,
         None => match crate::campaign::enrollment::frozen_campaign_effect(record)? {
-            Some(gate) => gate,
+            Some(gate) => (gate, None),
             None => return Ok(None),
         },
     };
@@ -63,11 +64,25 @@ pub(super) fn candidate_in_txn(
     let Some(digest) = crate::gate::external_effect_approval_digest(&gate) else {
         return Ok(None);
     };
+    if let Some(request) = mirror.as_ref() {
+        if actor != Some(request.scheduler_actor) {
+            return Ok(None);
+        }
+        let Some(writer) =
+            crate::linear_sync::linear_effect_writer_preview_in_txn(vault, txn, request)?
+        else {
+            return Ok(None);
+        };
+        if writer.verb != gate.verb {
+            return Ok(None);
+        }
+    }
     Ok(Some(OrdinaryCandidate {
         gate,
         digest,
         actor,
         family,
+        mirror,
     }))
 }
 
@@ -161,10 +176,23 @@ pub(super) fn queue_owner_ask_in_txn(
     let Some(candidate) = candidate_in_txn(vault, txn, &record)? else {
         return Ok(None);
     };
-    let Some(principal) = candidate.actor else {
+    queue_effect_ask_in_txn(vault, txn, &record, &candidate.gate)
+}
+
+/// Queues the exact actor-bound effect the native send writer held.
+pub(super) fn queue_effect_ask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+    effect: &ExternalEffectGateInput,
+) -> Result<Option<u64>, IntentLedgerError> {
+    let Some(principal) = effect.provenance.actor_entity_ref else {
         return Ok(None);
     };
-    let correlation = EntityId::derive(ASK_DOMAIN, &[&record.id, candidate.digest.as_bytes()])?;
+    let Some(digest) = crate::gate::external_effect_approval_digest(effect) else {
+        return Ok(None);
+    };
+    let correlation = EntityId::derive(ASK_DOMAIN, &[&record.id, digest.as_bytes()])?;
     let mut question = DecisionQuestion {
         id: correlation,
         version: ASK_VERSION,
@@ -192,7 +220,7 @@ pub(super) fn queue_owner_ask_in_txn(
         "intent_id": crate::entity_id::bytes_to_hex_lower(&record.id),
         "server": record.server,
         "tool": record.tool,
-        "approval_digest": candidate.digest.to_hex(),
+        "approval_digest": digest.to_hex(),
     });
     question.text = state.to_string();
     Ok(Some(vault.queue_decision_ask_in_txn(

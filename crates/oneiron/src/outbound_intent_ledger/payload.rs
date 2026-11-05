@@ -15,7 +15,9 @@
 //!
 //! The clear and sealed envelopes also name the send's recipient, the
 //! person its frozen counterparty resolved to at admission, so that
-//! person's erase reaches the row too (FIX 10953).
+//! person's erase reaches the row too (FIX 10953). A native mirror also
+//! names its verified co-actor and the source whose fields it copied, so
+//! erasing either retires that same clear or sealed payload.
 //!
 //! The intent id, payload hash and idempotency key stay those of the clear
 //! bytes. The row's content digest covers the stored form, which is written
@@ -44,7 +46,7 @@ pub(crate) const LEDGER_PAYLOAD_CUSTODY_GENERATION: u32 = 0;
 
 /// Opens every stored envelope. Its first byte never starts a UTF-8 text, so
 /// no frozen JSON request reads as one.
-const ENVELOPE_TAG: &[u8] = b"\xFFoneiron:ledger-payload:v2:";
+const ENVELOPE_TAG: &[u8] = b"\xFFoneiron:ledger-payload:v3:";
 
 const KIND_CLEAR: u8 = 0;
 const KIND_SEALED: u8 = 1;
@@ -62,6 +64,8 @@ pub(crate) struct LedgerPayloadContext {
     pub(crate) actor: Option<EntityId>,
     pub(crate) off_record: bool,
     pub(crate) recipient: Option<EntityId>,
+    pub(crate) co_actor: Option<EntityId>,
+    pub(crate) source: Option<EntityId>,
 }
 
 /// The frozen field the outbound dispatch pipeline names a send's
@@ -83,12 +87,13 @@ enum StoredPayload<'a> {
     Erased,
 }
 
-/// Whom a clear or sealed envelope names: the actor that admitted the send
-/// and the person it went to.
+/// The admitted actors, recipient, and native copied source of this payload.
 #[derive(Clone, Copy, Default)]
 struct Named {
     actor: Option<EntityId>,
     recipient: Option<EntityId>,
+    co_actor: Option<EntityId>,
+    source: Option<EntityId>,
 }
 
 impl<'a> StoredPayload<'a> {
@@ -107,7 +112,14 @@ impl<'a> StoredPayload<'a> {
         }
         let (actor, rest) = take_optional_id(rest).ok_or_else(invalid)?;
         let (recipient, rest) = take_optional_id(rest).ok_or_else(invalid)?;
-        let named = Named { actor, recipient };
+        let (co_actor, rest) = take_optional_id(rest).ok_or_else(invalid)?;
+        let (source, rest) = take_optional_id(rest).ok_or_else(invalid)?;
+        let named = Named {
+            actor,
+            recipient,
+            co_actor,
+            source,
+        };
         match kind {
             KIND_CLEAR => Ok(Self::Clear {
                 named,
@@ -171,6 +183,8 @@ fn envelope(kind: u8, named: Named, body: &[&[u8]]) -> Vec<u8> {
     if kind != KIND_ERASED {
         push_optional_id(&mut out, named.actor);
         push_optional_id(&mut out, named.recipient);
+        push_optional_id(&mut out, named.co_actor);
+        push_optional_id(&mut out, named.source);
     }
     for part in body {
         out.extend_from_slice(part);
@@ -241,6 +255,8 @@ pub(crate) fn stored_admission_in_txn(
     let named = Named {
         actor: context.actor,
         recipient: context.recipient,
+        co_actor: context.co_actor,
+        source: context.source,
     };
     if ledger_payload_sealed(context, record.payload()) {
         let custody_ref = custody_ref(&record.id)?;
@@ -256,7 +272,11 @@ pub(crate) fn stored_admission_in_txn(
             named,
             &[custody_ref.as_bytes().as_slice(), ciphertext.as_slice()],
         );
-    } else if named.actor.is_some() || named.recipient.is_some() {
+    } else if named.actor.is_some()
+        || named.recipient.is_some()
+        || named.co_actor.is_some()
+        || named.source.is_some()
+    {
         stored.payload = envelope(KIND_CLEAR, named, &[record.payload()]);
     }
     Ok(stored)
@@ -298,7 +318,8 @@ pub(super) fn open_payload_in_txn(
 
 /// Erasing `actor` from the intent ledger (FIX 9283): every row the actor
 /// admitted, and every row sent to it as the person a send went to (FIX
-/// 10953), keeps its id, attempt binding, accounting, state and delivery
+/// 10953), or its admitted co-actor or copied native source, keeps its id,
+/// attempt binding, accounting, state and delivery
 /// knowledge, and loses its request. A sealed row's key retires with it.
 /// A send still Pending or Deferred is abandoned, keeping that it may have
 /// been delivered: no erased request is sent again, and its remote task
@@ -325,25 +346,30 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             continue;
         };
         let named = stored.named();
-        if named.actor == Some(*actor) || named.recipient == Some(*actor) {
-            let custody_ref = match stored {
-                StoredPayload::Sealed { custody_ref, .. } => Some(custody_ref),
-                _ => None,
-            };
-            erased.push((record.id, custody_ref, named.actor != Some(*actor)));
-        }
+        let reason = if named.actor == Some(*actor) || named.co_actor == Some(*actor) {
+            None
+        } else if named.recipient == Some(*actor) {
+            Some(IntentEscalationReason::RecipientErased)
+        } else if named.source == Some(*actor) {
+            Some(IntentEscalationReason::BindingInvalid)
+        } else {
+            continue;
+        };
+        let custody_ref = match stored {
+            StoredPayload::Sealed { custody_ref, .. } => Some(custody_ref),
+            _ => None,
+        };
+        erased.push((record.id, custody_ref, reason));
     }
-    for (id, custody_ref, recipient_only) in erased {
+    for (id, custody_ref, reason) in erased {
         if let Some(custody_ref) = custody_ref {
             retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
         }
         let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
             continue;
         };
-        if recipient_only {
-            // The send names the erased person as its recipient: it stops
-            // for that, as an actor's erase stops its own sends.
-            stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
+        if let Some(reason) = reason {
+            stop_for_erase(&mut record, reason);
         }
         put_erased_record(vault, wtxn, record)?;
         super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;

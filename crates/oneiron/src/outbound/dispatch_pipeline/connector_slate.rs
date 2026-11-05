@@ -9,7 +9,10 @@ use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, OutboundSendFacts,
 };
+use crate::linear_sync::LinearEffectRequest;
 use crate::outbound::capability::{normalize_key, outbound_verb_contract};
+
+use super::frozen_payload::FrozenLinearMirror;
 
 #[derive(Deserialize)]
 struct FrozenDispatch {
@@ -25,6 +28,7 @@ struct FrozenDispatch {
     counterparty_ref: Option<String>,
     approval_send_ref: Option<String>,
     linear_approval_send_ref: Option<String>,
+    linear_mirror: Option<FrozenLinearMirror>,
     reply_thread_ref: Option<String>,
     calendar_invite: Option<CalendarInvitePayload>,
     has_opted_in: bool,
@@ -34,12 +38,13 @@ struct FrozenDispatch {
 
 /// Rebuilds only the ordinary frozen send's approve-once composition. The
 /// current admission still uses its original Gate input, not this snapshot.
-/// Other payload formats and target families name no candidate here.
+/// Other payload formats and target families name no candidate here. A
+/// mirror's returned request is data for the native current-writer check.
 pub(crate) fn connector_slate_effect_from_frozen_payload(
     payload: &[u8],
     server: &str,
     tool: &str,
-) -> Option<ExternalEffectGateInput> {
+) -> Option<(ExternalEffectGateInput, Option<LinearEffectRequest>)> {
     let frozen: FrozenDispatch = serde_json::from_slice(payload).ok()?;
     if frozen.channel != server {
         return None;
@@ -56,20 +61,24 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
     let actor_entity_ref = entity(frozen.actor_entity_ref)?;
     let sender = entity(frozen.channel_identity_ref)?;
     let connector = normalize_key(&frozen.channel);
-    let (target, send_ref) = if connector == "linear" {
-        // Only the native non-mirror producer freezes this reference. Its
-        // presence proves which Linear target to reconstruct; an absent
-        // mirror in an older payload would not prove mirror: None.
-        let send_ref = frozen.linear_approval_send_ref?;
+    let (target, send_ref, mirror) = if connector == "linear" {
+        let (mirror, send_ref) = match frozen.linear_mirror {
+            Some(mirror) if frozen.linear_approval_send_ref.is_none() => {
+                let (request, send_ref) = mirror.into_request()?;
+                (Some(request), send_ref)
+            }
+            Some(_) => return None,
+            None => (None, frozen.linear_approval_send_ref?),
+        };
         let target = ApprovalTarget::LinearDispatch {
             verb: contract.kind.clone(),
             target: frozen.target.clone(),
             content_ref: frozen.content_ref.clone(),
             send_ref: send_ref.clone(),
             payload_digest: crate::outbound_intent_ledger::hash_frozen_payload(payload),
-            mirror: None,
+            mirror: mirror.as_ref().map(crate::gate::LinearMirrorFacts::of),
         };
-        (target, send_ref)
+        (target, send_ref, mirror)
     } else {
         let send_ref = frozen.approval_send_ref?;
         let target = ApprovalTarget::for_outbound(&OutboundSendFacts {
@@ -84,7 +93,7 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
         if target.pinned_family() != Some(PinnedApprovalFamily::ConnectorSlate) {
             return None;
         }
-        (target, send_ref)
+        (target, send_ref, None)
     };
     let policy_risk = if frozen.policy_risk == ExternalEffectPolicyRisk::Normal.as_str() {
         ExternalEffectPolicyRisk::Normal
@@ -93,7 +102,7 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
     } else {
         return None;
     };
-    Some(ExternalEffectGateInput {
+    let gate = ExternalEffectGateInput {
         actor: GateActor {
             actor_class: frozen.actor_class,
             actor_ref: frozen.actor_ref,
@@ -120,5 +129,6 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
         has_permission: frozen.has_permission,
         policy_risk,
         send_autonomy: None,
-    })
+    };
+    Some((gate, mirror))
 }

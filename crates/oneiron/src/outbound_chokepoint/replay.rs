@@ -2,11 +2,11 @@
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
 use super::types::{
-    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    FirstPassAdmission, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
+    PreparedEffect,
 };
 use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
-use crate::consent::EffectDigest;
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
@@ -147,20 +147,26 @@ pub(super) fn send_pending<T: OutboundTransport>(
     )
 }
 
-/// The first send of the row its admission just committed. `pass_proof` is
-/// the owner's press that admission's Gate spent on it, if it spent one: it
-/// releases this send under `always ask` even when its kept copy did not
-/// write (FIX 990).
+/// The first send of the row its admission just committed. The evidence
+/// carries its primary press and actual admitted co-actor independently of
+/// their best-effort kept copies (FIX 990).
 pub(super) fn send_admitted<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
-    pass_proof: Option<EffectDigest>,
+    admission: FirstPassAdmission,
     now_ms: u64,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
     send_pending_with_gate(
-        vault, authority, record, None, pass_proof, now_ms, false, transport,
+        vault,
+        authority,
+        record,
+        None,
+        Some(admission),
+        now_ms,
+        false,
+        transport,
     )
 }
 
@@ -170,7 +176,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
     prepared: Option<&PreparedEffect>,
-    pass_proof: Option<EffectDigest>,
+    admission: Option<FirstPassAdmission>,
     now_ms: u64,
     replayed: bool,
     transport: &mut T,
@@ -383,7 +389,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if let Some(stop) = super::connector_slate::send_boundary(
         vault,
         &record,
-        pass_proof,
+        admission.as_ref(),
         now_ms,
         replayed,
         transport.campaign_local_node_id(),

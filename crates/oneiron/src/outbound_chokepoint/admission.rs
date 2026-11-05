@@ -11,8 +11,8 @@ use super::replay::{
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
 use super::types::{
-    OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
-    PreparedAuthorization, PreparedEffect,
+    FirstPassAdmission, FirstPassCoActor, OutboundEffectCommand, OutboundEffectError,
+    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -305,6 +305,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // nothing, so it spends no approve-once marker. FIX 6424 part 2a: it
     // reuses the press its own earlier admission kept, and names its digest.
     let mut co_keep = None;
+    let mut admitted_co_actor = None;
+    let mut co_payload_source = None;
     let mut co_governance = match prepared.co_actor.take() {
         Some(co_actor) => {
             let bound = (co_actor.bind)(vault, &mut wtxn)?;
@@ -327,6 +329,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
                 wtxn.commit().map_err(Error::from)?;
                 return Ok(gate_rejection(intent_id, decision_id, decision).held_by(&bound.effect));
             }
+            co_payload_source = bound.payload_source;
+            admitted_co_actor = Some(FirstPassCoActor {
+                effect: bound.effect,
+                spent_press: None,
+            });
             Some(co)
         }
         None => None,
@@ -343,6 +350,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             PreparedAuthorization::ScopedMcp { prepared, .. } if prepared.keeps_no_record()
         ),
         recipient: payload_recipient_in_txn(vault, &wtxn, &prepared.payload),
+        co_actor: admitted_co_actor
+            .as_ref()
+            .and_then(|co| co.effect.provenance.actor_entity_ref),
+        source: co_payload_source,
     };
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
@@ -650,7 +661,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
     let mut co_spent = None;
     if let Some(co) = co_governance {
-        co_spent = co.spent_press_digest().zip(co_keep);
+        let spent = co.spent_press_digest();
+        if let Some(admitted) = admitted_co_actor.as_mut() {
+            admitted.spent_press = spent;
+        }
+        co_spent = spent.zip(co_keep);
         gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
@@ -704,7 +719,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         co_spent,
     )?;
 
-    let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
+    let mut result = send_admitted(
+        vault,
+        authority,
+        pending,
+        FirstPassAdmission {
+            primary_press: spent,
+            co_actor: admitted_co_actor,
+        },
+        now_ms,
+        transport,
+    )?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
     // FIX 9228: a send-time AlwaysAsk hold keeps its slate outcome/reasons;
     // stamping the admission Allow here would surface gate.allow instead.

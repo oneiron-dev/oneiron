@@ -105,6 +105,21 @@ pub(super) enum FrozenLinearEffectKind {
 }
 
 impl FrozenLinearMirror {
+    pub(super) fn into_request(self) -> Option<(LinearEffectRequest, String)> {
+        let request = LinearEffectRequest {
+            operation_id: self.operation_id,
+            task_ref: crate::entity_id::EntityId::from_hex(&self.task_ref).ok()?,
+            scheduler_actor: crate::entity_id::EntityId::from_hex(&self.scheduler_actor).ok()?,
+            issue: self.issue,
+            kind: match self.kind {
+                FrozenLinearEffectKind::Create => LinearEffectKind::Create,
+                FrozenLinearEffectKind::Update => LinearEffectKind::Update,
+            },
+            fields: self.fields,
+        };
+        Some((request, self.send_ref))
+    }
+
     pub(super) fn of(request: &LinearEffectRequest, send_ref: &str) -> Self {
         Self {
             operation_id: request.operation_id,

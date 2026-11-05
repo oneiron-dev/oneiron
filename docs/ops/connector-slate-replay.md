@@ -17,8 +17,8 @@ permission, the dedupe touch, and transport. No default, timeout, budget, or
 slate-setting value changes.
 
 Scoped MCP `always ask` keeps its existing exact-call approve-once flow.
-Supported ordinary communication, calendar, feedback HTTP-bundle, non-mirror
-Linear and native campaign targets use the exact-call owner question and
-approve-once paths described in [ordinary outbound approvals](ordinary-outbound-approval.md).
+Supported ordinary communication, calendar, feedback HTTP-bundle, native
+Linear (including verified mirrored TASK mutations) and native campaign targets
+use the exact-call owner question and approve-once paths described in [ordinary outbound approvals](ordinary-outbound-approval.md).
 Other ordinary formats remain an open part of FIX 990; no hold is added without
 an approve-once path. Recovery drivers and provider transports are retained.
