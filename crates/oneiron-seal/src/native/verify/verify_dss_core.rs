@@ -2,7 +2,7 @@
 
 use lopdf::{Document, Object};
 
-use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
+use crate::api::{Counter, SealResourceLimits, VerifyCheckKind, VerifyFindingCode, note_current};
 use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
 
@@ -392,7 +392,8 @@ pub(super) fn collect_reference_chain(
     id: lopdf::ObjectId,
     ids: &mut std::collections::BTreeSet<lopdf::ObjectId>,
     work: &mut usize,
-) -> Option<()> {
+    limits: &SealResourceLimits,
+) -> Result<Option<()>, SealMemoryRefusal> {
     let mut chain = std::collections::BTreeSet::new();
     let mut current = id;
     loop {
@@ -400,16 +401,21 @@ pub(super) fn collect_reference_chain(
         if ids.contains(&current) {
             break;
         }
-        if !chain.insert(current) {
-            return None;
+        if !pdf::admitted::btree_insert(limits, &mut chain, current)? {
+            return Ok(None);
         }
-        let Ok(next) = doc.objects.get(&current)?.as_reference() else {
+        let Some(object) = doc.objects.get(&current) else {
+            return Ok(None);
+        };
+        let Ok(next) = object.as_reference() else {
             break;
         };
         current = next;
     }
-    ids.extend(chain);
-    Some(())
+    for id in chain {
+        pdf::admitted::btree_insert(limits, ids, id)?;
+    }
+    Ok(Some(()))
 }
 
 /// Byte offset the effective `/DSS` revision provably ends before: the
@@ -432,11 +438,17 @@ pub(super) fn collect_reference_chain(
 /// revision no DocTimeStamp attests (probe_c regression). The evaluation
 /// and this measurement resolve through the same uncapped walk, so neither
 /// stops where the other goes on.
-pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
+pub(super) fn dss_revision_end(
+    doc: &Document,
+    bytes: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<Option<u64>, SealMemoryRefusal> {
     let mut work = 0usize;
-    let collected = dss_object_ids(doc, &mut work);
+    let collected = dss_object_ids(doc, &mut work, limits);
     note_current(Counter::DssReferenceWork, work);
-    let ids = collected?;
+    let Some(ids) = collected? else {
+        return Ok(None);
+    };
     let mut newest = None;
     for (num, generation) in ids {
         match doc.reference_table.get(num) {
@@ -447,11 +459,14 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
                 let offset = u64::from(*offset);
                 newest = Some(newest.map_or(offset, |n: u64| n.max(offset)));
             }
-            _ => return None, // compressed or missing: coverage unprovable
+            _ => return Ok(None), // compressed or missing: coverage unprovable
         }
     }
-    let newest = newest?;
-    doc.reference_table
+    let Some(newest) = newest else {
+        return Ok(None);
+    };
+    Ok(doc
+        .reference_table
         .entries
         .values()
         .filter_map(|e| match e {
@@ -460,7 +475,7 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         })
         .filter(|o| *o > newest)
         .min()
-        .or_else(|| pdf::last_startxref(bytes).ok())
+        .or_else(|| pdf::last_startxref(bytes).ok()))
 }
 
 /// Every object id the effective `/DSS` reaches through the chains the
@@ -470,32 +485,47 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
 fn dss_object_ids(
     doc: &Document,
     work: &mut usize,
-) -> Option<std::collections::BTreeSet<lopdf::ObjectId>> {
-    let catalog = pdf::catalog(doc)?;
-    let dss_obj = catalog.get(b"DSS").ok()?;
+    limits: &SealResourceLimits,
+) -> Result<Option<std::collections::BTreeSet<lopdf::ObjectId>>, SealMemoryRefusal> {
+    let Some(catalog) = pdf::catalog(doc) else {
+        return Ok(None);
+    };
+    let Ok(dss_obj) = catalog.get(b"DSS") else {
+        return Ok(None);
+    };
     let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
     if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        collect_reference_chain(doc, root, &mut ids, work)?;
+        if collect_reference_chain(doc, root, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
     if let Object::Reference(id) = dss_obj {
-        collect_reference_chain(doc, *id, &mut ids, work)?;
+        if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok())?;
+    let Some(dss) = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok()) else {
+        return Ok(None);
+    };
     for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
         let Ok(arr_obj) = dss.get(key) else {
             continue;
         };
         if let Object::Reference(id) = arr_obj {
-            collect_reference_chain(doc, *id, &mut ids, work)?;
+            if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                return Ok(None);
+            }
         }
         let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
             continue;
         };
         for item in arr {
             if let Object::Reference(id) = item {
-                collect_reference_chain(doc, *id, &mut ids, work)?;
+                if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                    return Ok(None);
+                }
             }
         }
     }
-    Some(ids)
+    Ok(Some(ids))
 }

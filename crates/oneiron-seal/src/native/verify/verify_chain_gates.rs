@@ -319,7 +319,7 @@ pub(crate) fn verify_document(
         })
         .collect::<Result<_, _>>()
         .map_err(memory_refused)?;
-    let dss_end = dss_revision_end(&doc, bytes);
+    let dss_end = dss_revision_end(&doc, bytes, limits).map_err(memory_refused)?;
     let mut covered = Vec::new();
     for envelope in &envelopes {
         EmbeddedCert::extend_admitted(
