@@ -227,6 +227,8 @@ pub enum EsignEvent {
     Sealed {
         rejected: bool,
         item_sha256: Vec<[u8; 32]>,
+        /// Same item order as `item_sha256` and the sealed manifest.
+        item_profiles: Vec<super::sealer::SealProfileEvidence>,
     },
     ResealRequested {
         owner: String,
