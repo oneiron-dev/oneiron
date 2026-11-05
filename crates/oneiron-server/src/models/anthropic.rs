@@ -8,7 +8,7 @@ use oneiron_llm_anthropic::{
 };
 use serde_json::Value as JsonValue;
 
-use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::http::{HttpFailure, HttpReleaseError, ProviderHttp, SseItem};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
 
@@ -46,17 +46,26 @@ impl From<HttpFailure> for AnthropicMessagesTransportError {
     }
 }
 
+impl From<HttpReleaseError> for AnthropicMessagesTransportError {
+    fn from(error: HttpReleaseError) -> Self {
+        match error {
+            HttpReleaseError::Transport(error) => error.into(),
+            HttpReleaseError::Release(error) => Self::DispatchRelease(error),
+        }
+    }
+}
+
 impl AnthropicMessagesTransport for AnthropicHttp {
     fn execute<'a>(
         &'a self,
         request: AnthropicMessagesHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> AnthropicMessagesFuture<'a> {
         Box::pin(async move {
             let body = self.with_output_cap(request.body);
             let mut reply = self
                 .http
-                .post_json(&request.path, &request.headers, &body)
+                .post_json_leased(&request.path, &request.headers, &body, lease)
                 .await?;
             // A reply without usage (or with a null one) gets one carrying
             // only the served model; the adapter reads its absent counts as
@@ -75,10 +84,12 @@ impl AnthropicMessagesTransport for AnthropicHttp {
     fn stream<'a>(
         &'a self,
         request: AnthropicMessagesHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> Result<AnthropicMessagesProviderStream<'a>, AnthropicMessagesTransportError> {
         let body = self.with_output_cap(request.body);
-        let events = self.http.post_sse(&request.path, &request.headers, &body);
+        let events = self
+            .http
+            .post_sse_leased(&request.path, &request.headers, &body, lease);
         let frames = events.map(|item| match item? {
             SseItem::Status(reply) => Ok(AnthropicMessagesStreamFrame::Status(
                 AnthropicMessagesHttpResponse {
