@@ -110169,7 +110169,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/next_turn.rs",
-     "purpose": "What a live chat conversation's next turn is known to start with past its committed history (I1 = C…",
+     "purpose": "What a conversation's next chat turn is known to start with past its committed history (I1 = C, ARCH-0067…",
      "surface": {
       "crate-vis": 1
      }
@@ -111023,7 +111023,7 @@
      "path": "src/api/context_board/turn_actions.rs",
      "purpose": "The context board a queued Continue or Retry reads (FIX 6920), as a live chat turn reads its own…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
