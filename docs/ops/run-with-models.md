@@ -16,6 +16,24 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+### Configure first-run models without stopping the server
+
+With both the embedder and tagger slots still unconfigured, an authenticated owner can call
+`POST /v1/owner/settings/models/setup`. It takes the first-run model answers from
+`ModelSetupAnswers`: embedder provider, endpoint, locality, model and dimensions, and the
+`oneironer` tagger options. `embedder_api_key_env` is an environment variable's name, never the
+key itself. The request and reply schemas are published at `GET /api/openapi.json`.
+
+The route uses the vault the server already opened. It writes the config file the server
+started from, attaches the first model slots and starts their workers, without a vault reopen
+or a terminal prompt. Its reply is `ModelSetupOutcome`: `config` (the file path), `embedder`
+and `tagger`. It does not replace configured slots, reembed existing vectors or rewrite a
+managed server's settings. The native setup checks still apply: changed vault or sizing
+settings return `changed_since_review`, and a server without first-run setup state, a config
+file or the live setup runtime refuses the request. Invalid answers use the normal owner
+error response. The existing `GET` and `POST /v1/owner/settings/models` Responses `store`
+switch is separate and unchanged.
+
 An embedded binding that uses `embedded_serve_config` retains its explicit
 vault path and optional dimensions for first-run model setup on the open
 vault. Setup replays those inputs over the file and environment; dimensions
@@ -123,7 +141,8 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
 `elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+`max_output_tokens`, `output_limit_field`, `chat_path`, `prefill_wire` (both
+optional wire flags, below), `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `embed_shape`
 (`vllm_chat`, the default, `infinity`, `jina` or `cohere`: the shape the
 provider's embedding endpoint speaks; section 10), `capabilities` (`streaming`,
@@ -157,6 +176,38 @@ family neither judge has),
 `responses_socket` and `request_compression` (both below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
+
+`chat_path` and `prefill_wire` are optional provider fields. The server copies
+only these explicit settings into each configured model's catalog metadata,
+on the ordinary, brokered and managed-settings paths. For example, for an
+endpoint whose named model supports prefix continuation:
+
+```toml
+[models.providers.prefix]
+kind = "openai-compat"
+base_url = "https://api.example.com/beta"
+key_env = "PREFIX_API_KEY"
+chat_path = "unversioned"
+prefill_wire = "prefix"
+model_capabilities = { "prefix-model" = ["streaming", "json_response", "assistant_prefill"] }
+```
+
+When the selected catalog row has `chat_path = "unversioned"` and the adapter
+still uses its default `/v1/chat/completions` path, that row sends
+`POST /chat/completions` instead. With
+`base_url = "https://api.deepseek.com/beta"`, the call goes to
+`/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit
+non-default endpoint path wins; absent or unknown values leave the configured
+path unchanged.
+
+`prefill_wire = "prefix"` sends `prefix: true` on an open trailing assistant
+message only when that same selected row declares `assistant_prefill` in
+`model_capabilities` or the provider's fallback `capabilities`. An absent or
+unknown flag sends no prefix field. Continue still requires every rung to
+declare `assistant_prefill`. Neither option adds a catalog row, changes a
+model's capabilities, or binds a model by default. For a `key_secret` provider
+using the unversioned path, update the server and credential broker together
+so both recognize the new closed row. Direct calls need no broker.
 
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
@@ -239,6 +290,18 @@ model settings settle. With none, the existing same-user default stays in place.
 These are engine flags; the supervisor must supply paths reachable by the child.
 They do not add a vault VM broker transport. Plain serve keeps its file-based
 `[models.broker]` configuration.
+
+The supervisor can name the vault's explicit host allocation on managed argv
+with `--host-memory-bytes <bytes>` and `--host-cpu-millis <millis>`. Each flag
+is optional and managed-only; absent is unbounded for that field, and no
+capacity is inferred from the machine. The values are the operator's explicit
+per-vault allocation, carried as `HostLimits` and reported through the managed
+host; they are not an OS quota, they do not route through the embedded memory
+clamp, and they add no capacity refusal. A vault VM's constructor takes no
+allocation from this carrier: its guest limits come from its existing separate
+source, and these flags add no VM transport. An engine from before these flags
+refuses them, so a supervisor passes them only to engines at or after the merge
+that added them.
 
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
@@ -590,7 +653,7 @@ call whose socket will not open, or that carries audio, goes out over
 `responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
-`key_secret` provider stays on HTTP: the credential broker runs no socket yet.
+`key_secret` OpenAI or xAI provider uses the credential broker's per-call Responses socket: the broker upgrades `/v1/responses`, relays the checked create frame and strips every event, and holds no key between calls. The whole turn is bound at admission; a chained turn the provider no longer holds goes whole once on the same socket. Stored-chain resume works as above, with no broker-socket pool. Chat HTTP is the fallback when an upgrade or initial create is not accepted; a 4xx other than 408 or 429 latches that provider to chat until restart. Idle pooling above remains `key_env`-only. Broker Responses sockets use WebPKI roots; a private-CA origin falls back to chat.
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
@@ -639,6 +702,41 @@ evidence in `usage`"); a call to any other provider keeps its standard
 cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
+
+On the house EXL3 server a chat conversation keeps a native session: the
+canonical history stays computed between turns. Once a reply's successor is
+published, the session also prepares the part of the next turn already known,
+as background work beside it (I1 = C): the answering agent's craft, when
+`prompt_layout` is `stable_history_then_turn_context`, then the state-only
+board, both rendered for that turn's reader. A queued Continue or Retry that
+publishes a successor prepares its requester's next turn the same way. When
+the next turn arrives, the worker compares its own tokens with
+the prepared ones and reuses only their identical beginning; everything after
+the first token that differs, the fresh recall included, is computed as
+before, and a preparation still running stops. `[models.sessions]` holds the
+policy:
+
+```toml
+[models.sessions]
+prepare_tail = true   # the fixed policy, on by default
+planner = "off"       # "learned": skip a conversation's preparation once its tails gave too little
+```
+
+`GET /v1/ai/status` lists `prepared_tails`: prepares started, ready and
+stopped, publishes skipped by reason, forks that attached to a tail or missed
+it, and the tokens computed, reused and wasted.
+
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
 
 ## 3. Let the Dreamer work
 
@@ -825,6 +923,19 @@ manifest the `[models]` ladder is the role's binding.
 `prompt_layout` under `[models]` places each turn's context in its request:
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
+
+A chat turn's context board rides in two parts (I1 = C): its state part
+(worlds, tasks, loaded skills, room, inbox and the changed line) right
+before the user's message, and its query part (the memories and the skills
+that message found) right after it. Both come from one read, under one
+board budget. A queued Continue or Retry reads its board the same way.
+`turn_opener` under `[models.chat]` closes every chat call and every queued
+Continue or Retry: `clock` (the default) adds `<turn now="…"/>`, the vault
+clock's instant in UTC, after the query part, or right after the user's
+message when the board is held or not read; `off` adds nothing. A Retry that
+reuses its reply's kept prefix sends today's opener in place of the captured
+one; a Continue keeps the opener its saved reply followed. `POST
+/v1/core/context-board` and `ai.reply` still render the one frame.
 
 ## 5. Saved workflows
 
@@ -1142,6 +1253,19 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A fold can also take one kind of content over a span:
+`self.fold({kind: "repl_output", before: "t40", note?})` (or `from` and
+`through`; with no bound it reaches the current step). Each step in the span
+keeps its program, and with it its speech calls; its console shows one stub
+in place of the output: `⟨f3 · repl_output folded⟩`, the output's read
+handle, a read handle to each stored result the output names, and the ids it
+names. The engine writes these stubs from the steps' outputs, with no model
+call. A kind mark lands in the same batch as every other mark, and a batch of
+kind marks alone lands at once. A folded output is never read into the
+request, so it no longer counts against the window. `self.unfold({fold})`
+appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
+fold may lie over a whole-step fold; that fold still hides its steps.
+
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
 where it was found and whether a reveal would deliver at once, ask the owner
@@ -1163,6 +1287,27 @@ only grant is the secret's binding for the operation's effector (such as
 secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
+
+A served host also supplies `native_mail.jmap` against its installed native
+mail server and `broker.models` against a configured broker-backed
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
+`arguments: {"provider": "<configured provider name>"}` and returns one actual
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
+The host uses one actual model rung only as the broker's bodyless-request
+binding; it does not filter the listing or claim that model is serving.
+The broker is connected before custody releases the value. Both result and
+failure text are cleared inside the same credential door. The handle's
+record, a run-bound record and an operation grant use their existing doors,
+and the receipt names the generation actually presented. A refused broker
+request or a lost channel does not claim a confirmed presentation. No paid
+inference or media request is made by this operation. The host and broker
+must be rebuilt together; no new configuration setting is required.
 
 On a server, `self.use` also takes `connector.call`: one connector call with
 the secret as the call's credential, in place of the connector's own. Its

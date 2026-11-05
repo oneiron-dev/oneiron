@@ -115,6 +115,7 @@ mod lifted_view;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
+mod message_parts;
 mod message_result;
 mod note_tombstone;
 mod notes;
@@ -308,8 +309,7 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{
-    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VAULT_RECEIPTS_PAGE_MAX,
-    VaultReceiptsPage,
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
@@ -328,6 +328,7 @@ pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
+pub(crate) use result_attachment::{retire_message_result_in_row, retire_message_results_in_rows};
 pub use room_turn::RoomTurnHandle;
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest,
@@ -361,7 +362,10 @@ pub use structural::{
     ProductivityTreeRequest, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
+pub use support::{
+    HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
+    resolve_entity_ref,
+};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };

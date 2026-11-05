@@ -207,15 +207,19 @@ fn prepare_step_source(
         return Ok(Err(admitted::lapsed()));
     }
     let Some(request) = capsule_request(vault, capsule)? else {
-        return Ok(Err(unavailable(
-            Reason::SourceWithheld,
-            "request_unreadable",
-        )));
+        let (reason, cause) =
+            if matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. }) {
+                (Reason::SourceErased, "request_erased")
+            } else {
+                (Reason::SourceWithheld, "request_unreadable")
+            };
+        return Ok(Err(unavailable(reason, cause)));
     };
     if !admits()? {
         return Ok(Err(admitted::lapsed()));
     }
     let read = {
+        let _bodies = vault.pin_all_result_bodies();
         let rtxn = vault.store.env.read_txn()?;
         read_step_in_txn(vault, &rtxn, capsule, &start)?
     };
@@ -262,7 +266,12 @@ fn read_step_in_txn(
     start: &ExecutorStepStart,
 ) -> Result<Outcome<(CodeRunReplayRecord, CodeRunReplayRecord)>> {
     let Some(bytes) = capsule_start_body(vault, rtxn, capsule)? else {
-        return Ok(Err(unavailable(Reason::SourceWithheld, "start_unreadable")));
+        let (reason, cause) = if start.erased {
+            (Reason::SourceErased, "start_erased")
+        } else {
+            (Reason::SourceWithheld, "start_unreadable")
+        };
+        return Ok(Err(unavailable(reason, cause)));
     };
     let Some(prefix) = start_prefix(&bytes) else {
         return Ok(Err(unavailable(

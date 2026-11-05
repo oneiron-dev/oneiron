@@ -5,6 +5,8 @@
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
+use std::sync::atomic::AtomicBool;
+
 use super::{
     Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
     MediaDispatchRelease, MediaJobState, MediaRequest, MediaResponse, MediaRuntime, MediaTicket,
@@ -131,6 +133,31 @@ impl MediaRuntime {
         replay: Option<MediaReplayKey>,
         release: MediaDispatchRelease<'_>,
     ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released_inner(run, request, voices, replay, release, None)
+            .await
+    }
+
+    pub(crate) async fn run_admitted_for_step(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        admitted: &AtomicBool,
+    ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released_inner(run, request, voices, replay, None, Some(admitted))
+            .await
+    }
+
+    async fn run_admitted_released_inner(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
@@ -158,7 +185,7 @@ impl MediaRuntime {
             let kept = key.map(|_| request.clone());
             let ladder = self.ladder(&request)?;
             match ladder
-                .media_released(run, request, None, voices, release)
+                .media_released(run, request, None, voices, release, admitted)
                 .await?
             {
                 MediaAnswer::Done(response) => {
