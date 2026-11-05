@@ -70,10 +70,10 @@ mod lens_frames;
 mod linear_host;
 mod livequery;
 pub mod logging;
-mod machine;
-pub mod managed;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
+mod machine;
+pub mod managed;
 mod managed_owner_check;
 pub mod mcp;
 mod model_artifacts;
