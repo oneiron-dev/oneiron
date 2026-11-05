@@ -45,9 +45,10 @@ fork basis it needs is materialized in the same writer, together with its bundle
 copy. Unaffected snapshots keep their original bytes.
 
 Owner-selected history purge also applies the selected version-vector cut to
-each stored proposal or retained-head snapshot of that NOTE. Each cut is bounded
-by that snapshot's actual oplog and
-keeps an already higher shallow floor. Unrelated histories are unchanged. A
+each stored proposal or retained-head snapshot of that NOTE. It also covers the
+original and registered retired canonical slots that Switch left behind. Each
+cut is bounded by that snapshot's actual oplog and keeps an already higher
+shallow floor. Unrelated histories are unchanged. A
 native base that the cut would remove is materialized before the cut; the purge
 does not discard all retained history merely to remove the selected prefix.
 

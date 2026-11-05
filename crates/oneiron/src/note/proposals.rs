@@ -9,6 +9,7 @@ use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -331,6 +332,57 @@ pub(super) fn purge_stored_history(
             .map_err(|_| invalid("NOTE history purge failed"))?;
         super::document::NoteDocument::load(note, &snapshot)?;
         NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot)?;
+    }
+    // Switch leaves the old canonical slot intact. It is still a real
+    // retained parent even when no proposal row duplicates its snapshot.
+    let current = super::documents::head_in(&vault.store, txn, note)?.0;
+    let mut heads = std::collections::BTreeSet::from([note]);
+    for ((_, head), ()) in
+        super::documents::NOTE_HEAD_DOC.scan_from(&vault.store, txn, note.as_bytes())?
+    {
+        heads.insert(head);
+    }
+    for head in heads.into_iter().filter(|head| *head != current) {
+        let slot = DocumentSlot::of(head);
+        let Some(snapshot) = vault
+            .store
+            .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        else {
+            continue;
+        };
+        let retained = loro::LoroDoc::new();
+        super::storage::import_complete(&retained, &snapshot)?;
+        for update in vault.store.port_document_updates(txn, slot)? {
+            if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
+                return Err(invalid("invalid canonical document update key"));
+            }
+            super::storage::import_complete(&retained, &update.bytes)?;
+        }
+        let retained = super::document::NoteDocument::from_loro(note, retained)?;
+        let mut cut = retained.doc.oplog_vv().intersection(selected);
+        let floor = retained.doc.shallow_since_vv().to_vv();
+        if floor.includes_vv(&cut) {
+            continue;
+        }
+        cut.merge(&floor);
+        let through = retained.doc.vv_to_frontiers(&cut);
+        let snapshot = retained
+            .doc
+            .export(loro::ExportMode::shallow_snapshot(&through))
+            .map_err(|_| invalid("NOTE history purge failed"))?;
+        let shallow = super::document::NoteDocument::load(note, &snapshot)?;
+        vault
+            .store
+            .port_document_snapshot_put(txn, slot, &snapshot)?;
+        vault
+            .store
+            .port_document_state_vector_put(txn, slot, &shallow.doc.oplog_vv().encode())?;
+        vault.store.port_document_shallow_since_put(
+            txn,
+            slot,
+            &shallow.doc.shallow_since_vv().to_vv().encode(),
+        )?;
+        vault.store.port_document_updates_delete(txn, slot)?;
     }
     Ok(())
 }
