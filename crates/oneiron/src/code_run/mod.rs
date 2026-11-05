@@ -170,8 +170,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
-    step_replay_capsules_in_txn,
+    erase_contribution_forks_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
