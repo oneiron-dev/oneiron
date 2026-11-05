@@ -481,6 +481,66 @@ impl StoreRecordHooks for EngineRecordHooks {
         )
     }
 
+    fn campaign_step_body_text(
+        &self,
+        vault: &crate::Vault,
+        content_ref: &str,
+    ) -> Result<Option<String>> {
+        vault.campaign_step_body_text(content_ref)
+    }
+
+    fn compliance_install_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+        memory.compliance_install_as(owner, input)
+    }
+
+    fn compliance_amend(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+        memory.compliance_amend(input)
+    }
+
+    fn compliance_approve_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+        memory.compliance_approve_as(owner, input)
+    }
+
+    fn compliance_reject_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+        memory.compliance_reject_as(owner, input)
+    }
+
+    fn compliance_verify_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceVerifyRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+        memory.compliance_verify_as(owner, input)
+    }
+
+    fn compliance_result(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceResultRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceResult> {
+        memory.compliance_result(input)
+    }
+
     fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()> {
         crate::federation::validate_federation_grant_body_bytes(bytes)
     }
