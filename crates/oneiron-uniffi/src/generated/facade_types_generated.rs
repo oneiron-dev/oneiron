@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1248 facade rows, 4528 generated types.
+// UniFFI census: 1248 facade rows, 4529 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1200.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -30288,6 +30288,17 @@ pub struct ResearchProviderLeaseTokenObservationWire {
     pub settlement: Option<ResearchProviderLeaseTokenSettlementWire>,
 }
 
+/// `oneiron::verbs::research::provider_tokens::ResearchProviderRunTokenObservationWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchProviderRunTokenObservationWire {
+    #[serde(rename = "instance")]
+    pub instance: String,
+    #[serde(rename = "entry_recorded")]
+    pub entry_recorded: bool,
+    #[serde(rename = "model_future_returned")]
+    pub model_future_returned: bool,
+}
+
 /// `oneiron::verbs::research::provider_tokens::ResearchProviderTokenSnapshotWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResearchProviderTokenSnapshotWire {
@@ -30307,6 +30318,8 @@ pub struct ResearchProviderTokenSnapshotWire {
     pub failed_call_reports: Vec<ResearchProviderTokenMeasurementWire>,
     #[serde(rename = "leases")]
     pub leases: Vec<ResearchProviderLeaseTokenObservationWire>,
+    #[serde(rename = "run_observations")]
+    pub run_observations: Vec<ResearchProviderRunTokenObservationWire>,
 }
 
 /// `oneiron::verbs::research::provider_tokens::ResearchScopeProviderTokensWire`.

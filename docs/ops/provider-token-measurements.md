@@ -195,3 +195,27 @@ The scope's listed research runs are not an attribution of each permit to one
 attempt. Missing receipts, generations and child or unbound sources remain
 uncovered. Neither a permit's end nor all-present records close the scope,
 consume measured RSI tokens, or revise the existing reservation settlement.
+
+## Scoped model entry and future return
+
+`run_observations` identifies actual scoped `RunAdmission` instances, including
+an invocation that admitted no permit. `entry_recorded` means the scoped host
+constructed that run on its model-call path. It does not mean admission, provider
+bytes, or a measured zero. `model_future_returned` records that the code-mode
+ladder future returned, whether it answered or failed. The planned branch keeps
+its original successful `planned.answered` call, then records the marker before
+the existing handoff and response processing. Its original error still returns
+unchanged. Unscoped calls keep the original funded path and do not write these
+scoped markers.
+
+The marker uses the same native run instance, current guard generation and
+actual lease scope as its entry and permit records. Entry and return merge
+independently of capture recency; a failed entry write does not prevent a later
+return record, and an absent entry stays absent. The guard lock is released
+before the warning-only data write. There is no drop-time write or background
+finalizer. Cancellation or a crash before this marker leaves return unknown.
+
+A future's return is not a seal on its `RunAdmission`; it does not prevent a
+clone admitting later work. It does not certify all physical reports, every
+source, child scopes, whole-guard or whole-scope closure, or an RSI token total.
+The existing charged-spend and reservation settlement paths remain unchanged.

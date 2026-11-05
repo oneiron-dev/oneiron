@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use oneiron::agent_dispatch::{AgentDispatcher, ProviderLeaseTokenObservation, SpendScopeId};
+use oneiron::agent_dispatch::{
+    AgentDispatcher, ProviderLeaseTokenObservation, ProviderRunTokenObservation, SpendScopeId,
+};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission, RunReceipt, RunReceiptSink};
 use oneiron::{BudgetGuard, Vault};
 
@@ -16,14 +18,13 @@ struct ScopedProviderTokens {
 }
 
 impl ScopedProviderTokens {
-    fn capture(&self, lease: Option<&ProviderLeaseTokenObservation>) {
+    fn capture(&self, lease: &ProviderLeaseTokenObservation) {
         let snapshot = self.guard.provider_token_snapshot();
-        let dispatcher = AgentDispatcher::new(&self.vault);
-        let recorded = match lease {
-            Some(lease) => dispatcher.record_provider_lease_tokens(&self.scope, &snapshot, lease),
-            None => dispatcher.record_provider_token_snapshot(&self.scope, &snapshot),
-        };
-        if let Err(error) = recorded {
+        if let Err(error) = AgentDispatcher::new(&self.vault).record_provider_lease_tokens(
+            &self.scope,
+            &snapshot,
+            lease,
+        ) {
             tracing::warn!(
                 kind = ?error.kind(),
                 scope = self.scope.as_str(),
@@ -38,7 +39,7 @@ impl RunReceiptSink for ScopedProviderTokens {
         let lease = ProviderLeaseTokenObservation::from_receipt(&receipt);
         self.inner.record(receipt);
         if let Some(lease) = lease {
-            self.capture(Some(&lease));
+            self.capture(&lease);
         }
     }
 
@@ -65,7 +66,37 @@ impl ModelRuntime {
             guard: meter.clone(),
             inner: Arc::clone(&self.receipts),
         });
-        receipts.capture(None);
-        super::raw::funded_run(run, meter, self.host.clone(), receipts, payer)
+        let run = super::raw::funded_run(run, meter, self.host.clone(), receipts.clone(), payer);
+        record_model_stage(&receipts.vault, &receipts.scope, &run, false);
+        run
+    }
+}
+
+/// The scoped code-mode ladder future returned. This is not a run seal or
+/// a promise that no clone can admit more work or that all requests reported.
+pub(crate) fn record_scoped_model_return(vault: &Vault, scope: &SpendScopeId, run: &RunAdmission) {
+    record_model_stage(vault, scope, run, true);
+}
+
+fn record_model_stage(
+    vault: &Vault,
+    scope: &SpendScopeId,
+    run: &RunAdmission,
+    model_future_returned: bool,
+) {
+    let snapshot = run.provider_token_snapshot();
+    let observation = ProviderRunTokenObservation {
+        instance: run.instance(),
+        entry_recorded: !model_future_returned,
+        model_future_returned,
+    };
+    if let Err(error) =
+        AgentDispatcher::new(vault).record_provider_run_tokens(scope, &snapshot, &observation)
+    {
+        tracing::warn!(
+            kind = ?error.kind(),
+            scope = scope.as_str(),
+            "a scoped model call's source stage was not recorded"
+        );
     }
 }

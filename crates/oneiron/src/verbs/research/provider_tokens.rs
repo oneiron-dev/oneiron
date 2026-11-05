@@ -30,6 +30,16 @@ pub struct ResearchProviderTokenSnapshotWire {
     /// Actual native permit identities and their recorded receipt stages.
     /// Missing permits or stages remain unknown; this is not a scope inventory.
     pub leases: Vec<ResearchProviderLeaseTokenObservationWire>,
+    /// Native scoped model-call entries and observed future returns. This
+    /// does not seal the run, enumerate all sources or finalize its scope.
+    pub run_observations: Vec<ResearchProviderRunTokenObservationWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchProviderRunTokenObservationWire {
+    pub instance: String,
+    pub entry_recorded: bool,
+    pub model_future_returned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -123,6 +133,17 @@ pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopePr
                                                         .collect(),
                                                 }
                                             }),
+                                        })
+                                        .collect(),
+                                    run_observations: capture
+                                        .run_observations
+                                        .into_iter()
+                                        .map(|run| ResearchProviderRunTokenObservationWire {
+                                            instance: crate::entity_id::bytes_to_hex_lower(
+                                                run.instance.as_bytes(),
+                                            ),
+                                            entry_recorded: run.entry_recorded,
+                                            model_future_returned: run.model_future_returned,
                                         })
                                         .collect(),
                                 }
