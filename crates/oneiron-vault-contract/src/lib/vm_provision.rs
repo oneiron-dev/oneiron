@@ -4,7 +4,8 @@
 //! On a cold boot the guest's first connection to
 //! [`VM_BOOT_PORT`](crate::vm::VM_BOOT_PORT) is this one, dialled by the
 //! root bootstrap. The host writes one [`VmProvision`] line naming the vault
-//! and its binding, then exactly [`VM_FSCRYPT_KEY_LEN`] bytes of the vault's
+//! and its binding plus the optional supervisor-pinned public checkpoint
+//! recipient, then exactly [`VM_FSCRYPT_KEY_LEN`] bytes of the vault's
 //! name-bound fscrypt v2 master key ([`VmFscryptKey`]), and half-closes. The
 //! guest installs the key, checks that the kernel's identifier for it is the
 //! binding's, lays out its encrypted storage and its UID table, and answers
@@ -26,7 +27,7 @@ use zeroize::Zeroizing;
 
 /// The provision connection's revision. A host and an image agree on it
 /// through the image's build floor, not through `CONTRACT_VERSION`.
-pub const VM_PROVISION_REVISION: u32 = 1;
+pub const VM_PROVISION_REVISION: u32 = 2;
 
 /// The fscrypt v2 master key's length, the key frame's exact size.
 pub const VM_FSCRYPT_KEY_LEN: usize = 64;
@@ -103,6 +104,12 @@ pub struct VmProvision {
     /// The vault the VM runs, as `--vault-name` takes it.
     pub vault: String,
     pub binding: VmProvisionBinding,
+    /// The supervisor-pinned public recipient for checkpoint host-order
+    /// members. Required: `null` when none was delivered. It precedes the
+    /// unchanged raw fscrypt key frame and is echoed in the reply.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub checkpoint_host_holds_recipient:
+        Option<crate::checkpoint_recipient::CheckpointHostHoldsRecipient>,
 }
 
 impl VmProvision {
@@ -179,6 +186,9 @@ pub enum VmProvisionReply {
         revision: u32,
         vault: String,
         binding: VmProvisionBinding,
+        #[serde(deserialize_with = "Option::deserialize")]
+        checkpoint_host_holds_recipient:
+            Option<crate::checkpoint_recipient::CheckpointHostHoldsRecipient>,
     },
     /// The guest refused this provisioning and starts no engine.
     Refused {
