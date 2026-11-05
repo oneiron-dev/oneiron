@@ -124,9 +124,11 @@ fn live_skill_call(
             "the skill call was refused",
             &[],
         )),
-        SelfDispatchOutcome::Failed(failed) => {
-            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]))
-        }
+        SelfDispatchOutcome::Failed(failed) => Err(MemoryError::new(
+            failed.code.as_deref().unwrap_or(MEMORY_CODE_INTERNAL),
+            failed.error,
+            &[],
+        )),
         _ => Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "the skill call did not return an answer",
