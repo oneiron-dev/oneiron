@@ -4,15 +4,15 @@
 
 use std::collections::BTreeSet;
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use super::super::storage;
 use crate::EntityId;
 use crate::authority::{AuthorityEntryHash, NativeSkillCarrier};
 use crate::claim::ClaimApprovalStatus;
-use crate::error::{Error, Result};
-use crate::skill::SkillLifecycle;
+use crate::error::{Error, Result, SecretError};
+use crate::skill::{SkillLifecycle, SkillRecord};
 
 const FORMAT: u8 = 1;
 const SIGNING_DOMAIN: &[u8] = b"oneiron.native.skill-state.v1\0";
@@ -26,6 +26,13 @@ struct State {
 }
 
 impl State {
+    fn of(record: &SkillRecord) -> Self {
+        Self {
+            lifecycle: record.lifecycle_status.as_str().to_owned(),
+            approval: record.approval_status,
+        }
+    }
+
     fn lifecycle(&self) -> Result<SkillLifecycle> {
         SkillLifecycle::parse(&self.lifecycle).ok_or_else(malformed)
     }
@@ -79,6 +86,84 @@ fn malformed() -> Error {
 }
 
 impl SkillStateFact {
+    /// Only the private native publisher calls this, with an actual post-gate
+    /// input and the document it just loaded from the same Store transaction.
+    pub(super) fn from_post_gate(
+        admitted: &crate::batch::NativeSkillPostGate<'_>,
+        txn: &heed::RoTxn<'_>,
+        document: EntityId,
+        source: &super::super::EntityDoc,
+        previous: Option<&Self>,
+    ) -> Result<Self> {
+        admitted.recheck_in_txn(txn)?;
+        let entity = admitted.entity();
+        let birth = source.birth();
+        if birth.entity != entity.to_hex() {
+            return Err(malformed());
+        }
+        let prior = State::of(admitted.snapshot().prior());
+        if let Some(previous) = previous
+            && (!previous.target_is(entity, document, birth.at)
+                || previous.operation.state != prior)
+        {
+            return Err(malformed());
+        }
+        let ordinal = previous.map_or(Ok(1), |previous| {
+            previous
+                .operation
+                .ordinal
+                .checked_add(1)
+                .ok_or(Error::InvariantViolation(
+                    "native SKILL state ordinal overflow",
+                ))
+        })?;
+        let mut fact = Self {
+            format: FORMAT,
+            operation: Operation {
+                entity: *entity.as_bytes(),
+                document: *document.as_bytes(),
+                birth_at: birth.at,
+                source_core: admitted.snapshot().source_fingerprint(),
+                source_frontier: source.frontier(),
+                event: *EntityId::now().as_bytes(),
+                recorded_at: admitted.recorded_at(),
+                ordinal,
+                previous: previous.map(Self::token).transpose()?,
+                prior,
+                state: State::of(admitted.record()),
+            },
+            attestation: None,
+        };
+        // A legal local typed operation cannot acquire a new enrollment or
+        // keystore requirement. An unavailable signer leaves no transferable
+        // attestation; corruption and other errors are still errors.
+        let signer =
+            match crate::store::install_identity::machine_signer_in_txn(admitted.vault(), txn) {
+                Ok(signer) => Some(signer),
+                Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => None,
+                Err(error) => return Err(error),
+            };
+        if let Some((machine, key)) = signer {
+            let store = &admitted.vault().store;
+            let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+                store,
+                store.privacy_posture,
+                txn,
+            )?;
+            fact.attestation = Some(Attestation {
+                carrier: Carrier {
+                    machine: *machine.as_bytes(),
+                    key: key.verifying_key().to_bytes(),
+                    heads: crate::authority::act_heads(&fold, machine),
+                },
+                signature: Vec::new(),
+            });
+            let signature = key.sign(&fact.transcript()?).to_bytes().to_vec();
+            fact.attestation.as_mut().ok_or_else(malformed)?.signature = signature;
+        }
+        Ok(fact)
+    }
+
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         let fact: Self = storage::decode(bytes)?;
         if fact.format != FORMAT

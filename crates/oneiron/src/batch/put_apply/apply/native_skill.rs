@@ -13,6 +13,7 @@ pub(crate) struct NativeSkillPostGate<'a> {
     vault: &'a Vault,
     request: &'a SkillStateWrite,
     record: SkillRecord,
+    final_body: Vec<u8>,
     actor: Option<WriteActor>,
     recorded_at: u64,
 }
@@ -43,9 +44,16 @@ impl<'a> NativeSkillPostGate<'a> {
             vault: context.vault,
             request,
             record,
+            final_body: final_body.to_vec(),
             actor: context.actor,
             recorded_at: fixed.mutation_recorded_at,
         }))
+    }
+
+    pub(crate) fn recheck_in_txn(&self, txn: &RoTxn<'_>) -> Result<()> {
+        self.request
+            .recheck_final(&self.vault.store, txn, &self.entity(), &self.final_body)?;
+        Ok(())
     }
 
     pub(crate) fn vault(&self) -> &'a Vault {
