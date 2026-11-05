@@ -327,16 +327,42 @@ pub fn record_team_receipt_sourced(
         fact_sources,
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
     };
-    vault.with_write_txn_grouped(|wtxn| {
-        if TEAM_RECEIPT.contains(&vault.store, wtxn, &receipt.team_ref)? {
-            return Err(Error::InvalidClaimBody("a team receipt is written once"));
-        }
-        TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &stored)?;
-        if let (Some(outcome), Some(skill)) = (&receipt.outcome, &receipt.pattern_skill) {
-            feed_pattern_payoff_in_txn(vault, wtxn, receipt, skill.skill, outcome)?;
-        }
-        Ok(())
-    })
+    vault.with_write_txn_grouped(|wtxn| put_team_receipt_in_txn(vault, wtxn, &stored))
+}
+
+/// Records a sourced receipt in the caller's writer, validating against that
+/// same snapshot. Sources remain unknown unless every contributing read is named.
+pub(crate) fn record_team_receipt_sourced_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &TeamReceipt,
+    fact_sources: Option<Vec<EntityId>>,
+    outcome_sources: Option<Vec<EntityId>>,
+) -> Result<()> {
+    receipt.validate()?;
+    crate::task_type::validate_type_ref_in_txn(vault, txn, receipt.project, &receipt.type_ref)?;
+    let stored = StoredTeamReceipt {
+        receipt: receipt.clone(),
+        fact_sources,
+        outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
+    };
+    put_team_receipt_in_txn(vault, txn, &stored)
+}
+
+fn put_team_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    stored: &StoredTeamReceipt,
+) -> Result<()> {
+    let receipt = &stored.receipt;
+    if TEAM_RECEIPT.contains(&vault.store, txn, &receipt.team_ref)? {
+        return Err(Error::InvalidClaimBody("a team receipt is written once"));
+    }
+    TEAM_RECEIPT.put(&vault.store, txn, &receipt.team_ref, stored)?;
+    if let (Some(outcome), Some(skill)) = (&receipt.outcome, &receipt.pattern_skill) {
+        feed_pattern_payoff_in_txn(vault, txn, receipt, skill.skill, outcome)?;
+    }
+    Ok(())
 }
 
 /// Settles a team run's anchored outcome and feeds its pattern skill's

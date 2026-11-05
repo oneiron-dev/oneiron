@@ -57,15 +57,25 @@ pub fn team_run_observations(
     members: &[AttemptId],
 ) -> Result<TeamRunObservations> {
     let txn = vault.store.env.read_txn()?;
-    let tips = newest_tries(vault, &txn, members)?;
+    team_run_observations_in_txn(vault, &txn, leader, members)
+}
+
+/// Measures a team in the caller's snapshot.
+pub(crate) fn team_run_observations_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    leader: AttemptId,
+    members: &[AttemptId],
+) -> Result<TeamRunObservations> {
+    let tips = newest_tries(vault, txn, members)?;
     let mut models = BTreeSet::new();
     for (tip, record) in &tips {
         models.extend(match record {
             Some(record) => {
-                crate::skill_attribution::run_executor_model_in_txn(vault, &txn, record)?
+                crate::skill_attribution::run_executor_model_in_txn(vault, txn, record)?
             }
             None => vault
-                .model_seat_receipt_in_txn(&txn, EntityId::from_bytes(*tip.as_bytes())?)?
+                .model_seat_receipt_in_txn(txn, EntityId::from_bytes(*tip.as_bytes())?)?
                 .map(|seat| seat.model.to_string()),
         });
     }
@@ -73,7 +83,7 @@ pub fn team_run_observations(
     let mut sealed = 0_u32;
     let mut flawed = 0_u32;
     for member in members {
-        if let Some(seal) = vault.sealed_attempt_receipt_in_txn(&txn, *member)? {
+        if let Some(seal) = vault.sealed_attempt_receipt_in_txn(txn, *member)? {
             sealed += 1;
             if seal
                 .confession
@@ -90,7 +100,7 @@ pub fn team_run_observations(
     let mut calls = Some(0_u64);
     for member in members {
         let run = EntityId::from_bytes(*member.as_bytes())?;
-        calls = match (calls, vault.get_code_run_replay_record_in_txn(&txn, &run)?) {
+        calls = match (calls, vault.get_code_run_replay_record_in_txn(txn, &run)?) {
             (Some(sum), Some(record)) => Some(
                 sum.saturating_add(u64::try_from(record.bridge_calls.len()).unwrap_or(u64::MAX)),
             ),
@@ -98,15 +108,15 @@ pub fn team_run_observations(
         };
     }
     let dispatcher = AgentDispatcher::new(vault);
-    let cap = match dispatcher.attempt_spend_scope_in_txn(&txn, leader)? {
+    let cap = match dispatcher.attempt_spend_scope_in_txn(txn, leader)? {
         Some(scope) => {
-            let read = dispatcher.spend_read_at_in_txn(&txn, &scope.scope)?;
+            let read = dispatcher.spend_read_at_in_txn(txn, &scope.scope)?;
             Some((read.unit, read.cap_units))
         }
         None => None,
     };
     let spend = match &cap {
-        Some((unit, _)) => member_spend(&dispatcher, &txn, members, unit)?,
+        Some((unit, _)) => member_spend(&dispatcher, txn, members, unit)?,
         None => None,
     };
     #[allow(clippy::cast_precision_loss)]

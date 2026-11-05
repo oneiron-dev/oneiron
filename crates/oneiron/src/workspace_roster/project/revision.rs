@@ -383,10 +383,15 @@ fn companion(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
+    source_rows: &mut Option<BTreeSet<EntityId>>,
 ) -> Result<Option<ProjectRevision>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        *source_rows = None;
         return Ok(None);
     };
+    if let Some(rows) = source_rows.as_mut() {
+        rows.insert(id);
+    }
     if raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Ok(None);
     }
@@ -403,6 +408,17 @@ pub(crate) fn held_in_txn(
     project: EntityId,
     kind: u8,
 ) -> Result<HeldRevisions> {
+    Ok(held_in_txn_with_sources(store, txn, project, kind)?.0)
+}
+
+/// The same held set, retaining the actual entity rows loaded beside it.
+pub(crate) fn held_in_txn_with_sources(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+    kind: u8,
+) -> Result<(HeldRevisions, Option<BTreeSet<EntityId>>)> {
+    let mut source_rows = Some(BTreeSet::new());
     let mut held = HeldRevisions::default();
     // A forged row is final: no fold reads it, so its body is never loaded.
     let mut forged = BTreeSet::new();
@@ -413,11 +429,14 @@ pub(crate) fn held_in_txn(
         }
         if origin == RevisionOrigin::Forged {
             forged.insert(hash);
-        } else if let Some(revision) = companion(store, txn, id)? {
+        } else if let Some(revision) = companion(store, txn, id, &mut source_rows)? {
             held.insert(hash, revision, origin);
         }
     }
     if let Some(stored) = read::stored(store, txn, project, kind)? {
+        if let Some(rows) = source_rows.as_mut() {
+            rows.insert(project);
+        }
         for (hash, revision) in revisions_of_row(project, &stored)? {
             if !held.rows.contains_key(&hash) && !forged.contains(&hash) {
                 // Unindexed (a vault from before the capture): the fold
@@ -425,8 +444,10 @@ pub(crate) fn held_in_txn(
                 held.insert(hash, revision, RevisionOrigin::AwaitingParent);
             }
         }
+    } else {
+        source_rows = None;
     }
-    Ok(held)
+    Ok((held, source_rows))
 }
 
 /// Rebuilds the exact anchor chain of a held revision, root first and the
