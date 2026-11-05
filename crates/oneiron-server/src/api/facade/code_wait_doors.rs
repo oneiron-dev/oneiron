@@ -14,7 +14,7 @@ use oneiron::memory::code_wait_doors::{
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 
 use super::FacadeApiError;
-use super::host_doors::support::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -53,7 +53,19 @@ async fn as_person<T: Send + 'static>(
     act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
     let admitted = || {
-        let person = super::shared_act_doors::person(server, auth, verb)?;
+        let person = if let Ok(owner) = owner_proof(auth, server, verb) {
+            owner
+        } else {
+            let person = super::shared_act_doors::person(server, auth, verb)?;
+            // A fallback slip stays person-tier even when its person owns the vault.
+            if let Some(slip) = auth.verified_slip() {
+                server
+                    .vault()
+                    .bind_person_credential(person, slip.clone())?
+            } else {
+                person
+            }
+        };
         let caller =
             super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok::<_, MemoryError>((person, caller))

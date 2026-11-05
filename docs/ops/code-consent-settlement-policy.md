@@ -76,6 +76,8 @@ Owner or a live frozen holder; a word is evidence, not settlement authority.
 The answering writer requires native Owner authority or the current typed
 holder policy and action power before inspecting first-answer state. The
 public status read applies the same current admission in its read snapshot.
+The server preserves the full Owner-proof fast path and binds fallback slips
+with the native person-credential binder, not only the request-liveness binder.
 An Owner's narrowed person credential does not acquire Owner authority from
 the person's identity: it needs the holder policy and power like any other
 person credential. The original opener-lineage exclusion still applies to
