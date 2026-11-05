@@ -1705,8 +1705,12 @@ provider's `timeout_secs` (120 s by default), so raise it for long clips. A
 Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
-key in `key_env` or `key_secret` (sent as `x-goog-api-key`). It serves the image and video
-seats only. An image is `models/{model}:generateContent` asked for image
+key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
+`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
+when the model declares it; a `key_secret` chat goes through the credential broker as
+a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`generationConfig.maxOutputTokens` on both paths. It also serves the image and video
+seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
 (`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
 `imageSize` (`1K` up to 1024 px a side, `2K` up to 2048, else `4K`),
