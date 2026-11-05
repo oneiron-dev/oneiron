@@ -1,13 +1,17 @@
 //! Receipt-time storage for a retained inline response's default CLAIM vector.
-//! The receive producer stays disconnected until checkpoint custody and restore
-//! carry this copy under the original response instance.
+//! The receive producer stays disconnected until canonical receipt coupling
+//! and the source-owner lifetimes are complete.
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use super::source::HomeClaimResponseSource;
 use super::{HomeClaimVector, ReceivedHomeClaimVector};
-use crate::store::ResponseFamily;
+use crate::store::{
+    BodyInstance, ManifestDbs, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
+    Store, bind_missing_response_owners_in_txn, bind_response_in_txn, pin_body_custody_in_txn,
+    response_binding_in_txn, response_carrier,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Original source facts, not a replacement binding for the current claim.
@@ -37,14 +41,48 @@ pub(crate) enum RetainedHomeClaimResponseState {
     Stored,
 }
 
+fn step_claim_carriage(store: &Store, id: &EntityId, source: &[u8]) -> Option<ResponseCarriage> {
+    if ResponseFamily::of_row(ResponseDb::Entities, id.as_bytes(), source)
+        != Some(ResponseFamily::StepClaim)
+    {
+        return None;
+    }
+    match ResponseFamily::StepClaim
+        .scan(
+            store.attempt_operations,
+            store.voice_bank_response,
+            id.as_bytes(),
+            source,
+        )
+        .carriage()
+    {
+        Some((carriage, false)) => Some(carriage),
+        _ => None,
+    }
+}
+
 impl ReceivedHomeClaimVector {
+    /// Mints outside the canonical writer. Keep the returned native instance
+    /// alive until that writer commits; an unused mint is ordinary debris.
+    /// This does not establish that the received source is the current winner.
+    pub(crate) fn prepare_response_instance(&self, vault: &Vault) -> Result<Option<BodyInstance>> {
+        if step_claim_carriage(&vault.store, &self.vector.entity_id, &self.vector.source).is_none()
+            || !super::own_peer(vault, self.peer)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(vault.store.body_mint()?.mint()?))
+    }
+
     /// Retains the original instance and obligations in the pending job's own
     /// writer, only while this exact full source is its canonical winner.
-    /// A genuinely unbound source still needs the native binding pass.
+    /// `prepared` was minted before this writer and stays leased through commit.
+    /// Without one, an unbound source keeps its native pending work unchanged.
     pub(crate) fn retain_response_in_txn(
         &self,
         vault: &Vault,
         txn: &mut RwTxn<'_>,
+        prepared: Option<&BodyInstance>,
     ) -> Result<RetainedHomeClaimResponseState> {
         let Some(facts) = self.source_facts_in_txn(vault, txn)? else {
             return Ok(RetainedHomeClaimResponseState::SourceChanged);
@@ -54,36 +92,48 @@ impl ReceivedHomeClaimVector {
         if facts.origin_kind.is_some() {
             return Ok(RetainedHomeClaimResponseState::OtherSource);
         }
+        // This port implements the native StepClaim copy's shared lifetime,
+        // not every CLAIM response family's ownership rules.
+        if step_claim_carriage(&vault.store, &self.vector.entity_id, &self.vector.source).is_none()
+        {
+            return Ok(RetainedHomeClaimResponseState::OtherSource);
+        }
         let (binding, owners) = match facts.response {
             HomeClaimResponseSource::NotResponse => {
                 return Ok(RetainedHomeClaimResponseState::OtherSource);
             }
-            HomeClaimResponseSource::Unbound { .. } => {
-                return Ok(RetainedHomeClaimResponseState::UnboundResponse);
+            HomeClaimResponseSource::Unbound { digest, owners } => {
+                let carrier =
+                    response_carrier(ResponseDb::Entities, self.vector.entity_id.as_bytes());
+                let existing = response_binding_in_txn(&vault.store, txn, &carrier)?
+                    .filter(|binding| binding.digest == digest);
+                let (binding, history) = if let Some(binding) = existing {
+                    let history = bind_missing_response_owners_in_txn(
+                        &vault.store,
+                        txn,
+                        &carrier,
+                        binding,
+                        &owners,
+                    )?;
+                    (binding, history)
+                } else {
+                    let Some(prepared) = prepared else {
+                        return Ok(RetainedHomeClaimResponseState::UnboundResponse);
+                    };
+                    pin_body_custody_in_txn(&vault.store, txn)?;
+                    let binding = ResponseBinding {
+                        instance: *prepared.instance(),
+                        digest,
+                    };
+                    let history =
+                        bind_response_in_txn(&vault.store, txn, &carrier, binding, &owners)?;
+                    (binding, history)
+                };
+                vault.store.key_custody().journal_body_history(history)?;
+                (binding, owners)
             }
             HomeClaimResponseSource::Bound { binding, owners } => (binding, owners),
         };
-        // This port implements the native StepClaim copy's shared lifetime,
-        // not every CLAIM response family's ownership rules.
-        if ResponseFamily::of_row(
-            crate::store::ResponseDb::Entities,
-            self.vector.entity_id.as_bytes(),
-            &self.vector.source,
-        ) != Some(ResponseFamily::StepClaim)
-            || !matches!(
-                ResponseFamily::StepClaim
-                    .scan(
-                        vault.store.attempt_operations,
-                        vault.store.voice_bank_response,
-                        self.vector.entity_id.as_bytes(),
-                        &self.vector.source,
-                    )
-                    .carriage(),
-                Some((_, false))
-            )
-        {
-            return Ok(RetainedHomeClaimResponseState::OtherSource);
-        }
         let response = RetainedResponseSource {
             instance: binding.instance,
             source_digest: binding.digest,
@@ -118,26 +168,10 @@ impl RetainedHomeClaimResponse {
     pub(crate) fn decode(store: &crate::store::Store, id: &EntityId, bytes: &[u8]) -> Result<Self> {
         let copy: Self = rmp_serde::from_slice(bytes)
             .map_err(|_| Error::CorruptedIndex("retained home CLAIM response"))?;
-        let family = ResponseFamily::of_row(
-            crate::store::ResponseDb::Entities,
-            id.as_bytes(),
-            &copy.vector.source,
-        );
-        if copy.vector.entity_id != *id
-            || family != Some(ResponseFamily::StepClaim)
-            || copy.response.owners.as_slice() != [*id]
-        {
+        if copy.vector.entity_id != *id || copy.response.owners.as_slice() != [*id] {
             return Err(Error::CorruptedIndex("retained home CLAIM response"));
         }
-        let Some((carriage, false)) = ResponseFamily::StepClaim
-            .scan(
-                store.attempt_operations,
-                store.voice_bank_response,
-                id.as_bytes(),
-                &copy.vector.source,
-            )
-            .carriage()
-        else {
+        let Some(carriage) = step_claim_carriage(store, id, &copy.vector.source) else {
             return Err(Error::CorruptedIndex("retained home CLAIM response"));
         };
         if blake3::hash(&copy.vector.source[carriage.keep..]).as_bytes()

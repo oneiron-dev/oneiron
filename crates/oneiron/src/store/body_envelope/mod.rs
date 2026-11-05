@@ -47,6 +47,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use oneiron_crypto::Kek;
 use zeroize::Zeroizing;
 
+pub(crate) use self::custody::BodyInstance;
 pub(crate) use self::custody::{
     BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
