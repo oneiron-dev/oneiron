@@ -126,6 +126,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
+        "vm-outbox-companion-admitted",
+        |args| args.vm_outbox_companion_admitted,
+        ArgvUse::Read,
+    ),
+    (
         "vm-restore-revision",
         |args| args.vm_restore_revision.is_some(),
         ArgvUse::Read,

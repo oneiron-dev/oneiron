@@ -163,6 +163,7 @@ impl Memory<'_> {
     pub(crate) fn code_consent_principal(&self) -> crate::code_run::CodeConsentPrincipal {
         crate::code_run::CodeConsentPrincipal {
             actor_ref: self.actor,
+            actor_class: self.actor_class as u8,
             credential: self.invocation_slip.clone().map(|witness| {
                 crate::code_run::CodeConsentSavedCredential {
                     instrument: self.credential_instrument.clone(),

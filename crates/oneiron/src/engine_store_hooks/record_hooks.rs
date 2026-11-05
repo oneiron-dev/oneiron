@@ -69,6 +69,50 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
     }
 
+    fn record_comm_send_receipt(
+        &self,
+        vault: &crate::Vault,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_send_receipt(vault, party, channel_class, occurred_at)
+    }
+
+    fn record_comm_actor_send_receipt_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        display_name: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_actor_send_receipt_in_txn(
+            vault,
+            wtxn,
+            actor,
+            display_name,
+            channel_class,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_thread_event(
+        &self,
+        vault: &crate::Vault,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_thread_event(vault, thread_ref, party, joined, occurred_at)
+    }
+
+    fn run_comm_projector_housekeeping_step(&self, vault: &crate::Vault) {
+        crate::comm::run_comm_projector_housekeeping_step(vault)
+    }
+
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)
     }
@@ -228,6 +272,33 @@ impl StoreRecordHooks for EngineRecordHooks {
         actor: EntityId,
     ) -> Result<bool> {
         crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
+    }
+
+    fn erase_skipped_send_receipt_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::comm::erase_skipped_send_receipt_in_txn(store, wtxn, id)
+    }
+
+    fn erase_trusted_contact_rows_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::counterparty_contact::erase_trusted_contact_rows_in_txn(store, wtxn, id)
+    }
+
+    fn erase_inbox_cards_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::calendar::inbox_card::erase_inbox_cards_in_txn(store, wtxn, id)
     }
 
     fn erase_room_side_rows(

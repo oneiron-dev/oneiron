@@ -13,7 +13,6 @@ use super::signature_store::SIGNATURE;
 use super::transport::{PUBLISHER_CHANNEL_CLASS, SEND_STATE, SendStateRow};
 use super::{PublisherResult, SignatureSendState};
 use crate::Vault;
-use crate::comm::record_comm_actor_send_receipt_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -92,14 +91,17 @@ pub(crate) fn record_signature_delivery_in_txn(
     if next.state == SignatureSendState::Sent
         && let Some(publisher) = publisher
     {
-        record_comm_actor_send_receipt_in_txn(
-            vault,
-            wtxn,
-            publisher.actor,
-            &publisher.identity,
-            PUBLISHER_CHANNEL_CLASS,
-            vault.store.clock.now_recorded_at(),
-        )?;
+        vault
+            .store
+            .record_hooks
+            .record_comm_actor_send_receipt_in_txn(
+                vault,
+                wtxn,
+                publisher.actor,
+                &publisher.identity,
+                PUBLISHER_CHANNEL_CLASS,
+                vault.store.clock.now_recorded_at(),
+            )?;
     }
     Ok(SEND_STATE.put(&vault.store, wtxn, &signature, &next)?)
 }

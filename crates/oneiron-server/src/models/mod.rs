@@ -42,6 +42,7 @@ mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
 mod driven;
+mod exl3_evidence;
 #[cfg(test)]
 mod fallback_tests;
 mod family;

@@ -8,7 +8,7 @@ use super::super::document_candidate_types::{
     CodePushCandidateHold, CodePushCandidateState, ReceivedRefIngress, ResolvedCandidateFile,
 };
 use super::super::tree::{OriginTreeFile, read_tree_files};
-use super::{Held, MODE_GITLINK};
+use super::Held;
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
@@ -44,8 +44,8 @@ fn tree_blob(
 /// source operation must be exactly the old and new trees' change at its
 /// path; its exact old and incoming entries, its base document, its
 /// reviewed state change (CALL M: absent and empty differ, every present
-/// state names its Git mode) and its document operation. A submodule link
-/// or bytes that are not UTF-8 hold; no rename is inferred.
+/// state names its Git mode) and its document operation. Gitlinks keep their
+/// OID bytes; non-UTF-8 bytes hold. No rename is inferred.
 pub(super) fn prepare_push_candidate_documents(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
@@ -92,13 +92,6 @@ pub(super) fn prepare_push_candidate_documents(
         let after = tree_blob(&new_entries, &new_files, path);
         if !validate_received_operation(operation, before.as_ref(), after.as_ref()) {
             return held("source_operation_mismatch");
-        }
-        if before
-            .iter()
-            .chain(after.iter())
-            .any(|blob| blob.mode == MODE_GITLINK)
-        {
-            return held("submodule_entry");
         }
         let before_bytes = old_files.get(path).map(|file| file.content.clone());
         let after_bytes = new_files.get(path).map(|file| file.content.clone());

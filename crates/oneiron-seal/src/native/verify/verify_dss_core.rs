@@ -181,7 +181,9 @@ fn material_valid(
             memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
+                let Some(issuer) =
+                    crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
+                else {
                     return Ok(false);
                 };
                 v.push(issuer);

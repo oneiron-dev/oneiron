@@ -167,7 +167,7 @@ fn fold_cell_with_snapshot_in_txn(
     digest: &[u8; 32],
     now: u64,
 ) -> Result<(Estimate, OwnTally, Vec<String>, Option<FrozenFold>)> {
-    let stored_prior =
+    let (stored_prior, _) =
         stored_prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)?;
     let conversions = conversions_in_txn(vault, txn)?;
     let prior = stored_prior.project(&conversions);
