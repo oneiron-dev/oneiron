@@ -171,8 +171,8 @@ impl Vault {
                 redacted_at: None,
             };
             self.store.append_gate_decision_in_txn(txn, &decision)?;
-            // The queue's run-id ceiling is 124 bytes. Hash the full scoped
-            // binding so a second evidence slice cannot collide or silently
+            // Hash the full scoped binding so a second evidence slice
+            // cannot collide or silently
             // reuse another attempt, without truncating any ref.
             let run_key = format!(
                 "weave:{}",

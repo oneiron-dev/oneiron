@@ -31,6 +31,8 @@
 
 mod actions;
 mod page;
+mod purpose;
+pub(crate) use purpose::purpose_questions_in_txn;
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
 

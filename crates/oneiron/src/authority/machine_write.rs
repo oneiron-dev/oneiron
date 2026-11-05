@@ -147,6 +147,24 @@ impl Vault {
         self.attach_machine_signature(&txn, id, candidate, envelope, signer)
     }
 
+    /// The registered MACHINE door in the caller's transaction. A missing
+    /// retained signer is still an error; the native Gate verifies enrollment.
+    pub(crate) fn sign_registered_machine_claim_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &mut WriteEnvelope,
+    ) -> Result<()> {
+        if envelope.actor().actor_class() != EdgeActorClass::System {
+            return Err(denied());
+        }
+        let signer = self
+            .retained_machine_signer(envelope.actor().entity_ref())?
+            .ok_or_else(denied)?;
+        self.attach_machine_signature(txn, id, candidate, envelope, signer)
+    }
+
     /// An engine writer signs its own MACHINE candidate inside the caller's
     /// transaction with the signer the host retained for the envelope's
     /// actor. Without one the envelope stays unsigned and the write door

@@ -263,37 +263,61 @@ impl OffRecordSession<'_> {
             let landed = plans
                 .iter()
                 .map(|plan| {
-                    if plan.appends() {
-                        floor
-                            .copy_append(
-                                self.vault,
-                                wtxn,
-                                &self.session_ref,
-                                plan,
-                                initiator,
-                                promoted_at,
-                            )
-                            .map(|appended| (appended.outcome, appended.held))
+                    let (outcome, held) = if plan.appends() {
+                        let appended = floor.copy_append(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            plan,
+                            initiator,
+                            promoted_at,
+                        )?;
+                        (appended.outcome, appended.held)
                     } else {
-                        floor
-                            .promote(
-                                self.vault,
-                                wtxn,
-                                &self.session_ref,
-                                plan,
-                                initiator,
-                                promoted_at,
-                            )
-                            .map(|outcome| {
-                                let held: BTreeSet<EntityId> =
-                                    outcome.replayed.iter().copied().collect();
-                                (outcome, held)
-                            })
+                        let outcome = floor.promote(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            plan,
+                            initiator,
+                            promoted_at,
+                        )?;
+                        let held: BTreeSet<EntityId> = outcome.replayed.iter().copied().collect();
+                        (outcome, held)
+                    };
+                    let mut messages = Vec::new();
+                    if state.record.room.is_some() {
+                        for op in &plan.ops {
+                            if let crate::batch::BatchOp::Put {
+                                id,
+                                entity_type: crate::registry::ENTITY_TYPE_MESSAGE,
+                                occurred,
+                                ..
+                            } = op
+                                && held.contains(id)
+                                && let crate::vault::LiveEntityRow::Live {
+                                    entity_type: crate::registry::ENTITY_TYPE_MESSAGE,
+                                    body,
+                                } = crate::vault::live_entity_row_in_txn(
+                                    &self.vault.store,
+                                    wtxn,
+                                    id,
+                                )?
+                            {
+                                let body = zeroize::Zeroizing::new(body);
+                                messages.push((
+                                    *id,
+                                    occurred.start,
+                                    *blake3::hash(&body).as_bytes(),
+                                ));
+                            }
+                        }
                     }
+                    Ok((outcome, held, messages))
                 })
                 .collect::<Result<Vec<_>>>()?;
             let mut remakes: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
-            for (plan, (outcome, held)) in plans.iter().zip(&landed) {
+            for (plan, (outcome, held, _)) in plans.iter().zip(&landed) {
                 if remake_turns.contains(&plan.turn())
                     && !outcome.replayed.is_empty()
                     && plan.ops.iter().any(|op| matches!(op,
@@ -334,33 +358,15 @@ impl OffRecordSession<'_> {
         }
         // Committed. Publish the RAM state, then drop the kept rows and
         // journal entries from the room — in that order, and never before.
-        for (plan, (_, held)) in plans.iter().zip(&landed) {
+        for (plan, (_, _, messages)) in plans.iter().zip(&landed) {
             let turn = *plan.turn().as_bytes();
             if !state.record.promoted_turns.contains(&turn) {
                 state.record.promoted_turns.push(turn);
             }
-            let messages: Vec<(EntityId, u64, &[u8])> = plan
-                .ops
-                .iter()
-                .filter_map(|op| match op {
-                    crate::batch::BatchOp::Put {
-                        id,
-                        entity_type,
-                        occurred,
-                        data,
-                        ..
-                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
-                        && held.contains(id) =>
-                    {
-                        Some((*id, occurred.start, data.as_slice()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            state.keep_messages(plan.turn(), &messages);
+            state.keep_message_digests(plan.turn(), messages.iter().copied());
         }
         self.entry.publish_state(state);
-        for (plan, (_, held)) in plans.iter().zip(&landed) {
+        for (plan, (_, held, _)) in plans.iter().zip(&landed) {
             // Best-effort for the same reason the window refresh is: the
             // subgraph and its receipt are already durable, so a failure to
             // tidy the ROOM must not tell the caller their consented promotion
@@ -379,8 +385,8 @@ impl OffRecordSession<'_> {
         let outcomes = plans
             .iter()
             .zip(landed)
-            .filter(|(plan, (outcome, _))| !plan.appends() || !outcome.replayed.is_empty())
-            .map(|(plan, (outcome, _))| (plan.turn(), outcome))
+            .filter(|(plan, (outcome, _, _))| !plan.appends() || !outcome.replayed.is_empty())
+            .map(|(plan, (outcome, _, _))| (plan.turn(), outcome))
             .collect();
         Ok((outcomes, checked))
     }

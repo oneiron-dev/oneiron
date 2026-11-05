@@ -118,11 +118,14 @@ pub enum OriginKeepRefKind {
     /// An open automatic mirror push plan (FIX 7173) holds each object it
     /// still sends until it settles.
     MirrorWork,
+    /// A stable engine Git projection (FIX 5020) holds its commit while its
+    /// ENGINE_EXPORTS row exists, so a failed publication cannot unpin it.
+    EngineExport,
 }
 
 impl OriginKeepRefKind {
     /// Every kind, in the order the shared-count law walks them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Publication,
         Self::Change,
         Self::Conflict,
@@ -130,6 +133,7 @@ impl OriginKeepRefKind {
         Self::Snapshot,
         Self::PublishRequest,
         Self::MirrorWork,
+        Self::EngineExport,
     ];
 
     /// The pinned on-disk spelling.
@@ -143,6 +147,7 @@ impl OriginKeepRefKind {
             Self::Snapshot => "snapshot",
             Self::PublishRequest => "publish_request",
             Self::MirrorWork => "mirror_work",
+            Self::EngineExport => "engine_export",
         }
     }
 

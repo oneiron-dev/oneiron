@@ -271,7 +271,13 @@ pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessa
         author: message.author.as_str(),
         message_type: message.message_type.as_str(),
         content: message.content.as_str(),
-        parts: message.parts.clone(),
+        parts: message.parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .cloned()
+                .map(crate::store::witness_message_body::StoredMessagePart::Inline)
+                .collect()
+        }),
         metadata: message.metadata.as_ref().map(json_to_rmpv),
         is_visible: message.is_visible,
         order: message.order,

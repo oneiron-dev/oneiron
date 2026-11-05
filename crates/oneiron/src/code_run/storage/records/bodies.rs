@@ -17,6 +17,13 @@ impl Vault {
         Ok(self.code_run_script_sink()?.sweeping(self.known_source()?))
     }
 
+    /// A result of the actual execution that received PERSON reveals.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        Ok(self
+            .code_run_script_sink()?
+            .sweeping_run(self.run_known_source(exec_run)?))
+    }
+
     /// [`Self::code_run_output_sink`] with no sweep, for a step's program:
     /// the stored program is the one a resumed step runs again, byte for
     /// byte.
