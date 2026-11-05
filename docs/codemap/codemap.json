@@ -57713,6 +57713,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/dependency_registration.rs",
+     "purpose": "Ownership of one current dependency-index registration",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57991,7 +58001,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 9
      }
     },
@@ -91885,7 +91895,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92447,7 +92457,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6458,
+   "source_files": 6459,
    "test_files": 895
   },
   "oneiron-android": {
