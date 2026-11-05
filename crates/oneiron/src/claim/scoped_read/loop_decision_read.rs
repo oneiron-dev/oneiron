@@ -229,7 +229,7 @@ fn answered<T>(check: Result<Option<T>>, what: &'static str) -> Option<Option<T>
     dead_code,
     reason = "L07-A's weave adapter (OF-499 A2) is its first caller"
 )]
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Every loop decision `reader` may see, admitted and refused alike, in
     /// ledger order (OF-499 A2). The reader binds in `txn` as the live weave
     /// report binds it: a person or an agent to this lane's actor, an owner

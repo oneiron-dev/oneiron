@@ -86,7 +86,7 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The same lane admitting claims of every status the record verbs serve.
     #[must_use]
     pub(crate) fn with_claim_status(mut self, status: ClaimReadStatus) -> Self {

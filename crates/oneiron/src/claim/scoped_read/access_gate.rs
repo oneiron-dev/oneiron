@@ -154,7 +154,7 @@ impl ScopedReadActorKey {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Persist grant time before the read snapshot, never inside it. Inside
     /// a room turn, or with peer reads, each peer's access grants are judged
     /// at that time too, and the snapshot may hold a member who joined after

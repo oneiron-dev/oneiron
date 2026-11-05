@@ -36,7 +36,7 @@ enum DenseChannel<'q> {
     },
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
