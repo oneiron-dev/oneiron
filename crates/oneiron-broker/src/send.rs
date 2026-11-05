@@ -120,7 +120,14 @@ impl Sender {
                             empty,
                         );
                     }
-                    push_wiped(&mut raw, &chunk);
+                    if push_wiped(&mut raw, &chunk).is_err() {
+                        return (
+                            Outcome::Failed {
+                                reason: Failure::Send,
+                            },
+                            empty,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(error) => return (failed(&error), empty),
@@ -201,7 +208,9 @@ impl Sender {
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
             };
-            push_wiped(&mut cleared, &passed);
+            if push_wiped(&mut cleared, &passed).is_err() {
+                break Some(Failure::Send);
+            }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
             while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
@@ -213,7 +222,11 @@ impl Sender {
                 break None;
             }
             if sent > 0 {
-                cleared = Zeroizing::new(cleared[sent..].to_vec());
+                let mut remainder = Zeroizing::new(Vec::new());
+                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                    break Some(Failure::Send);
+                }
+                cleared = remainder;
             }
         };
         within(deadline, write_stream_end(writer, cut)).await
@@ -515,14 +528,21 @@ pub(crate) async fn answer<W: AsyncWrite + Unpin>(
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is
 /// wiped as it drops instead of freed with reply bytes in it.
-pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
-    let needed = buffer.len() + chunk.len();
+pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) -> io::Result<()> {
+    let needed = buffer
+        .len()
+        .checked_add(chunk.len())
+        .ok_or(io::ErrorKind::OutOfMemory)?;
     if needed > buffer.capacity() {
-        let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));
+        let mut grown = Zeroizing::new(Vec::new());
+        grown
+            .try_reserve_exact(needed.max(buffer.capacity().saturating_mul(2)))
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
         grown.extend_from_slice(buffer);
         *buffer = grown;
     }
     buffer.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// The reply's headers, each value stripped. A header whose name holds the
