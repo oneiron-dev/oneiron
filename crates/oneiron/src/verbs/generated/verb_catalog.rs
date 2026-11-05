@@ -14180,7 +14180,7 @@ impl AgentVerb {
                 "The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys."
             }
             Self::VaultArtifactsAppend => {
-                "Appends one version of bytes to a blob artifact's append-only chain."
+                "Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep."
             }
             Self::VaultArtifactsRead => "Reads one version of a blob artifact's bytes.",
             Self::VaultConsolidationEnqueue => {

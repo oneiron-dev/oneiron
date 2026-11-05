@@ -1,6 +1,6 @@
 //! `vault.receipts`'s input and its page (FIX 10186): any positive limit,
-//! served at most [`VAULT_RECEIPTS_PAGE_MAX`] receipts a page, and the
-//! `after` the next page takes until the receipts end.
+//! requested on the gate ledger and at most [`VAULT_RECEIPTS_PAGE_MAX`] on
+//! the unified family, with `after` continuing a page's receipts.
 use serde::{Deserialize, Serialize};
 
 pub use crate::memory::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
