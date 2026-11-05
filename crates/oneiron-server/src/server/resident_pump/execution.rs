@@ -17,6 +17,7 @@ use super::{
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
+use oneiron::llm::seat::SeatLearningContext;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -109,6 +110,15 @@ pub(super) fn run_bound(
     // stamp its pack loads write. DOOR-111 S5: the seat is born stamped
     // with the dispatch's type, so its route reads with its own stamp.
     let type_ref = &status.input.type_ref;
+    let learning = status
+        .input
+        .project_ref
+        .zip(status.input.target.agent_definition_ref().ok())
+        .map(|(project, agent)| SeatLearningContext {
+            project,
+            agent,
+            type_ref: type_ref.clone(),
+        });
     let model_seat = if continues {
         continued_seat(
             vault,
@@ -117,6 +127,7 @@ pub(super) fn run_bound(
             type_ref,
             definition.models.clone(),
             worlds.clone(),
+            learning,
         )?
     } else {
         // The birth's worlds are the dispatch row's branch world (FIX 11918,
@@ -131,6 +142,7 @@ pub(super) fn run_bound(
             status.input.plan.as_ref(),
             definition.models.clone(),
             worlds,
+            learning,
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -435,11 +447,18 @@ fn continued_seat(
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     // The birth's worlds are the dispatch row's branch world, threaded by the
     // caller (FIX 11918, Engine 00:54); empty inherits. No federation slip here.
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        SeatTask {
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| SeatTask {
             kind: SeatKind::Attempt,
             warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
             task: config.task.clone(),
@@ -455,8 +474,9 @@ fn continued_seat(
             listed,
             worlds: Vec::new(),
             served: None,
-        }
-    })
+            learning: None,
+        },
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
