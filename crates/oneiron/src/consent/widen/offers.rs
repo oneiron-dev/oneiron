@@ -21,12 +21,9 @@ impl Vault {
     ) -> Result<bool> {
         let filer = filer.to_hex();
         let beneficiary = contact.to_hex();
-        for entry in WIDEN_PROPOSALS.iter_range(
-            &self.store,
-            txn,
-            Bound::Unbounded,
-            Bound::Unbounded,
-        )? {
+        for entry in
+            WIDEN_PROPOSALS.iter_range(&self.store, txn, Bound::Unbounded, Bound::Unbounded)?
+        {
             let (reference, row) = entry?;
             if row.proposal.proposer != filer {
                 continue;
