@@ -55,6 +55,7 @@ pub(crate) fn ensure_person_substrate(
             ENTITY_TYPE_FACET,
             occurred,
             learned_at,
+            0,
             &bytes,
         )?;
         super::put_apply::stage_entity_index_rows(
@@ -159,6 +160,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -220,6 +222,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -236,6 +239,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             }
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            crate::ports::claim_order::observe_in_txn(store, &mut txn, header.row_version)?;
             let bytes = crate::claim::upgrade_pre_scope_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let prefix = store.short_id_prefix(header.entity_type)?;
             let plan =
@@ -247,6 +251,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;
