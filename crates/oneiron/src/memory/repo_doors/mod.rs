@@ -85,6 +85,14 @@ pub struct RepoRunAnswer<T> {
     pub rows: Vec<EntityId>,
 }
 
+/// The host operation Gate's selected repo. Request-selection data only;
+/// the door admits the run again and compares this before preparing bytes.
+#[derive(Clone, Copy)]
+pub(crate) struct RepoRunSelection {
+    pub(crate) repo: EntityId,
+    pub(crate) portable_hit: bool,
+}
+
 /// What one admitted run repo act stands on, as its snapshot read it.
 pub(crate) struct RepoRunAdmitted {
     pub(crate) membership: RepoMembership,

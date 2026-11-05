@@ -43925,6 +43925,12 @@ pub struct LiveRunRequestRepoSnapshotsIngestInput {
 pub struct RepoWorkOpenInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
 }
