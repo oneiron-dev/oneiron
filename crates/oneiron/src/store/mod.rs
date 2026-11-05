@@ -216,6 +216,7 @@ pub use oneiron_store::outbound_trigger;
 pub(crate) mod output_decay;
 pub use oneiron_store::pack_hook_actor_class;
 pub mod pack_hook_proposal;
+pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
