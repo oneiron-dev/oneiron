@@ -420,6 +420,7 @@ pub(crate) fn project_cell_in_txn(
 
 /// Re-projects every registered cell, so the window keeps fading runs with no
 /// new evidence arriving. An off-hot-path sweep; returns the cells it visited.
+/// A cell whose subject is gone is passed over without stopping the sweep.
 ///
 /// # Errors
 ///
@@ -432,6 +433,18 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
     };
     for digest in &digests {
         vault.with_write_txn_grouped(|wtxn| {
+            if let Some(row) = CELL.get(&vault.store, wtxn, digest)?
+                && vault
+                    .store
+                    .port_entity_record(wtxn, &row.cell.subject)?
+                    .is_none()
+            {
+                tracing::warn!(
+                    subject = %row.cell.subject.to_hex(),
+                    "a learning cell was not reprojected: its subject is gone"
+                );
+                return Ok(());
+            }
             project_cell_in_txn(vault, wtxn, digest, now).map(|_| ())
         })?;
     }
