@@ -25422,7 +25422,7 @@
      "path": "src/deletion/tombstone_scope.rs",
      "purpose": "The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -41440,7 +41440,7 @@
      "purpose": "Optional process adapter for an explicitly configured native meeting-audio host",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 3
      }
@@ -41472,7 +41472,7 @@
      "path": "src/ingest/meeting_audio/command/unit.rs",
      "purpose": "Each physical model call of a native stage admitted on its own permit (FIX 3765): the bridge names a unit…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -67586,16 +67586,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PackMigrationMap",
-      "PackPredicateRewrite"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/predicate_rewrites.rs",
      "purpose": "Predicate rewrite classifications carried by pack-source migration maps",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -72307,7 +72303,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 158,
-      "mod": 67,
+      "mod": 68,
       "re-export": 87
      }
     },
@@ -72639,6 +72635,20 @@
       "crate-vis": 4,
       "enum": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackMigrationMap",
+      "PackPredicateRewrite"
+     ],
+     "path": "src/store/pack_predicate_rewrites.rs",
+     "purpose": "Predicate rewrite classifications carried by pack-source migration maps",
+     "surface": {
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -90591,7 +90601,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 380,
+     "files": 381,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90831,7 +90841,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6377,
+   "source_files": 6378,
    "test_files": 895
   },
   "oneiron-android": {
@@ -122832,7 +122842,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/anthropic.rs",
@@ -123094,7 +123104,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/gemini_chat.rs",
