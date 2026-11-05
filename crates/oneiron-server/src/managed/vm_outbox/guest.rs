@@ -18,7 +18,10 @@
 //!                            root:UID 0640
 //! ```
 //!
-//! Then it binds its lifecycle endpoint (`endpoint`), says `ready` on its
+//! Then it binds its lifecycle endpoint (`endpoint`). A replacement restores
+//! this boot's authenticated park state and validated backup registration
+//! before any carrier work or readiness; an initial start resets that state.
+//! It says `ready` on its
 //! standard output, and carries: it dials the host's carrier port and runs
 //! sessions for as long as it lives, waiting one rescan period after a
 //! session ends or a dial fails, and keeping its work across both. A
@@ -73,10 +76,17 @@ pub fn run_vm_outbox() -> ExitCode {
     }
 }
 
-/// What `oneiron-vm-init` passes: `--vault-name <name> --uid <uid>`.
-fn parse(mut args: impl Iterator<Item = std::ffi::OsString>) -> anyhow::Result<(String, u32)> {
-    let (mut vault, mut uid) = (None, None);
+/// What `oneiron-vm-init` passes: `--vault-name <name> --uid <uid>`, and
+/// `--resume-state` only when replacing a companion in this engine's boot.
+fn parse(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> anyhow::Result<(String, u32, bool)> {
+    let (mut vault, mut uid, mut resuming) = (None, None, false);
     while let Some(flag) = args.next() {
+        if flag == "--resume-state" {
+            resuming = true;
+            continue;
+        }
         let value = args.next().and_then(|value| value.into_string().ok());
         match flag.to_str() {
             Some("--vault-name") => vault = value,
@@ -86,14 +96,14 @@ fn parse(mut args: impl Iterator<Item = std::ffi::OsString>) -> anyhow::Result<(
     }
     match (vault, uid) {
         (Some(vault), Some(uid)) if valid_vault_name(&vault) && uid != 0 && uid != u32::MAX => {
-            Ok((vault, uid))
+            Ok((vault, uid, resuming))
         }
         _ => anyhow::bail!("no valid --vault-name or no non-root --uid"),
     }
 }
 
 fn run() -> anyhow::Result<()> {
-    let (vault, uid) = parse(std::env::args_os().skip(1))?;
+    let (vault, uid, resuming) = parse(std::env::args_os().skip(1))?;
     // Blocked before any thread starts, so only the stop watch takes them.
     let stops = block_stop_signals()?;
     let outbox = lay_out(uid)?;
@@ -101,12 +111,15 @@ fn run() -> anyhow::Result<()> {
     let gate = Arc::new(Gate::default());
     let registry = Registry::default();
     let board = Board::default();
+    let listener = endpoint::bind(uid)?;
+    let runtime = endpoint::Runtime::prepare(&vault, uid, resuming, &gate, &registry)?;
     endpoint::serve(
-        endpoint::bind(uid)?,
+        listener,
         uid,
         Arc::clone(&gate),
         Arc::clone(&registry),
         Arc::clone(&board),
+        runtime,
     )?;
     let connection: Arc<Mutex<Option<File>>> = Arc::default();
     watch_stop(stops, Arc::clone(&gate), Arc::clone(&connection))?;

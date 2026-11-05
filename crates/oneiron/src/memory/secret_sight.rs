@@ -151,6 +151,7 @@ impl Memory<'_> {
         .with_reader(self.read_key()?)
         .with_attempt(attempt)
         .with_task(task)
-        .with_step(self.host_step()))
+        .with_step(self.host_step())
+        .with_exec_run(self.bound_code_run()))
     }
 }
