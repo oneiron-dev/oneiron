@@ -51,7 +51,9 @@ pub(crate) use replica::{
     policy_closure_in, policy_conflicts_in, policy_in, publishable_in, published_closure_in,
     redacted_successor_in, thread_source_in,
 };
-pub(crate) use walk::{ReplicationScope, readable_with_read_in, withheld_from_replication_in};
+pub(crate) use walk::{
+    ReplicationScope, readable_with_read_in, withheld_by_lineage_in, withheld_from_replication_in,
+};
 
 /// One policy, by its id.
 const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =
@@ -59,6 +61,9 @@ const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =
 /// The policy each bound row was born under, by the row's id.
 const RECORDS: SideTable<EntityId, EntityId, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_RECORD);
+/// Each row this vault reads to no one meanwhile, and why.
+const HELD: SideTable<EntityId, HeldBack, Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
 /// The thread policy of one thread of a source policy, by the source policy
 /// and the BLAKE3 of the source's own thread key.
 const THREADS: SideTable<(EntityId, [u8; 32]), EntityId, Named> =
@@ -123,6 +128,65 @@ pub(crate) struct SourceAudienceEvent {
     /// Who made the change; `None` once that actor was erased.
     pub(crate) by: Option<EntityId>,
     pub(crate) at: u64,
+}
+
+/// Why a row reads to no one here meanwhile (FIX 12559 follow-up). Either
+/// way it never leaves this vault while held, and no read of it, or of a
+/// row whose words came from it, passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum HeldBack {
+    /// Its carried binding names a policy that has not arrived; it lifts
+    /// once the binding lands.
+    Pending,
+    /// The vault it came from withheld it after it travelled (its words
+    /// joined a row bound otherwise); it lifts once its carrier comes back
+    /// with no marker.
+    Withheld,
+}
+
+/// Why the row `id` reads to no one here, when it is held back.
+pub(crate) fn held_back_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<HeldBack>> {
+    HELD.get(&vault.store, txn, id)
+}
+
+/// Whether the vault holds any row back.
+pub(crate) fn any_held_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(HELD.iter_from(&vault.store, txn, &[])?.next().is_some())
+}
+
+/// Holds the row `id` back for `why`, in `txn`: a withholding stands over a
+/// pending binding. Whether that changed what is held.
+pub(crate) fn hold_back_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    why: HeldBack,
+) -> Result<bool> {
+    let held = HELD.get(&vault.store, txn, id)?;
+    if held == Some(why) || held == Some(HeldBack::Withheld) {
+        return Ok(false);
+    }
+    HELD.put(&vault.store, txn, id, &why)?;
+    Ok(true)
+}
+
+/// Lifts the hold on the row `id` when it is held for `why`, in `txn`.
+/// Whether that changed what is held.
+pub(crate) fn lift_hold_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    why: HeldBack,
+) -> Result<bool> {
+    if HELD.get(&vault.store, txn, id)? != Some(why) {
+        return Ok(false);
+    }
+    HELD.delete(&vault.store, txn, id)?;
+    Ok(true)
 }
 
 /// Whether the vault holds any policy: one that holds none binds no row.

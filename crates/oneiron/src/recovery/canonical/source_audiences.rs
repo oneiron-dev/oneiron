@@ -144,6 +144,9 @@ pub(super) fn capture(
                         families.entry(id).or_default().push((key, value, policy));
                     }
                 }
+                // A withholding marker names a row the window no longer
+                // carries; the hold it set lives in the vault, not here.
+                Carrier::Withheld { .. } => {}
             }
         }
         for (id, revisions) in families {
@@ -288,6 +291,8 @@ impl CanonicalSnapshot {
                             .push((row.key, row.value, policy));
                     }
                 }
+                // Capture keeps no marker; one in an artifact restores none.
+                Carrier::Withheld { .. } => {}
             }
         }
         for (id, current) in held {

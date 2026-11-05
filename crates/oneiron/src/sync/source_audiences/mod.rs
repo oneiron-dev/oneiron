@@ -8,7 +8,13 @@
 //!
 //! - `record/<row>`: the policy id the row is bound to;
 //! - `policy/<policy>/<revision>`: one revision of a policy, the revision
-//!   spelled in sixteen hex digits and equal to the policy's own.
+//!   spelled in sixteen hex digits and equal to the policy's own;
+//! - `withheld/<row>`: the row left the window after it travelled (its
+//!   words joined a row bound otherwise), and the machine that withheld it.
+//!   Every other holder of the row reads it to no one until its carrier
+//!   comes back with no marker ([`source_audience::HeldBack::Withheld`]); a
+//!   row whose carried binding waits for its policy is held the same way
+//!   meanwhile ([`source_audience::HeldBack::Pending`]).
 //!
 //! Each revision a window holds stays beside the others, so the highest
 //! wins however Loro orders them, and two unequal copies of one revision
@@ -33,10 +39,12 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
-    Carrier, CarrierKey, carrier, encode_binding, encode_policy, named, parse_key, policy_key,
-    record_key,
+    Carrier, CarrierKey, carrier, encode_binding, encode_policy, encode_withheld, named, parse_key,
+    policy_key, record_key, withheld_key,
 };
-use crate::source_audience::{self, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy};
+use crate::source_audience::{
+    self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
+};
 
 pub(crate) use erased::erase_carriers_in_txn;
 
@@ -165,7 +173,7 @@ impl AdmissionRows {
                 Ok(Carrier::Policy { id, policy }) => {
                     self.versions.entry((id, policy.revision)).or_insert(bytes);
                 }
-                Err(_) => {}
+                Ok(Carrier::Withheld { .. }) | Err(_) => {}
             }
         }
     }
@@ -221,6 +229,9 @@ pub(crate) fn admit_carrier(
                 }
             }
         }
+        // A marker asserts only that a row left: its holders read it to no
+        // one, which no held word contradicts.
+        Carrier::Withheld { .. } => {}
     }
     Ok(())
 }
@@ -266,13 +277,33 @@ pub(crate) fn refuse_foreign_map(doc: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-/// The row a carried key's binding rides with: `record/<row>`'s row; a
-/// policy key names no row.
+/// The row a carried key names: `record/<row>`'s and `withheld/<row>`'s
+/// row; a policy key names no row.
 pub(crate) fn record_owner(map_key: &str) -> Option<EntityId> {
     match parse_key(map_key)? {
-        CarrierKey::Record(row) => Some(row),
+        CarrierKey::Record(row) | CarrierKey::Withheld(row) => Some(row),
         CarrierKey::Policy(..) => None,
     }
+}
+
+/// Files a withholding marker for each of `rows` in `doc`'s map, naming
+/// `by`, the machine whose walk withheld them, so every other holder of a
+/// row that already travelled reads it to no one (REVIEW-5911). The caller
+/// removed the rows' carriers and commits.
+///
+/// # Errors
+///
+/// Codec and map write failures.
+pub(crate) fn mark_withheld(doc: &LoroDoc, rows: &[EntityId], by: Option<&EntityId>) -> Result<()> {
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    let value = encode_withheld(by)?;
+    for row in rows {
+        let map_key = withheld_key(row);
+        if map_get_bytes(&map, &map_key).as_deref() != Some(value.as_slice()) {
+            map_insert_bytes(&map, &map_key, &value)?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether `doc` carries a binding for `row`, materialized here or not: an
@@ -399,7 +430,7 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
         .iter()
         .filter_map(|(_, carried)| match carried {
             Carrier::Record { policy, .. } => Some(*policy),
-            Carrier::Policy { .. } => None,
+            Carrier::Policy { .. } | Carrier::Withheld { .. } => None,
         })
         .collect();
     let mut reached = bound.clone();
@@ -500,8 +531,10 @@ pub(crate) fn refresh_and_scrub(
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let mut gone = Vec::new();
+    let mut lifted = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
+        let me = crate::identity::read_machine_id_in_txn(vault, &rtxn)?;
         for (map_key, carried) in carriers(&map) {
             match carried {
                 Carrier::Record { row, .. } if !rows.contains(&row) => gone.push(map_key),
@@ -510,12 +543,31 @@ pub(crate) fn refresh_and_scrub(
                 {
                     gone.push(map_key);
                 }
-                Carrier::Record { .. } | Carrier::Policy { .. } => {}
+                // This machine's own marker lifts once the row rides again
+                // (its holders lift their hold as its carrier lands), or once
+                // the row is gone here. It names no actor: no pin.
+                Carrier::Withheld { row, by }
+                    if by == me
+                        && (rows.contains(&row)
+                            || !crate::vault::live_entity_row_in_txn(
+                                &vault.store,
+                                &rtxn,
+                                &row,
+                            )?
+                            .is_live()) =>
+                {
+                    lifted.push(map_key);
+                }
+                Carrier::Record { .. } | Carrier::Policy { .. } | Carrier::Withheld { .. } => {}
             }
         }
     }
     let mut changed = write_published(&map, &published)?;
     changed |= write_current_heads(vault, &map)?;
+    for map_key in &lifted {
+        map_delete(&map, map_key)?;
+        changed = true;
+    }
     if !gone.is_empty() {
         pin_history_free(vault, pin)?;
         for map_key in &gone {
@@ -584,8 +636,10 @@ pub(crate) fn apply_record_in_txn(
     window: &str,
     id: &EntityId,
 ) -> Result<ReplicaMerge> {
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    settle_withheld_in_txn(vault, txn, &map, id)?;
     let key = record_key(id);
-    let Some(bytes) = map_get_bytes(&doc.get_map(SOURCE_AUDIENCES_MAP), &key) else {
+    let Some(bytes) = map_get_bytes(&map, &key) else {
         return Ok(ReplicaMerge::Held);
     };
     let Ok(Carrier::Record { policy, .. }) = carrier(&key, &bytes) else {
@@ -600,7 +654,39 @@ pub(crate) fn apply_record_in_txn(
     {
         return Ok(ReplicaMerge::Conflict);
     }
-    source_audience::bind_replicated_in_txn(vault, txn, id, &policy)
+    let merge = source_audience::bind_replicated_in_txn(vault, txn, id, &policy)?;
+    if matches!(merge, ReplicaMerge::Written | ReplicaMerge::Held) {
+        source_audience::lift_hold_in_txn(vault, txn, id, HeldBack::Pending)?;
+    }
+    Ok(merge)
+}
+
+/// Holds the row `id`, whose carrier `map`'s window carries, back while
+/// another machine's marker says that machine withheld it; lifts that hold
+/// once the carrier rides with no such marker. Whether the hold changed.
+fn settle_withheld_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    map: &LoroMap,
+    id: &EntityId,
+) -> Result<bool> {
+    let map_key = withheld_key(id);
+    let marked = match map_get_bytes(map, &map_key) {
+        Some(bytes) => match carrier(&map_key, &bytes) {
+            Ok(Carrier::Withheld { by, .. }) => Some(by),
+            // A marker that does not decode holds the row: it never reads
+            // wider for a malformed word.
+            _ => Some(None),
+        },
+        None => None,
+    };
+    let me = crate::identity::read_machine_id_in_txn(vault, txn)?;
+    match marked {
+        Some(by) if by != me => {
+            source_audience::hold_back_in_txn(vault, txn, id, HeldBack::Withheld)
+        }
+        _ => source_audience::lift_hold_in_txn(vault, txn, id, HeldBack::Withheld),
+    }
 }
 
 /// The refusal a row takes whose carried binding names a policy closure
@@ -634,14 +720,22 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let heads = carried_heads(&map);
-    let records: Vec<(EntityId, EntityId)> = carriers(&map)
-        .into_iter()
+    let carried = carriers(&map);
+    let records: Vec<(EntityId, EntityId)> = carried
+        .iter()
         .filter_map(|(_, carried)| match carried {
-            Carrier::Record { row, policy } => Some((row, policy)),
-            Carrier::Policy { .. } => None,
+            Carrier::Record { row, policy } => Some((*row, *policy)),
+            Carrier::Policy { .. } | Carrier::Withheld { .. } => None,
         })
         .collect();
-    if heads.is_empty() && records.is_empty() {
+    let markers: Vec<(EntityId, Option<EntityId>)> = carried
+        .into_iter()
+        .filter_map(|(_, carried)| match carried {
+            Carrier::Withheld { row, by } => Some((row, by)),
+            Carrier::Record { .. } | Carrier::Policy { .. } => None,
+        })
+        .collect();
+    if heads.is_empty() && records.is_empty() && markers.is_empty() {
         return Ok(Vec::new());
     }
     let rows = carried_rows(doc);
@@ -669,6 +763,18 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
             }
         }
         let mut affected = Vec::new();
+        // A row another machine withheld after it travelled reads to no one
+        // here (REVIEW-5911): its holders are told, not left reading it
+        // under the binding it travelled with.
+        let me = crate::identity::read_machine_id_in_txn(vault, txn)?;
+        for (row, by) in &markers {
+            if *by != me
+                && crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+                && source_audience::hold_back_in_txn(vault, txn, row, HeldBack::Withheld)?
+            {
+                affected.push(*row);
+            }
+        }
         for (row, policy) in &records {
             if !rows.contains(row) {
                 continue;
@@ -689,14 +795,30 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 continue;
             }
             match source_audience::bind_replicated_in_txn(vault, txn, row, policy)? {
-                ReplicaMerge::Written => affected.push(*row),
-                ReplicaMerge::Held if reaches(&changed) => affected.push(*row),
+                ReplicaMerge::Written => {
+                    source_audience::lift_hold_in_txn(vault, txn, row, HeldBack::Pending)?;
+                    affected.push(*row);
+                }
+                ReplicaMerge::Held => {
+                    if source_audience::lift_hold_in_txn(vault, txn, row, HeldBack::Pending)?
+                        || reaches(&changed)
+                    {
+                        affected.push(*row);
+                    }
+                }
                 ReplicaMerge::Conflict => tracing::warn!(
                     reason = "source_audience_binding_conflict",
                     row = %row.to_hex(),
                     "a carried binding contradicts the one held; the held one stands"
                 ),
-                ReplicaMerge::Held | ReplicaMerge::Pending => {}
+                // An admitted row whose carried binding waits for its policy
+                // reads to no one until the binding lands (REVIEW-5918),
+                // never as the unbound row it is meanwhile.
+                ReplicaMerge::Pending => {
+                    if source_audience::hold_back_in_txn(vault, txn, row, HeldBack::Pending)? {
+                        affected.push(*row);
+                    }
+                }
             }
         }
         Ok(affected)
