@@ -48,6 +48,12 @@ back to raw character coordinates. A sealed or withheld head does not bypass
 its existing read error. Final reattachment still checks the native stored
 snapshot and remains an explicit act; an offer is not an attachment.
 
+A masked caller's reattachment checks both the pinned and target File span
+inside the same native write transaction before comparing raw words. Hidden
+or unmappable spans cannot expose that equality. Persisted key spans govern
+visibility even when a secret's bytes happen to equal the mask filler.
+Owner and granted native sights keep their existing behavior.
+
 ## Versions and scope
 
 The File adapter uses the existing character-diff remapping over the whole

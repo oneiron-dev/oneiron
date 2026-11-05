@@ -488,6 +488,32 @@ pub(super) fn file_text(bytes: &[u8]) -> crate::Result<Option<String>> {
     Ok(std::str::from_utf8(bytes).ok().map(str::to_owned))
 }
 
+/// The exact byte range of a non-empty whole-text character span.
+pub(super) fn file_span_byte_range(
+    raw: &str,
+    char_start: u64,
+    char_end: u64,
+) -> Option<std::ops::Range<usize>> {
+    let (start, end) = (
+        usize::try_from(char_start).ok()?,
+        usize::try_from(char_end).ok()?,
+    );
+    if start >= end {
+        return None;
+    }
+    let len = raw.chars().count();
+    if end > len {
+        return None;
+    }
+    let byte_start = raw.char_indices().nth(start).map(|(at, _)| at)?;
+    let byte_end = if end == len {
+        raw.len()
+    } else {
+        raw.char_indices().nth(end).map(|(at, _)| at)?
+    };
+    Some(byte_start..byte_end)
+}
+
 /// The quote at a raw `text/plain` char span as `sighted_bytes` renders it.
 /// Coordinates always name the raw immutable text; what a masked reader is
 /// served is the door's own masked copy restricted to the span, never raw
@@ -527,24 +553,8 @@ pub(super) fn file_quote_for_sight(
     }
     // Byte ranges stay exact where masked char counts do not: a multibyte
     // key reads as one filler byte per byte, shifting masked char offsets.
-    let (start, end) = (
-        usize::try_from(char_start).ok()?,
-        usize::try_from(char_end).ok()?,
-    );
-    if start >= end {
-        return None;
-    }
-    let len = raw.chars().count();
-    if end > len {
-        return None;
-    }
-    let byte_start = raw.char_indices().nth(start).map(|(at, _)| at)?;
-    let byte_end = if end == len {
-        raw.len()
-    } else {
-        raw.char_indices().nth(end).map(|(at, _)| at)?
-    };
-    String::from_utf8(sighted_bytes[byte_start..byte_end].to_vec()).ok()
+    let span = file_span_byte_range(raw, char_start, char_end)?;
+    String::from_utf8(sighted_bytes[span].to_vec()).ok()
 }
 
 /// The single whole-text unit of a `text/plain` version: raw `0..charcount`,
