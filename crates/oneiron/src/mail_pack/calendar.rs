@@ -60,10 +60,23 @@ pub struct MailCalendarPull {
     pub complete: bool,
 }
 
+/// One whole calendar a feed wire read (an ICS file or subscription).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MailCalendarFeed {
+    /// The complete `VCALENDAR` document.
+    pub ics: Vec<u8>,
+    /// The cursor the next read starts from (an HTTP validator).
+    pub next_cursor: Option<String>,
+}
+
 /// What a calendar wire's pull answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MailCalendarRead {
     Pull(MailCalendarPull),
+    /// The whole calendar: every UID it no longer carries is removed.
+    Feed(MailCalendarFeed),
+    /// The calendar has not changed since the cursor.
+    Unchanged,
     /// The provider no longer keeps changes from that cursor: the next pull
     /// lists the calendar again.
     Expired,
@@ -322,6 +335,23 @@ impl Vault {
         for _ in 0..pages {
             let pull = match wire.pull(source, state.cursor.as_deref())? {
                 MailCalendarRead::Pull(pull) => pull,
+                MailCalendarRead::Feed(feed) => {
+                    let at = crate::unix_seconds_now();
+                    let events = crate::calendar::ingest::apply_calendar_source_feed(
+                        self, system, &feed.ics, at,
+                    )
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                    report.landed += events as u64;
+                    state.landed += events as u64;
+                    state.cursor = feed.next_cursor;
+                    state.complete = true;
+                    self.write_calendar_sync_state(source.source_ref, state)?;
+                    break;
+                }
+                MailCalendarRead::Unchanged => {
+                    state.complete = true;
+                    break;
+                }
                 MailCalendarRead::Expired => {
                     report.anchor_expired = true;
                     state.cursor = None;

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::google_calendar::HttpGoogleCalendarWire;
+use super::ics_calendar::HttpIcsCalendarWire;
 use super::importer::{MailSyncBudget, MailSyncReport};
 use super::microsoft365::HttpGraphMailWire;
 use super::source::MailProvider;
@@ -43,14 +44,18 @@ impl Memory<'_> {
         let source = EntityId::from_hex(&input.source_ref)?;
         let vault = self.vault();
         if let Some(calendar) = vault.mail_calendar_source(source)? {
-            if !reads_google_mail(calendar.provider) {
-                return Err(MemoryError::bad_request_with(
-                    "this device reads Google calendars so far",
-                    &["Connect a Google Workspace or Google calendar; other providers follow."],
-                ));
+            if reads_google_mail(calendar.provider) {
+                let wire = HttpGoogleCalendarWire::new(vault)?;
+                return vault.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
             }
-            let wire = HttpGoogleCalendarWire::new(vault)?;
-            return vault.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
+            if calendar.provider == MailProvider::Ics {
+                let wire = HttpIcsCalendarWire::new(vault)?;
+                return vault.mail_calendar_sync_step(source, &wire, 1);
+            }
+            return Err(MemoryError::bad_request_with(
+                "this device reads Google calendars and ICS subscriptions so far",
+                &["Connect a Google or ICS calendar; Microsoft 365 and CalDAV calendars follow."],
+            ));
         }
         let snapshot = vault
             .mail_sync_source(source)?

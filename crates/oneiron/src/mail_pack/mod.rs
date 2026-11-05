@@ -31,7 +31,8 @@
 //! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
 //! ([`microsoft365`]). Calendar sources land through the calendar engine's
 //! connector admission, each EVENT bound to its source at birth
-//! ([`calendar`]), read from Google Calendar first ([`google_calendar`]).
+//! ([`calendar`]), read from Google Calendar ([`google_calendar`]) or an ICS subscription
+//! ([`ics_calendar`]).
 //! The owner runs a step on this device through [`local_sync`].
 
 mod calendar;
@@ -40,6 +41,7 @@ mod credential;
 mod doors;
 mod gmail;
 mod google_calendar;
+mod ics_calendar;
 mod importer;
 mod inbox;
 mod landing;
@@ -58,7 +60,7 @@ pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
-pub use calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire};
+pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
@@ -71,6 +73,7 @@ pub use doors::{
 };
 pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
+pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,

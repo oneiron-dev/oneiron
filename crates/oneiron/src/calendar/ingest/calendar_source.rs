@@ -6,6 +6,7 @@
 //! delete marks the source's passport absent and cancels, as a connector
 //! pull's does.
 
+use super::admission::{PollAdmission, VerdictFold};
 use crate::calendar::CalendarError;
 use crate::calendar::connectors::{RemoteCalendarChange, RemoteCalendarObject};
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
@@ -49,6 +50,44 @@ pub(crate) fn apply_calendar_source_change(
         }
     }
 }
+
+/// Lands one whole feed a pack calendar source's wire read (an ICS file or
+/// subscription), under the source's calendar `system`: archived bound to
+/// the source, admitted as an ICS feed poll admits one, then every UID the
+/// complete feed no longer carries marked absent for this source. Returns
+/// how many VEVENTs the feed carried.
+///
+/// # Errors
+///
+/// The feed does not parse completely (nothing is read as removed), the
+/// source is not an Active calendar of an installed pack, or the admission
+/// refuses.
+pub(crate) fn apply_calendar_source_feed(
+    vault: &Vault,
+    system: &str,
+    ics: &[u8],
+    now: u64,
+) -> Result<usize, CalendarError> {
+    let feed = parse_ics_feed(ics)?;
+    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?;
+    let mut admission = PollAdmission {
+        vault,
+        screener: None,
+        safeguard_enabled: false,
+        system,
+        preserve_direction: false,
+        now,
+        blob_ref: &blob_ref,
+        verdict_fold: VerdictFold::default(),
+        continuations: None,
+    };
+    admission.apply_feed(&feed)?;
+    admission.sweep_absent_sources(&feed)?;
+    Ok(feed.events.len())
+}
+
+/// The archive key of a whole feed, beside the per-UID resources.
+const FEED_ARCHIVE_KEY: &str = "#feed";
 
 fn apply_upsert(
     vault: &Vault,
