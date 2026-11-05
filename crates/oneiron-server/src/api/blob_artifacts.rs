@@ -396,10 +396,17 @@ pub(super) async fn view(
     let owner = super::owner_routes::owner(&auth, &server).ok();
     let view = blocking_read(move || {
         let vault = server.vault();
-        let reader = owner
-            .as_ref()
-            .map(|_| crate::api::scoped_read_for_core_auth(vault, &auth))
-            .transpose()?;
+        let reader = if let Some(owner) = owner.as_ref() {
+            let action = super::host_action::host_action_of(vault, &auth)
+                .transpose()
+                .map_err(super::host_action::host_action_refusal)?;
+            let key = vault
+                .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+                .map_err(|error| core_engine_error("artifact read failed", error))?;
+            Some(vault.scoped_read(key.for_destination(&auth.destination())))
+        } else {
+            None
+        };
         let view = match caveat_lane(vault, &auth)? {
             None => vault.blob_artifact_view_for_reader(&id, owner.as_ref(), reader.as_ref()),
             // A tree the lane does not admit whole reads as absent. A
@@ -553,10 +560,17 @@ async fn export(
                 return Ok(None);
             }
         }
-        let reader = owner
-            .as_ref()
-            .map(|_| crate::api::scoped_read_for_core_auth(vault, &auth))
-            .transpose()?;
+        let reader = if let Some(owner) = owner.as_ref() {
+            let action = super::host_action::host_action_of(vault, &auth)
+                .transpose()
+                .map_err(super::host_action::host_action_refusal)?;
+            let key = vault
+                .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+                .map_err(|error| core_engine_error("artifact export failed", error))?;
+            Some(vault.scoped_read(key.for_destination(&auth.destination())))
+        } else {
+            None
+        };
         let file = vault
             .export_blob_artifact_for_reader(
                 &id,

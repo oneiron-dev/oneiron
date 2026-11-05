@@ -478,9 +478,17 @@ impl Memory<'_> {
     /// its made_by and born-from. Queue-check exhaust needs the request's
     /// authenticated Owner proof; an unbound public read withholds it.
     pub fn artifacts_view(&self, input: &ArtifactRefRequest) -> MemoryResult<Option<ArtifactView>> {
-        Ok(self
+        let artifact = entity(&input.artifact_ref)?;
+        if let Some(view) = self
             .vault()
-            .blob_artifact_view_for_reader(&entity(&input.artifact_ref)?, None, None)?)
+            .blob_artifact_view_for_reader(&artifact, None, None)?
+        {
+            return Ok(Some(view));
+        }
+        match self.queue_check_request_owner() {
+            Some(owner) => self.artifacts_view_as_owner(owner, input),
+            None => Ok(None),
+        }
     }
 
     /// The family view with the actual Owner proof carried by this request.
@@ -491,7 +499,7 @@ impl Memory<'_> {
         input: &ArtifactRefRequest,
     ) -> MemoryResult<Option<ArtifactView>> {
         self.artifact_owner_matches(owner)?;
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
         Ok(self.vault().blob_artifact_view_for_reader(
             &entity(&input.artifact_ref)?,
             Some(owner),
@@ -499,7 +507,7 @@ impl Memory<'_> {
         )?)
     }
 
-    fn artifact_owner_matches(
+    pub(crate) fn artifact_owner_matches(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
     ) -> MemoryResult<()> {
@@ -520,7 +528,7 @@ impl Memory<'_> {
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
-        self.artifacts_export_with_owner(input, None)
+        self.artifacts_export_with_owner(input, self.queue_check_request_owner())
     }
 
     /// A sighted export with this request's real Owner proof. Secret sight

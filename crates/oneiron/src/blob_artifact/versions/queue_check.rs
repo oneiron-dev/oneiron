@@ -4,7 +4,8 @@
 //!
 //! Original input taint is attached at birth; the closed token settles the
 //! artifact's input placement in the same writer. MadeBy records provenance,
-//! not permission. WIP: public reads still need the current-Owner fence.
+//! not permission. Public family reads carry the current Owner proof and
+//! retain the request's actual scoped reader.
 
 use heed::RwTxn;
 

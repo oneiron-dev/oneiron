@@ -11,6 +11,13 @@ use crate::task_verb::task_create_origin_in_txn;
 use crate::typed_body::LiftedSources;
 
 impl Memory<'_> {
+    /// The request's real Owner proof for queue-check exhaust, when the host
+    /// bound the owner's own direct request (`with_owner_authorship`).
+    /// Borrowed from the existing field; never a new field or factory.
+    pub(crate) fn queue_check_request_owner(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        self.owner_authorship.as_ref()
+    }
+
     /// One artifact version's export, its bytes as this caller reads them: a
     /// file stored with keys in it reads whole for the owner, and for an
     /// agent that says `why` once a grant covers its keys (OF-560, granted
@@ -54,7 +61,8 @@ impl Memory<'_> {
             let Some(owner) = owner else {
                 return Ok(None);
             };
-            let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+            self.artifact_owner_matches(owner)?;
+            let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
             return Ok(vault.export_blob_artifact_for_reader(
                 artifact,
                 Some(pinned),
