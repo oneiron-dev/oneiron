@@ -143,6 +143,7 @@ impl CarriedVaultKey {
         let mut key = None;
         let mut opened = Vec::new();
         let mut refusal = None;
+        let mut allocation_error = None;
         let mut attempt = |stored: &StoredWrap, secret: &UnlockSecret<'_>| match open_wrap(
             vault_id,
             &self.0.commitment,
@@ -153,6 +154,13 @@ impl CarriedVaultKey {
                 opened.push(wrap_digest(stored));
                 if key.is_none() {
                     key = Some(unwrapped);
+                }
+            }
+            Err(crate::error::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::OutOfMemory =>
+            {
+                if allocation_error.is_none() {
+                    allocation_error = Some(crate::error::Error::Io(error));
                 }
             }
             Err(error) => refusal = Some(error),
@@ -243,7 +251,9 @@ impl CarriedVaultKey {
         }
         match key {
             Some(key) => Ok((key, opened)),
-            None => Err(refusal.unwrap_or_else(|| refused("the vault key has no such wrap"))),
+            None => Err(allocation_error
+                .or(refusal)
+                .unwrap_or_else(|| refused("the vault key has no such wrap"))),
         }
     }
 
