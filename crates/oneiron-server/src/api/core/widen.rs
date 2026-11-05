@@ -1,6 +1,6 @@
 //! Host-only landing or decline of a frozen widen proposal. A transport login is not a holder action.
-use super::super::json_payload;
 use crate::{
+    api::body_spool::OwnerJsonBody,
     auth::{CoreAuth, CoreScope},
     error::{ApiError, ApiErrorEnvelope, EnvelopedApiError},
     managed::ManagedWidenHolder,
@@ -8,7 +8,7 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Extension, State, rejection::JsonRejection},
+    extract::{Extension, State},
     http::request::Parts,
 };
 use oneiron::{ErrorKind, store::GateDecisionId};
@@ -175,10 +175,10 @@ pub(crate) async fn core_accept_widen(
     parts: Parts,
     State(server): State<Arc<SyncServer>>,
     managed_holder: Option<Extension<ManagedWidenHolder>>,
-    payload: Result<Json<CoreAcceptWidenRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CoreAcceptWidenRequest>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     let holder = widen_holder(&parts, &server, managed_holder).await?;
-    let req = json_payload(payload)?;
+    let req = payload.read_for_transfer(&server).await?;
     let delta = req.expected_delta.as_bytes().chunks_exact(2);
     if !delta.remainder().is_empty() {
         return Err(ApiError::bad_request("invalid expected_delta", Some("expected_delta")).into());
@@ -225,10 +225,10 @@ pub(crate) async fn core_reject_widen(
     parts: Parts,
     State(server): State<Arc<SyncServer>>,
     managed_holder: Option<Extension<ManagedWidenHolder>>,
-    payload: Result<Json<CoreRejectWidenRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CoreRejectWidenRequest>,
 ) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
     let holder = widen_holder(&parts, &server, managed_holder).await?;
-    let req = json_payload(payload)?;
+    let req = payload.read_for_transfer(&server).await?;
     let (owner, credential) = holder.owner(&server)?;
     let result = match credential {
         Some(credential) => {
