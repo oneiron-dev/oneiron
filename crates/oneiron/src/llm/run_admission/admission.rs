@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, WorkClass,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, OwnedDispatchRelease,
+    WorkClass,
 };
 use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
@@ -69,6 +70,8 @@ pub struct RunAdmission {
     submit_key: Option<String>,
     /// Host scheduling and physical-custody context for this handle (R4).
     work_context: Option<WorkContext>,
+    /// Native pre-send conditions carried only by this handle's text model gates.
+    text_dispatch_releases: Vec<OwnedDispatchRelease>,
 }
 
 pub(super) struct RunInner {
@@ -216,7 +219,23 @@ impl RunAdmission {
             initiator: None,
             submit_key: None,
             work_context: None,
+            text_dispatch_releases: Vec::new(),
         }
+    }
+
+    /// Conjoins a fixed native pre-send condition for text model calls through
+    /// this handle. It cannot replace a condition already held by a clone.
+    #[must_use]
+    pub fn within_text_dispatch_release(&self, release: OwnedDispatchRelease) -> Self {
+        let mut next = self.clone();
+        if !next
+            .text_dispatch_releases
+            .iter()
+            .any(|prior| Arc::ptr_eq(prior, &release))
+        {
+            next.text_dispatch_releases.push(release);
+        }
+        next
     }
 
     #[must_use]

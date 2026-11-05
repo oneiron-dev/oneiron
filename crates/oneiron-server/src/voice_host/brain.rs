@@ -334,7 +334,18 @@ impl ChatBrain {
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
         let run = match &self.bindings.phone {
-            Some(phone) => run.initiated_by(Some(phone.agent())),
+            Some(phone) => {
+                let phone = Arc::clone(phone);
+                let generation = request.generation;
+                run.initiated_by(Some(phone.agent()))
+                    .within_text_dispatch_release(Arc::new(move || {
+                        if phone.accepts_output(generation) {
+                            Ok(())
+                        } else {
+                            Err(oneiron::llm::FatalLlmError::InvalidRequest.into())
+                        }
+                    }))
+            }
             None => run,
         };
         let (stream, binding) = admitted
