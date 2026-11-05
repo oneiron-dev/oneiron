@@ -25,7 +25,7 @@ pub(crate) async fn self_memory_diary_query(
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> Listed<oneiron::task_verb::sdk::DiaryQueryOutcome> {
     const VERB: &str = "self.memory.diary.query";
-    let caller = match diary_reader(server, auth) {
+    let caller = match diary_reader(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -50,7 +50,7 @@ pub(crate) async fn self_memory_pads_read(
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> Listed<oneiron::task_verb::sdk::DiaryQueryOutcome> {
     const VERB: &str = "self.memory.pads.read";
-    let caller = match diary_reader(server, auth) {
+    let caller = match diary_reader(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -72,7 +72,7 @@ pub(crate) async fn self_memory_pads_admin_reads(
     input: oneiron::task_verb::sdk::AdminPadReadsRequest,
 ) -> Listed<oneiron::task_verb::sdk::AdminPadReadsView> {
     const VERB: &str = "self.memory.pads.admin_reads";
-    let caller = match diary_reader(server, auth) {
+    let caller = match diary_reader(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };

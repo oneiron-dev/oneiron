@@ -30,7 +30,7 @@ use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
 pub(crate) use self::observations::agent_verb_observations_of;
-pub(super) use self::request::self_call_request_value;
+pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
     serde_json::to_string(spec).map_err(|_| invalid_code_run_replay("context spec does not encode"))
@@ -104,6 +104,10 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("failed")),
             ("effect", Value::from(result.effect.as_str())),
             ("error", Value::from(result.error.as_str())),
+            (
+                "code",
+                result.code.as_deref().map_or(Value::Nil, Value::from),
+            ),
         ]),
         SelfDispatchOutcome::Context(result) => request_map(vec![
             ("kind", Value::from("context")),
@@ -304,6 +308,10 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             error: str_value(map_get(entries, "error")?)?.to_owned(),
+            code: match map_get(entries, "code")? {
+                Value::Nil => None,
+                value => Some(str_value(value)?.to_owned()),
+            },
         })),
         "speech" => {
             let order = u32::try_from(u64_value(map_get(entries, "order")?)?)
