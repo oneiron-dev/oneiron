@@ -6635,13 +6635,13 @@ declare const vault: Sdk.VaultHost & {
   };
   off_record: {
     claims: {
-      /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      /** A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
       upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     };
     /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
     discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
     notes: {
-      /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      /** A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
       create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     };
     /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
@@ -6651,13 +6651,13 @@ declare const vault: Sdk.VaultHost & {
       confirm_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
       decline_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+      /** A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
       export(input: Sdk.OffRecordRoomExportRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
       /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
       save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
       save_from_here(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential. */
+      /** A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential. */
       start(input: Sdk.OffRecordRoomStartRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
       /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
       status(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
