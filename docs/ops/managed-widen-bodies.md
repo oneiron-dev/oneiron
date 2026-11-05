@@ -216,6 +216,13 @@ parsed value tree drops before canonical reconstruction. The typed result and
 reconstructed value tree still allocate; this is not whole-validation heap
 admission.
 
+Contact-disclosure approve-once digests encode one immutable canonical value
+into a counting writer, then encode that same value directly into the hasher.
+The encoded payload vector is not retained. The domain, proposal reference and
+payload remain length-framed in the same order, with the same canonical bytes
+and encoding errors. The typed proposal and canonical value tree still allocate;
+this does not account for the whole disclosure path's memory.
+
 For an accept, file comparison runs outside every LMDB transaction. It compares
 exact bytes to the proposal's stored canonical delta, not just a digest.
 The acting writer then checks the current owner, holder credential, unresolved
