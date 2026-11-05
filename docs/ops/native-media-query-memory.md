@@ -91,6 +91,14 @@ clone and serialization behavior stay unchanged. The provisional writer's
 detached record clone owns different backing and is not covered by this lease;
 neither are retained config JSON, serialized row bytes or later decoded rows.
 
+The canonical provisional writer separately records those same two reference
+capacities on its deep-cloned record, using the same optional supplied line.
+Its private owner keeps the whole cloned record before that separate lease and
+moves by value into the detached write. Staging consumes the whole owner, so
+neither an unstarted write nor a write error can release the lease before the
+cloned payload. This still covers only those two strings, not the clone's
+config JSON or its other record fields. Existing queue behavior is unchanged.
+
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
 working-set bound remain open.

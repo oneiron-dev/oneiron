@@ -200,6 +200,23 @@ impl SessionStoreView<'_> {
     }
 }
 
+struct ProvisionalRetrievalRun {
+    record: RetrievalRunRecord,
+    _replay_inputs_memory: Option<crate::host_memory::MemoryLease>,
+}
+
+impl ProvisionalRetrievalRun {
+    fn stage(self, core: &StoreCore, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let staged =
+            stage_retrieval_run_with_visibility(&core.canonical_dbs(), wtxn, &self.record, false);
+        if staged.is_err() {
+            core.retrieval_writes_disabled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        staged
+    }
+}
+
 impl Store {
     /// Runtime capture opt-in, separate from the write-failure fuse below.
     pub(crate) fn retrieval_telemetry_capture_enabled(&self) -> bool {
@@ -226,24 +243,32 @@ impl Store {
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         self.admit_retrieval_run_write(record)?;
+        let mut replay_inputs_memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
         let record = record.clone();
+        if let (Some(memory), Some(inputs)) =
+            (replay_inputs_memory.as_mut(), record.replay_inputs.as_ref())
+        {
+            let bytes = [
+                inputs.query_ref.as_ref(),
+                inputs.corpus_snapshot_ref.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(0_u64, |bytes, value| {
+                bytes.saturating_add(value.capacity() as u64)
+            });
+            memory.materialized(0, bytes);
+        }
+        let record = ProvisionalRetrievalRun {
+            record,
+            _replay_inputs_memory: replay_inputs_memory,
+        };
         self.group_write_detached(DetachedWrite::of_core(
             "context-pack retrieval run, provisional",
-            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| {
-                let staged = stage_retrieval_run_with_visibility(
-                    &core.canonical_dbs(),
-                    wtxn,
-                    &record,
-                    false,
-                );
-                if staged.is_err() {
-                    core.retrieval_writes_disabled
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-                staged
-            },
+            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| record.stage(core, wtxn),
         ));
         Ok(())
     }
