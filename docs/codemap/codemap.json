@@ -95897,6 +95897,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/route_keys.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -96071,6 +96081,13 @@
      "layout": "file",
      "purpose": "Who this process is, and closing its memory to processes of its own uid"
     },
+    "route_keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "—"
+    },
     "send": {
      "files": 1,
      "impl_vault": false,
@@ -96109,7 +96126,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 5
   },
   "oneiron-browser": {
