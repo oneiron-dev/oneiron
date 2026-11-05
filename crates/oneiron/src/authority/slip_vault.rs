@@ -167,7 +167,8 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
-            && self.slip_refs_stand_in_txn(txn, claims, now)?)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
@@ -196,7 +197,10 @@ impl Vault {
         }
         // Its grant, invitation and delegation (OF-606) bound later frames (FIX 5952).
         match fold.slips.mints.get(id) {
-            Some(mint) => self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs()),
+            Some(mint) => Ok(
+                self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs())?
+                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?,
+            ),
             None => Ok(false),
         }
     }
