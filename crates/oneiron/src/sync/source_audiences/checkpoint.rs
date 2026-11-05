@@ -1,7 +1,8 @@
-//! A source audience carrier in a checkpoint (SYNC-3 §5): a binding rides
-//! with the row its key names; a policy revision names the people who read
-//! under it and is no entity of its own. Neither is split here, so each
-//! stays unclassified under the vault-wide seal, named as such.
+//! A source audience carrier in a checkpoint (SYNC-3 §5): a binding and a
+//! withholding marker ride with the row their key names; a policy revision
+//! names the people who read under it and is no entity of its own. None is
+//! split here, so each stays unclassified under the vault-wide seal, named
+//! as such.
 #![allow(
     dead_code,
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -15,6 +16,8 @@ use crate::sync::checkpoint_payload::{KeyClass, Placement, SyncUnclassified};
 const BINDING_UNSPLIT: &str = "a source audience binding is not split from its policy";
 /// A policy revision names its readers, its shares and its creator.
 const POLICY_ACTORS: &str = "a source audience policy names the people who read under it";
+/// A withholding marker names the machine that withheld its row.
+const MARKER_UNSPLIT: &str = "a source audience withholding marker names the machine that set it";
 
 /// Where the carrier under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
@@ -26,6 +29,10 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         Ok(Carrier::Policy { .. }) => {
             Placement::unclassified(None, SyncUnclassified::ActorSplit(POLICY_ACTORS))
         }
+        Ok(Carrier::Withheld { row, .. }) => Placement::unclassified(
+            Some(OwnerRef::entity(&row)),
+            SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
+        ),
         Err(_) => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
 }
