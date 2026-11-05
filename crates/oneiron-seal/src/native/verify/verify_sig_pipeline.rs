@@ -477,10 +477,11 @@ pub(super) fn verify_cades_sig(
         None
     };
     let cms_der = unpadded_cms(&e.contents);
-    let parsed = cms_der
-        .and_then(|d| cms::parse_cms(d).ok())
-        .map(|parsed| parsed.held(memory))
-        .transpose()?;
+    let parsed = match cms_der.map(|der| cms::parse_cms(der, memory)) {
+        Some(Ok(parsed)) => Some(parsed),
+        Some(Err(cms::TokenError::Memory(refusal))) => return Err(refusal),
+        Some(Err(cms::TokenError::Invalid)) | None => None,
+    };
     let env_ok = parsed.as_ref().is_some_and(|p| {
         p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
             && p.econtent.is_none()
@@ -605,7 +606,7 @@ fn verify_signer(
                 && cms::verify_signature_value(
                     a,
                     cert_der,
-                    &cms::signed_attrs_signature_input(signer),
+                    &cms::signed_attrs_signature_input(signer, memory)?,
                     &signer.signature,
                 )
                 .is_ok()
