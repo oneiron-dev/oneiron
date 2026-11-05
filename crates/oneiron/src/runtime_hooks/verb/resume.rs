@@ -210,7 +210,7 @@ impl Vault {
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
             // A result over the cap saves that it completed, not the result.
-            Ok(value) => (ask::SavedOutcome::result(&value)?, false),
+            Ok((value, hook_notice)) => (ask::SavedOutcome::result(&value, hook_notice)?, false),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.

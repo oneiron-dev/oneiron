@@ -24,8 +24,8 @@ pub fn row(
 }
 
 /// [`row`] with the content-free notice bit from the actual pre chain,
-/// captured before the post chain consumes it. `None` means this call read
-/// a drained call's saved result, which does not retain that metadata.
+/// captured before the post chain consumes it or read beside a drained
+/// call's saved result. `None` means its source supplied no notice metadata.
 /// The result itself and every hook, admission and abort stay the same.
 ///
 /// # Errors
@@ -94,7 +94,11 @@ fn row_with_saved(
     )? {
         Ok(pre) => pre,
         Err(stop) => {
-            return completed(verb, stop, session.as_ref()).map(|value| (value, None));
+            let notice = match &stop {
+                VerbHookStop::Completed { hook_notice, .. } => *hook_notice,
+                _ => None,
+            };
+            return completed(verb, stop, session.as_ref()).map(|value| (value, notice));
         }
     };
     drop(pre_restriction);

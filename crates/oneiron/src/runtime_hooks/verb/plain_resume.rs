@@ -259,7 +259,7 @@ pub(super) fn run(
     class: EdgeActorClass,
     args: Value,
     plain: PlainRowResume,
-) -> Result<MemoryResult<Value>> {
+) -> Result<MemoryResult<(Value, Option<bool>)>> {
     let refusal = {
         let txn = vault.store.env.read_txn()?;
         match &plain.authority {
@@ -297,8 +297,9 @@ pub(super) fn run(
     Ok(match room {
         Some(room) => memory
             .for_room_turn(room)
-            .and_then(|turn| turn.invoke(verb, args)),
-        None => crate::task_verb::sdk::invoke(&memory, verb, args),
+            .and_then(|turn| turn.invoke(verb, args))
+            .map(|value| (value, None)),
+        None => crate::task_verb::sdk::invoke_with_notice(&memory, verb, args),
     })
 }
 
