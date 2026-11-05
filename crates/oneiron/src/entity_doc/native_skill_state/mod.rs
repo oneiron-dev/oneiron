@@ -9,6 +9,8 @@ mod inherited;
 mod inspect;
 #[cfg(feature = "sync")]
 mod prepare;
+#[cfg(feature = "sync")]
+pub(super) use prepare::publish_in_txn;
 mod project;
 mod register;
 mod request;
