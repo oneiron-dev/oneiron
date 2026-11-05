@@ -266,6 +266,33 @@ impl DecisionProvider for RuleDecisionProvider {
             .cloned()
             .unwrap_or_else(abstained))
     }
+
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        Some(CapturedDecision {
+            result: self.decide(call).map(DecisionReadOutcome::Answered),
+            receipts: Vec::new(),
+        })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        Some(CapturedDecisionPack {
+            result: self.decide_pack(pack).map(|answers| {
+                answers
+                    .into_iter()
+                    .map(DecisionReadOutcome::Answered)
+                    .collect()
+            }),
+            receipts: Vec::new(),
+        })
+    }
 }
 
 /// Host adapter for the local head, the System One rung or the big model. Model access,
