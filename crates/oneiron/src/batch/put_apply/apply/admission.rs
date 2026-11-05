@@ -10,6 +10,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
     pub(super) learned_at: u64,
+    pub(super) row_version: Option<u64>,
     pub(super) options: crate::batch::put_apply::request::PutOptions,
     pub(super) origin: crate::batch::BaseWriteOrigin<'a>,
     pub(super) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
@@ -39,16 +40,21 @@ pub(super) struct FixedPut<'a> {
 impl FixedPut<'_> {
     /// The physical row stays immutable for a headed native state operation.
     /// All semantic gates and effects continue to receive the logical body.
-    pub(super) fn storage_body_and_times<'row>(
+    pub(super) fn storage_body_and_metadata<'row>(
         &'row self,
         data: &'row [u8],
-    ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8])> {
+    ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8], Option<u64>)> {
         #[cfg(feature = "sync")]
         if let Some(request) = self.skill_state_write {
-            let (occurred, learned_at) = request.snapshot().physical_times()?;
-            return Ok((occurred, learned_at, request.snapshot().physical_body()));
+            let (occurred, learned_at, row_version) = request.snapshot().physical_metadata()?;
+            return Ok((
+                occurred,
+                learned_at,
+                request.snapshot().physical_body(),
+                Some(row_version),
+            ));
         }
-        Ok((self.occurred, self.learned_at, data))
+        Ok((self.occurred, self.learned_at, data, self.row_version))
     }
 }
 
@@ -111,6 +117,7 @@ pub(super) fn admit_put<'a>(
                 occurred,
                 learned_at,
                 data,
+                row_version,
             },
         options,
         context:
@@ -256,6 +263,7 @@ pub(super) fn admit_put<'a>(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             options,
             origin,
             write_policy,

@@ -304,17 +304,26 @@ impl Appended {
 /// exactly as for any ordinary base write.
 pub(crate) struct PromoteReplayGrant {
     members: BTreeSet<EntityId>,
+    selected_saver: Option<crate::WriteActor>,
 }
 
 impl PromoteReplayGrant {
     fn mint(plan: &PromotePlan) -> Self {
         Self {
             members: plan.replayed.iter().copied().collect(),
+            selected_saver: None,
         }
     }
 
     fn mint_for(members: BTreeSet<EntityId>) -> Self {
-        Self { members }
+        Self {
+            members,
+            selected_saver: None,
+        }
+    }
+
+    pub(crate) const fn selected_saver(&self) -> Option<crate::WriteActor> {
+        self.selected_saver
     }
 
     /// Readable crate-wide so both membership doors can ASK a grant they were
@@ -741,6 +750,22 @@ impl FloorWrites<'_> {
             "off-record promote staged pickup markers for its source windows"
         );
         Ok(())
+    }
+}
+
+impl FloorWrites<'_> {
+    pub(in crate::off_record) fn save_scratch_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        session_ref: &str,
+        prepared: crate::off_record::lifecycle::PreparedScratchSave,
+    ) -> Result<crate::off_record::lifecycle::SavedScratch> {
+        let grant = PromoteReplayGrant {
+            members: prepared.members().clone(),
+            selected_saver: Some(prepared.saver()),
+        };
+        prepared.land(self, vault, txn, session_ref, &grant)
     }
 }
 

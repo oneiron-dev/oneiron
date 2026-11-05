@@ -256,6 +256,7 @@ pub(super) fn mint_guest_grants(
                             end: now,
                         },
                         learned_at: now,
+                        row_version: None,
                         data: encoded,
                         allow_maintenance: true,
                         allow_reserved_predicate: false,

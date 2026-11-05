@@ -635,6 +635,7 @@ impl crate::Vault {
         id: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: u64,
         staged: &StagedAssetBody,
         tier: crate::store::window_protocol::ImportTier,
         birth: Option<&crate::store::row_birth::RowBirth>,
@@ -659,13 +660,27 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch.put_replicated_asset_file(id, occurred, learned_at, &manifest, staged.facts)
+            batch.put_replicated_asset_file(
+                id,
+                occurred,
+                learned_at,
+                Some(row_version),
+                &manifest,
+                staged.facts,
+            )
         } else {
             let bytes = match &staged.body {
                 Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
                 Staged::File { .. } => std::borrow::Cow::Owned(staged.to_vec()?),
             };
-            batch.put_replicated(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
+            batch.put_replicated(
+                id,
+                ENTITY_TYPE_ASSET,
+                occurred,
+                learned_at,
+                Some(row_version),
+                &bytes,
+            )
         };
         put.apply(txn)?;
         if matches!(staged.body, Staged::File { .. }) {

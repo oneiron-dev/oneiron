@@ -355,7 +355,11 @@ pub(super) fn apply_actor_ops_collecting(
     origin: BaseWriteOrigin<'_>,
     #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
 ) -> Result<(super::base_apply::PendingNativeSkillBatch, ContentWriteSet)> {
-    if !matches!(origin, BaseWriteOrigin::Ordinary) {
+    let admitted = match origin {
+        BaseWriteOrigin::Ordinary => true,
+        BaseWriteOrigin::PromoteReplay(grant) => grant.selected_saver() == Some(*actor),
+    };
+    if !admitted {
         return Err(Error::InvariantViolation(
             "actor content cannot be replay origin",
         ));
