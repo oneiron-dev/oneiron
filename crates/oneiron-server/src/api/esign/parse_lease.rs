@@ -55,10 +55,10 @@ pub(super) fn inspected_in_memory(
     inspected(lease, deadline, pdf, stream_decode_bytes)
 }
 
-/// Anonymous geometry uses an installed inspection worker when available.
+/// Geometry uses an installed inspection worker when available.
 /// Hosts without that worker keep their existing native path; installation
 /// is not a new prerequisite for an already working geometry request.
-pub(super) fn inspected_anonymous(
+pub(super) fn inspected_with_worker(
     server: &crate::server::SyncServer,
     lease: MemoryLease,
     deadline: Instant,
@@ -93,7 +93,7 @@ pub(super) fn inspected_anonymous_in_memory(
     let bytes = u64::try_from(pdf.len()).unwrap_or(u64::MAX);
     let mut lease = memory.lease(bytes, deadline).map_err(memory_refused)?;
     lease.materialized(bytes, bytes);
-    inspected_anonymous(server, lease, deadline, pdf, stream_decode_bytes)
+    inspected_with_worker(server, lease, deadline, pdf, stream_decode_bytes)
 }
 
 /// One inspection's lease, and why it stopped growing, if it did.
