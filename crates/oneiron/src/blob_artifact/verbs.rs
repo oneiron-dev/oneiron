@@ -919,6 +919,7 @@ impl Memory<'_> {
             run_ref: &input.run_ref,
         };
         let vault = self.vault();
+        let mut deferred_error = None;
         let run = match &input.units {
             ArtifactAskUnits::SheetRows {
                 sheet,
@@ -926,18 +927,22 @@ impl Memory<'_> {
                 answer_column,
                 header_row,
                 max_count,
-            } => vault.ask_blob_artifact_sheet_rows(
-                &artifact,
-                &SheetRowsAsk {
-                    ask,
-                    sheet,
-                    rows: RangeRef::parse(rows)?,
-                    answer_col: *answer_column,
-                    header_row: *header_row,
-                    max_count_override: *max_count,
-                    only_rows: None,
-                },
-            )?,
+            } => {
+                let outcome = vault.ask_blob_artifact_sheet_rows(
+                    &artifact,
+                    &SheetRowsAsk {
+                        ask,
+                        sheet,
+                        rows: RangeRef::parse(rows)?,
+                        answer_col: *answer_column,
+                        header_row: *header_row,
+                        max_count_override: *max_count,
+                        only_rows: None,
+                    },
+                )?;
+                deferred_error = outcome.deferred_error;
+                outcome.run
+            }
             ArtifactAskUnits::Paragraphs {
                 blocks,
                 author,
@@ -1023,6 +1028,9 @@ impl Memory<'_> {
                 (actor, at),
                 &read,
             )?;
+            if let Some(error) = deferred_error {
+                return Err(error.into());
+            }
             if let Some(refusal) = run.deferred_floor {
                 return Err(crate::office_body::machine_memory_refused(refusal).into());
             }

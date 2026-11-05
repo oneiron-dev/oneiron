@@ -3,7 +3,7 @@
 use super::{Changed, Selection};
 use crate::edit_roundtrip::{
     ArtifactAsk, ArtifactAskRun, FolderAsk, FolderItem, ParagraphAsk, SheetRowSelection,
-    SheetRowsAsk,
+    SheetRowsAsk, SheetRowsAskOutcome,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -19,7 +19,7 @@ pub(super) fn ask_selection(
     selected_rows: Option<&SheetRowSelection>,
     ask: ArtifactAsk<'_>,
     sight: crate::secret_custody::SecretSight,
-) -> Result<ArtifactAskRun> {
+) -> Result<SheetRowsAskOutcome> {
     match selection {
         Selection::SheetRows {
             sheet,
@@ -46,18 +46,20 @@ pub(super) fn ask_selection(
             blocks,
             author,
             labels,
-        } => vault.ask_blob_artifact_paragraphs(
-            &artifact,
-            &ParagraphAsk {
-                ask,
-                blocks: match only {
-                    Some(Changed::Blocks(changed)) => changed.as_slice(),
-                    _ => *blocks,
+        } => vault
+            .ask_blob_artifact_paragraphs(
+                &artifact,
+                &ParagraphAsk {
+                    ask,
+                    blocks: match only {
+                        Some(Changed::Blocks(changed)) => changed.as_slice(),
+                        _ => *blocks,
+                    },
+                    author,
+                    labels,
                 },
-                author,
-                labels,
-            },
-        ),
+            )
+            .map(Into::into),
         Selection::FolderItems {
             sheet,
             answer_col,
@@ -82,19 +84,22 @@ pub(super) fn ask_selection(
                     refused: Vec::new(),
                     read_rows: Vec::new(),
                     next_sheet_row: None,
-                });
+                }
+                .into());
             }
-            vault.ask_folder_items_into_sheet(
-                &artifact,
-                &FolderAsk {
-                    ask,
-                    items: &items,
-                    sheet,
-                    answer_col: *answer_col,
-                    max_count_override: *max_count,
-                    sight,
-                },
-            )
+            vault
+                .ask_folder_items_into_sheet(
+                    &artifact,
+                    &FolderAsk {
+                        ask,
+                        items: &items,
+                        sheet,
+                        answer_col: *answer_col,
+                        max_count_override: *max_count,
+                        sight,
+                    },
+                )
+                .map(Into::into)
         }
     }
 }

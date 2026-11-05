@@ -12,8 +12,8 @@ use super::super::ask_history::{
 use super::super::store::owned_head;
 use super::unit_receipts::artifact_unit_receipts;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
-use crate::edit_roundtrip::ArtifactAskRun;
 use crate::edit_roundtrip::SheetRowSelection;
+use crate::edit_roundtrip::SheetRowsAskOutcome;
 use crate::edit_settle::PendingProposalView;
 use crate::{EntityId, ErrorKind, Result, Vault};
 
@@ -31,7 +31,7 @@ impl Asking<'_> {
         kind: &str,
         selection_ref: [u8; 32],
         selected_rows: Option<SheetRowSelection>,
-        ask: impl FnOnce(&str, Option<&SheetRowSelection>) -> Result<ArtifactAskRun>,
+        ask: impl FnOnce(&str, Option<&SheetRowSelection>) -> Result<SheetRowsAskOutcome>,
     ) -> Result<Option<PendingProposalView>> {
         let vault = self.vault;
         // The live bodies it reads, pinned as the ask starts (FIX 2115).
@@ -67,7 +67,9 @@ impl Asking<'_> {
                 next_sheet_row,
             }
         };
-        let committed = ask(&reference, selected_rows.as_ref()).and_then(|run| {
+        let committed = ask(&reference, selected_rows.as_ref()).and_then(|outcome| {
+            let run = outcome.run;
+            let deferred_error = outcome.deferred_error;
             let remaining_sheet_rows = match run.next_sheet_row {
                 Some(next) => {
                     let mut selected = selected_rows
@@ -84,7 +86,7 @@ impl Asking<'_> {
             };
             let deadline = run.sheet_answers.as_ref().map(|work| work.deadline);
             let deferred_floor = run.deferred_floor;
-            vault.with_write_txn_grouped(|wtxn| {
+            let committed = vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match (&run.sheet_answers, &run.proposal) {
                     (Some(work), _) => Some(vault.retain_sheet_answer_work_with_reads_in_txn(
                         wtxn,
@@ -118,13 +120,19 @@ impl Asking<'_> {
                 let principal = self.record.principal;
                 let asked = event(
                     proposal_ref,
-                    deferred_floor
-                        .map(|refusal| crate::office_body::machine_memory_refused(refusal).kind()),
+                    deferred_error.as_ref().map(crate::Error::kind).or_else(|| {
+                        deferred_floor.map(|refusal| {
+                            crate::office_body::machine_memory_refused(refusal).kind()
+                        })
+                    }),
                     artifact_unit_receipts(&run),
                     run.next_sheet_row,
                 );
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
                 Ok((proposed, deadline, deferred_floor))
+            });
+            committed.map(|(proposed, deadline, deferred_floor)| {
+                (proposed, deadline, deferred_floor, deferred_error)
             })
         });
         if let Err(error) = &committed {
@@ -142,7 +150,10 @@ impl Asking<'_> {
         }
         // A later byte-staging failure never rolls back paid answers, logs
         // a second failed ask, or resets its original traversal projection.
-        committed.and_then(|(proposed, deadline, deferred_floor)| {
+        committed.and_then(|(proposed, deadline, deferred_floor, deferred_error)| {
+            if let Some(error) = deferred_error {
+                return Err(error);
+            }
             if let Some(refusal) = deferred_floor {
                 return Err(crate::office_body::machine_memory_refused(refusal));
             }

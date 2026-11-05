@@ -29,8 +29,18 @@ do not attempt staging on that path. `SheetAnswerWork.next_sheet_row` persists
 with the pending record and appears in its summary, including after staging.
 Standing asks also commit their remaining selection and failed-kind history;
 wakes mark only the completed prefix. None of these paths repeats a paid call
-or replaces the original deadline. A floor before any paid value and unrelated
-errors keep their ordinary error path.
+or replaces the original deadline. A floor before any paid value keeps its
+ordinary error path.
+
+`Vault::ask_blob_artifact_sheet_rows` returns `SheetRowsAskOutcome`: the
+existing Clone `ArtifactAskRun` plus an owned `deferred_error`. A later
+non-timeout native row-ask error after a paid value follows the same retention
+order. The fresh, standing and wake callers retain the completed cohort and
+failing-row cursor before returning that original typed error, without staging.
+Standing and wake callers record its kind in the same successful retention
+transaction, then return the error outside the failed-commit logger. The error
+itself is neither cloned nor persisted. An error before a paid value and the
+existing timeout/deadline paths keep their ordinary behavior.
 
 ## Pending state and retry
 

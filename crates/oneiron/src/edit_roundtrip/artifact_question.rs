@@ -339,6 +339,23 @@ pub struct ArtifactAskRun {
     pub next_sheet_row: Option<u32>,
 }
 
+/// A sheet-row traversal and a later native ask failure after paid work.
+/// The caller retains the run before returning the original error.
+#[derive(Debug)]
+pub struct SheetRowsAskOutcome {
+    pub run: ArtifactAskRun,
+    pub deferred_error: Option<crate::Error>,
+}
+
+impl From<ArtifactAskRun> for SheetRowsAskOutcome {
+    fn from(run: ArtifactAskRun) -> Self {
+        Self {
+            run,
+            deferred_error: None,
+        }
+    }
+}
+
 /// The cell a decided answer writes: a yes/no as a boolean, a pick as its
 /// text, a score as its number. An abstention writes none.
 pub(crate) fn answer_cell(answer: &DecisionAnswer) -> Result<Option<CellValue>> {
