@@ -232,3 +232,12 @@ read as present empty vectors in the generated records. Native reads, owner
 and scope checks, input conversion, clients and hooks remain unchanged. This
 is selected output conversion only, not end-to-end depth, heap or runtime
 closure.
+
+
+`vault.weave.report` shares the saved digest's owned claim conversion. Every
+required claim value and optional scope across all report sections and items
+is consumed before a finite conversion can fail. The exact narrowing receipt,
+section order, scores and all non-claim item variants retain the whole record
+codec. Required null remains present; optional null scope remains absent.
+Correction replies stay on their existing finite codec. Native reads, policy,
+input conversion, typed client calls and hooks are unchanged.

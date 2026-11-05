@@ -58,6 +58,7 @@ mod shape_groups;
 mod shape_plans;
 pub(crate) use shape_groups::lift_shape_groups;
 mod skill_callables;
+mod weave_reports;
 mod wire_json;
 
 /// Lowers a foreign value into the engine type `T`.
