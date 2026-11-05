@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6441 | 895 | 145 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6445 | 895 | 145 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 52 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1549 | 182 | 48 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1550 | 182 | 48 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 158 | 4 | 0 |
@@ -142,7 +142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `dreamer_prefilter` | dir | 8 | m | yes | ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth… |
 | `dreamer_promotion` | file+dir | 10 | m | — | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
-| `dreamer_runner` | dir | 191 | L | yes | Private Dreamer runner store plus atomic admission |
+| `dreamer_runner` | dir | 192 | L | yes | Private Dreamer runner store plus atomic admission |
 | `dreamer_tournament` | dir | 6 | m | — | OF-366 tournament claim-authoring runner primitives |
 | `dreamer_wake` | dir | 69 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge_regeneration` | file | 1 | s | — | The `regenerates` link proofs over stored rows (FIX 5972) |
@@ -160,7 +160,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `federation` | dir | 68 | L | yes | Federation grant record substrate |
 | `feedback` | dir | 53 | L | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `file_secret_marks` | file | 1 | s | — | Value-free file-mask paths, read visibility, and byte-span transformations |
-| `gate` | dir | 193 | L | yes | DEC-0005 Gate policy manifest resolver |
+| `gate` | dir | 195 | L | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 13 | m | yes | OF-336 generated-UI component contract |
 | `git_wire` | dir | 40 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `graph_fs` | dir | 15 | m | — | Graph-FS read projection over the vault graph |
@@ -188,7 +188,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `linear_sync` | dir | 16 | m | yes | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 9 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
-| `llm` | dir | 167 | L | yes | Engine-facing LLM invocation seam |
+| `llm` | dir | 168 | L | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 3 | s | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `machine_destination` | file | 1 | s | — | Machine destinations and folded read-location values |
 | `maintain` | dir | 6 | m | — | — |
@@ -847,7 +847,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `logging` | file+dir | 2 | s | What the binaries write to their log sinks, and the panic hook |
 | `mac_worker_bootstrap` | dir | 4 | s | Private real-CLI entry before Tokio is constructed |
 | `machine` | file+dir | 2 | m | What this machine has: cores, memory, descriptors, free disk |
-| `managed` | dir | 98 | L | Managed serve mode: the vault engine as a supervised child process |
+| `managed` | dir | 99 | L | Managed serve mode: the vault engine as a supervised child process |
 | `managed_owner_check` | file | 1 | s | This server's check that a managed vault's attested owner is its live owner, which his queued work runs… |
 | `mcp` | dir | 26 | L | MCP connector actor registry |
 | `model_artifacts` | dir | 5 | m | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
