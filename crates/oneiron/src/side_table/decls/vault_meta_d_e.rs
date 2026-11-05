@@ -64,6 +64,11 @@ side_tables! {
     /// vault's own, with its generation and the version it replaced. Key: hash32 (the target's
     /// pins).
     DRAFTER_BINDING: VaultMeta b"drafter:binding:v1:" Named Engine;
+    /// FIX 14975: one drafter version's evaluation: the arms' identities, each case's counts,
+    /// times and output digest, the allowed ties' logits, the speed comparison, the decision
+    /// and the observation after an activation; never a token, a text or a key. Key: id16
+    /// (the evaluation). An erase of a version it names drops it.
+    DRAFTER_EVALUATION: VaultMeta b"drafter:evaluation:v1:" Named Engine;
     /// FIX 12569: one content-free drafter event: a night's retrain outcome, a qualification,
     /// an activation, a rollback, a revert, an erase or a policy change. Key: id16 (the event,
     /// time-ordered).
@@ -73,8 +78,8 @@ side_tables! {
     DRAFTER_POLICY: VaultMeta b"drafter:policy:v1" Named;
     /// FIX 12569: one drafter version and its run: target, parent, recipe, pinned policy and
     /// cutoff, dependency set, job, state, generation and sealed artifact reference, never a
-    /// key. Key: id16 (the version). Its scrub erases an actor or source from all four drafter
-    /// families (binding, event, policy, version), so the other three name none.
+    /// key. Key: id16 (the version). Its scrub erases an actor or source from the drafter
+    /// families (binding, evaluation, event, policy, version), so the others name none.
     DRAFTER_VERSION: VaultMeta b"drafter:version:v1:" Named
         => crate::drafter::erase_drafter_actor_in_txn;
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its

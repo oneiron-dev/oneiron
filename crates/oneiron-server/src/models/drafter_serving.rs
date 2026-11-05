@@ -119,6 +119,14 @@ pub(super) fn stock_draft_identity(record_sha256: &str) -> String {
     format!("{STOCK_DRAFT_IDENTITY_PREFIX}{record_sha256}")
 }
 
+/// Whether `identity` is one a launch that loads a row's stock draft names
+/// (FIX 14975: the evaluator's stock arm).
+#[cfg(unix)]
+#[must_use]
+pub(super) fn is_stock_draft_identity(identity: &str) -> bool {
+    identity.starts_with(STOCK_DRAFT_IDENTITY_PREFIX)
+}
+
 /// Checks `set` at a launch's install: an EXL3 worker loads it; its digest
 /// is the one its files give; every file it names is a plain name in its
 /// directory, of its length and BLAKE3; and the directory holds nothing
@@ -193,6 +201,22 @@ fn served_vaults() -> MutexGuard<'static, BTreeMap<[u8; 32], Weak<VaultDrafterHo
     vaults
 }
 
+/// How many vaults this process serves drafters for (FIX 14975).
+#[cfg(unix)]
+pub(super) fn served_vault_count() -> usize {
+    served_vaults().len()
+}
+
+/// The runtime vault `vault`'s drafter host runs on, when one is attached
+/// here (FIX 14975: the evaluator's tasks run on it).
+#[cfg(unix)]
+pub(super) fn vault_runtime(vault: &[u8; 32]) -> Option<Handle> {
+    served_vaults()
+        .get(vault)
+        .and_then(Weak::upgrade)
+        .map(|host| host.runtime.clone())
+}
+
 /// One vault's drafter serving host.
 struct VaultDrafterHost {
     vault: Weak<Vault>,
@@ -233,6 +257,9 @@ impl DrafterServingRuntime for VaultDrafterHost {
         {
             let _entered = self.runtime.enter();
             worker_host::clear_vault_drafts(Some(&self.id));
+            // FIX 14975: no evaluator incarnation keeps a private head either.
+            #[cfg(unix)]
+            worker_host::retire_vault_evaluators(&self.id);
         }
         if let Some(vault) = self.vault.upgrade() {
             vault.remove_drafter_plaintext(&BTreeSet::new());
@@ -278,7 +305,7 @@ impl DrafterServingRuntime for VaultDrafterHost {
 }
 
 /// Runs `work` on the vault off the runtime.
-async fn blocking<T, F>(vault: &Arc<Vault>, work: F) -> oneiron::Result<T>
+pub(super) async fn blocking<T, F>(vault: &Arc<Vault>, work: F) -> oneiron::Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&Vault) -> oneiron::Result<T> + Send + 'static,

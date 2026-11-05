@@ -280,6 +280,9 @@ impl Vault {
         if let Some(runtime) = self.drafter_serving_runtime() {
             runtime.vault_locking();
         }
+        // FIX 14975: an evaluation's plaintext goes too; the host retired its
+        // evaluator workers in `vault_locking`.
+        self.remove_drafter_evaluation_plaintext();
     }
 
     /// What each bound target's worker serves now: the attached host's view,

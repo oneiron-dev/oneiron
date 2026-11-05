@@ -40,6 +40,11 @@ const DRAFTER_ARTIFACT_DIR: &str = "drafter-artifacts";
 /// drafter's plaintext load set in (FIX 14976).
 const DRAFTER_SERVING_DIR: &str = "drafter-serving";
 
+/// The directory under the vault root that an evaluator materialises a
+/// drafter's plaintext load set in for its evaluator workers (FIX 14975),
+/// apart from the serving host's: a serving pass never removes it.
+const DRAFTER_EVALUATION_DIR: &str = "drafter-evaluation";
+
 /// The directory under the vault root that sealed drafter corpora live in
 /// (FIX 14973): one directory per version, sealed files only, never a key.
 const DRAFTER_CORPUS_DIR: &str = "drafter-corpora";
@@ -55,6 +60,16 @@ impl Store {
     /// the root it opened at: what a serving worker loads, never a key.
     pub(crate) fn drafter_serving_dir(&self) -> PathBuf {
         self.owner._registered_path.path.join(DRAFTER_SERVING_DIR)
+    }
+
+    /// This vault's drafter plaintext materialised for evaluation,
+    /// `drafter-evaluation/` under the root it opened at: what an evaluator
+    /// worker loads, never a key.
+    pub(crate) fn drafter_evaluation_dir(&self) -> PathBuf {
+        self.owner
+            ._registered_path
+            .path
+            .join(DRAFTER_EVALUATION_DIR)
     }
 
     /// This vault's sealed drafter corpus directory, `drafter-corpora/`
