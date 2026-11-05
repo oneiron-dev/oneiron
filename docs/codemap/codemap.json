@@ -29373,6 +29373,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoachEnvironmentDraft",
+      "EnvironmentGrantTarget"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_environment.rs",
+     "purpose": "Reviewable grant-environment repair data for a failure-ladder case",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29387,7 +29401,7 @@
       "crate-vis": 9,
       "enum": 1,
       "fn": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2,
       "trait": 1
      }
@@ -29788,7 +29802,26 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 4,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HarnessOf360Evaluation",
+      "HarnessOf360Metric",
+      "HarnessOf360Observation",
+      "HarnessOf360Scheduled"
+     ],
+     "path": "src/dreamer_runner/maintenance/evaluation/of360.rs",
+     "purpose": "Owner-selected native OF360 metrics over the supplied, digest-pinned inputs",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -42355,7 +42388,8 @@
      "notable": [
       "ChoiceRow",
       "ChoiceValue",
-      "SpawnChoice"
+      "SpawnChoice",
+      "SpawnChoiceSource"
      ],
      "path": "src/learning_setting_choice.rs",
      "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…",
@@ -42364,7 +42398,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 6,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -55565,7 +55599,7 @@
      "purpose": "A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds",
      "surface": {
       "crate-vis": 10,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -77371,7 +77405,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -82709,7 +82743,7 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 7,
       "struct": 2,
@@ -91679,7 +91713,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 194,
+     "files": 196,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92731,7 +92765,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6483,
+   "source_files": 6485,
    "test_files": 895
   },
   "oneiron-android": {
@@ -116736,7 +116770,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/harness_evaluation_routes.rs",
-     "purpose": "Owner-supplied scores for the native Dreamer tuning harness",
+     "purpose": "Owner observations and explicitly selected native OF360 harness metrics",
      "surface": {
       "crate-vis": 1
      }
