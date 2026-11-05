@@ -295,9 +295,7 @@ impl Vault {
             _ => None,
         };
         txn.commit()?;
-        if !receipt.revoked_slips.is_empty() {
-            self.store.notify_credential_revocations();
-        }
+        self.store.notify_credential_revocations();
         Ok(SharedActExecution {
             receipt,
             delivery,
