@@ -32,6 +32,7 @@
 
 mod compliance;
 mod doors;
+mod gmail;
 mod importer;
 mod inbox;
 mod landing;
@@ -53,6 +54,7 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub use gmail::{HttpGmailMailWire, MailSourceSyncRequest};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
