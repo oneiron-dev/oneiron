@@ -304,7 +304,7 @@ fn editable(doc: &LoroDoc, scope: &DocxStoryScope, block: &str) -> Result<LoroTe
 /// A story paragraph holds one line: a break would be a second paragraph.
 /// There is no byte ceiling; the body's per-block ceiling does not extend
 /// here.
-pub(super) fn story_line(text: &str) -> Result<()> {
+fn story_line(text: &str) -> Result<()> {
     if text.contains(['\n', '\r']) {
         return Err(invalid("a story paragraph's text holds no line breaks"));
     }
