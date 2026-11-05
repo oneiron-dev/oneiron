@@ -752,6 +752,7 @@ pub(super) fn put_erased_record(
         crate::side_table::Erased::of(record)?,
     )?;
     super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
+    super::late_recipient::forget_intent_party_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

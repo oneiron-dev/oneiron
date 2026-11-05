@@ -77,6 +77,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     erase_skipped_send_receipt_in_txn,
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     erase_inbox_cards_in_txn,
+    // FIX 11030: a deleted PERSON's unresolved sends, linked by its party key
+    // while its body still names it.
+    crate::outbound_intent_ledger::link_late_recipients_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
