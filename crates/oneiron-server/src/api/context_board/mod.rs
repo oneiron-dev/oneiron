@@ -584,9 +584,24 @@ pub(crate) async fn context_board_hydrate(
         rows
     });
     // The layout applies over the assembled sections; each fold its batch
-    // starts keeps the live counts it starts from (BOARD-LAYOUT).
-    let laid_out =
-        oneiron::context_board::apply_board_layout(&parts.sections, &layout.layout, cap_tok);
+    // starts keeps the live counts it starts from (BOARD-LAYOUT). An explicit
+    // TASK-row allotment wins over the TASKS share, so this render fits TASKS
+    // to no share; the stored layout keeps it.
+    let explicit_tasks_layout = req
+        .tasks_budget_tok
+        .is_some()
+        .then(|| layout.layout.share_tok("tasks", cap_tok))
+        .flatten()
+        .map(|_| {
+            let mut render = layout.layout.clone();
+            render.edit("tasks", |section| section.share_pct = None);
+            render
+        });
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &parts.sections,
+        explicit_tasks_layout.as_ref().unwrap_or(&layout.layout),
+        cap_tok,
+    );
     let layout_candidate = layout
         .candidate
         .map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));

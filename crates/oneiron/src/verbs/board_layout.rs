@@ -108,6 +108,7 @@ pub fn board_fold_reply(
                 note,
                 keep,
                 baseline: None,
+                section_baselines: std::collections::BTreeMap::new(),
             });
         });
         Ok(())
@@ -167,9 +168,13 @@ pub fn board_replace_reply(
         for (key, section) in &mut next.sections {
             let prior = layout.fold(key).cloned();
             if let Some(fold) = &mut section.fold {
-                fold.baseline = prior
-                    .filter(|prior| prior.note == fold.note && prior.keep == fold.keep)
-                    .and_then(|prior| prior.baseline);
+                let prior =
+                    prior.filter(|prior| prior.note == fold.note && prior.keep == fold.keep);
+                fold.section_baselines = prior
+                    .as_ref()
+                    .map(|prior| prior.section_baselines.clone())
+                    .unwrap_or_default();
+                fold.baseline = prior.and_then(|prior| prior.baseline);
             }
         }
         *layout = next;
