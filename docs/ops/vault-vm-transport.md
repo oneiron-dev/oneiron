@@ -77,6 +77,35 @@ credential.
   the hashes and that floor, before it stages a list, and counts a list
   applied only on an image at or after the floor.
 
+## Native image-release evidence (FIX 9140)
+
+Every cold VMM boot, including a cold restore or marker inspection, records
+`VaultVm::image_release_observation()` and a `vm_image_release_observed` log.
+It describes a boot **attempt**, not readiness, current health or admission.
+Without `ONEIRON_IMAGE_RELEASE_BINDINGS`, it records the existing absent
+manifest and unavailable signature facts without reading the kernel or rootfs.
+With a binding map configured, it streams BLAKE3 over the opened regular
+kernel and rootfs files on the blocking pool. Read or measurement failures
+remain evidence and never refuse a boot. The measured pair selects the existing
+host-owned Boot binding and the shared `ObserveOnly` release observation;
+no manifest is inferred from a path or an expected pin.
+
+`pre_boot_paths` means only the bytes measured before VMM spawn. Firecracker
+still opens the original paths later, so a match is **not** proof of immutable
+bytes actually booted. The record's time is when observation completed.
+Partial measurements retain each artifact's result; no release check is
+reported when either digest is unavailable. Existing signature-verifier and
+host-capability limits remain explicit in the shared release facts.
+
+A RAM snapshot-load attempt replaces any earlier cold-boot record with
+`snapshot_resume_unmeasured`, no release observation and
+`snapshot_qualified: false`. It neither measures the current paths nor checks
+saved RAM or a snapshot key. No standalone native snapshot is qualified yet;
+FIX 9140 remains partial for that work and the external binding producer.
+This observation adds no profile field, image-format revision, size limit,
+boot refusal, snapshot invalidation or automatic restart. The separate image
+floor and supervisor checks above still apply unchanged.
+
 ## Start checks and the outbox carrier
 
 - The vault disk (FIX 6632): before each cold boot's VMM starts, the host
