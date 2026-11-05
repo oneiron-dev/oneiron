@@ -412,6 +412,49 @@ pub(super) fn reconcile_connector_task(
     Ok(terminal)
 }
 
+/// Settles a TASK whose interrupt's ambient alternative stopped with its
+/// delivery unknown (FIX 11029): the interrupt may not go after a send that
+/// may have gone, so the TASK is ambiguous, its receipt names the
+/// alternative, and its queue row completes, in one writer.
+pub(super) fn settle_ambiguous_alternative_task(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &super::connector_task::ConnectorSendTask,
+    mut receipt: crate::receipt::ReceiptRecord,
+    now: u64,
+) -> Result<(), Error> {
+    super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
+    receipt.outcome = "ambiguous".to_owned();
+    vault.with_write_txn_grouped(|wtxn| {
+        persist_admitted_send_receipt_in_txn(
+            vault,
+            wtxn,
+            task.task_ref,
+            receipt,
+            SendReceiptOutcome::Ambiguous,
+            true,
+            None,
+        )?;
+        project_connector_send_task_outcome_in_txn(
+            vault,
+            wtxn,
+            task.task_ref,
+            ConnectorSendTaskOutcome::Ambiguous,
+            now,
+        )?;
+        AttemptQueue::new(vault).complete_in_txn(
+            wtxn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )?;
+        Ok(())
+    })
+}
+
 /// Completes a TASK whose interrupt the delivery window degraded and whose
 /// ambient alternative went (FIX 7962): the alternative carried its send
 /// out, under its own ledger row and receipt. The interrupt's receipt keeps

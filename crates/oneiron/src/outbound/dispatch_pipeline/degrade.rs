@@ -40,12 +40,7 @@ fn ambient_alternative_request(
     parent: &OutboundDispatchRequest,
     alternative: &OutboundAmbientAlternative,
 ) -> OutboundDispatchRequest {
-    let derive = |id: &str| {
-        format!(
-            "{id}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{}",
-            alternative.surface
-        )
-    };
+    let derive = |id: &str| ambient_alternative_ref(id, &alternative.surface);
     let mut request = OutboundDispatchRequest::new(
         derive(&parent.receipt_id),
         derive(&parent.intent_ref),
@@ -64,6 +59,44 @@ fn ambient_alternative_request(
     request.delivery_window_clock = parent.delivery_window_clock;
     request.delivery_window_human_explicit_instant = parent.delivery_window_human_explicit_instant;
     request
+}
+
+/// The identity an alternative for `surface` derives from its interrupt's
+/// identity `id`: its receipt, intent and ledger refs, the same on every
+/// retry of that interrupt (FIX 11029: the executor finds the alternative's
+/// ledger row by it).
+pub(in crate::outbound) fn ambient_alternative_ref(id: &str, surface: &str) -> String {
+    format!("{id}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{surface}")
+}
+
+/// The request an interrupt's bound alternative goes as, outside a
+/// degraded dispatch: the executor's send of an alternative already
+/// admitted (FIX 11029).
+pub(in crate::outbound) fn ambient_alternative_dispatch_request(
+    parent: &OutboundDispatchRequest,
+    alternative: &OutboundAmbientAlternative,
+) -> OutboundDispatchRequest {
+    ambient_alternative_request(parent, alternative)
+}
+
+/// Names an interrupt's alternative and what came of it on the interrupt's
+/// receipt, as a degraded dispatch names it.
+pub(in crate::outbound) fn name_ambient_alternative(
+    receipt: &mut crate::receipt::ReceiptRecord,
+    parent: &OutboundDispatchRequest,
+    alternative: &OutboundAmbientAlternative,
+    outcome: &str,
+) {
+    let fields = &mut receipt.fields;
+    fields.insert(
+        ALTERNATIVE_SURFACE_FIELD.to_owned(),
+        alternative.surface.clone(),
+    );
+    fields.insert(
+        ALTERNATIVE_INTENT_REF_FIELD.to_owned(),
+        ambient_alternative_ref(&parent.intent_ref, &alternative.surface),
+    );
+    fields.insert(ALTERNATIVE_OUTCOME_FIELD.to_owned(), outcome.to_owned());
 }
 
 /// Sends a degraded interrupt's bound alternative and names it on the
