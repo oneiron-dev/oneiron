@@ -40,7 +40,6 @@ use crate::outbound_intent_ledger::{
 pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
 
 /// What the writer found for an `always ask` call.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Release {
     /// A press already proved for this row, or the setting moved off ask.
     Send,
@@ -48,6 +47,8 @@ enum Release {
     Spent,
     /// No press: the call waits for the owner.
     Ask,
+    /// The row already left Pending before this writer.
+    Current(IntentLedgerRecord),
 }
 
 /// The last snapshot before `record`'s send: `None` lets the send go on;
@@ -125,9 +126,12 @@ fn always_ask(
     };
     let digest = candidate.digest;
     let release = vault.try_with_write_txn(|wtxn| -> Result<Release, IntentLedgerError> {
-        let current = read_intent_record_in_txn(vault, wtxn, &record.id)?;
-        if current.is_none_or(|row| row.state != IntentState::Pending) {
-            return Ok(Release::Ask);
+        match read_intent_record_in_txn(vault, wtxn, &record.id)? {
+            Some(current) if current.state != IntentState::Pending => {
+                return Ok(Release::Current(current));
+            }
+            None => return Err(Error::EntityNotFound.into()),
+            Some(_) => {}
         }
         match setting_in_txn(vault, wtxn, record)? {
             SlateDisposition::AlwaysAsk => {}
@@ -158,6 +162,7 @@ fn always_ask(
         }
     })?;
     match release {
+        Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
         Release::Send => Ok(None),
         Release::Spent => {
             let subject = bytes_to_hex_lower(&record.id);
