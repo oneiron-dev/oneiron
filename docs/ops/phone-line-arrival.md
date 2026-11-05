@@ -128,7 +128,7 @@ voiceprint. Instructions and model restrictions come from the same admitted defi
 its native world scope stays on both direct and speculative readers. The budget actor
 and model caller are the actual agent; caller attribution does not change the run's
 payer. Existing configured budget, reserve, suspension and render settings are reused.
-No-room funding retains the native vault-owner default. Media uses the phone-specific door,
+No-room funding retains the native `None` payer; it is not a new agent billing account. Media uses the phone-specific door,
 not the ordinary owner/device door. This constructor is not connected to a public
 start door or a running call. Native action/model-ceiling qualification and the actual
 answering lifecycle remain open; caller attribution is not credential authority.
