@@ -100,6 +100,11 @@ pub struct MergeQueue<'a> {
 }
 
 impl<'a> MergeQueue<'a> {
+    /// The proven repository this queue opened, including a served source.
+    pub(crate) fn repository(&self) -> &GitWireRepo {
+        &self.repo
+    }
+
     /// Bind to one proven local object store. `initialize` records its initial
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {

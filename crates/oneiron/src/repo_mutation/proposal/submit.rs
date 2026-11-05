@@ -7,6 +7,7 @@
 use super::*;
 use crate::code_document::CodeOpProvenanceValidation;
 use crate::memory::repo_doors::RepoRunStamp;
+use crate::repo_mutation::git::resolve_pinned_repo_root;
 use crate::repo_mutation::snapshot::RepoPinnedBase;
 
 /// Where a proposal's pre-action base comes from.
@@ -90,7 +91,10 @@ impl Vault {
         if let Some(catalog) = review.catalog() {
             triage_critiques(catalog, &[], &[])?;
         }
-        let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
+        let repo_root = match &base {
+            ProposalBase::Pinned(_) => resolve_pinned_repo_root(&request.repo_ref)?,
+            ProposalBase::CurrentCheckout => resolve_mutable_repo_root(&request.repo_ref)?,
+        };
         let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
         self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
@@ -212,7 +216,10 @@ impl Vault {
         if let Some(catalog) = review.catalog() {
             triage_critiques(catalog, &[], &[])?;
         }
-        let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
+        let repo_root = match &base {
+            ProposalBase::Pinned(_) => resolve_pinned_repo_root(&request.repo_ref)?,
+            ProposalBase::CurrentCheckout => resolve_mutable_repo_root(&request.repo_ref)?,
+        };
         let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
         self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
