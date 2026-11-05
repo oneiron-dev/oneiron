@@ -162,6 +162,7 @@ impl BatchBuilder<'_> {
         id: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         manifest: &[u8],
         file: crate::store::AssetBodyFacts,
     ) -> Self {
@@ -171,6 +172,7 @@ impl BatchBuilder<'_> {
             crate::registry::ENTITY_TYPE_ASSET,
             occurred,
             learned_at,
+            row_version,
             manifest,
         )
     }
@@ -433,6 +435,7 @@ impl BatchBuilder<'_> {
         entity_type: u8,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         data: &[u8],
     ) -> Self {
         #[cfg(feature = "sync")]
@@ -453,6 +456,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
         ));
         self
@@ -481,6 +485,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            None,
             data,
         ));
         self
@@ -500,6 +505,7 @@ fn plain_put_op(
         entity_type,
         occurred,
         learned_at,
+        row_version: None,
         data: data.to_vec(),
         allow_maintenance: false,
         allow_reserved_predicate: false,

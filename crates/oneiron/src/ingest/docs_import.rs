@@ -176,6 +176,7 @@ fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
             end: now,
         },
         learned_at: now,
+        row_version: None,
         data: encoded(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
