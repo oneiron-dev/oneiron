@@ -141,7 +141,12 @@ impl Selection {
                 }
             }
             out.captured_rows(&bodies, |_| true);
-            for getter in [super::Getter::Note, super::Getter::TypedBody] {
+            for getter in [
+                super::Getter::Note,
+                super::Getter::TypedBody,
+                super::Getter::OfficeBody,
+                super::Getter::BlobArtifact,
+            ] {
                 out.captured_rows(&getter.capture(&vault.store, txn)?, |at| {
                     [
                         &crate::side_table::NOTE_HEAD,
@@ -149,6 +154,8 @@ impl Selection {
                         &crate::side_table::NOTE_OVERRIDE,
                         &crate::side_table::TYPED_BODY_HEAD,
                         &crate::side_table::TYPED_BODY_DOC,
+                        &crate::side_table::OFFICE_BODY_HEAD,
+                        &crate::side_table::BLOB_ARTIFACT_HEAD,
                     ]
                     .into_iter()
                     .any(|decl| at.in_table(decl))
