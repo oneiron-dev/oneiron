@@ -155,7 +155,12 @@ pub(super) fn next_eligible(state: &BudgetRowState<'_>, now: u64) -> Option<u64>
     }
     match &state.budget.window {
         EffectorBudgetWindow::Rolling { duration_s } => {
-            let mut entries = state.usage.entries.clone();
+            let mut entries: Vec<_> = state
+                .usage
+                .entries
+                .iter()
+                .map(|entry| (entry.at, entry.amount))
+                .collect();
             entries.sort_unstable();
             let mut used = state.usage.used();
             for (at, amount) in entries {

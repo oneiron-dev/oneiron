@@ -230,6 +230,7 @@ pub(crate) fn reserve_budget_in_txn(
     if debits.is_empty() && spend.is_none() {
         return Ok(());
     }
+    crate::connector_key::set_effector_debits_reserved_in_txn(&vault.store, wtxn, &debits, true)?;
     let (spend, spend_rows) = spend.map_or((None, Vec::new()), |(basis, rows)| (Some(basis), rows));
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.reservation = Some(BudgetReservation {
@@ -379,6 +380,19 @@ pub(super) fn settle_reservation_in_txn(
         }
         _ => None,
     };
+    if next == ReservationStatus::Settled {
+        let debits = reconciled
+            .as_ref()
+            .map_or(reservation.debits.as_slice(), |(debits, _)| {
+                debits.as_slice()
+            });
+        crate::connector_key::set_effector_debits_reserved_in_txn(
+            &vault.store,
+            wtxn,
+            debits,
+            false,
+        )?;
+    }
     update_settlement_in_txn(vault, wtxn, &record.id, |settlement| {
         if let Some(reservation) = settlement.reservation.as_mut() {
             reservation.status = next;
