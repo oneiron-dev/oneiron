@@ -370,8 +370,8 @@ fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
 
 /// Whether this process holds the repository behind `common_dir`, and
 /// whether a writer has asked maintenance holding it to give it up.
-#[cfg(test)]
-pub(crate) fn repository_hold_for_test(common_dir: &Path) -> (bool, bool) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn repository_hold_for_test(common_dir: &Path) -> (bool, bool) {
     let cell = repo_lock_cell(common_dir.as_os_str().as_encoded_bytes()).expect("lock map");
     let hold = *cell.hold.lock().expect("repository hold");
     (

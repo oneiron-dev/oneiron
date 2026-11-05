@@ -25,7 +25,7 @@ impl DeleteBearingUpdate {
     /// Test-only escape hatch so queue unit tests can exercise the `d:`
     /// row machinery with synthetic bytes. NOT part of the public API and
     /// compiled out of every non-test build.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }

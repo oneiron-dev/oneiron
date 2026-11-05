@@ -40,8 +40,8 @@ pub fn refuse_occupant(path: &Path, error: std::io::Error, file_reason: &'static
     }
 }
 
-#[cfg(test)]
-pub(super) mod file_write_fault_hook {
+#[cfg(any(test, feature = "test-support"))]
+pub mod file_write_fault_hook {
     //! One-shot test-only fault injection after the T2 file opens, proving
     //! the guard is armed before a file write can fail.
 
@@ -52,18 +52,18 @@ pub(super) mod file_write_fault_hook {
     }
 
     /// Arms a one-shot file-write failure on the current thread.
-    pub(in crate::secret_lease) fn arm_file_write_failure() {
+    pub fn arm_file_write_failure() {
         FILE_WRITE_FAILURE.with(|c| c.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(super) fn take_file_write_failure() -> bool {
+    pub fn take_file_write_failure() -> bool {
         FILE_WRITE_FAILURE.with(|c| c.replace(false))
     }
 }
 
-#[cfg(all(test, unix))]
-pub(super) mod path_swap_hook {
+#[cfg(all(any(test, feature = "test-support"), unix))]
+pub mod path_swap_hook {
     //! One-shot test-only seams in a T2 file write, the windows a racing local
     //! process would use.
 
@@ -71,7 +71,7 @@ pub(super) mod path_swap_hook {
 
     /// Where in the write a seam runs.
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(in crate::secret_lease) enum Stage {
+    pub enum Stage {
         /// After the target's directory is resolved, before its file opens:
         /// an ancestor can be swapped here.
         BeforeOpen,
@@ -86,11 +86,11 @@ pub(super) mod path_swap_hook {
     }
 
     /// Runs `swap` once, at `stage` of the next T2 file write on this thread.
-    pub(in crate::secret_lease) fn arm(stage: Stage, swap: impl FnOnce() + 'static) {
+    pub fn arm(stage: Stage, swap: impl FnOnce() + 'static) {
         SWAP.with_borrow_mut(|armed| *armed = Some((stage, Box::new(swap))));
     }
 
-    pub(super) fn fire(stage: Stage) {
+    pub fn fire(stage: Stage) {
         let swap = SWAP.with_borrow_mut(|armed| match armed.take() {
             Some((at, swap)) if at == stage => Some(swap),
             other => {

@@ -265,19 +265,19 @@ pub fn parent_or_here(parent: &Path) -> &Path {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type RootEntryCallback = Box<dyn FnMut(&std::ffi::CStr)>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<RootEntryCallback>> =
+    pub static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<RootEntryCallback>> =
         std::cell::RefCell::new(None);
 }
 
 /// Runs `callback` with each entry's name as this thread removes it from the
 /// root of a held directory, until the removal ends.
-#[cfg(test)]
-pub(crate) fn arm_after_root_entry_removed(callback: impl FnMut(&std::ffi::CStr) + 'static) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn arm_after_root_entry_removed(callback: impl FnMut(&std::ffi::CStr) + 'static) {
     AFTER_ROOT_ENTRY_REMOVED.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
