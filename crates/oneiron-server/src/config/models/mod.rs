@@ -326,16 +326,18 @@ pub struct ChatSettings {
     pub turn_opener: TurnOpener,
 }
 
-/// `[models.chat] turn_opener`: what closes a chat turn whose context board
-/// rides, after its query part (ARCH-0067 §2: the log closes with a
-/// now-time turn opener the model completes; I1 = C turn order).
+/// `[models.chat] turn_opener`: what closes a chat turn's call and a queued
+/// Continue's or Retry's, after the board's query part when the board rides,
+/// else right after the newest user message (ARCH-0067 §2: the log closes
+/// with a now-time turn opener the model completes; I1 = C turn order).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOpener {
     /// The engine's now-time line, sampled once as the turn is admitted.
     #[default]
     Clock,
-    /// None: the turn ends at its board's query part.
+    /// None: the call ends at its board's query part, or at the newest user
+    /// message.
     Off,
 }
 
