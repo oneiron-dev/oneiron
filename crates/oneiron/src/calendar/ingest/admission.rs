@@ -4,6 +4,7 @@ mod continuation;
 mod import_claim;
 mod preflight;
 mod recurrence;
+mod source_events;
 use super::ingest;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
@@ -80,6 +81,10 @@ impl PollAdmission<'_> {
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
         self.preflight_event(event)?;
+        // A pack calendar source's EVENTs are its own (FIX 12559).
+        if let Some(source) = source_events::pack_source(self.vault, self.system)? {
+            return self.apply_source_event(event, source);
+        }
         if let Some(original) = event.properties.recurrence_id_utc {
             return self.apply_exception(event, original);
         }
@@ -227,6 +232,15 @@ impl PollAdmission<'_> {
                         WriteActor::new(actor, crate::EdgeActorClass::System),
                         id,
                         self.now,
+                    )?;
+                    // A pack calendar source's EVENT is bound to the source's
+                    // audience in its birth commit (FIX 12559); a no-op for
+                    // any other system.
+                    crate::mail_pack::bind_calendar_source_row_in_txn(
+                        self.vault,
+                        txn,
+                        self.system,
+                        &id,
                     )?;
                     Ok(id)
                 });
