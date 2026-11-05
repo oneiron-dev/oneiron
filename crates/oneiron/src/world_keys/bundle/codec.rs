@@ -510,7 +510,12 @@ pub(super) fn parse_envelope(
 ) -> Result<Envelope> {
     let malformed = || refused("malformed sealed vault object");
     let envelope =
-        Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(|_| malformed())?;
+        Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            _ => malformed(),
+        })?;
     let header = envelope.header();
     let same_vault = *vault.get_or_insert_with(|| header.vault_id.clone()) == header.vault_id;
     if header.purpose != purpose

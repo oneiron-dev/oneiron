@@ -307,7 +307,7 @@ impl Vault {
             WrapRecipient::Machine(secret.machine),
             &secret.secret,
             &pad,
-        )
+        )?
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
         let records = match self.append_world_key_wraps_in_txn(
             txn,
@@ -388,7 +388,7 @@ impl Vault {
             WrapRecipient::Machine(secret.machine),
             &secret.secret,
             &pad,
-        )
+        )?
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
         let key = Arc::new(key);
         ring.insert(current.id, Arc::clone(&key));
@@ -574,10 +574,21 @@ pub(crate) fn open_counted(
     recipient: WrapRecipient,
     secret: &HybridSecretKey,
     pad: &WorldKeyPad,
-) -> Option<WorldKey> {
-    let vault_id = fold.vault_id?;
-    key.wraps.get(&recipient)?.iter().find_map(|wrap| {
-        let envelope = Envelope::parse(&wrap.envelope).ok()?;
+) -> Result<Option<WorldKey>> {
+    let Some(vault_id) = fold.vault_id else {
+        return Ok(None);
+    };
+    let Some(wraps) = key.wraps.get(&recipient) else {
+        return Ok(None);
+    };
+    for wrap in wraps {
+        let envelope = match Envelope::parse(&wrap.envelope) {
+            Ok(envelope) => envelope,
+            Err(oneiron_crypto::Error::OutOfMemory) => {
+                return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+            }
+            Err(_) => continue,
+        };
         let binding = WorldKeyBinding {
             vault_id,
             key: key.id,
@@ -585,6 +596,9 @@ pub(crate) fn open_counted(
             policy: wrap.policy,
             commitment: key.commitment,
         };
-        open_world_key(&binding, recipient, secret, &envelope, pad).ok()
-    })
+        if let Ok(key) = open_world_key(&binding, recipient, secret, &envelope, pad) {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
 }

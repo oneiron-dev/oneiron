@@ -230,11 +230,21 @@ impl Vault {
                 Reach::Conflicted
             } else {
                 match pad_in_txn(&self.store, txn, &key.id)? {
-                    Some(pad) => open_counted(&old, key, to_me, &door.secret.secret, &pad)
-                        .or_else(|| {
-                            open_own(&old, &own, key.id, Some(key.commitment), door.secret, &pad)
-                        })
-                        .map_or(Reach::Unopenable, Reach::Opened),
+                    Some(pad) => {
+                        let opened =
+                            match open_counted(&old, key, to_me, &door.secret.secret, &pad)? {
+                                Some(key) => Some(key),
+                                None => open_own(
+                                    &old,
+                                    &own,
+                                    key.id,
+                                    Some(key.commitment),
+                                    door.secret,
+                                    &pad,
+                                )?,
+                            };
+                        opened.map_or(Reach::Unopenable, Reach::Opened)
+                    }
                     None => Reach::Unopenable,
                 }
             };
@@ -252,9 +262,11 @@ impl Vault {
                 continue;
             }
             let reach = if self.world_keys_reached_in_txn(txn, record.key.world, now)? {
-                pad_in_txn(&self.store, txn, &record.key)?
-                    .and_then(|pad| open_own(&old, &own, record.key, None, door.secret, &pad))
-                    .map_or(Reach::Unopenable, Reach::Opened)
+                match pad_in_txn(&self.store, txn, &record.key)? {
+                    Some(pad) => open_own(&old, &own, record.key, None, door.secret, &pad)?
+                        .map_or(Reach::Unopenable, Reach::Opened),
+                    None => Reach::Unopenable,
+                }
             } else {
                 Reach::NotLive
             };
@@ -320,9 +332,11 @@ impl Vault {
                 } else if key.conflicted {
                     Reach::Conflicted
                 } else {
-                    pad_in_txn(&self.store, txn, &key.id)?
-                        .and_then(|pad| open_counted(&mid, key, to_root, &recovery, &pad))
-                        .map_or(Reach::Unopenable, Reach::Opened)
+                    match pad_in_txn(&self.store, txn, &key.id)? {
+                        Some(pad) => open_counted(&mid, key, to_root, &recovery, &pad)?
+                            .map_or(Reach::Unopenable, Reach::Opened),
+                        None => Reach::Unopenable,
+                    }
                 };
                 start.reached.insert(
                     key.id,
@@ -622,24 +636,34 @@ fn open_own(
     commitment: Option<[u8; 32]>,
     secret: &MachineSecret,
     pad: &WorldKeyPad,
-) -> Option<WorldKey> {
-    let vault_id = fold.vault_id?;
+) -> Result<Option<WorldKey>> {
+    let Some(vault_id) = fold.vault_id else {
+        return Ok(None);
+    };
     let me = WrapRecipient::Machine(secret.machine);
-    own.iter()
-        .map(|(_, record)| record)
-        .filter(|record| {
-            record.key == id && commitment.is_none_or(|held| held == record.commitment)
-        })
-        .find_map(|record| {
-            let (_, bytes) = record.wraps.iter().find(|(to, _)| *to == me)?;
-            let envelope = oneiron_crypto::Envelope::parse(bytes).ok()?;
-            let binding = WorldKeyBinding {
-                vault_id,
-                key: id,
-                owner: record.owner,
-                policy: record.policy,
-                commitment: record.commitment,
-            };
-            open_world_key(&binding, me, &secret.secret, &envelope, pad).ok()
-        })
+    for record in own.iter().map(|(_, record)| record).filter(|record| {
+        record.key == id && commitment.is_none_or(|held| held == record.commitment)
+    }) {
+        let Some((_, bytes)) = record.wraps.iter().find(|(to, _)| *to == me) else {
+            continue;
+        };
+        let envelope = match oneiron_crypto::Envelope::parse(bytes) {
+            Ok(envelope) => envelope,
+            Err(oneiron_crypto::Error::OutOfMemory) => {
+                return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+            }
+            Err(_) => continue,
+        };
+        let binding = WorldKeyBinding {
+            vault_id,
+            key: id,
+            owner: record.owner,
+            policy: record.policy,
+            commitment: record.commitment,
+        };
+        if let Ok(key) = open_world_key(&binding, me, &secret.secret, &envelope, pad) {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
 }
