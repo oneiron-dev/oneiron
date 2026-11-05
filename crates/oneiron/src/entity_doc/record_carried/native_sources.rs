@@ -38,11 +38,13 @@ pub(super) struct NativeSourcePlace {
     pub(super) position: NativeSourcePosition,
 }
 
-/// These requirements cannot be discharged by inspecting this collection or
-/// by a decoded fact's signature, row hash, token or operation id.
+/// Source-accounting items for the actual recipient or authorized continuation.
+/// They are not a policy requiring historical actor/shared-grant replay, and
+/// an unknown item alone is not a new refusal. Inspecting this collection or a
+/// decoded signature, row hash, token or operation id grants no permission.
 pub(super) enum NativeSourceRequirement {
-    /// Selection and every raw write still need the complete recipient owner.
-    /// A separately checked original door law does not discharge this grant.
+    /// Bind selection and every raw write to the actual whole continuation.
+    /// A separately checked original door law is not that recipient owner.
     NativeDoor {
         place: NativeSourcePlace,
         fact: Option<[u8; 32]>,
