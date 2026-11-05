@@ -210,6 +210,8 @@ pub struct PromotePlan {
     /// Whether the turn is already in base, saved by this stretch, so the
     /// plan only adds messages said into it since ([`Self::appends`]).
     pub(super) appends: bool,
+    /// The exact source view whose MESSAGE bodies and side rows this plan saves.
+    pub(super) source_snapshot: super::snapshot::OverlaySnapshot,
     /// The copies' charge on what the room's overlay retains, held for the
     /// plan's life. Last, so it drops after the copies it counts.
     pub(super) charge: Option<PlanCharge>,
@@ -229,6 +231,11 @@ impl Drop for PromotePlan {
 }
 
 impl PromotePlan {
+    /// The same overlay view from which this replay program was selected.
+    pub fn source_snapshot(&self) -> &super::snapshot::OverlaySnapshot {
+        &self.source_snapshot
+    }
+
     /// The promoted turn — the receipt key and the pickup marker's id.
     pub const fn turn(&self) -> EntityId {
         self.turn

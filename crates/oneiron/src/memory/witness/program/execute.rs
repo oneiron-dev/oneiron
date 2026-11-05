@@ -83,6 +83,7 @@ impl Memory<'_> {
             saver,
             admit,
             room_speech,
+            terminal,
         } = resolve_witness_landing(turn, target, &mut session_route)?;
 
         // A quote rides a message of a room turn that lands at base and is
@@ -141,6 +142,7 @@ impl Memory<'_> {
             unproven: &unproven,
             silent,
             saver: saver.as_ref(),
+            terminal,
         };
         before_txn();
 

@@ -49,9 +49,67 @@ transaction. A failed instrument never falls back to native-host authority.
 The binding holds no Vault reference, so keeping it beside a producer or runtime
 entry cannot create a Vault ownership cycle. It is not serializable or recoverable.
 
-This is a native lifetime bridge, not a routed message-stream implementation.
-The ordinary message-stream opener, ACTIVE rows, custody, partial publication,
-terminal receipts and HTTP delivery still do not consume this binding.
+This is the native lifetime bridge used by the private assistant stream below.
+The ordinary message-stream opener, ACTIVE rows, custody and partial publication
+remain unchanged. HTTP delivery still does not consume this binding.
+
+## Native caller-private assistant streams
+
+`binding.begin_assistant_stream(vault, agent, sitting, turn)` consumes the actual
+caller binding and opens one fresh Companion reply. Its author is the native
+assistant handle: `vault.memory(agent, Agent)` with the optional sitting key.
+The native host supplies its actually selected assistant agent. This is not a
+snapshot of an arbitrary credential-bound author Memory, and the sitting key
+is context, not authority. The caller's human identity never becomes the agent.
+
+The opaque, non-serializable `SessionMessageStream` shares the existing live
+registry, fair permit and idle pump. It buffers in RAM without ACTIVE rows,
+custody or partial broadcasts. `append`, `partial` and `flush` recheck the
+original caller and independent author; partial text projects known custody values
+through the caller's own sight using a read-only index snapshot as well as any
+existing file marks. Potential secret suffixes stay withheld while the reply is
+growing. Complete matches in the released prefix are redacted without creating
+custody or marks. A write-only credential sees masked keys, not an extra
+requirement to read base records. Legacy actor-only stream handles
+cannot access a caller-private entry, even if they name the same agent.
+
+`finalize`, `finalize_model` and `cancel` keep their actual finality and model
+finish reason. The existing policy idle interval ends a quiet stream as Partial.
+The native token's `completion` exposes that state after an explicit or idle end.
+Anonymous returns `SessionStreamOutcome::Unretained` with no MESSAGE id or
+receipt reference. No row, checkpoint, custody or receipt is written.
+
+A retained terminal uses the existing witness program. Its native plan supplies
+the actual newly staged MESSAGE id. That same transaction writes the existing
+stream receipt and per-generation reference into the selected base or session
+sink, after MESSAGE staging and before its effect. Canonical text bytes and
+reply-assertion types are read from that same staged view. No latest-row guess,
+caller-chosen MESSAGE id, second writer or base sidecar for an overlay is used.
+A post-commit hook error is recognized only by the exact immutable generation
+receipt in that same captured route, never by its RAM candidate alone. If that
+read fails, the stream keeps the exact candidate and resolves it before accepting
+more text or minting another MESSAGE. Only a successful absent lookup permits a
+fresh write. A found committed terminal closes the token before any new append.
+
+A wrong-Vault operation fails before changing the token. Its weak origin-registry
+binding is only an ownership check; the original caller, session and author
+admission still apply. Retirement and terminal removal use that origin runtime.
+A revoked caller or invalidated session retires private RAM state. An author
+policy refusal preserves accepted text while any private token remains alive.
+Once all private tokens are gone, the existing idle pump retires a terminally
+refused orphan and releases its fair permit. Registry and pump references do not
+count as private tokens. Storage errors and an unresolved terminal receipt remain
+retryable. A terminal releases its fair permit and removes the resident entry. No private stream is
+recoverable after process exit: its accepted text was never checkpointed.
+This new native door does not change ordinary OnRecord, Continue or Retry APIs.
+
+Explicit OffRecord promotion and later room copy carry each newly saved MESSAGE's
+latest stream receipt and all its generation receipts into the same base writer,
+after native replay and body holds. The replay plan retains the exact overlay
+snapshot from which it selected the MESSAGE, including its lease and retained-memory
+accounting. A later witness publication cannot substitute a newer receipt view.
+Existing base MESSAGEs keep their own receipt history; a promotion retry remains
+answered by its original durable save receipt.
 
 ## Integration boundary
 

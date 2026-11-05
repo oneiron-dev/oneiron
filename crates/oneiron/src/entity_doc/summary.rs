@@ -307,8 +307,17 @@ pub(crate) fn open_summary_proposal(
         }
         // Pending output is still retained text. Its sources must reach the
         // entity's complete fork set when one of them is erased.
-        for source in &sources {
-            crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
+        for record in &bundle.forks {
+            let fork = EntityId::from_hex(&record.fork)?;
+            for source in &sources {
+                crate::ports::record_fork_dependency_in_txn(
+                    &vault.store,
+                    txn,
+                    &request.entity,
+                    source,
+                    &fork,
+                )?;
+            }
         }
         Ok::<_, oneiron_contracts::memory::MemoryError>((bundle, landed))
     })?;

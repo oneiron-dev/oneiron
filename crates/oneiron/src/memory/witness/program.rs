@@ -71,6 +71,8 @@ pub(super) enum WitnessTarget<'a, 'v> {
         rostered: Option<EntityId>,
         /// The server's pre-embedded turn vector, staged once on mint/extend.
         turn_vector: Option<TurnVector>,
+        /// Native RAM streaming finality, written beside the actual new MESSAGE.
+        terminal: Option<&'a super::stream::SessionStreamTerminal>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },

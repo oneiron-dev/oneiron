@@ -104,17 +104,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/launch.rs` | src | m | 5 struct · 1 enum · 1 fn · 9 crate-vis | LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView | The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count… |
 | `src/agent_dispatch/leader_planner.rs` | src | s | 1 struct · 2 fn | VaultLeaderTeamPlanner | The concrete CEO planner (OF-389, ARCH-0079 #planner): the leader's top-shapes advice over the one live… |
 | `src/agent_dispatch/leader_starter.rs` | src | m | 5 struct · 1 trait · 6 fn · 2 crate-vis | LeaderAdvice, LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner | CEO starter over existing TASK promises, project responsibility and skill loads |
-| `src/agent_dispatch/mod.rs` | src | s | 2 mod · 25 re-export · 17 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `src/agent_dispatch/mod.rs` | src | s | 2 mod · 25 re-export · 18 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/origin.rs` | src | s | 3 crate-vis | — | OF-221: the conversation that started a dispatch |
 | `src/agent_dispatch/planner.rs` | src | L | 10 struct · 1 enum · 11 fn · 1 const · 2 re-export · 6 crate-vis | AvailableModel, CostEnvelope, PlanBudget, PlannerDecisions, PlannerEvidence, PlannerQuestionContext, PlannerRung, PlannerThresholds +3 | The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which… |
 | `src/agent_dispatch/planner/budget_resolution.rs` | src | s | 3 crate-vis | — | The budget a plan is fitted to and launched under (FIX 9561) |
 | `src/agent_dispatch/planner/measured.rs` | src | s | 2 struct · 2 crate-vis | MeasuredRate, PatternCandidate | What the planner weighs for one candidate (ARCH-0079 #planner): its measured rate on each seat, and a… |
 | `src/agent_dispatch/planner/receipt.rs` | src | s | 1 struct · 2 fn | SpawnPlanReceipt | The spawn plan receipt: what a spawn asked, the plan it resolved to, and why |
-| `src/agent_dispatch/planner_live.rs` | src | m | 3 struct · 5 fn · 3 crate-vis | LivePlanRequest, PlannerSeat, PlannerSkills | The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's… |
+| `src/agent_dispatch/planner_live.rs` | src | m | 3 struct · 5 fn · 4 crate-vis | LivePlanRequest, PlannerSeat, PlannerSkills | The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's… |
 | `src/agent_dispatch/planner_live/intent.rs` | src | m | 1 fn · 13 crate-vis | — | The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key |
 | `src/agent_dispatch/planner_live/intent/child.rs` | src | m | 6 fn · 2 crate-vis | — | The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask… |
 | `src/agent_dispatch/planner_live/intent/erase.rs` | src | m | 10 crate-vis | — | A planned intent's erase (Engine 10-22) |
-| `src/agent_dispatch/planner_live/learning.rs` | src | s | 6 crate-vis | — | The measured reads the live planner weighs, and what a thin project leaf borrows into them (FIX 5496… |
+| `src/agent_dispatch/planner_live/learning.rs` | src | s | 7 crate-vis | — | The measured reads the live planner weighs, and what a thin project leaf borrows into them (FIX 5496… |
 | `src/agent_dispatch/planner_live/root_plan.rs` | src | s | 4 crate-vis | — | The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the… |
 | `src/agent_dispatch/planner_live/team_launch.rs` | src | m | 1 fn | — | The planned launch (DOOR-111 S4a, S4c-2): a planned intent's plan, launched as one group, at the root for… |
 | `src/agent_dispatch/planner_live/team_launch/child.rs` | src | s | 1 fn | — | The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under… |
@@ -798,7 +798,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/reseal.rs` | src | s | 2 fn | — | Owner-tier reseal admission and the repair sweep |
 | `src/blob_artifact/esign/seal.rs` | src | m | 2 struct · 1 enum · 3 fn · 1 crate-vis | EsignSealError, SealedDocument, SealedItem | Lease-fenced seal job |
 | `src/blob_artifact/esign/seal_run.rs` | src | s | 1 enum · 1 fn | EsignSealRun | The seal task's runner (ARCH-0064 section 7: the seal "runs as a task, never inline in a request") |
-| `src/blob_artifact/esign/sealer.rs` | src | s | 6 struct · 3 enum · 1 trait · 2 fn | EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealDegrade +2 | The seal port: how the engine reaches a PAdES sealer it does not link |
+| `src/blob_artifact/esign/sealer.rs` | src | s | 7 struct · 4 enum · 1 trait · 2 fn | EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealDegrade +4 | The seal port: how the engine reaches a PAdES sealer it does not link |
 | `src/blob_artifact/esign/signature_image.rs` | src | m | 1 struct · 6 fn · 4 crate-vis | SignatureImagePlan | Capability-bound, decoded and re-encoded signature images |
 | `src/blob_artifact/esign/signature_revision.rs` | src | m | 1 fn · 1 const · 2 crate-vis | — | The ordinary signature revision, written on the engine's side of the seal (ARCH-0075… |
 | `src/blob_artifact/esign/signature_revision_tests.rs` | test | s | — | — | The engine's signature revision re-emits the first page, the catalog and the AcroForm; what it re-emits must… |
@@ -2389,10 +2389,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/coach_repair.rs` | src | m | 7 crate-vis | — | The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418) |
 | `src/dreamer_runner/maintenance/coach_research.rs` | src | s | 1 trait · 3 fn | ResearchGoalOracle | The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a… |
 | `src/dreamer_runner/maintenance/coach_resolution.rs` | src | s | 1 crate-vis | — | The Coach's resolution of its model issues (OF-418 L3; ARCH-0066 §6) |
-| `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 7 struct · 1 trait · 3 fn · 1 const · 1 re-export · 2 crate-vis | CandidateRun, CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
+| `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 6 struct · 1 trait · 3 fn · 1 const · 2 re-export · 2 crate-vis | CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/dreamer_runner/maintenance/code_fix/admission.rs` | src | m | 13 crate-vis | — | The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704) |
+| `src/dreamer_runner/maintenance/code_fix/candidate_run.rs` | src | s | 1 struct · 2 crate-vis | CandidateRun | Candidate results and the native origin each replay carries |
 | `src/dreamer_runner/maintenance/code_fix/engine.rs` | src | m | 2 crate-vis | — | A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on… |
-| `src/dreamer_runner/maintenance/code_fix/instruction.rs` | src | m | 8 crate-vis | — | The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the… |
+| `src/dreamer_runner/maintenance/code_fix/instruction.rs` | src | m | 9 crate-vis | — | The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the… |
 | `src/dreamer_runner/maintenance/code_fix/publisher.rs` | src | m | 2 struct · 7 enum · 1 trait · 3 fn · 5 crate-vis | CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary, EngineCallUsage, EngineCandidateRun, EngineNotRun +2 | A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over… |
 | `src/dreamer_runner/maintenance/code_fix/work.rs` | src | m | 10 crate-vis | — | A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal… |
 | `src/dreamer_runner/maintenance/compaction_check.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 1 re-export · 4 crate-vis | CompactionCheckDeclaration, CompactionCheckModel, CompactionCheckVerdict | The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer "checks the agent's… |
@@ -3636,8 +3637,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/score_scraper.rs` | src | s | 3 struct · 1 trait · 6 fn · 2 re-export | ScoreFetch, ScoreScraper, ScoreScraperConfig, ScoreSourceConfig | Config-driven benchmark scraping |
 | `src/llm/score_scraper/http.rs` | src | s | 1 struct · 1 fn | HttpScoreFetch | Bounded HTTPS JSON transport for configured score sources |
 | `src/llm/score_scraper/worker.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | ScoreScraperWorker | Lifecycle-owned background score refresh: one immediate attempt, then the configured cadence |
-| `src/llm/seat.rs` | src | m | 6 struct · 3 enum · 16 fn · 4 re-export | DescriptionLine, DescriptionSource, ModelSeat, PurposeEffort, SeatCandidate, SeatChoiceReceipt, SeatKind, SeatPool +1 | Seat-birth model routing above the raw LLM call seam |
+| `src/llm/seat.rs` | src | m | 6 struct · 3 enum · 16 fn · 5 re-export · 1 crate-vis | DescriptionLine, DescriptionSource, ModelSeat, PurposeEffort, SeatCandidate, SeatChoiceReceipt, SeatKind, SeatPool +1 | Seat-birth model routing above the raw LLM call seam |
 | `src/llm/seat/decisions.rs` | src | s | 2 struct · 1 trait · 1 fn | SeatDecisions, SeatNotes, SeatPickReadings | The seat pick as typed decisions through the host's ladder, and the note seam beside it |
+| `src/llm/seat/learning.rs` | src | s | 1 struct · 1 crate-vis | SeatLearningContext | Read-only native task context and the model evidence a fresh seat consumes |
 | `src/llm/seat/policy.rs` | src | s | 1 struct · 1 enum · 2 fn · 6 crate-vis | SeatPolicy, SeatPrecedence | Manifest-owned runtime seat policy; shipped defaults are data, not routing code |
 | `src/llm/seat/run.rs` | src | m | 1 struct · 4 fn · 4 crate-vis | TaskSeatReceipt | A run's immutable seat pin: born once per run, loaded again on resume |
 | `src/llm/seat/tests.rs` | test | m | — | — | — |
@@ -3999,8 +4001,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/linked.rs` | src | s | 1 crate-vis | — | A base witness that commits its caller's own record with the turn (FIX 8533): the record runs in the turn's… |
 | `src/memory/witness/mod.rs` | src | s | 5 re-export · 10 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | s | 1 re-export · 10 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
-| `src/memory/witness/program/caller.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 re-export | SessionWitnessContext, SessionWitnessOutcome | Caller-bound session speech |
-| `src/memory/witness/program/caller/binding.rs` | src | s | 1 struct · 3 fn | SessionWitnessBinding | Owned caller/session authority for native work that outlives a borrowed Memory |
+| `src/memory/witness/program/caller.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 re-export · 4 crate-vis | SessionWitnessContext, SessionWitnessOutcome | Caller-bound session speech |
+| `src/memory/witness/program/caller/binding.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | SessionWitnessBinding | Owned caller/session authority for native work that outlives a borrowed Memory |
 | `src/memory/witness/program/execute.rs` | src | s | 3 crate-vis | — | The witness program's run: request shape, target, plan, then one write transaction per landing |
 | `src/memory/witness/program/execute/answer.rs` | src | s | 1 crate-vis | — | A landed witness, after its write commits: the receipt it answers with, and the on-record copy, live window… |
 | `src/memory/witness/program/execute/guards.rs` | src | s | 2 crate-vis | — | The witness write's guards and admission: a base landing's guards, or an overlay landing's guards read… |
@@ -4022,13 +4024,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/stream/lifecycle/terminal/new_message.rs` | src | s | 1 crate-vis | — | A new message's terminal: its witness, with a Retry proven again in the same write |
 | `src/memory/witness/stream/lifecycle/terminal/receipts.rs` | src | s | 2 crate-vis | — | A terminal's receipts: the one a landed generation holds, and the one a write opens with |
 | `src/memory/witness/stream/lift.rs` | src | s | 1 crate-vis | — | The lift sweep's door for a stream's seed (OF-067) |
-| `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 5 re-export · 4 crate-vis | — | Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality |
+| `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 6 re-export · 6 crate-vis | — | Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality |
 | `src/memory/witness/stream/policy.rs` | src | s | 2 fn · 3 crate-vis | — | Durable owner policy; no token or partial content is stored here |
 | `src/memory/witness/stream/presence.rs` | src | s | 1 fn · 6 crate-vis | — | Native EphemeralStore publication |
 | `src/memory/witness/stream/reader.rs` | src | s | 1 crate-vis | — | The handle a stream's terminal reads under: its opener's (FIX 1667) |
 | `src/memory/witness/stream/refused.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | StreamRecoveryRefusal | The stream seeds the vault's open could not replay, kept for the owner (FIX 9974, FIX 11933) |
 | `src/memory/witness/stream/reply_assertions.rs` | src | s | 8 crate-vis | — | A model stream's reply assertions at its terminal (OF-063, FIX 3416) |
-| `src/memory/witness/stream/storage.rs` | src | m | 2 fn · 16 crate-vis | — | Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit |
+| `src/memory/witness/stream/session.rs` | src | m | 3 struct · 1 enum · 8 fn · 6 crate-vis | SessionMessageStream, SessionStreamEnd, SessionStreamOutcome, SessionStreamPartial | Native caller-session assistant RAM streaming: one fresh Companion reply |
+| `src/memory/witness/stream/storage.rs` | src | m | 2 fn · 21 crate-vis | — | Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit |
 | `src/memory/witness/stream/tests.rs` | test | m | — | — | Observable stream contracts: no partial persistence, cadence, finality and retry |
 | `src/memory/witness/stream/types.rs` | src | s | 4 struct · 7 enum · 1 fn · 1 type · 2 const | MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason +3 | Public streaming vocabulary |
 | `src/memory/witness/turn_program.rs` | src | s | 2 fn · 2 crate-vis | — | DOOR-141's two seams on the actor's surface: arming a program for this actor's own future turns, and the… |
@@ -4170,7 +4173,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/types.rs` | src | s | 7 struct · 4 enum · 2 fn · 3 crate-vis | ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion, OffRecordSessionRecord +3 | Public records, enums, constants and the executor-utterance label shared by all off-record children |
 | `src/off_record/lifecycle/vault_api.rs` | src | m | 12 fn · 7 crate-vis | — | Vault verbs: session vault handle, enter, mode flip, receipt log and close |
 | `src/off_record/mod.rs` | src | s | 1 mod · 3 re-export · 9 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
-| `src/off_record/promote.rs` | src | m | 2 struct · 2 fn · 3 const · 21 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
+| `src/off_record/promote.rs` | src | L | 2 struct · 2 fn · 3 const · 21 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
 | `src/off_record/promote/attribution.rs` | src | s | 1 crate-vis | — | FIX 3103 (OF-540): a promotion witnesses the edges it replays for the runs that journaled them, never for… |
 | `src/off_record/promote/repo_projection.rs` | src | s | 1 crate-vis | — | What a promotion replays of a room's cached media vectors (FIX 7608 S3F, FIX 10407) |
 | `src/off_record/promote/result_holds.rs` | src | s | 3 crate-vis | — | A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the… |
@@ -4658,6 +4661,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_setting_doors.rs` | src | m | 4 struct · 9 fn · 1 re-export · 1 crate-vis | InferenceDefaultsReplaceRequest, PolicyActionOutcome, PolicySettingActReceipt, WakePolicySetRequest | The app's policy actions as host verbs (OF-181) |
 | `src/ports/claim_read_status.rs` | src | s | 1 crate-vis | — | Status modes carried by an actor-keyed read lane |
 | `src/ports/contracts.rs` | src | m | 1 struct · 12 trait | BlobStore, ChangeLogStore, ClaimStore, DependencyIndex, EdgeStore, EntityStore, JobQueue, JobScope +5 | The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions |
+| `src/ports/dependency_registration.rs` | src | s | 3 crate-vis | — | Ownership of one current dependency-index registration |
 | `src/ports/dependent_walk.rs` | src | m | 3 struct · 5 fn · 3 const · 14 crate-vis | DependentWalkCheck, DependentWalkPolicy, DependentWalkProgress | A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from… |
 | `src/ports/dependent_walk/mark.rs` | src | s | 6 crate-vis | — | A walk row and the marks it holds: what each mark of a source covers, and the worlds a row is withdrawn for |
 | `src/ports/dependent_walk/tests.rs` | test | m | — | — | Done-means for the batched dependent walk (rule 5: no erase refuses for its count of dependents): every door… |
@@ -4686,7 +4690,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/memory.rs` | src | m | 11 crate-vis | — | In-memory transactional conformance adapter |
 | `src/ports/memory/auxiliary.rs` | src | m | — | — | In-memory secondary indexes, immutable audit rows, blobs and queue leases |
 | `src/ports/memory/query.rs` | src | m | — | — | Memory implementation of the same lazy read contracts as LMDB |
-| `src/ports/mod.rs` | src | s | 9 re-export · 23 crate-vis | — | Transaction-composable storage ports |
+| `src/ports/mod.rs` | src | s | 9 re-export · 24 crate-vis | — | Transaction-composable storage ports |
 | `src/ports/mutation.rs` | src | s | 5 crate-vis | — | Mutation audit composition |
 | `src/ports/point_read.rs` | src | s | 2 struct · 1 enum · 3 fn | PointRead, ReadRow, ReadTarget | Point-read targets, frontiers, and admitted row values |
 | `src/ports/query.rs` | src | m | 3 struct · 3 enum · 8 trait · 1 type | ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, EntityWriteSegmentRead +6 | Read halves of the storage ports |
@@ -5594,7 +5598,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/mod.rs` | src | m | 3 mod · 19 re-export · 19 crate-vis | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
 | `src/skill_optimize/offer.rs` | src | m | 9 fn · 1 const · 1 re-export · 4 crate-vis | — | The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner… |
 | `src/skill_optimize/offer/snapshot.rs` | src | m | 10 struct · 5 enum · 1 re-export · 7 crate-vis | ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost +7 | The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is… |
-| `src/skill_optimize/offer_doors.rs` | src | s | 8 struct · 8 fn | OfferAnswerRequest, OfferListRequest, OfferPassRef, OfferPassRequest, OfferPassResult, OfferRef, OfferUndoReceipt, OfferView | Typed owner doors for the production Coach offer pass and its evidence |
+| `src/skill_optimize/offer_doors.rs` | src | s | 9 struct · 9 fn | OfferAnswerReply, OfferAnswerRequest, OfferListRequest, OfferPassRef, OfferPassRequest, OfferPassResult, OfferRef, OfferUndoReceipt +1 | Typed owner doors for the production Coach offer pass and its evidence |
 | `src/skill_optimize/offer_pilot.rs` | src | m | 9 struct · 14 fn · 2 crate-vis | OfferCandidateQuery, OfferCandidateRecord, OfferCandidateSetup, OfferPilot, OfferPilotComplete, OfferPilotMeasurement, OfferPilotPrepare, OfferPilotPrepared +1 | Per-seat candidate pins and externally measured pilot evidence for OF-577 |
 | `src/skill_optimize/offer_switch.rs` | src | m | 2 struct · 2 enum · 5 fn · 5 crate-vis | OfferSwitchReceipt, OfferSwitchUndo, SwitchApplication, SwitchOwner | An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo) |
 | `src/skill_optimize/offer_training.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | OfferTrainingHandoff, TrainingChoice | An approved training offer's run (OF-577; ARCH-0053 #training-offers: a train yes runs the OF-552 pack, then… |
@@ -7031,7 +7035,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/uds/tests.rs` | test | s | — | — | Source-authored socket tests |
 | `src/voice_cascade/uds/tests/bridge_tests.rs` | test | s | — | — | — |
 | `src/voice_cascade/uds/tests/socket_tests.rs` | test | s | — | — | — |
-| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 13 fn · 1 const · 1 mod · 2 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
+| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 14 fn · 1 const · 1 mod · 2 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
 | `src/voice_cascade/voxcpm2/http.rs` | src | m | 1 struct · 1 enum · 4 fn | VoxCpm2Event, VoxCpm2HttpQueue | Loopback wire to a separately deployed, always-warm CUDA worker |
 | `src/voice_cascade/voxcpm2/http/tests.rs` | test | s | — | — | — |
 | `src/voice_cascade/voxcpm2/pcm.rs` | src | s | 2 struct · 6 fn · 2 crate-vis | PcmSpool, VoxCpm2PcmBody | One render's PCM16LE result as it streams in from the worker (C058), here and on the own-server VoxCPM2… |

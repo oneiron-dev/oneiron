@@ -24,15 +24,15 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 
 /// The run rows that act on their caller's live agent run and read nothing
 /// else of it: the attempt, its lease and its actor, for the leader's rows
-/// the planner the host lends beside the lease, and for the fold rows the
-/// run's own log, at the step boundary its host serializes the action with
+/// the planner or slip issuer the host lends beside the lease, and for the
+/// fold rows the run's own log, at the step boundary its host serializes the action with
 /// (OF-181). A host serves them as actions only under that run's lease.
 /// `tasks.consult.result` lands as the run's actor, under its door's read
 /// lane, and `self.workflows.dispatch_bound` binds a TASK as that actor,
 /// under its lease and its door's read lane. `self.skills.call`,
 /// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
 /// bridge, its results, its park). None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 14] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 15] = [
     RunVerb::TasksConsultResult,
     RunVerb::TasksRefuse,
     RunVerb::SelfReportBlocked,
@@ -42,6 +42,7 @@ pub(crate) const LIVE_RUN_VERBS: [RunVerb; 14] = [
     RunVerb::SelfTeamSubmit,
     RunVerb::SelfLeaderAdvice,
     RunVerb::SelfLeaderPattern,
+    RunVerb::SelfLeaderSplit,
     RunVerb::SelfFold,
     RunVerb::SelfCompact,
     RunVerb::SelfUnfold,

@@ -171,6 +171,12 @@ pub(crate) fn erase_fork_actor_in_txn(
         if fork.status == ForkStatus::Pending
             && ACTOR_ERASE_PENDING_ENTITY_DOC_FORK == PendingDocForkErase::Delete
         {
+            crate::ports::remove_fork_dependencies_in_txn(
+                &vault.store,
+                wtxn,
+                &EntityId::from_hex(&fork.entity)?,
+                &EntityId::from_hex(&fork.fork)?,
+            )?;
             ENTITY_DOC_FORK.delete(&vault.store, wtxn, &key)?;
             ENTITY_DOC_FORK_SNAPSHOT.delete(&vault.store, wtxn, &key)?;
         } else {
@@ -644,6 +650,12 @@ fn settle_one(
     let before = live.frontier();
     let after = match verb {
         SettleVerb::Reject => {
+            crate::ports::remove_fork_dependencies_in_txn(
+                &vault.store,
+                txn,
+                &entity,
+                &EntityId::from_hex(fork_id)?,
+            )?;
             record.status = ForkStatus::Rejected;
             before.clone()
         }

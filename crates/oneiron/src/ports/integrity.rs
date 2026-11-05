@@ -35,27 +35,7 @@ pub(crate) fn record_dependency_in_txn(
     source: SourceSpan,
     dependent: &EntityId,
 ) -> Result<()> {
-    if source.document == *dependent {
-        return Err(Error::InvariantViolation("self dependency"));
-    }
-    let visibility = super::TombstoneStoreRead::port_deletion_state(store, txn, &source.document)?;
-    if visibility.deleted || visibility.stale {
-        return Err(Error::EntityNotFound);
-    }
-    let key = [source_prefix(source).as_slice(), dependent.as_bytes()].concat();
-    let admitted = store.vault_meta().get(txn, &key)?.is_none();
-    store.vault_meta().put(txn, &key, &[])?;
-    let reverse = [
-        super::regeneration::reverse_prefix(dependent).as_slice(),
-        source.document.as_bytes(),
-        &source.frontier.to_be_bytes(),
-    ]
-    .concat();
-    store.vault_meta().put(txn, &reverse, &[])?;
-    if admitted {
-        super::dependent_walk::settle_admitted_in_txn(store, txn, source, dependent)?;
-    }
-    Ok(())
+    super::dependency_registration::record(store, txn, source, dependent, None)
 }
 pub(super) fn list_by_source(
     store: &impl ManifestDbs,

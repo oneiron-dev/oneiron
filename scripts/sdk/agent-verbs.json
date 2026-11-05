@@ -7261,7 +7261,7 @@
       "name": "vault.coach.training_offers.answer",
       "description": "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice.",
       "input": "crate::skill_optimize::offer_doors::OfferAnswerRequest",
-      "output": "crate::skill_optimize::OfferAnswerRecord",
+      "output": "crate::skill_optimize::offer_doors::OfferAnswerReply",
       "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,

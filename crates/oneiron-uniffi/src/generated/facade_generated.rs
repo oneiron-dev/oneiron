@@ -2311,7 +2311,7 @@ export_facade! {
     let output = client.vault_coach_training_offers_result(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.result", &output)
 };
-"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerRecord = |client| {
+"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerReply = |client| {
     let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest = crate::codec::lower_record("vault.coach.training_offers.answer", input)?;
     let output = client.vault_coach_training_offers_answer(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.answer", &output)
