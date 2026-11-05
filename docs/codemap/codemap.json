@@ -3193,7 +3193,7 @@
      "path": "src/authority/act_standing.rs",
      "purpose": "An owner act signed outside the authority log, judged at its own causal point (FIX 4649, mesh contract §4)…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -4581,7 +4581,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 46,
       "mod": 2,
       "re-export": 70
      }
@@ -4622,7 +4622,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -4769,6 +4769,26 @@
      "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/past_grant_standing.rs",
+     "purpose": "Prior signed owner-agent standing for main-log WorldPrivacy acts (FIX 4703)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/past_grant_standing/topology.rs",
+     "purpose": "Prior Grant standing for signed topology decisions outside the log",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -18427,6 +18447,7 @@
       "SelfMemoryEdgeWriteResult",
       "SelfMemorySearchResult",
       "SelfMemoryWriteResult",
+      "SelfSandboxProposalDiskFloor",
       "SelfSkillCallResult",
       "SelfSpeechResult",
       "SelfTaskRefusalResult"
@@ -18436,7 +18457,7 @@
      "surface": {
       "enum": 3,
       "fn": 3,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -26885,7 +26906,7 @@
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -28365,6 +28386,7 @@
      "path": "src/dreamer_promotion/scoped.rs",
      "purpose": "Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -35935,7 +35957,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 20,
       "struct": 2
@@ -40906,7 +40928,7 @@
      "path": "src/identity_topology/seal_standing.rs",
      "purpose": "A decision seal's causal evidence (FIX 4649, FIX 4652, FIX 5248): the act each decision seal names for…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -62623,7 +62645,7 @@
      "path": "src/runtime_hooks/read.rs",
      "purpose": "The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -62821,6 +62843,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbCallScope"
+     ],
+     "path": "src/runtime_hooks/verb/call_scope.rs",
+     "purpose": "The call context a verb-hook selector can narrow to",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -62909,7 +62945,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 9,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 2,
       "type": 1
      }
@@ -91439,7 +91475,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 248,
+     "files": 250,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92517,7 +92553,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92939,7 +92975,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6499,
+   "source_files": 6502,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93019,7 +93055,7 @@
   "oneiron-authority": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentGrantActRecord",
@@ -107261,6 +107297,7 @@
      "kind": "src",
      "notable": [
       "NapiHostRootProfile",
+      "NapiNativeLimitQuestion",
       "NapiPaired",
       "NapiWitnessTurnInput",
       "NativeClient"
@@ -107268,8 +107305,8 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 14,
-      "struct": 4
+      "fn": 15,
+      "struct": 5
      }
     },
     {
@@ -107578,7 +107615,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "NapiVault"
@@ -107587,7 +107624,20 @@
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
       "crate-vis": 1,
-      "fn": 30,
+      "fn": 31,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeLimitQuestion"
+     ],
+     "path": "src/lib/vault/limit_questions.rs",
+     "purpose": "One raw vault's engine `[limits]` questions, kept for the host that opened it",
+     "surface": {
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -107637,9 +107687,9 @@
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
     "lib": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The raw N-API addon root: module registrations and the crate-level native exports"
     },
@@ -107651,9 +107701,9 @@
      "purpose": "Legacy `NapiVault` DTOs: edges, scored entities, subtrees, batches, codebase snapshots, email"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "The raw N-API addon root: module registrations and the crate-level native exports",
-   "source_files": 28,
+   "source_files": 29,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -109007,7 +109057,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 1,
       "re-export": 1,
       "type": 1
@@ -109118,9 +109168,9 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 21,
+      "fn": 22,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -109137,6 +109187,19 @@
       "fn": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeLimitQuestion"
+     ],
+     "path": "src/native_limit_questions.rs",
+     "purpose": "Native SDK host snapshots of the shared vault's engine-limit crossings",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
      }
     },
     {
@@ -109358,6 +109421,13 @@
      "layout": "file",
      "purpose": "Own-server raw LLM transport over the SDK's single authenticated HTTP client"
     },
+    "native_limit_questions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Native SDK host snapshots of the shared vault's engine-limit crossings"
+    },
     "remote": {
      "files": 10,
      "impl_vault": false,
@@ -109368,7 +109438,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 22,
+   "source_files": 23,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -110827,6 +110897,16 @@
      "notable": [],
      "path": "src/ai_host/coach_heal.rs",
      "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_heal/wake.rs",
+     "purpose": "The installed Coach worker's resources, lent to an invoked wake pass",
      "surface": {
       "crate-vis": 5
      }
@@ -116457,6 +116537,16 @@
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/pairing_paths.rs",
+     "purpose": "Pairing and slip-revocation operations for the routes in `api/pairing.rs`",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -124852,6 +124942,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/exl3_evidence.rs",
+     "purpose": "What an EXL3 worker's answers must echo to keep a verified-artifacts claim (FIX 9195, FIX 9296): the launch…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -125307,7 +125407,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -125373,7 +125473,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -125706,7 +125806,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -129037,14 +129137,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 110,
+     "files": 111,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 664,
+     "files": 665,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129401,7 +129501,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 114,
+     "files": 115,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129557,7 +129657,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1558,
+   "source_files": 1561,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -136980,7 +137080,20 @@
      "surface": {
       "const": 1,
       "fn": 12,
-      "re-export": 7,
+      "re-export": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeLimitQuestion"
+     ],
+     "path": "src/native_limit_questions.rs",
+     "purpose": "`Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from…",
+     "surface": {
+      "fn": 1,
       "struct": 1
      }
     },
@@ -137068,6 +137181,13 @@
      "layout": "file",
      "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…"
     },
+    "native_limit_questions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -137085,7 +137205,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-vault-contract": {
