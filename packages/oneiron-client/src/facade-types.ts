@@ -3273,7 +3273,7 @@ export type OffRecordRoomExportRequest = { room: string; session_ref: string; tr
 /** `oneiron::memory::result_attachment::MessageResultSource` */
 export type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string }
 /** `oneiron::memory::result_attachment::MessageResultAttachment` */
-export type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] }
+export type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; erased: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] }
 /** `oneiron::verbs::off_record_rooms::OffRecordRoomCopyResult` */
 export type OffRecordRoomCopyResult = { label: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean }
 /** `oneiron::verbs::off_record_rooms::OffRecordRoomExportResult` */
