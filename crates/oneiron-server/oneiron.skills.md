@@ -367,7 +367,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving. `[limits].semantic_query_bytes` defaults to `8_388_608` decoded text bytes; a crossing asks and serves the full query, rather than returning a row-specific 413. This endpoint does not apply stock JSON's body-byte ceiling; other routes keep theirs. Body-memory and embedding-concurrency admission remain separate from this query-byte row.
 
 #### search-text - `GET /api/search/text`
 

@@ -1,5 +1,5 @@
 //! The record hooks the store layer's write, erase and read paths run:
-//! identity-topology, federation, room and secret-custody checks, supplied
+//! identity-topology, federation, room, voice and secret-custody checks, supplied
 //! by the engine when a store opens.
 
 use std::collections::BTreeSet;
@@ -113,6 +113,15 @@ pub trait StoreRecordHooks: Send + Sync {
     fn erase_room_side_rows(&self, store: &Store, txn: &mut RwTxn<'_>, id: &EntityId)
     -> Result<()>;
 
+    /// The engine's `voice_identity::erase_recognition_for_subject_in_txn`,
+    /// an entity side-row eraser of `deletion::derived_rows`.
+    fn erase_recognition_for_subject_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::erase_audience_actor_in_txn`.
     fn erase_audience_actor_in_txn(
         &self,
@@ -128,4 +137,13 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `affect::state_inputs::spoke_in`.
+    fn spoke_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool>;
 }

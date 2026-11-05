@@ -41,6 +41,8 @@ vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
 vaultCommitmentsRelease(input: unknown): unknown
 vaultCommitmentsSupersede(input: unknown): unknown
+vaultCommitmentsReminderRouteGet(input: unknown): unknown
+vaultCommitmentsReminderRouteSet(input: unknown): unknown
 fetch(input: unknown): unknown
 crawl(input: unknown): unknown
 report(input: unknown): unknown
@@ -277,6 +279,7 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsFitSet(input: unknown): unknown
+vaultSkillsAdvisoryAskSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
 vaultSkillsOptimizeStart(input: unknown): unknown
 vaultSkillsOptimizeResult(input: unknown): unknown
@@ -394,6 +397,7 @@ vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
+vaultSyncQuarantineHeldEdits(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
@@ -1267,6 +1271,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   inOffRecordSession(sessionRef: string): NativeClient
+  withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null

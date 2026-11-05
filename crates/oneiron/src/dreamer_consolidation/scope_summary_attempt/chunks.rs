@@ -47,7 +47,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         plan: &ScopeSummaryPlan,
         evidence: &ScopeSummaryEvidence,
         instruction: &str,
-        window: u64,
+        mut window: u64,
+        mut charges: StepChargeTally,
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
         let (Some(session), Some(first)) = (plan.session, evidence.covers.first().copied()) else {
@@ -55,207 +56,225 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 "only a sitting with text pages its turns",
             ));
         };
-        let schema = output::session_schema();
-        let params = serde_json::to_vec(&(
-            instruction,
-            self.model.as_str(),
-            &schema,
-            PAGES_DOMAIN,
-            window,
-        ))
-        .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-        let params_hash = *blake3::hash(&params).as_bytes();
-        let memo = plan.composition_memo(evidence, &params_hash)?;
-        // The same paged composition already stands: no page is asked again.
-        match ctx.vault.reuse_composed_scope_summary(
-            attempt_id,
-            plan,
-            evidence,
-            &first,
-            &memo,
-            &params_hash,
-        ) {
-            Ok(true) => {
-                return Ok(DreamerAttemptExecution::Completed {
-                    completed_units: 0,
-                    step_hashes: Vec::new(),
-                });
-            }
-            Ok(false) => {}
-            Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
-            }
-            Err(error) => return Err(error),
-        }
-        let sources = blake3::Hash::from_bytes(evidence.fingerprint()?).to_hex();
-        // The sitting shows under its call-local label, as its records do
-        // (FIX 9170): each page's request binds the map that names it.
-        let mut labels = evidence.labels.clone();
-        let sitting = labels.assign(LabelKind::Conversation, session).to_string();
-        // A page's frame is counted at the widest numbers it can carry.
-        let frame = framed_tokens(
-            instruction,
-            &page_input(plan, "", u64::MAX, u64::MAX, &sitting, sources.as_str())?,
-            &schema,
-        )?;
-        let framed = |records: &str, index: u64, count: u64| {
-            let user = page_input(plan, records, index, count, &sitting, sources.as_str())?;
-            framed_tokens(instruction, &user, &schema)
-        };
-        let pages = match window.checked_sub(frame) {
-            Some(room) => fitting_pages(evidence, room, window, framed)?,
-            None => None,
-        };
-        let Some(pages) = pages else {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: format!(
-                    "session summary page does not fit: window_tokens={window} frame_tokens={frame}"
-                ),
-                cause: DreamerParkCause::Retry,
-            });
-        };
-        let count = pages.len() as u64;
-        let mut steps = Vec::with_capacity(pages.len());
-        for (index, page) in (1_u64..).zip(pages) {
-            let user = page_input(
-                plan,
-                &page.records,
-                index,
-                count,
-                &sitting,
-                sources.as_str(),
-            )?;
-            let mut request =
-                self.summary_request(ctx.vault, evidence, schema.clone(), instruction, user)?;
-            labels.bind_request(&mut request, None);
-            let step_hash = request
-                .canonical_hash()
-                .map_err(|_| invalid_consolidation("summary request did not hash"))?;
-            steps.push((request, step_hash, page.labels));
-        }
-        // A sitting's summary is in no conversation: its steps are about the
-        // first TURN it reads, as its one call's step is.
-        let subject = match &plan.scope {
-            Some(scope) => scope.conversation,
-            None => first,
-        };
-        let step_ctx = DurableStepContext {
-            vault: ctx.vault,
-            attempt_id,
-            run_id: attempt.status.attempt.run_id.clone(),
-            envelope_actor: self.actor,
-            subject,
-            deadline: Some(ctx.deadline),
-            now_ms: ctx.now_ms,
-        };
-        // Every exit once a page may have been paid carries the tally.
-        let mut charges = StepChargeTally::default();
-        let mut replies = Vec::with_capacity(steps.len());
-        for (request, step_hash, labels) in steps {
-            if ctx.deadline.expired() {
-                return Ok(charges.checkpoint());
-            }
-            // Each page answers to the page contract inside its step.
-            let check_labels = labels.clone();
-            let check = move |response: &LlmResponse| {
-                output::paged_output(response, &check_labels)
-                    .map(drop)
-                    .map_err(str::to_owned)
-            };
-            let outcome =
-                call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
-            let response = match outcome {
-                Ok(StepOutcome::Finished {
-                    response, memoized, ..
-                }) => {
-                    if let Err(error) =
-                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
-                    {
-                        if !memoized {
-                            charges.record_usage(&response.usage);
-                        }
-                        return Ok(charges.park_on_error(&error));
-                    }
-                    response
-                }
-                Ok(StepOutcome::Trapped { .. }) => {
-                    return Ok(charges
-                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
-                }
-                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                    charges.record_usage(&usage);
+        let result: Result<DreamerAttemptExecution> = async {
+            'layouts: loop {
+                if ctx.deadline.expired() {
                     return Ok(charges.checkpoint());
                 }
-                Err(DurableStepError::DeadlineHardCut) => return Ok(charges.checkpoint()),
-                Err(DurableStepError::FinalizeRefused) => {
-                    return Ok(
-                        charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
-                    );
-                }
-                Err(DurableStepError::Engine(error)) => return Ok(charges.park_on_error(&error)),
-                Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
-                    if let DurableStepError::SpentSchemaValidation { usage, .. } = &other {
-                        charges.record_usage(usage);
+                let schema = output::session_schema();
+                let params = serde_json::to_vec(&(
+                    instruction,
+                    self.model.as_str(),
+                    &schema,
+                    PAGES_DOMAIN,
+                    window,
+                ))
+                .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
+                let params_hash = *blake3::hash(&params).as_bytes();
+                let memo = plan.composition_memo(evidence, &params_hash)?;
+                // The same paged composition already stands: no page is asked again.
+                match ctx.vault.reuse_composed_scope_summary(
+                    attempt_id,
+                    plan,
+                    evidence,
+                    &first,
+                    &memo,
+                    &params_hash,
+                ) {
+                    Ok(true) => {
+                        return Ok(DreamerAttemptExecution::Completed {
+                            completed_units: charges.units,
+                            step_hashes: charges.step_hashes.clone(),
+                        });
                     }
-                    return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
+                    Ok(false) => {}
+                    Err(error) if waits_on_residency(&error) => {
+                        return Ok(residency_deferral(ctx.now_ms, charges.units, charges.step_hashes.clone()));
+                    }
+                    Err(error) => return Err(error),
                 }
-                Err(other) => {
-                    return Ok(
-                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
-                    );
+                let sources = blake3::Hash::from_bytes(evidence.fingerprint()?).to_hex();
+                // The sitting shows under its call-local label, as its records do
+                // (FIX 9170): each page's request binds the map that names it.
+                let mut labels = evidence.labels.clone();
+                let sitting = labels.assign(LabelKind::Conversation, session).to_string();
+                // A page's frame is counted at the widest numbers it can carry.
+                let frame = framed_tokens(
+                    instruction,
+                    &page_input(plan, "", u64::MAX, u64::MAX, &sitting, sources.as_str())?,
+                    &schema,
+                )?;
+                let framed = |records: &str, index: u64, count: u64| {
+                    let user = page_input(plan, records, index, count, &sitting, sources.as_str())?;
+                    framed_tokens(instruction, &user, &schema)
+                };
+                let pages = match window.checked_sub(frame) {
+                    Some(room) => fitting_pages(evidence, room, window, framed)?,
+                    None => None,
+                };
+                let Some(pages) = pages else {
+                    return Ok(charges.park_for(
+                        &format!("session summary page does not fit: window_tokens={window} frame_tokens={frame}"),
+                        DreamerParkCause::Retry,
+                    ));
+                };
+                let count = pages.len() as u64;
+                let mut steps = Vec::with_capacity(pages.len());
+                for (index, page) in (1_u64..).zip(pages) {
+                    let user = page_input(
+                        plan,
+                        &page.records,
+                        index,
+                        count,
+                        &sitting,
+                        sources.as_str(),
+                    )?;
+                    let mut request =
+                        self.summary_request(ctx.vault, evidence, schema.clone(), instruction, user)?;
+                    labels.bind_request(&mut request, None);
+                    let step_hash = request
+                        .canonical_hash()
+                        .map_err(|_| invalid_consolidation("summary request did not hash"))?;
+                    steps.push((request, step_hash, page.labels));
                 }
-            };
-            // The step's check already admitted this reply; its lines are read
-            // through the same parse.
-            match output::paged_output(&response, &labels) {
-                Ok(page) => replies.push(page),
-                Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+                // A sitting's summary is in no conversation: its steps are about the
+                // first TURN it reads, as its one call's step is.
+                let subject = match &plan.scope {
+                    Some(scope) => scope.conversation,
+                    None => first,
+                };
+                let step_ctx = DurableStepContext {
+                    vault: ctx.vault,
+                    attempt_id,
+                    run_id: attempt.status.attempt.run_id.clone(),
+                    envelope_actor: self.actor,
+                    subject,
+                    deadline: Some(ctx.deadline),
+                    now_ms: ctx.now_ms,
+                };
+                let mut replies = Vec::with_capacity(steps.len());
+                for (request, step_hash, labels) in steps {
+                    if ctx.deadline.expired() {
+                        return Ok(charges.checkpoint());
+                    }
+                    // Each page answers to the page contract inside its step.
+                    let check_labels = labels.clone();
+                    let check = move |response: &LlmResponse| {
+                        output::paged_output(response, &check_labels)
+                            .map(drop)
+                            .map_err(str::to_owned)
+                    };
+                    let outcome =
+                        call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
+                    let response = match outcome {
+                        Ok(StepOutcome::Finished {
+                            response, memoized, ..
+                        }) => {
+                            if let Err(error) =
+                                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                            {
+                                if !memoized {
+                                    charges.record_usage(&response.usage);
+                                }
+                                return Ok(charges.park_on_error(&error));
+                            }
+                            response
+                        }
+                        Ok(StepOutcome::Trapped { .. }) => {
+                            return Ok(charges
+                                .park_for("durable step trapped for resume", DreamerParkCause::Signal));
+                        }
+                        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+                            charges.record_usage(&usage);
+                            return Ok(charges.checkpoint());
+                        }
+                        Err(DurableStepError::DeadlineHardCut) => return Ok(charges.checkpoint()),
+                        Err(DurableStepError::FinalizeRefused) => {
+                            return Ok(
+                                charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
+                            );
+                        }
+                        Err(DurableStepError::Engine(error)) => return Ok(charges.park_on_error(&error)),
+                        Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
+                            if let DurableStepError::SpentSchemaValidation { usage, .. } = &other {
+                                charges.record_usage(usage);
+                            }
+                            return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
+                        }
+                        Err(other) => {
+                            if let DurableStepError::SpentLlm { usage, .. }
+                            | DurableStepError::SpentFallback { usage, .. } = &other
+                            {
+                                charges.record_usage(usage);
+                            }
+                            if super::window::correction_overflow(&other)
+                                && let Some(smaller) = super::window::smaller_window(window)
+                            {
+                                window = smaller;
+                                continue 'layouts;
+                            }
+                            return Ok(
+                                charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
+                            );
+                        }
+                    };
+                    // The step's check already admitted this reply; its lines are read
+                    // through the same parse.
+                    match output::paged_output(&response, &labels) {
+                        Ok(page) => replies.push(page),
+                        Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+                    }
+                }
+                if ctx.deadline.expired() {
+                    return Ok(charges.checkpoint());
+                }
+                let composition = match output::assemble(replies) {
+                    Ok(composition) => composition,
+                    Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
+                };
+                // The text lands in durable names, never its pages' labels (FIX 10359).
+                let (text, keep, line_sources) = super::durable_labels::durable_summary(
+                    composition.text,
+                    &composition.keep,
+                    Some(composition.line_sources),
+                    &super::durable_labels::label_names(&labels, None),
+                );
+                let composed = ComposedSummary {
+                    text: &text,
+                    keep: &keep,
+                    params_hash,
+                    instruction,
+                    model: self.model.as_str(),
+                    covers: evidence.covers.clone(),
+                    messages: evidence.messages.clone(),
+                    memo,
+                    line_sources,
+                    arc_work: None,
+                };
+                // The landing fence reads the whole evidence again, every page's
+                // sources with it.
+                return match ctx
+                    .vault
+                    .land_composed_scope_summary(attempt_id, plan, evidence, &composed, self.actor)
+                {
+                    Ok(_) => Ok(DreamerAttemptExecution::Completed {
+                        completed_units: charges.units,
+                        step_hashes: charges.step_hashes.clone(),
+                    }),
+                    Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
+                    Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                        ctx.now_ms,
+                        charges.units,
+                        charges.step_hashes.clone(),
+                    )),
+                    Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
+                };
             }
+        }.await;
+        if result.is_err() {
+            ctx.note_spend_before_error(charges.units, &charges.step_hashes);
         }
-        if ctx.deadline.expired() {
-            return Ok(charges.checkpoint());
-        }
-        let composition = match output::assemble(replies) {
-            Ok(composition) => composition,
-            Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
-        };
-        // The text lands in durable names, never its pages' labels (FIX 10359).
-        let (text, keep, line_sources) = super::durable_labels::durable_summary(
-            composition.text,
-            &composition.keep,
-            Some(composition.line_sources),
-            &super::durable_labels::label_names(&labels, None),
-        );
-        let composed = ComposedSummary {
-            text: &text,
-            keep: &keep,
-            params_hash,
-            instruction,
-            model: self.model.as_str(),
-            covers: evidence.covers.clone(),
-            messages: evidence.messages.clone(),
-            memo,
-            line_sources,
-            arc_work: None,
-        };
-        // The landing fence reads the whole evidence again, every page's
-        // sources with it.
-        match ctx
-            .vault
-            .land_composed_scope_summary(attempt_id, plan, evidence, &composed, self.actor)
-        {
-            Ok(_) => Ok(DreamerAttemptExecution::Completed {
-                completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
-            }),
-            Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
-            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
-                ctx.now_ms,
-                charges.units,
-                charges.step_hashes.clone(),
-            )),
-            Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
-        }
+        result
     }
 }
 

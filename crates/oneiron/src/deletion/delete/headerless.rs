@@ -220,6 +220,10 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            // Hard reasons only: only they wrote the marker above.
+            if reason.active_store_hard_purge_v1() {
+                self.notify_local_delete_materialized(&[*id]);
+            }
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -274,6 +278,8 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;

@@ -189,8 +189,8 @@ pub(crate) use gate_hooks::StoreGateHooks;
 mod sync_hooks;
 #[cfg(feature = "sync")]
 pub(crate) use sync_hooks::StoreSyncHooks;
-#[cfg(feature = "sync")]
 pub mod document_frame_tags;
+pub mod framing;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
@@ -228,7 +228,6 @@ pub mod result_memory;
 pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
-#[cfg(feature = "sync")]
 pub mod window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
@@ -369,6 +368,7 @@ pub mod revision_ref;
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
+pub(crate) mod shared_leave_receipt;
 mod short_id_alias;
 pub(crate) mod skill_attribution_causes;
 pub(crate) mod skill_attribution_judgments;
@@ -462,6 +462,9 @@ pub(crate) use group_commit::{
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
+};
 pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
@@ -537,7 +540,7 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
-pub(crate) use usage_sources::erase_usage_source_in_txn;
+pub(crate) use usage_sources::{erase_pending_usage_source_in_txn, erase_usage_source_in_txn};
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 

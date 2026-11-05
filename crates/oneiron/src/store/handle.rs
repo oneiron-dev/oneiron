@@ -237,6 +237,10 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The adopted checkpoint image, verified once per stored rows, with its
+    /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
+    /// exact stored rows, never by generation; dies with the handle.
+    pub(crate) adopted_image_cache: Mutex<Option<crate::authority::AdoptedImageCacheEntry>>,
     /// The causal standing of the topology decision seals one committed
     /// authority generation judged (FIX 4649). Never persisted.
     pub(crate) act_causal_points: Mutex<Option<std::sync::Arc<crate::authority::CausalPoints>>>,
@@ -858,6 +862,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -880,10 +885,13 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    let hash = blake3::hash(&body);
+    let mut trusted_origin = hash.as_bytes().to_vec();
+    trusted_origin.extend_from_slice(&clock.peek_recorded_at().to_be_bytes());
     sync_state.put(
         wtxn,
         &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
-        blake3::hash(&body).as_bytes(),
+        &trusted_origin,
     )?;
     sync_state.put(
         wtxn,
