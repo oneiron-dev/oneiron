@@ -171,6 +171,22 @@ pub(crate) struct ProducerLinks {
     pub(crate) manifests: Vec<EntityId>,
 }
 
+/// The recorded links a retrieval window proves (FIX 7315): the dispatch attempt every run of
+/// a nonempty window records, when each records the same one; else none. Manifests stay empty:
+/// this slice records no manifest link. Diagnostic data only, never authority.
+pub(crate) fn links_from_runs(runs: &[RetrievalRunRecord]) -> ProducerLinks {
+    let mut attempts = Vec::new();
+    if let Some(first) = runs.first().and_then(|run| run.dispatch_attempt)
+        && runs.iter().all(|run| run.dispatch_attempt == Some(first))
+    {
+        attempts.push(first);
+    }
+    ProducerLinks {
+        attempts,
+        manifests: Vec::new(),
+    }
+}
+
 /// The producer a finding's recorded links prove (OF-418 L3), under one binding rule: the one
 /// active skill the one linked attempt loaded, by the heal's own ruled rule; else the one
 /// linked live policy manifest, at its stored row's digest; else the config every run of

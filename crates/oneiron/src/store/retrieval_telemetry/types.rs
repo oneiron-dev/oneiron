@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::retrieval_quality::{
@@ -478,6 +479,9 @@ pub struct RetrievalRunRecord {
     /// is never stamped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_expander_id: Option<String>,
+    /// The host-bound leased attempt whose dispatcher requested this retrieval.
+    /// None means no such binding was captured; this is not read authority.
+    pub dispatch_attempt: Option<AttemptId>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -542,6 +546,7 @@ impl RetrievalRunRecord {
             replay_inputs: None,
             turn: None,
             query_expander_id: None,
+            dispatch_attempt: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,
