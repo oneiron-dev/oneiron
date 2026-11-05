@@ -105,8 +105,8 @@ impl Vault {
         // receiver-side `apply_replayed_tombstone` nothing-local branch:
         // ONLY the durable `dt:` marker is written (hard-once-seen — the
         // CRDT tombstone above is already published, so the id IS
-        // hard-deleted), guarded so an existing marker is never overwritten,
-        // and the actor sweep runs, as there.
+        // hard-deleted), insert-only except for an admitted privacy setting's
+        // progress, and the actor sweep runs, as there.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? && !had_touch_sources {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
             crate::deletion::tombstone::record_hard_delete_marker_in_txn(

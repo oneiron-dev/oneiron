@@ -295,8 +295,8 @@ impl Vault {
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
-            // manipulation. The guarded write keeps every-boot replay a
-            // read-only no-op once the marker exists.
+            // manipulation. Once its admitted privacy setting is recorded,
+            // the guarded write keeps every-boot replay a read-only no-op.
             crate::deletion::tombstone::record_hard_delete_marker_in_txn(
                 &self.store,
                 wtxn,
