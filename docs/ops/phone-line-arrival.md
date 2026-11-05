@@ -153,6 +153,16 @@ value alone does not end the call. Ordinary start still supplies `None` and keep
 original owner/device checks. There is no public phone start or HTTP audio door; this
 private mode cannot yet start a phone call through an existing production caller.
 
+Live Soniox segments reuse that same media door for continuing-stream admission.
+Before socket readiness, frame send, flush, and read-driven flushing, the phone mode
+rechecks its original receiving-agent credential and current line on the same vault.
+This applies to queued audio, opening configuration, cuts, keepalives and replayed
+frames. Refusal ends the hearing through its existing error path; it is not a socket
+drop that reconnects. Ordinary doors admit these checks without changing their stream,
+lease, queue or reconnect behavior. No speech generation is invented for incoming
+caller audio. Buffered transcription and complete text-request release remain separate;
+these live-send checks still do not activate an answering route or prove a running call.
+
 The call-local media entry points attach the actual receiving agent to the same
 admitted run and filter its ladder through the frozen native model list, including
 owner-selected fallback rungs. Voice routing filters eligible backend bindings before
