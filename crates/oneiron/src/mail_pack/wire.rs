@@ -24,6 +24,9 @@ pub struct MailSyncSource {
     pub custody_ref: String,
     /// The delegated channel identity the source reads through, if any.
     pub channel_identity: Option<EntityId>,
+    /// The copy setting's cutoff for this step: mail received before it is
+    /// not copied. `None` keeps all mail.
+    pub newer_than: Option<u64>,
 }
 
 impl MailSyncSource {
@@ -35,6 +38,7 @@ impl MailSyncSource {
             provider_account: row.provider_account.clone(),
             custody_ref: row.custody_ref.clone(),
             channel_identity: row.channel_identity,
+            newer_than: None,
         }
     }
 }
