@@ -293,11 +293,21 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             match self.get(source, &Self::message_url(&provider_id)?, &minimal)? {
                 Some(message) => {
                     let labels = labels_of(&message);
+                    let trash_or_spam = trash_or_spam(&labels);
                     changes.push(MailHistoryChange::Labels {
-                        provider_id,
-                        trash_or_spam: trash_or_spam(&labels),
+                        provider_id: provider_id.clone(),
+                        trash_or_spam,
                         labels,
                     });
+                    // A message out of trash and spam may never have been
+                    // copied (Gmail reports no addition for it): it is filed
+                    // as added, under the copy setting's rules.
+                    if !trash_or_spam {
+                        changes.push(MailHistoryChange::Added(MailMessageRef {
+                            provider_id,
+                            thread_id: text_of(message.get("threadId")),
+                        }));
+                    }
                 }
                 // Gone since: deleted at the provider.
                 None => changes.push(MailHistoryChange::Deleted { provider_id }),

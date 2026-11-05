@@ -47,8 +47,8 @@ struct MailCalendarResource {
     /// The listing of the source that last saw it
     /// ([`MailCalendarSyncState::listing`]).
     listing: u64,
-    /// Its master's start, Unix seconds.
-    starts_at: Option<u64>,
+    /// Its master's start and end, Unix seconds.
+    span: Option<(u64, u64)>,
 }
 
 fn resource_key(source: EntityId, href: &str) -> (EntityId, [u8; 32]) {
@@ -96,8 +96,8 @@ pub struct MailCalendarPull {
     /// Whether this page ends a listing: the cursor now follows changes.
     pub complete: bool,
     /// The span of start times a listing's pages cover; `None` for the whole
-    /// calendar. A resource landed before, starting in it and omitted by the
-    /// finished listing, is marked absent.
+    /// calendar. A resource landed before whose span meets it, omitted by
+    /// the finished listing, is marked absent.
     pub covers: Option<TimeRange>,
 }
 
@@ -472,16 +472,14 @@ impl Vault {
             RemoteCalendarChange::Upsert(object) => {
                 let key = resource_key(source, &object.href);
                 let earlier = CALENDAR_RESOURCES.get(&self.store, txn, &key)?;
-                let starts_at = match applied {
-                    Ok(crate::calendar::ingest::CalendarSourceChange::Applied { starts_at }) => {
-                        *starts_at
-                    }
-                    _ => earlier.as_ref().and_then(|resource| resource.starts_at),
+                let span = match applied {
+                    Ok(crate::calendar::ingest::CalendarSourceChange::Applied { span }) => *span,
+                    _ => earlier.as_ref().and_then(|resource| resource.span),
                 };
                 let resource = MailCalendarResource {
                     uid: object.uid.clone(),
                     listing,
-                    starts_at,
+                    span,
                 };
                 CALENDAR_RESOURCES.put(&self.store, txn, &key, &resource)
             }
@@ -494,7 +492,7 @@ impl Vault {
     }
 
     /// The UIDs the source landed that its finished listing `listing` did
-    /// not see, among those starting in `covers` (all, when `None`).
+    /// not see, among those whose span meets `covers` (all, when `None`).
     fn calendar_listing_omissions(
         &self,
         source: EntityId,
@@ -505,10 +503,10 @@ impl Vault {
         let mut omitted = std::collections::BTreeSet::new();
         for row in CALENDAR_RESOURCES.iter_from(&self.store, &txn, source.as_bytes())? {
             let (_, resource) = row?;
-            let covered = covers.is_none_or(|span| {
+            let covered = covers.is_none_or(|covered| {
                 resource
-                    .starts_at
-                    .is_some_and(|start| start >= span.start && start < span.end)
+                    .span
+                    .is_some_and(|(start, end)| start <= covered.end && end >= covered.start)
             });
             if resource.listing < listing && covered {
                 omitted.insert(resource.uid);

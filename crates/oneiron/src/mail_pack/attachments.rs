@@ -21,6 +21,13 @@ use crate::{EntityId, Result, Vault, source_audience};
 const ATTACHMENTS: SideTable<(EntityId, [u8; 32]), MailAttachmentRow, Named> =
     SideTable::new(&side_table::MAIL_PACK_ATTACHMENT);
 
+/// The opened-attachment artifacts owed their own delete, by the artifact;
+/// the value is when they were owed.
+const ERASE_OWED: SideTable<EntityId, u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_ATTACHMENT_ERASE);
+/// The most owed artifacts one collection deletes.
+const ERASES_PER_COLLECTION: usize = 64;
+
 /// The largest attachment fetched.
 const MAX_ATTACHMENT_BYTES: usize = 32 * 1024 * 1024;
 
@@ -195,7 +202,10 @@ pub(super) fn message_artifacts(
 }
 
 /// Removes the opened-attachment rows of one forgotten or erased message,
-/// with the file names they kept.
+/// with the file names they kept. Each stored artifact they name is owed its
+/// own delete, which runs once this writer commits
+/// ([`collect_after_delete`]): an eraser cannot delete another row in its
+/// writer, and the bytes go with their message.
 pub(super) fn forget_message_attachments_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -203,14 +213,85 @@ pub(super) fn forget_message_attachments_in_txn(
     provider_id: &str,
 ) -> Result<()> {
     let mut keys = Vec::new();
+    let mut artifacts = Vec::new();
     for row in ATTACHMENTS.iter_from(store, txn, source.as_bytes())? {
         let (key, row) = row?;
         if row.provider_id == provider_id {
             keys.push(key);
+            artifacts.extend(row.artifact);
         }
     }
     for key in keys {
         ATTACHMENTS.delete(store, txn, &key)?;
+    }
+    let at = crate::unix_seconds_now();
+    for artifact in artifacts {
+        ERASE_OWED.put(store, txn, &artifact, &at)?;
+    }
+    Ok(())
+}
+
+/// Deletes the opened-attachment artifacts whose message was erased, a
+/// bounded batch at a time: after every delete commits, and at each import
+/// step. An artifact stays owed until its delete has committed, so one
+/// that fails, or a crash between, is tried again; a failure is logged. A
+/// collection the deletes it runs reach again returns at once.
+pub(crate) fn collect_after_delete(vault: &Vault) {
+    let Some(_running) = Collecting::enter() else {
+        return;
+    };
+    if let Err(error) = collect_owed_erases(vault) {
+        tracing::warn!(
+            reason = "mail_attachment_erase_owed",
+            %error,
+            "an erased message's attachment artifact is owed its delete; the next delete or import step retries"
+        );
+    }
+}
+
+thread_local! {
+    /// Whether this thread is collecting owed attachment erases now.
+    static COLLECTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// This thread's one collection while it runs.
+struct Collecting;
+
+impl Collecting {
+    fn enter() -> Option<Self> {
+        if COLLECTING.with(|running| running.replace(true)) {
+            return None;
+        }
+        Some(Self)
+    }
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        COLLECTING.with(|running| running.set(false));
+    }
+}
+
+fn collect_owed_erases(vault: &Vault) -> Result<()> {
+    let owed: Vec<EntityId> = {
+        let txn = vault.store.env.read_txn()?;
+        let mut owed = Vec::new();
+        for row in ERASE_OWED.iter_from(&vault.store, &txn, &[])? {
+            if owed.len() >= ERASES_PER_COLLECTION {
+                break;
+            }
+            owed.push(row?.0);
+        }
+        owed
+    };
+    for artifact in owed {
+        if vault.get_blob_artifact(&artifact)?.is_some() {
+            vault
+                .delete_entity_with_reason(&artifact, crate::deletion::DeleteReason::UserDelete)?;
+        }
+        vault.with_write_txn_grouped(|txn| {
+            ERASE_OWED.delete(&vault.store, txn, &artifact).map(drop)
+        })?;
     }
     Ok(())
 }

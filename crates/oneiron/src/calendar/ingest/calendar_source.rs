@@ -18,10 +18,10 @@ use crate::vault::Vault;
 /// What one pulled change did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CalendarSourceChange {
-    /// The resource's series landed or moved; `starts_at` is its master's
-    /// start, Unix seconds (an all-day or floating one's civil start read as
-    /// UTC).
-    Applied { starts_at: Option<u64> },
+    /// The resource's series landed or moved; `span` is its master's start
+    /// and end, Unix seconds (an all-day or floating one's civil times read
+    /// as UTC).
+    Applied { span: Option<(u64, u64)> },
     /// The provider deleted it: the source's passport is absent, and the
     /// EVENT cancelled once no live source reports it.
     Deleted,
@@ -42,7 +42,7 @@ pub(crate) fn apply_calendar_source_change(
 ) -> Result<CalendarSourceChange, CalendarError> {
     match change {
         RemoteCalendarChange::Upsert(object) => Ok(CalendarSourceChange::Applied {
-            starts_at: apply_upsert(vault, system, object, now)?,
+            span: apply_upsert(vault, system, object, now)?,
         }),
         RemoteCalendarChange::Delete { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
@@ -114,11 +114,8 @@ pub(crate) fn apply_calendar_source_omissions(
     let record =
         archive_source_resource(vault, system, LISTING_ARCHIVE_KEY, omitted.as_bytes(), now)?
             .record;
-    let none = ParsedIcsFeed { events: Vec::new() };
-    for uid in uids {
-        super::sweep_connector_resource(vault, system, &record, &none, uid, now)?;
-    }
-    Ok(())
+    let uids: std::collections::BTreeSet<&str> = uids.iter().map(String::as_str).collect();
+    super::sweep_connector_uids(vault, system, &record, &uids, now)
 }
 
 /// The archive key of a whole feed, beside the per-UID resources.
@@ -126,13 +123,13 @@ const FEED_ARCHIVE_KEY: &str = "#feed";
 /// The archive key of the UIDs a finished listing omitted.
 const LISTING_ARCHIVE_KEY: &str = "#listing";
 
-/// Lands one resource; answers its master's start.
+/// Lands one resource; answers its master's span.
 fn apply_upsert(
     vault: &Vault,
     system: &str,
     object: &RemoteCalendarObject,
     now: u64,
-) -> Result<Option<u64>, CalendarError> {
+) -> Result<Option<(u64, u64)>, CalendarError> {
     let feed = parse_resource(&object.ics)?;
     let uid = feed
         .events
@@ -153,16 +150,26 @@ fn apply_upsert(
     if is_series(&feed) || earlier_was_series(vault, &archived)? {
         super::sweep_connector_resource(vault, system, record, &feed, &uid, now)?;
     }
-    Ok(feed.events.first().and_then(starts_at))
+    Ok(feed.events.first().and_then(span))
 }
 
-/// An event's start, Unix seconds: its UTC start, else its civil start read
-/// as UTC.
-fn starts_at(event: &crate::calendar::ics::ParsedVEvent) -> Option<u64> {
-    if let Some(start) = event.starts_at_utc {
-        return Some(start);
-    }
-    let wall = event.properties.wall_time.as_ref()?;
+/// An event's start and end, Unix seconds: its UTC times, else its civil
+/// times read as UTC; an end it lacks is its start.
+fn span(event: &crate::calendar::ics::ParsedVEvent) -> Option<(u64, u64)> {
+    let start = match event.starts_at_utc {
+        Some(start) => start,
+        None => civil_seconds(event.properties.wall_time.as_ref()?)?,
+    };
+    let end = event
+        .ends_at_utc
+        .or_else(|| event.properties.wall_end.as_ref().and_then(civil_seconds))
+        .unwrap_or(start)
+        .max(start);
+    Some((start, end))
+}
+
+/// A civil time read as UTC, Unix seconds.
+fn civil_seconds(wall: &crate::calendar::claims::CalendarWallTimeValue) -> Option<u64> {
     let at = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
         .and_hms_opt(
             u32::from(wall.h),

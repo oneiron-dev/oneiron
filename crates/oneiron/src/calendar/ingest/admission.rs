@@ -151,7 +151,7 @@ impl PollAdmission<'_> {
     fn sweep_resource(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
-        only_uid: Option<&str>,
+        only_uids: Option<&std::collections::BTreeSet<&str>>,
         absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         let present: std::collections::BTreeSet<_> = feed
@@ -163,13 +163,14 @@ impl PollAdmission<'_> {
             let passports = live_passports_for_event(self.vault, &event_ref)?;
             let instance = self.exception_start(event_ref)?;
             if !passports.iter().any(|(_, value)| {
-                value.system == self.system && only_uid.is_none_or(|uid| value.uid == uid)
+                value.system == self.system
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
             }) {
                 continue;
             }
             for (_, value) in &passports {
                 let reports = value.system == self.system
-                    && only_uid.is_none_or(|uid| value.uid == uid)
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
                     && value.direction.is_inbound_bearing()
                     && value.presence == CalendarPassportPresence::Live
                     && !present.contains(&(value.uid.as_str(), instance));
@@ -662,7 +663,24 @@ pub(in crate::calendar) fn sweep_connector_resource(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source, now).sweep_resource(
         feed,
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
+        CalendarStatusBasis::ImportedAbsence,
+    )
+}
+
+/// Marks every UID in `uids` absent for `system` in one EVENT scan: each of
+/// its live inbound passports there, master and instances, as an omitted
+/// feed item does.
+pub(in crate::calendar) fn sweep_connector_uids(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    uids: &std::collections::BTreeSet<&str>,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source, now).sweep_resource(
+        &super::ics::ParsedIcsFeed { events: Vec::new() },
+        Some(uids),
         CalendarStatusBasis::ImportedAbsence,
     )
 }
@@ -677,7 +695,7 @@ pub(in crate::calendar) fn delete_connector_resource(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source, now).sweep_resource(
         &super::ics::ParsedIcsFeed { events: Vec::new() },
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
         CalendarStatusBasis::ImportedCancel,
     )
 }
