@@ -20,10 +20,9 @@ use crate::store::Store;
 
 /// The turns of `binding`'s conversation witnessed into `session`, in that
 /// SESSION's own order; on a DAG read, only the turns on the retained chain
-/// of the branch read. A member of another conversation is skipped even
-/// when that conversation is deleted. `None` when the order does not read
-/// here: a member that names no single conversation, or a branch whose chain
-/// does not.
+/// of the branch read. A member that names another conversation, or none,
+/// is skipped, even when that conversation was deleted or purged. `None`
+/// when a branch's chain does not read here.
 ///
 /// # Errors
 ///
@@ -52,14 +51,18 @@ pub(crate) fn conversation_turn_order_in(
                     order.push(turn);
                 }
             }
-            // A turn is read by the conversation it names, live or not: a
-            // turn of another conversation, deleted since, is not this one's
-            // and never makes this order unreadable.
-            None => match crate::conversation_dag::room_of(store, txn, &turn) {
-                Ok(room) if room == binding.conversation => order.push(turn),
-                Ok(_) => {}
-                Err(_) => return Ok(None),
-            },
+            // A turn is read by the conversation it names, live or not. A
+            // turn that names another conversation, or none (its conversation
+            // purged with its edge and no pin left), is not this one's and
+            // never makes this order unreadable. A turn of this live
+            // conversation always names it.
+            None => {
+                if crate::conversation_dag::named_room(store, txn, &turn)?
+                    .is_ok_and(|room| room == binding.conversation)
+                {
+                    order.push(turn);
+                }
+            }
         }
     }
     Ok(Some(order))
