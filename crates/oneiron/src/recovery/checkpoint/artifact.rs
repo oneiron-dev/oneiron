@@ -413,21 +413,58 @@ impl Prelude {
     }
 }
 
-/// An artifact whose manifest and image have opened.
+/// An artifact whose manifest and image have opened. Its fields stay private
+/// so an opened body stream cannot be paired with caller-supplied image bytes.
 pub(super) struct OpenedArtifact<'k> {
-    pub(super) image: Vec<u8>,
+    image: Vec<u8>,
     /// BLAKE3 of the image: the checkpoint id.
-    pub(super) image_id: [u8; 32],
+    image_id: [u8; 32],
     /// BLAKE3 of the signed commitment's exact bytes.
-    pub(super) commitment_digest: [u8; 32],
-    pub(super) created_at: u64,
-    pub(super) bodies: SealedBodies<'k>,
+    commitment_digest: [u8; 32],
+    created_at: u64,
+    bodies: SealedBodies<'k>,
     /// The manifest's custody requirement (KS-4).
-    pub(super) custody: Option<crate::store::CustodyRequirement>,
+    custody: Option<crate::store::CustodyRequirement>,
     /// The checkpoint sequence its verified commitment signs (OF-570 (e)).
-    pub(super) sequence: u64,
+    sequence: u64,
     /// The snapshot id its verified commitment signs.
-    pub(super) snapshot: [u8; 32],
+    snapshot: [u8; 32],
+}
+
+impl<'k> OpenedArtifact<'k> {
+    pub(super) fn image(&self) -> &[u8] {
+        &self.image
+    }
+
+    pub(super) fn image_id(&self) -> [u8; 32] {
+        self.image_id
+    }
+
+    pub(super) fn commitment_digest(&self) -> [u8; 32] {
+        self.commitment_digest
+    }
+
+    pub(super) fn created_at(&self) -> u64 {
+        self.created_at
+    }
+
+    pub(super) fn bodies(&self) -> &SealedBodies<'k> {
+        &self.bodies
+    }
+
+    pub(super) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(super) fn snapshot(&self) -> [u8; 32] {
+        self.snapshot
+    }
+
+    pub(super) fn into_bodies_and_custody(
+        self,
+    ) -> (SealedBodies<'k>, Option<crate::store::CustodyRequirement>) {
+        (self.bodies, self.custody)
+    }
 }
 
 /// The result bodies an opened artifact carries, each read back through its
