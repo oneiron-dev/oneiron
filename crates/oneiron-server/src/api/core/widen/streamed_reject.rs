@@ -6,11 +6,12 @@ use axum::Json;
 
 use super::{CoreRejectWidenResponse, WidenHolder, widen_refusal};
 use crate::api::body_spool::{
-    BodySpool, BulkMember, SpooledField, TextFileSink, Unspooled, create_failed, invalid_json,
+    BodySpool, BulkMember, SpooledField, TextFileSink, Unspooled, create_failed,
+    decode_memory_refused, invalid_json,
 };
 use crate::api::clock_ingress;
 use crate::error::{ApiError, EnvelopedApiError};
-use crate::machine::DiskClaim;
+use crate::machine::{DiskClaim, MemoryRefusal};
 use crate::server::SyncServer;
 
 /// The reference file closes before the same raw body's stored-copy room.
@@ -19,7 +20,9 @@ struct RejectBulk {
     _room: Option<Arc<DiskClaim>>,
 }
 
-pub(super) struct BulkDecoded {
+pub(super) type BulkDecoded = Result<DecodedFields, MemoryRefusal>;
+
+pub(super) struct DecodedFields {
     json: Result<(), crate::api::body_spool::JsonInvalid>,
     reference: Result<SpooledField, Unspooled>,
     room: Option<Arc<DiskClaim>>,
@@ -30,14 +33,23 @@ pub(super) fn bulk_decoder(
 ) -> impl FnOnce(BodySpool) -> Result<BulkDecoded, Unspooled> + Send + 'static {
     let vault = Arc::clone(server.vault());
     move |mut spool: BodySpool| {
+        let mut memory = match spool.admit_string_decode_buffers() {
+            Ok(memory) => memory,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
         let file = vault.archive_spool_file().map_err(create_failed)?;
-        let mut reference = TextFileSink::new(file);
-        let json = spool.string_object(&mut [BulkMember::required("proposal_ref", &mut reference)]);
-        Ok(BulkDecoded {
+        let mut reference = TextFileSink::new_admitted(file, &mut memory);
+        let json = spool.string_object_admitted(
+            &mut [BulkMember::required("proposal_ref", &mut reference)],
+            &mut memory,
+        );
+        let decoded = DecodedFields {
             json,
             reference: reference.into_field(),
             room: spool.into_room(),
-        })
+        };
+        drop(memory);
+        Ok(Ok(decoded))
     }
 }
 
@@ -46,7 +58,9 @@ pub(super) async fn answer_bulk(
     holder: WidenHolder,
     decoded: Result<BulkDecoded, Unspooled>,
 ) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
-    let decoded = decoded.map_err(Unspooled::refusal)?;
+    let decoded = decoded
+        .map_err(Unspooled::refusal)?
+        .map_err(decode_memory_refused)?;
     decoded.json.map_err(|_| invalid_json())?;
     let reference = decoded.reference.map_err(Unspooled::refusal)?;
     let bulk = RejectBulk {

@@ -13,11 +13,13 @@
 
 mod hex;
 mod json;
+mod memory;
 mod owner_json;
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -34,6 +36,7 @@ pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{
     Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
 };
+pub(super) use self::memory::decode_memory_refused;
 pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
@@ -55,6 +58,7 @@ const NO_ROOM_REMEDY: &str = "Free room on the vault's disk, then send the reque
 pub(super) struct BodySpool {
     file: File,
     room: Option<Arc<DiskClaim>>,
+    stopped: Arc<AtomicBool>,
 }
 
 impl BodySpool {
@@ -73,10 +77,15 @@ impl BodySpool {
         json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
     }
 
-    /// The spool as an object containing only the declared string members,
-    /// without a copied metadata head.
-    pub(super) fn string_object(&mut self, bulk: &mut [BulkMember<'_>]) -> Result<(), JsonInvalid> {
-        json::decode_string_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
+    /// The declared string members, using reader room admitted with the text sink.
+    pub(super) fn string_object_admitted(
+        &mut self,
+        bulk: &mut [BulkMember<'_>],
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Result<(), JsonInvalid> {
+        let reader = BufReader::with_capacity(SPOOL_PIECE, &mut self.file);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        json::decode_string_object(reader, bulk)
     }
 
     /// The spool's bytes from its start, read as they lie on the disk, a
@@ -168,10 +177,16 @@ pub(super) async fn spool_then<R: Send + 'static>(
     };
     let vault = Arc::clone(&server.vault);
     let (sender, receiver) = mpsc::channel(2);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let _stop = memory::StopOnDrop(Arc::clone(&stopped));
     let mut worker = transfer::spawn_worker(move || -> Result<R, Unspooled> {
         let account = floor.as_ref().zip(room.as_deref());
         let file = spool_to_end(&vault, BodyReader::new(receiver), account, declared)?;
-        Ok(then(BodySpool { file, room }))
+        Ok(then(BodySpool {
+            file,
+            room,
+            stopped,
+        }))
     });
     // The worker can end at the floor before the client sends its next
     // frame, so its answer is taken without waiting for the body to end.
