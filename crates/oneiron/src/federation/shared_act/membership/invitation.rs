@@ -319,10 +319,10 @@ impl Vault {
 
     /// The invitee binds their pending invitation to a key of their own and
     /// gets its slip (FIX 1925, FIX 8745): `invitee`'s request came on their
-    /// own independent live human slip, whose key the invitation records and
-    /// the slip, minted under the host's `issuer`, binds. It ends when the
-    /// invitation does, when that credential does, or when the invitee binds
-    /// another key. No one names this key for them: an `add_member` holder
+    /// own independent live human slip, presented whole, whose key the
+    /// invitation records and the slip, minted under the host's `issuer`,
+    /// binds. It ends when the invitation does, when that credential does
+    /// (it is minted to end no later), or when the invitee binds another key. No one names this key for them: an `add_member` holder
     /// only creates or withdraws the invitation. An invitee with no such
     /// credential redeems an owner's invitation pairing code instead.
     pub fn mint_invitation_slip(
@@ -352,7 +352,7 @@ impl Vault {
             own.person,
             &invitation.id,
             own.holder_key,
-            invitation.expires_at,
+            invitation.expires_at.min(own.expires_at),
         )?;
         txn.commit()?;
         Ok(slip)
