@@ -293,7 +293,7 @@ fn scrub_webp(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut kept: Vec<([u8; 4], Vec<u8>)> = Vec::new();
     let mut saw_vp8x = false;
     let mut saw_image = false;
-    let mut pos = 12;
+    let mut pos: usize = 12;
     while pos.checked_add(8)? <= end {
         let tag = [bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]];
         let size = u32::from_le_bytes([
@@ -385,7 +385,7 @@ fn scrub_gif(bytes: &[u8]) -> Option<Vec<u8>> {
     if bytes.len() < 13 || (!bytes.starts_with(b"GIF87a") && !bytes.starts_with(b"GIF89a")) {
         return None;
     }
-    let mut pos = 13;
+    let mut pos: usize = 13;
     if bytes[10] & 0x80 != 0 {
         let colors = 1usize << ((bytes[10] & 0x07) + 1);
         pos = pos.checked_add(colors.checked_mul(3)?)?;

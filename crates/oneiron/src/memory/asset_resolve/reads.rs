@@ -373,7 +373,7 @@ fn svg_document(bytes: &[u8]) -> bool {
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(root) | quick_xml::events::Event::Empty(root)) => {
-                return root.local_name().as_ref() == b"svg";
+                return root.local_name().as_ref() == "svg";
             }
             Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
             _ => {}
