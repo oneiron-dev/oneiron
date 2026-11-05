@@ -285,3 +285,24 @@ leaves only through the existing secret reveal and wait doors, under their
 current grant and T1 lease, or through the owner's authenticated reveal door.
 Those doors return the canonical typed part bytes sealed by the writer. This
 is not automatic upstream replay or proof of an issuing login.
+
+## Automatic reminder wording
+
+The native commitment-reminder wording worker creates a private execution context
+from its actual claimed attempt, vault and native executor. It applies the existing
+model-call retention policy at arrival and again at the terminal. This is a new
+automatic wording execution, not the historical commitment's caller or session.
+It does not derive a caller from a budget owner, read principal or queue payload.
+
+Each destination still receives only its admitted reminder sources. The capture
+hook fingerprints the actual rung-bound request before dispatch. A successful
+terminal keeps the answering rung's binding, usage and whole Reasoning parts
+through the existing model-call writer, before the ordinary text projection and
+later wording-filing checks. A request snapshot alone creates no durable evidence.
+A digest or evidence-write failure is best effort and does not retry the model or
+stop the fixed reminder.
+
+Source-row attribution and read-world information remain explicitly unknown where
+this path has no captured supplier. The evidence is not a claim that the wording
+was filed, approved or sent. It grants no replay permission, caller session or
+issuing-login identity, and does not describe the provider's original HTTP bytes.
