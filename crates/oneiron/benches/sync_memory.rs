@@ -1,21 +1,19 @@
-//! yrs memory benchmark for Oneiron sync GO/NO-GO gate.
+//! Loro memory benchmark for Oneiron sync GO/NO-GO gate.
 //!
 //! Simulates the ARCH-023b window Doc schema:
-//! - "entities" MapRef: 3,000 entities as Any::Buffer (header + JSON data)
-//! - "edges" MapRef: ~6,000 edges (2 per entity) as Any::Buffer
-//! - "tombstones" MapRef: empty (schema placeholder)
+//! - "entities" LoroMap: 3,000 entities as binary values (header + JSON data)
+//! - "edges" LoroMap: ~6,000 edges (2 per entity) as binary values
+//! - "tombstones" LoroMap: empty (schema placeholder)
 //! - 1,000 entities rewritten 3 times each (Dreamer consolidation sim)
 //!
 //! Run: cargo bench --bench sync_memory --features sync
 #![allow(
     clippy::disallowed_methods,
-    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+    reason = "a benchmark process starts its own subprocesses; the rule covers the server's crates"
 )]
 
-use std::sync::Arc;
-
+use loro::LoroDoc;
 use oneiron::EdgeKind;
-use yrs::{Any, Doc, Map, Transact};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -159,7 +157,7 @@ fn get_rss_bytes() -> u64 {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    println!("=== yrs Memory Benchmark (Oneiron Sync GO/NO-GO) ===\n");
+    println!("=== Loro Memory Benchmark (Oneiron Sync GO/NO-GO) ===\n");
 
     // Measure baseline RSS before creating the Doc
     let rss_before = get_rss_bytes();
@@ -168,23 +166,24 @@ fn main() {
         rss_before as f64 / (1024.0 * 1024.0)
     );
 
-    // ── Create the yrs Doc ──────────────────────────────────────────────────
-    let doc = Doc::new();
-    let entities = doc.get_or_insert_map("entities");
-    let edges = doc.get_or_insert_map("edges");
-    let _tombstones = doc.get_or_insert_map("tombstones");
+    // ── Create the Loro Doc ──────────────────────────────────────────────────
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let _tombstones = doc.get_map("tombstones");
 
     // ── Insert N entities ───────────────────────────────────────────────────
     println!("\nInserting {NUM_ENTITIES} entities (~{ENTITY_BLOB_SIZE} bytes each)...");
     {
-        let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
             let id = make_entity_id(i);
             let blob = make_entity_blob(i);
-            let value = Any::Buffer(Arc::from(blob.as_slice()));
-            entities.insert(&mut txn, id.as_str(), value);
+            entities
+                .insert(id.as_str(), blob.as_slice())
+                .expect("failed to insert entity");
         }
-    } // txn commits here
+        doc.commit();
+    }
 
     let rss_after_entities = get_rss_bytes();
     println!(
@@ -200,7 +199,6 @@ fn main() {
         "\nRewriting {NUM_REWRITES} entities x{REWRITES_PER_ENTITY} ({total_rewrites} total overwrites)..."
     );
     for round in 0..REWRITES_PER_ENTITY {
-        let mut txn = doc.transact_mut();
         for i in 0..NUM_REWRITES {
             let id = make_entity_id(i);
             // Slightly different blob each rewrite to simulate consolidation
@@ -208,9 +206,11 @@ fn main() {
             // Mutate a few bytes to simulate updated content
             blob[HEADER_SIZE] = b'R'; // mark as rewritten
             blob[HEADER_SIZE + 1] = (round as u8) + b'0';
-            let value = Any::Buffer(Arc::from(blob.as_slice()));
-            entities.insert(&mut txn, id.as_str(), value);
+            entities
+                .insert(id.as_str(), blob.as_slice())
+                .expect("failed to insert entity");
         }
+        doc.commit();
     }
 
     let rss_after_rewrites = get_rss_bytes();
@@ -226,18 +226,18 @@ fn main() {
         "\nInserting {num_edges} semantic-bare edges ({SEMANTIC_BARE_EDGE_VALUE_SIZE} bytes each)..."
     );
     {
-        let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
             for e in 0..EDGES_PER_ENTITY {
                 let tgt = (i + e + 1) % NUM_ENTITIES;
                 let kind = BENCH_EDGE_KINDS[e % BENCH_EDGE_KINDS.len()];
                 let key = make_edge_key(i, kind, tgt);
-                let val = Any::Buffer(Arc::from(
-                    make_edge_value(i * EDGES_PER_ENTITY + e).as_slice(),
-                ));
-                edges.insert(&mut txn, key.as_str(), val);
+                let value = make_edge_value(i * EDGES_PER_ENTITY + e);
+                edges
+                    .insert(key.as_str(), value.as_slice())
+                    .expect("failed to insert edge");
             }
         }
+        doc.commit();
     }
 
     let rss_after_edges = get_rss_bytes();
