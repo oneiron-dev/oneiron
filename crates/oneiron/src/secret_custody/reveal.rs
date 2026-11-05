@@ -63,6 +63,7 @@ pub(crate) use self::file::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight,
 };
+pub(crate) use self::replay::run_person_prints_in_txn;
 pub use self::types::{
     HandleReveal, OwnerSecretReveal, RevealGrantScope, RevealTarget, SecretHandleCard,
     SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealCause,
@@ -131,6 +132,8 @@ pub(crate) struct RevealAsker {
     provider: Option<String>,
     project: Option<EntityId>,
     run: Option<String>,
+    /// The actual durable execution that receives a PERSON value.
+    exec_run: Option<EntityId>,
     reader: Option<crate::claim::ScopedReadActorKey>,
     /// The leased try the asker's run holds, as its host bound it: the run
     /// a run-bound secret's record names (FIX 8028); `None` for an asker no
@@ -151,11 +154,18 @@ impl RevealAsker {
             provider: None,
             project,
             run,
+            exec_run: None,
             reader: None,
             attempt: None,
             task: None,
             step: None,
         }
+    }
+
+    /// The durable execution the host binds, not the queue's string run tag.
+    pub(crate) fn with_exec_run(mut self, exec_run: Option<EntityId>) -> Self {
+        self.exec_run = exec_run;
+        self
     }
 
     /// This asker with the code-mode step its call is, as the host bound it.
