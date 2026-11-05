@@ -31,9 +31,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-#[cfg(feature = "sync")]
-use crate::error::Error;
-use crate::error::Result;
+use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
@@ -463,9 +461,10 @@ impl Vault {
             return Ok(RepoManifestMerge::Held);
         }
         // Where this host serves the repo, its origin authority row names
-        // the one writer and epoch; read outside the writer, as refresh does.
-        let origin = match held {
-            Some(_) => self.served_origin_writer(carried)?,
+        // the one writer and epoch; read outside the writer, as refresh does,
+        // and from the copy held here, never from what the carried one says.
+        let origin = match &held {
+            Some(held) => self.served_origin_writer(held)?,
             None => None,
         };
         self.with_write_txn_grouped(|txn| {
