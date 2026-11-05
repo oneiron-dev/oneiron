@@ -85,6 +85,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::OriginCut(_)
+            | AuthorityOp::DeviceSuccession(_)
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::AgentGrantAct(_)

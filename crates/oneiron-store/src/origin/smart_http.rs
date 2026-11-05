@@ -4,5 +4,8 @@ pub mod bounds;
 pub mod evidence;
 pub mod held;
 pub mod hooks;
+pub mod maintain;
+pub mod paths;
+pub mod push_paths;
 pub mod retained_reasons;
 pub mod serve_cmd;
