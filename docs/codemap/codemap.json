@@ -14826,7 +14826,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 47,
       "fn": 10,
       "re-export": 1,
       "struct": 1
@@ -63477,7 +63477,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 5,
       "struct": 1
      }
@@ -63611,7 +63611,7 @@
      "path": "src/scope_summary/request/requester_lane.rs",
      "purpose": "FIX 2194 (OF-506): a queued summary keeps the read lane its requester declared it under",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -107401,6 +107401,7 @@
       "NapiDreamerJobRef",
       "NapiDreamerJobView",
       "NapiDreamerParkedJobView",
+      "NapiEmbeddingMatchEvidence",
       "NapiEntityRead",
       "NapiEntityRefReceipt",
       "NapiEntityView",
@@ -107443,7 +107444,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 62
+      "struct": 63
      }
     },
     {
