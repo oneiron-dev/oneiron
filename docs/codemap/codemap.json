@@ -7094,13 +7094,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9
      }
     },
@@ -91090,7 +91090,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 152,
+   "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6378,
    "test_files": 895
