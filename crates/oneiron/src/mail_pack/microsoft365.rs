@@ -604,18 +604,21 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 let provider_id = graph_id(entry.get("id"))?;
                 if entry.get("@removed").is_some() {
                     changes.extend(self.removal(source, provider_id, from_skipped)?);
-                } else if !(was_skipped && now_skipped) && !older_than_kept(entry, source) {
+                } else if !(was_skipped && now_skipped) {
                     // A change to a message copied already (its categories)
-                    // reaches its labels; one not copied yet is filed.
+                    // reaches its labels, whatever its age; one not copied
+                    // yet is filed when the copy setting keeps it.
                     changes.push(MailHistoryChange::Labels {
                         provider_id: provider_id.clone(),
                         labels: folder_labels(entry, tree.names.get(folder).copied(), folder),
                         trash_or_spam: tree.trash(folder)?,
                     });
-                    changes.push(MailHistoryChange::Added(MailMessageRef {
-                        provider_id,
-                        thread_id: text_of(entry.get("conversationId")),
-                    }));
+                    if !older_than_kept(entry, source) {
+                        changes.push(MailHistoryChange::Added(MailMessageRef {
+                            provider_id,
+                            thread_id: text_of(entry.get("conversationId")),
+                        }));
+                    }
                 }
             }
             if let Some(next) = text_of(listed.get("@odata.nextLink")) {
