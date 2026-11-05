@@ -603,7 +603,14 @@ impl SealBackend for AskedBackend {
         &self,
         request: SignRevisionRequest,
     ) -> Result<BackendSignature, BackendError> {
-        let algorithm = self.signing_identity()?.algorithm;
+        let cached_algorithm = {
+            let identity = lock(&self.identity);
+            identity.as_ref().map(|identity| identity.algorithm)
+        };
+        let algorithm = match cached_algorithm {
+            Some(algorithm) => algorithm,
+            None => self.signing_identity()?.algorithm,
+        };
         let revision_id = request.revision_id.ok_or(BackendError::Rejected {
             code: BackendRejectCode::Unauthorized,
         })?;
