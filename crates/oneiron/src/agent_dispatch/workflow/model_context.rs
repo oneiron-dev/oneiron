@@ -40,6 +40,8 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::WriteActor;
 
+mod current_readers;
+
 /// The keys a turn body names its speaker under, first non-empty one wins:
 /// the vocabulary the chat projection admits a turn by.
 const TURN_SPEAKER_KEYS: &[&str] = &["speaker", "role", "author", "spkr"];

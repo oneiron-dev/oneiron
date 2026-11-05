@@ -215,7 +215,7 @@ vm_restore_wire_revision = 1
 vm_anchor_wire_revision = 1
 vm_anchor_proxy_revision = 1
 vm_network_revision = 1
-vm_managed_profile_revision = 1
+vm_managed_profile_revision = 2
 # The trusted organ builds capability (FIX 7889, FIX 9344): the revision the
 # pinned vault-init carries when it hands each line of the config drive's
 # trusted-organ-builds to the engine. A fact, never a gate: the emitter names
