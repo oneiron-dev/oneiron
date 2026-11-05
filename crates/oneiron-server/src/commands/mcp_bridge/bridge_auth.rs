@@ -22,6 +22,7 @@ use tokio_tungstenite::tungstenite::http::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::cli::{McpArgs, McpAuthMode, McpTransport};
 use crate::commands::{api, credential_file};
+use oneiron_vault_contract::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 
 /// Whom the bridge's requests run as.
 pub(super) enum Auth {
@@ -146,7 +147,7 @@ const FRAMING_HEADERS: [&str; 11] = [
 
 /// A slip's holder proof and an MCP connector's credential: either makes the
 /// socket someone else's, never the owner's own.
-const SLIP_HEADERS: [&str; 2] = ["x-oneiron-binding", "x-oneiron-mcp-credential"];
+const SLIP_HEADERS: [&str; 2] = [BINDING_HEADER, MCP_CREDENTIAL_HEADER];
 
 /// The attestations only a vault's supervisor makes, after it checks the
 /// sign-in itself, and strips when a caller brings one.
