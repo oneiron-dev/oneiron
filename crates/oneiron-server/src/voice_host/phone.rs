@@ -14,6 +14,7 @@ use crate::auth::{CoreAuth, CoreScope};
 /// The bridge's credential and caller metadata never enter this type.
 pub struct PhoneCallRead {
     vault: Arc<Vault>,
+    auth: CoreAuth,
     key: ScopedReadActorKey,
     agent: EntityId,
     prepared: Mutex<Option<PreparedPhoneOutput>>,
@@ -50,6 +51,7 @@ impl PhoneCallRead {
         // AGENT_DEF, not a class inferred from provider or caller text.
         let read = Arc::new(Self {
             vault,
+            auth: auth.clone(),
             key,
             agent,
             prepared: Mutex::new(None),
@@ -64,6 +66,16 @@ impl PhoneCallRead {
 
     pub(super) fn read(&self) -> ScopedRead<'_> {
         self.vault.scoped_read(self.key.clone())
+    }
+
+    pub(super) fn memory(&self) -> Result<oneiron::memory::Memory<'_>, HostError> {
+        Ok(crate::api::credential_memory(
+            &self.vault,
+            Some(&self.auth),
+            self.agent,
+            oneiron::EdgeActorClass::Agent,
+        )
+        .within_phone_line_read(&self.key)?)
     }
 
     /// Capture before context/history assembly, not after a model has already

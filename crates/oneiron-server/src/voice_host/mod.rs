@@ -267,45 +267,55 @@ impl VoiceHost {
             deadline: Some(self.call_deadline),
             threads: Some(self.speculative.clone()),
         };
-        let handle = match &self.speculative_auth {
-            Some(auth)
-                if (auth.managed_owner().is_none()
-                    && !auth.is_host_holder()
-                    && auth.verified_slip().is_some()
-                    && auth.actor_class() == Some("human"))
-                    || (auth.is_owner_grade()
-                        && auth.verified_slip().is_none()
-                        && auth.invocation_slip().is_none()
-                        && auth.actor_class() == Some("human")
-                        && auth.managed_owner().is_some_and(|holder| {
-                            auth.principal_ref()
-                                .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                                == Some(holder)
-                        })) =>
-            {
-                // The owner door proved this ordinary slip or managed
-                // attestation's same Human principal, not the payer's class.
-                let actor = auth
-                    .principal_ref()
-                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                    .ok_or(HostError::InvalidRequest)?;
-                let memory = crate::api::credential_memory(
-                    &self.vault,
-                    Some(auth),
-                    actor,
-                    oneiron::EdgeActorClass::Human,
-                )
-                .at(auth.locality());
-                state.core.open_scoped_utterance(
-                    utterance_id,
-                    config,
-                    &memory,
-                    &RecallScope::default(),
-                )?
+        let handle = if let Some(phone) = &self.phone {
+            let memory = phone.memory()?;
+            state.core.open_scoped_utterance(
+                utterance_id,
+                config,
+                &memory,
+                &RecallScope::default(),
+            )?
+        } else {
+            match &self.speculative_auth {
+                Some(auth)
+                    if (auth.managed_owner().is_none()
+                        && !auth.is_host_holder()
+                        && auth.verified_slip().is_some()
+                        && auth.actor_class() == Some("human"))
+                        || (auth.is_owner_grade()
+                            && auth.verified_slip().is_none()
+                            && auth.invocation_slip().is_none()
+                            && auth.actor_class() == Some("human")
+                            && auth.managed_owner().is_some_and(|holder| {
+                                auth.principal_ref().and_then(|principal| {
+                                    oneiron::EntityId::from_hex(principal).ok()
+                                }) == Some(holder)
+                            })) =>
+                {
+                    // The owner door proved this ordinary slip or managed
+                    // attestation's same Human principal, not the payer's class.
+                    let actor = auth
+                        .principal_ref()
+                        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                        .ok_or(HostError::InvalidRequest)?;
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor,
+                        oneiron::EdgeActorClass::Human,
+                    )
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
+                // Other admitted credential forms and unbound attachments retain
+                // the existing trusted path, not an auth-error fallback.
+                Some(_) | None => state.core.open_utterance(utterance_id, config)?,
             }
-            // Other admitted credential forms and unbound attachments retain
-            // the existing trusted path, not an auth-error fallback.
-            Some(_) | None => state.core.open_utterance(utterance_id, config)?,
         };
         // Connection-local, monotonically unique correlation. Not authentication.
         let token = serial.to_string();
