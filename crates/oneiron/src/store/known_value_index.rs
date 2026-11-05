@@ -447,6 +447,11 @@ impl KnownValues {
     }
 
     /// The known value `data` is, whole.
+    /// Exact raw whole-value identity, without exposing its keyed fingerprint.
+    pub(crate) fn is_exact_value(&self, data: &[u8]) -> bool {
+        self.whole(data).is_some()
+    }
+
     fn whole(&self, data: &[u8]) -> Option<&Known> {
         self.longest_at(data)
             .filter(|known| known.len == data.len())

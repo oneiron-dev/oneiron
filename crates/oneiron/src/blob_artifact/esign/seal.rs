@@ -10,7 +10,7 @@ use super::{
     },
     sealer::{
         EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
-        SealProfile, SealVerdict,
+        SealProfile, SealProfileEvidence, SealVerdict,
     },
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
@@ -49,6 +49,7 @@ pub struct SealedItem {
     pub sealed_artifact: String,
     pub sealed_version: u64,
     pub sha256: [u8; 32],
+    pub profile: SealProfileEvidence,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedDocument {
@@ -254,7 +255,16 @@ impl Vault {
             if sealed.evidence_sha256 != hash {
                 return Err(EsignSealError::Verification);
             }
-            outputs.push((sealed.bytes, hash, prepared.audit_chain_sha256));
+            outputs.push((
+                sealed.bytes,
+                hash,
+                prepared.audit_chain_sha256,
+                SealProfileEvidence {
+                    requested: sealed.requested,
+                    achieved: sealed.achieved,
+                    degraded: sealed.degraded,
+                },
+            ));
         }
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
@@ -264,7 +274,7 @@ impl Vault {
             }
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;
             let mut items = Vec::new();
-            for (index, (bytes, hash, _)) in outputs.iter().enumerate() {
+            for (index, (bytes, hash, _, profile)) in outputs.iter().enumerate() {
                 let id = self.new_entity_id()?;
                 let mut body = originals[index].0.clone();
                 body.name = format!("sealed-{}.pdf", index + 1);
@@ -310,6 +320,7 @@ impl Vault {
                     sealed_artifact: id.to_hex(),
                     sealed_version: version.version,
                     sha256: *hash,
+                    profile: profile.clone(),
                 });
             }
             let manifest = SealedDocument {
@@ -326,6 +337,7 @@ impl Vault {
                 EsignEvent::Sealed {
                     rejected: manifest.rejected,
                     item_sha256: manifest.items.iter().map(|i| i.sha256).collect(),
+                    item_profiles: manifest.items.iter().map(|i| i.profile.clone()).collect(),
                 },
                 EsignAuditActor {
                     actor: format!(

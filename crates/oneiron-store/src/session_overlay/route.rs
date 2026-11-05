@@ -1,3 +1,6 @@
+//! Session write routing: which store a session write lands in per mode.
+//! Entry [`SessionWriteRoute`]; consulted by the `overlay` lifecycle on every write.
+//! Owned by `session_overlay`; off-record writes stage in the overlay, never durable.
 use std::sync::Arc;
 
 use oneiron_contracts::error::{Error, Result};
