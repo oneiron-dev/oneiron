@@ -40,8 +40,61 @@ pub struct RoTxn<'e> {
 /// transaction lives, so a sealed env's values are copied here and live until
 /// the transaction ends, as heed promises. Wiped when the transaction drops.
 pub(crate) struct Stash {
-    kept: Mutex<Vec<StashedCopy>>,
+    kept: Mutex<StashEntries>,
     account: Option<Arc<dyn crate::PageAccount>>,
+}
+
+// The vector frees its entries and backing buffer before its index charge drops.
+struct StashEntries {
+    copies: Vec<StashedCopy>,
+    allocation: Option<StashAllocation>,
+}
+
+impl StashEntries {
+    fn push(
+        &mut self,
+        copy: StashedCopy,
+        account: Option<&Arc<dyn crate::PageAccount>>,
+    ) -> Result<()> {
+        if let Some(account) = account.filter(|_| self.copies.len() == self.copies.capacity()) {
+            // Match Rust 1.96's non-ZST RawVec push growth, then request that
+            // exact capacity so the complete replacement is admitted first.
+            let size = std::mem::size_of::<StashedCopy>();
+            let minimum = if size <= 1024 { 4 } else { 1 };
+            let capacity = self
+                .copies
+                .capacity()
+                .checked_mul(2)
+                .and_then(|doubled| {
+                    self.copies
+                        .len()
+                        .checked_add(1)
+                        .map(|need| doubled.max(need))
+                })
+                .map(|capacity| capacity.max(minimum))
+                .ok_or_else(|| std::io::Error::from_raw_os_error(libc::ENOMEM))?;
+            let bytes = std::alloc::Layout::array::<StashedCopy>(capacity)
+                .map_err(|_| std::io::Error::from_raw_os_error(libc::ENOMEM))?
+                .size();
+            if !account.reserve(bytes) {
+                mdb_result(libc::ENOMEM)?;
+            }
+            let mut allocation = StashAllocation {
+                account: Arc::clone(account),
+                bytes,
+                allocated: false,
+            };
+            self.copies
+                .try_reserve_exact(capacity - self.copies.len())
+                .map_err(|_| std::io::Error::from_raw_os_error(libc::ENOMEM))?;
+            allocation.account.materialized(allocation.bytes);
+            allocation.allocated = true;
+            // Successful growth has freed/reallocated the old backing buffer.
+            drop(self.allocation.replace(allocation));
+        }
+        self.copies.push(copy);
+        Ok(())
+    }
 }
 
 // Field order keeps the payload alive through wiping, then frees it before
@@ -72,7 +125,10 @@ impl Drop for StashAllocation {
 impl Stash {
     fn for_env(env: &Env, account: Option<Arc<dyn crate::PageAccount>>) -> Option<Stash> {
         env.is_sealed().then(|| Stash {
-            kept: Mutex::new(Vec::new()),
+            kept: Mutex::new(StashEntries {
+                copies: Vec::new(),
+                allocation: None,
+            }),
             account,
         })
     }
@@ -108,10 +164,13 @@ impl Stash {
         self.kept
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(StashedCopy {
-                bytes: copy,
-                _allocation: allocation,
-            });
+            .push(
+                StashedCopy {
+                    bytes: copy,
+                    _allocation: allocation,
+                },
+                self.account.as_ref(),
+            )?;
         Ok(unsafe { std::slice::from_raw_parts(data, len) })
     }
 }

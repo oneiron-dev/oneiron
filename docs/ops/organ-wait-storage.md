@@ -163,10 +163,27 @@ same typed ENOMEM path as native allocation denial; it does not wait inside the
 writer. Plain environments remain zero-copy. Sealed reads without an account
 still copy and wipe; earlier copies are not retroactively charged.
 
+The sealed-read stash also admits its Vec index before each physical growth.
+The accounted path requests the same non-zero entry capacity as Rust 1.96's
+native Vec push growth. Its full replacement layout is reserved beside the
+old index, materialized immediately after successful growth, and kept charged
+until the backing Vec is freed. A successful growth releases the old index's
+charge only after that allocation has been replaced; a failed growth leaves
+the old index and its charge intact. Payload charges remain separate.
+
+The Vec and its entries drop before the index allocation guard. This includes
+the inline per-entry payload guards in the actual entry layout, not a guessed
+per-entry allowance. An index allocated before an account attaches is not
+retroactively charged. Unaccounted stashes retain ordinary Vec push behavior.
+Accounted index admission denial, allocation failure or layout overflow returns
+typed ENOMEM without waiting inside the writer. Existing outside-writer native
+admission replay rules stay unchanged.
+
 This covers dirty-page, encrypted read-cache, single-ID-list, raw dirty-list,
-transaction-control-block and sealed read-copy payload allocations during the
-accounted transaction, including the native allocations' actual heap-only
-prefixes. It does not cover the stash's Vec index or inline guard metadata,
-other ID2/ID3 control arrays, startup scratch, mmap, every metadata/overlay copy
-or native physical-disk/CoW costs. The disk claim above still covers encoded
-values only. This is not complete FIX8125, whole-heap coverage or runtime proof.
+transaction-control-block, sealed read-copy payload and stash-index allocations
+during the accounted transaction, including the native allocations' actual
+heap-only prefixes and the Vec's requested entry layout. It does not measure
+allocator bookkeeping or hidden slack, other ID2/ID3 control arrays, startup
+scratch, mmap, every metadata/overlay copy or native physical-disk/CoW costs.
+The disk claim above still covers encoded values only. This is not complete
+FIX8125, whole-heap coverage or runtime proof.
