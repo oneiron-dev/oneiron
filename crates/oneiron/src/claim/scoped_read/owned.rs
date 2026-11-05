@@ -19,7 +19,7 @@ pub struct OwnedScopedRead {
     vault: Arc<crate::Vault>,
 }
 
-impl<'a> ScopedRead<'a> {
+impl ScopedRead<'_> {
     /// Transfers only a base reader of this exact vault. An incompatible
     /// reader comes back unchanged; a session's overlay is never detached.
     pub fn into_owned_base(

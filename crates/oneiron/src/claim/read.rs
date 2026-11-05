@@ -2,6 +2,7 @@
 //! scans, the session-bundle projection, and the facet-ref lookup the scoped
 //! read lane gates on.
 
+use crate::write_envelope::claim_body::{ClaimBodyRead, ClaimBodyReadError, ClaimScopeReadMemory};
 use rmpv::Value;
 
 use super::*;
@@ -98,6 +99,28 @@ impl Vault {
             rtxn,
             id,
             super::history_projection::resolved_machine_history,
+            None,
+        )
+        .map(|body| {
+            body.map(|body| {
+                body.try_into_unbound_body()
+                    .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
+            })
+        })
+        .map_err(ClaimBodyReadError::into_unbound_error)
+    }
+
+    pub(crate) fn get_claim_with_scope_memory_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<Option<ClaimBodyRead>, ClaimBodyReadError> {
+        self.claim_in_txn(
+            rtxn,
+            id,
+            super::history_projection::resolved_machine_history,
+            memory,
         )
     }
 
@@ -114,7 +137,15 @@ impl Vault {
             rtxn,
             id,
             super::history_projection::machine_history_for_restriction,
+            None,
         )
+        .map(|body| {
+            body.map(|body| {
+                body.try_into_unbound_body()
+                    .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
+            })
+        })
+        .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
     fn claim_in_txn(
@@ -127,8 +158,9 @@ impl Vault {
             &crate::authority::AuthorityFold,
             EntityId,
         ) -> Result<super::transition::ClaimTransitionProjection>,
-    ) -> Result<Option<ClaimBody>> {
-        let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<Option<ClaimBodyRead>, ClaimBodyReadError> {
+        let body = self.claim_body_with_scope_memory_in_txn(rtxn, id, memory)?;
         let Some(body) = body else { return Ok(None) };
         if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
             || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
@@ -136,7 +168,8 @@ impl Vault {
             || self
                 .store
                 .vault_meta
-                .get(rtxn, &super::history_projection::pin_key(*id))?
+                .get(rtxn, &super::history_projection::pin_key(*id))
+                .map_err(Error::from)?
                 .is_some()
         {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
@@ -145,8 +178,9 @@ impl Vault {
             if !projection.admits_successor_by(crate::claim::claim_author(&body))
                 || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
             {
-                return Ok(Some(super::history_projection::project_machine_claim(
-                    &projection,
+                return Ok(Some(ClaimBodyRead::retained(
+                    super::history_projection::project_machine_claim(&projection),
+                    memory,
                 )));
             }
         }

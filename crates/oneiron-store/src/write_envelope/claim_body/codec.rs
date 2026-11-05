@@ -111,6 +111,21 @@ pub fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 ///   predicates are rejected unless `allow_reserved_predicate` is set
 ///   (crate-private door / read path).
 pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
+    decode_claim_body_with_scope_memory(data, allow_reserved_predicate, None)
+        .map(|body| {
+            body.try_into_unbound_body()
+                .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
+        })
+        .map_err(ClaimBodyReadError::into_unbound_error)
+}
+
+/// The canonical decoder with admission before its typed relationship backing.
+/// The MessagePack DOM itself is already allocated and is not admitted here.
+pub fn decode_claim_body_with_scope_memory(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+    memory: Option<ClaimScopeReadMemory<'_>>,
+) -> std::result::Result<ClaimBodyRead, ClaimBodyReadError> {
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
@@ -118,10 +133,10 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?;
     if cursor.position() != data.len() as u64 {
-        return Err(Error::InvalidClaimBody("trailing bytes after body map"));
+        return Err(Error::InvalidClaimBody("trailing bytes after body map").into());
     }
     let Value::Map(entries) = value else {
-        return Err(Error::InvalidClaimBody("body must be a MessagePack map"));
+        return Err(Error::InvalidClaimBody("body must be a MessagePack map").into());
     };
 
     let mut predicate: Option<String> = None;
@@ -138,7 +153,7 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let mut valid_to: Option<u64> = None;
     let mut source: Option<ClaimSource> = None;
     let mut world: Option<EntityId> = None;
-    let mut rel: RelationshipScope = None;
+    let mut rel = None;
     let mut scope: Option<Value> = None;
     let mut session_tag: Option<String> = None;
     let mut stale: Option<bool> = None;
@@ -149,22 +164,23 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let mut seen = [false; CLAIM_BODY_KEYS.len()];
     for (key, value) in entries {
         let Some(key) = key.as_str() else {
-            return Err(Error::InvalidClaimBody("body keys must be strings"));
+            return Err(Error::InvalidClaimBody("body keys must be strings").into());
         };
         let Some(index) = CLAIM_BODY_KEYS.iter().position(|known| *known == key) else {
             return Err(Error::InvalidClaimBody(
                 "body key is not in the pinned CLAIM_BODY_KEYS set",
-            ));
+            )
+            .into());
         };
         if seen[index] {
-            return Err(Error::InvalidClaimBody("duplicate body key"));
+            return Err(Error::InvalidClaimBody("duplicate body key").into());
         }
         seen[index] = true;
 
         match CLAIM_BODY_KEYS[index] {
             "pred" => {
                 let Value::String(pred) = value else {
-                    return Err(Error::InvalidClaimBody("pred must be a string"));
+                    return Err(Error::InvalidClaimBody("pred must be a string").into());
                 };
                 predicate = Some(
                     pred.into_str()
@@ -227,10 +243,12 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
             "scopeFacetId" => scope_facet = Some(scope_stamp::scope_id(&value)?),
             "scopeProjectId" => scope_project = Some(scope_stamp::scope_id(&value)?),
             "scopeVersion" => scope_version = value.as_u64(),
-            "scopeRelationshipId" => rel = decode_relationship_scope(&value)?,
+            "scopeRelationshipId" => {
+                rel = Some(relationship_scope::ValidatedRelationshipScope::new(value)?);
+            }
             "subj" => {
                 let Value::Binary(bytes) = &value else {
-                    return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
+                    return Err(Error::InvalidClaimBody("subj must be MessagePack binary").into());
                 };
                 subject = Some(ClaimSubject::decode(bytes)?);
             }
@@ -249,13 +267,13 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
             }
             "stale" => {
                 let Value::Boolean(flag) = value else {
-                    return Err(Error::InvalidClaimBody("stale must be a boolean"));
+                    return Err(Error::InvalidClaimBody("stale must be a boolean").into());
                 };
                 stale = Some(flag);
             }
             "sess" => {
                 let Value::String(tag) = value else {
-                    return Err(Error::InvalidClaimBody("sess must be a string"));
+                    return Err(Error::InvalidClaimBody("sess must be a string").into());
                 };
                 let tag = tag
                     .into_str()
@@ -268,9 +286,7 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     }
 
     if scope_version != Some(2) || !seen[9] {
-        return Err(Error::InvalidClaimBody(
-            "missing required scope stamp/version",
-        ));
+        return Err(Error::InvalidClaimBody("missing required scope stamp/version").into());
     }
     let stamped_world = world.ok_or(Error::InvalidClaimBody("missing worldId"))?;
     let world = (stamped_world != base_world_id()).then_some(stamped_world);
@@ -293,26 +309,44 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     // scope decision. Unknown sibling entries are not inspected.
     validate_known_claim_scope_entries(scope.as_ref())?;
 
-    Ok(ClaimBody {
-        predicate,
-        subject,
-        value: claim_value,
-        confidence,
-        confidence_band,
-        confidence_basis,
-        approval,
-        lifecycle,
-        salience,
-        evidence,
-        valid_from,
-        valid_to,
-        source,
-        world,
-        rel,
-        scope,
-        scope_facet,
-        scope_project,
-        session_tag,
-        stale: stale.unwrap_or(false),
-    })
+    let rel = rel.expect("required relationship scope was validated");
+    let mut memory = match (memory, rel.len()) {
+        (Some(memory), Some(count)) => {
+            Some(memory.admit(count).map_err(ClaimBodyReadError::Refused)?)
+        }
+        _ => None,
+    };
+    let reserved = rel.len().map_or(0, read_memory::relationship_bytes);
+    let rel = rel.materialize();
+    if let Some(memory) = &mut memory {
+        let actual = rel
+            .as_ref()
+            .map_or(0, |ids| read_memory::relationship_bytes(ids.capacity()));
+        memory.materialized(reserved, actual);
+    }
+    Ok(ClaimBodyRead::new(
+        ClaimBody {
+            predicate,
+            subject,
+            value: claim_value,
+            confidence,
+            confidence_band,
+            confidence_basis,
+            approval,
+            lifecycle,
+            salience,
+            evidence,
+            valid_from,
+            valid_to,
+            source,
+            world,
+            rel,
+            scope,
+            scope_facet,
+            scope_project,
+            session_tag,
+            stale: stale.unwrap_or(false),
+        },
+        memory,
+    ))
 }

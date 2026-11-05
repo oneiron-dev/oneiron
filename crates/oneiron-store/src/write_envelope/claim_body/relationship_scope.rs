@@ -63,6 +63,15 @@ impl<const N: usize> From<[EntityId; N]> for RelationshipSet {
     }
 }
 
+impl IntoIterator for RelationshipSet {
+    type Item = EntityId;
+    type IntoIter = std::vec::IntoIter<EntityId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ids.into_iter()
+    }
+}
+
 impl<'a> IntoIterator for &'a RelationshipSet {
     type Item = &'a EntityId;
     type IntoIter = std::slice::Iter<'a, EntityId>;
@@ -151,14 +160,52 @@ pub fn encode_relationship_scope(rel: Option<&RelationshipSet>) -> Value {
 /// Decode `scopeRelationshipId`: `all`, or an array of 16-byte ids of any
 /// length, `[]` included.
 pub fn decode_relationship_scope(value: &Value) -> Result<RelationshipScope> {
+    relationship_ids(value).map(|ids| ids.map(materialize_relationship_ids))
+}
+
+fn relationship_ids(value: &Value) -> Result<Option<&[Value]>> {
     if value.as_str() == Some("all") {
         return Ok(None);
     }
     let Value::Array(ids) = value else {
         return Err(Error::InvalidClaimBody("invalid relationship scope"));
     };
-    ids.iter()
-        .map(scope_stamp::scope_id)
-        .collect::<Result<RelationshipSet>>()
-        .map(Some)
+    for id in ids {
+        scope_stamp::scope_id(id)?;
+    }
+    Ok(Some(ids))
+}
+
+fn materialize_relationship_ids(ids: &[Value]) -> RelationshipSet {
+    let mut decoded = Vec::with_capacity(ids.len());
+    for id in ids {
+        decoded.push(scope_stamp::scope_id(id).expect("validated relationship id"));
+    }
+    RelationshipSet::canonicalize(decoded)
+}
+
+/// Keeps the original DOM until every claim field has passed validation.
+pub(super) struct ValidatedRelationshipScope {
+    value: Value,
+}
+
+impl ValidatedRelationshipScope {
+    pub(super) fn new(value: Value) -> Result<Self> {
+        relationship_ids(&value)?;
+        Ok(Self { value })
+    }
+
+    pub(super) fn len(&self) -> Option<usize> {
+        match &self.value {
+            Value::Array(ids) => Some(ids.len()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn materialize(self) -> RelationshipScope {
+        match &self.value {
+            Value::Array(ids) => Some(materialize_relationship_ids(ids)),
+            _ => None,
+        }
+    }
 }

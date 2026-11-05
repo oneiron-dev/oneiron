@@ -21,11 +21,11 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RecordError, Result};
-use crate::host_memory::MachineMemory;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
 use rmpv::Value;
 
 /// Closes `old_id` in favour of `new_id` for one claim whose FAMILY DOOR owns
@@ -395,24 +395,25 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(
-        vault, rtxn, contact_id, None,
-    )?)
+    counterparty_contact_record_from_heads(
+        contact_claim_bodies_in_txn(vault, rtxn, contact_id, None)
+            .map_err(ClaimBodyReadError::into_unbound_error)?,
+    )
 }
 
 fn contact_claim_bodies_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
-    memory: Option<&MachineMemory>,
-) -> Result<Vec<ContactClaim>> {
+    memory: Option<ClaimScopeReadMemory<'_>>,
+) -> std::result::Result<Vec<ContactClaim>, ClaimBodyReadError> {
     let mut bodies = Vec::new();
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
     // Keep the first duplicate for the fold, but read every claim so later
     // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
+        if let Some(body) = vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, memory)? {
             if duplicate || !is_live_contact_head(&body) {
                 continue;
             }
@@ -423,7 +424,7 @@ fn contact_claim_bodies_in_txn(
                 continue;
             };
             duplicate = std::mem::replace(&mut seen[index], true);
-            bodies.push(ContactClaim::new(body, memory));
+            bodies.push(body);
         }
     }
     Ok(bodies)
@@ -446,14 +447,15 @@ pub(super) fn live_counterparty_contact_heads_in_txn(
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
     live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, None)
+        .map_err(ClaimBodyReadError::into_unbound_error)
 }
 
 fn live_counterparty_contact_heads_with_memory_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
-    memory: Option<&MachineMemory>,
-) -> Result<Option<CounterpartyContactRecord>> {
+    memory: Option<ClaimScopeReadMemory<'_>>,
+) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
     if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
         return Ok(None);
     }
@@ -461,7 +463,9 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     if !bodies.iter().any(|body| is_live_contact_head(body)) {
         return Ok(None);
     }
-    counterparty_contact_record_from_heads(bodies).map(Some)
+    counterparty_contact_record_from_heads(bodies)
+        .map(Some)
+        .map_err(ClaimBodyReadError::from)
 }
 
 /// The contact as every reader sees it: its own heads, with the party's
@@ -474,14 +478,15 @@ pub(super) fn counterparty_contact_in_claims_in_txn(
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
     counterparty_contact_with_memory_in_claims_in_txn(vault, rtxn, contact_id, None)
+        .map_err(ClaimBodyReadError::into_unbound_error)
 }
 
 pub(super) fn counterparty_contact_with_memory_in_claims_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
-    memory: Option<&MachineMemory>,
-) -> Result<Option<CounterpartyContactRecord>> {
+    memory: Option<ClaimScopeReadMemory<'_>>,
+) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
     let Some(mut record) =
         live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, memory)?
     else {
@@ -520,7 +525,7 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
             continue;
         };
         if raw.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            bodies.push(ContactClaim::new(
+            bodies.push(ContactClaim::retained(
                 crate::claim::decode_claim_body(&raw.body, true)?,
                 None,
             ));
