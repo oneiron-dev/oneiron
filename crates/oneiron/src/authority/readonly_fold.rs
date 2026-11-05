@@ -546,9 +546,17 @@ fn fold_stored_tail_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
     arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Result<AuthorityTailFold> {
-    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
-        && let Some(fold) =
-            fold_adopted_in_txn(store, posture, txn, key, &adopted, required, arriving)?
+    if let Some(adopted) =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
+        && let Some(fold) = fold_adopted_in_txn(
+            store,
+            posture,
+            txn,
+            key,
+            adopted.as_ref(),
+            required,
+            arriving,
+        )?
     {
         return Ok(fold);
     }

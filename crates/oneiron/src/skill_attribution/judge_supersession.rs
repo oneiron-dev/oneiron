@@ -252,6 +252,7 @@ pub fn supersede_displaced_judge_receipts(
         }
         Ok(())
     })?;
+    crate::edit_distance::attribution::project_amendment_reliability(vault)?;
     for (skill, executor) in affected {
         match executor {
             Some(model) => {
