@@ -9,12 +9,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
-use super::PayloadItem;
+use crate::checkpoint_payload::PayloadItem;
 
 /// Every generation of every compartment a kept copy names, with the
 /// checkpoint ids of the copies naming it.
 #[derive(Debug, Default)]
-pub(crate) struct KeptGenerations {
+pub struct KeptGenerations {
     named: BTreeMap<PayloadItem, BTreeMap<u64, BTreeSet<[u8; 32]>>>,
     incomplete: bool,
 }
@@ -22,7 +22,7 @@ pub(crate) struct KeptGenerations {
 impl KeptGenerations {
     /// Records that the kept copy `holder` (its checkpoint id) needs
     /// `item`'s leaf at `generation`.
-    pub(crate) fn hold(&mut self, item: PayloadItem, generation: u64, holder: [u8; 32]) {
+    pub fn hold(&mut self, item: PayloadItem, generation: u64, holder: [u8; 32]) {
         self.named
             .entry(item)
             .or_default()
@@ -33,14 +33,14 @@ impl KeptGenerations {
 
     /// Records that a kept copy's inventory did not read: nothing it may
     /// name is released.
-    pub(crate) fn unread(&mut self) {
+    pub fn unread(&mut self) {
         self.incomplete = true;
     }
 
     /// Whether a kept copy names `item` at a generation after `generation`:
     /// a capture sealed it at a later generation, and that copy landed
     /// (FIX 11800). A copy whose inventory did not read names nothing.
-    pub(crate) fn names_after(&self, item: &PayloadItem, generation: u64) -> bool {
+    pub fn names_after(&self, item: &PayloadItem, generation: u64) -> bool {
         let after = (Bound::Excluded(generation), Bound::Unbounded);
         self.named
             .get(item)
@@ -48,7 +48,7 @@ impl KeptGenerations {
     }
 
     /// Whether no kept copy needs `item`'s leaf at or below `through`.
-    pub(crate) fn releases(&self, item: &PayloadItem, through: u64) -> bool {
+    pub fn releases(&self, item: &PayloadItem, through: u64) -> bool {
         !self.incomplete
             && self
                 .named
