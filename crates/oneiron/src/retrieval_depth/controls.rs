@@ -1,6 +1,5 @@
 //! Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and
 //! the share of the budget the answer keeps.
-use crate::error::{Error, Result};
 use crate::rerank::Reranker;
 use crate::store::embedding::InputKind;
 
