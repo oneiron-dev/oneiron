@@ -84,42 +84,67 @@ The host derives the selection from its durably admitted order. The explicit
 whole-family option is suitable only when that order covers this entire native
 family. The selector is source scope, not legal-order or reader authority.
 
-## Scope still being integrated
+## Integration and unchanged behavior
 
-This native bank alone does not replace any existing live-vault hold. The real
-host store/client and managed startup consumers must land with it. Normal
-customer-requested holds and their owner-confirmed lift remain unchanged.
-Off-record encrypted spill remains governed by its own exact-session order
-scope. The additional live-session source bank below is a published-body slice,
-not whole written-session preservation or a usable deployed floor.
+This native source does not remove an existing live-vault hold. Normal
+customer-requested holds and their owner-confirmed lift remain unchanged. The
+matching HOST store/client, key custody, audit, typed verifier and durable ACK
+must be integrated before a deployed preservation claim is valid. Source code
+alone is not a compiled or deployed floor.
 
-## Live-session source bank
+## Live-session written-spill source
 
-A live target uses the actual physical vault id, the exact registry reference
-and the 16-byte overlay shell minted once at entry. It is not a gate decision
-or an entry timestamp. A new order registers under the same entry lock that
-publishes closing. An admitted exact standing may reconnect to its retained
-closing source. The per-vault private registry keeps public recipient and order
-metadata, not source bytes or private keys. A disconnected attempt is not an
-order release. Explicit release ends only that order generation; its native
-receipt does not claim that HOST keys or clone content were destroyed.
+A live target uses the actual physical vault id, exact registry reference and
+16-byte overlay shell minted once at entry. It is not a gate decision or an
+entry timestamp. A new order registers under the same entry lock that publishes
+closing. Registration installs an opaque native retention guard for active,
+future and finished spill sources. The private order standing owns that
+ORIGINAL guard through disconnect and failed attempts; reconnect never tries
+to replace a source guard after its bytes or keys have gone. Ordinary writers
+without an order keep their existing weak tracking and disk-spill behavior.
 
-`Pending` means registered without a source pin. `Accepted` is emitted only
-when the close-side supplier lends its sealed, drained overlay snapshot and
-existing spill directory. The borrowed getter uses actual native file rows and
-body-key decoding. Only digest and length from an output reference are body
-facts; its placeholder path, kind and completion fields are not occurrence
-metadata. No body key or wrap leaves the supplier.
+An admitted exact standing may reconnect to its retained closing source. The
+per-vault registry keeps order/public-recipient metadata and the opaque native
+source-lifetime guard, not HOST private keys or a separate raw-body store.
+Explicit release ends only that order generation, interrupts its attempts and
+waits for their collectors before acknowledging. Its native receipt is not
+proof that HOST keys or clone content were destroyed. Expiry uses the admitted
+order term, not a new timeout or default retention interval.
 
-The stream binds a typed source family and the exact whole request digest in
-all content, descriptor and summary AEAD roles. The encrypted completion
-manifest states its actual extent. `PublishedLiveSessionBodies` is not a claim
-that an in-progress written temporary file was captured. This bank therefore
-keeps the exact covered close pending after a published-only extent ACK. An
-empty published-row set is not proof that no written spill exists. Full
-writer-aware temporary-spill coverage and definitive no-written-source proof
-remain integration work; this bank must not be activated as whole-session
-preservation or used to wipe an unqualified extent.
+`Pending` means registered without a final source pin. Covered close seals and
+drains ordinary overlay writes, then freezes the native per-instance IO gate.
+Only short native IO is drained; neither a producer nor HOST network IO runs
+under that gate. The final published snapshot, frozen file descriptors and
+native keys stay with the borrowed getter through whole-source verification
+and durable HOST ACK. Files renamed before a failed publication or an aborted
+binding remain actual native candidates, not fabricated committed rows.
+
+The encrypted metadata component is a closed `LiveSpillMetadata` value:
+`Published` carries an actual raw key/file row; `NativeFile` carries the actual
+filename, native-finish flag and physical size. The latter is not producer
+path, kind or completion. Its shared key/family helpers distinguish the two
+variants. Metadata tag 7 precedes its body tag 6; both use the exact metadata
+encoding's hash as their revision. Body length and fingerprint come ONLY from
+the measured native plaintext, never an output reference's placeholder fields.
+No native key or file descriptor leaves the supplier.
+
+`WrittenLiveSessionSpill` covers ALL final published bodies and frozen written
+files of that exact closing instance. The encrypted summary's `live_bodies`
+count equals the number of complete metadata/body pairs; a gate capture has
+zero. The HOST must parse the whole metadata component before checking its
+variant's key/family commitment and the following body's same source, key and
+revision. It checks every body fingerprint/length and the final counts and
+transcript before durable publication and ACK. A successful ACK retires only
+that exact captured standing. Any other covered order still must capture or
+reach release/expiry before normal close can wipe its source.
+
+A zero-body completion is emitted ONLY after the combined final published
+snapshot AND frozen native inventory prove no written source. Empty published
+rows alone never establish that fact. A failed physical suffix is an honest
+source error and retains the covered source; it is not a partial completion or
+wipe permission. This extent is written result-body spill, not all session
+content, producer completion, future writes, crash recovery or a historical
+legal-clone replay guarantee.
 
 Managed stop wakes queued capture waiters and shuts all registered stream
 clones before the existing all-socket shutdown and all-worker join. A capture

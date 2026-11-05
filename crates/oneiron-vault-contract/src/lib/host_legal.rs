@@ -345,13 +345,53 @@ pub struct CaptureDescriptor {
     pub chunk_count: u64,
 }
 
-/// The native source extent actually copied. Published live bodies do not
-/// imply coverage of an in-progress written spill or completion of an order.
+/// Actual source facts encrypted as a live metadata component. A native file
+/// is not a producer occurrence or a fabricated published RAW_OUTPUTS row.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LiveSpillMetadata {
+    Published {
+        raw_key: Vec<u8>,
+        raw_file_row: Vec<u8>,
+    },
+    NativeFile {
+        name: String,
+        /// Whether the native spill finished, not whether its producer completed.
+        finished: bool,
+        physical_len: u64,
+    },
+}
+
+impl LiveSpillMetadata {
+    pub fn source_key(&self) -> &[u8] {
+        match self {
+            Self::Published { raw_key, .. } => raw_key,
+            Self::NativeFile { name, .. } => name.as_bytes(),
+        }
+    }
+
+    pub fn metadata_family(&self) -> &'static str {
+        match self {
+            Self::Published { .. } => "off-record.raw-output.file",
+            Self::NativeFile { .. } => "off-record.native-spill.file",
+        }
+    }
+
+    pub fn body_family(&self) -> &'static str {
+        match self {
+            Self::Published { .. } => "off-record.raw-output.body",
+            Self::NativeFile { .. } => "off-record.native-spill.body",
+        }
+    }
+}
+
+/// The native source extent actually copied. Written spill covers the final
+/// published rows AND frozen native files of the exact live session instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureExtent {
     GateDecisions,
-    PublishedLiveSessionBodies,
+    WrittenLiveSessionSpill,
 }
 
 /// Immutable completion manifest for its declared extent, encrypted to the
@@ -366,6 +406,7 @@ pub struct CaptureSummary {
     pub ends_at: u64,
     pub decisions: u64,
     pub live_sessions: u64,
+    pub live_bodies: u64,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,

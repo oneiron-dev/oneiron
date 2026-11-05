@@ -148,6 +148,7 @@ impl<'stream> Collector<'stream> {
         mut self,
         decisions: u64,
         live_sessions: u64,
+        live_bodies: u64,
         extent: CaptureExtent,
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
@@ -160,6 +161,7 @@ impl<'stream> Collector<'stream> {
             ends_at: self.request.ends_at,
             decisions,
             live_sessions,
+            live_bodies,
             extent,
             components: self.components,
             plaintext_bytes: self.plaintext_bytes,

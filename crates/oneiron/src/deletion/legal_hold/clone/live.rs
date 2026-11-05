@@ -11,12 +11,14 @@ use std::time::Duration;
 use oneiron_crypto::{HybridPublicKey, legal_clone::SourceComponent};
 use oneiron_vault_contract::host_legal::{
     CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, FrameHeader, FrameKind,
-    LiveSessionTarget, ReleaseLiveOrder,
+    LiveSessionTarget, LiveSpillMetadata, ReleaseLiveOrder,
 };
 
 use crate::error::Result;
-use crate::off_record::PublishedSessionSpill;
+use crate::off_record::{WrittenSessionSpill, WrittenSpillMetadata};
+use crate::store::LiveSpillRetention;
 use crate::{EntityId, Vault};
+use zeroize::Zeroizing;
 
 use super::collector::Collector;
 
@@ -45,6 +47,8 @@ struct LiveOrder {
     key: OrderKey,
     ends_at: u64,
     recipient: Vec<u8>,
+    _retention: LiveSpillRetention,
+    completed: AtomicBool,
     attempts: Mutex<Vec<Weak<Attempt>>>,
 }
 
@@ -222,6 +226,13 @@ impl Drop for CaptureAttempt {
 
 impl LiveOrder {
     fn attach(&self, attempt: &Arc<Attempt>) -> Result<()> {
+        if self.completed.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "live legal capture complete",
+            )
+            .into());
+        }
         if self.ends_at != attempt.request.ends_at || self.recipient != attempt.request.recipient {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -279,7 +290,7 @@ impl HostLegalCaptures {
             generation: attempt.request.generation,
             target: target.clone(),
         };
-        let attach = || -> Result<()> {
+        let attach = |retention| -> Result<()> {
             let mut registry = self.registry.lock().map_err(|_| poisoned())?;
             if self.stopped.load(Ordering::Acquire)
                 || registry.released.contains(&(key.order, key.generation))
@@ -291,6 +302,8 @@ impl HostLegalCaptures {
                     key: key.clone(),
                     ends_at: attempt.request.ends_at,
                     recipient: attempt.request.recipient.clone(),
+                    _retention: retention,
+                    completed: AtomicBool::new(false),
                     attempts: Mutex::new(Vec::new()),
                 })
             });
@@ -314,6 +327,24 @@ impl HostLegalCaptures {
         )
     }
 
+    fn complete(&self, order: &Arc<LiveOrder>, captured: &Arc<Attempt>) -> Result<()> {
+        let mut registry = self.registry.lock().map_err(|_| poisoned())?;
+        order.completed.store(true, Ordering::Release);
+        if registry
+            .orders
+            .get(&order.key)
+            .is_some_and(|current| Arc::ptr_eq(current, order))
+        {
+            registry.orders.remove(&order.key);
+        }
+        for attempt in order.attempts()? {
+            if !Arc::ptr_eq(&attempt, captured) {
+                attempt.cancel(io::ErrorKind::Interrupted)?;
+            }
+        }
+        Ok(())
+    }
+
     fn release(&self, vault: &Vault, release: &ReleaseLiveOrder) -> Result<()> {
         let orders = {
             let mut registry = self.registry.lock().map_err(|_| poisoned())?;
@@ -331,7 +362,7 @@ impl HostLegalCaptures {
                 .collect::<Vec<_>>()
         };
         let mut attempts = Vec::new();
-        for order in orders {
+        for order in &orders {
             attempts.extend(order.attempts()?);
         }
         for attempt in &attempts {
@@ -443,12 +474,13 @@ impl Vault {
 }
 
 impl LiveSpillCaptures {
-    pub(crate) fn capture(&self, vault: &Vault, source: &PublishedSessionSpill) -> Result<()> {
+    pub(crate) fn capture_written(
+        &self,
+        vault: &Vault,
+        source: &WrittenSessionSpill,
+    ) -> Result<()> {
         let identity = source.identity();
         for order in &self.orders {
-            if order.ends_at <= vault.store.clock.now_recorded_at() {
-                continue;
-            }
             if identity.source_vault() != vault.vault_id()
                 || identity.session_ref() != order.key.target.session_ref
                 || identity.instance().as_bytes() != order.key.target.instance
@@ -459,70 +491,102 @@ impl LiveSpillCaptures {
                 )
                 .into());
             }
+        }
+        self.capture(vault, Some(source))
+    }
+
+    /// Called only after the native final snapshot and frozen writer inventory
+    /// jointly prove that this exact instance has no written spill.
+    pub(crate) fn no_written_spill(&self, vault: &Vault) -> Result<()> {
+        self.capture(vault, None)
+    }
+
+    fn capture(&self, vault: &Vault, source: Option<&WrittenSessionSpill>) -> Result<()> {
+        let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
+            .map_err(|_| io::Error::other("live legal body count overflow"))?;
+        for order in &self.orders {
+            if order.completed.load(Ordering::Acquire)
+                || order.ends_at <= vault.store.clock.now_recorded_at()
+            {
+                continue;
+            }
             let attempt = order.current_attempt()?;
             let mut capture = attempt.start(vault)?;
             let outcome = (|| -> Result<()> {
                 attempt.check(vault)?;
                 let mut collector =
                     Collector::pinned(&mut capture.stream, &attempt.public, &attempt.request)?;
-                source.for_each_published_body(|key, file_row, reference, reader| {
-                    attempt.check(vault)?;
-                    let source = CaptureSource::LiveSession(order.key.target.clone());
-                    let revision = *blake3::hash(file_row).as_bytes();
-                    collector.component(
-                        SourceComponent::LiveSessionMetadata,
-                        source.clone(),
-                        "off-record.raw-output.file",
-                        key,
-                        revision,
-                        file_row.len() as u64,
-                        revision,
-                        &mut &file_row[..],
-                        || attempt.check(vault),
-                    )?;
-                    collector.component(
-                        SourceComponent::LiveSessionBody,
-                        source,
-                        "off-record.raw-output.body",
-                        key,
-                        revision,
-                        reference.raw_len,
-                        reference.raw_blake3,
-                        reader,
-                        || attempt.check(vault),
+                let mut copied = 0u64;
+                if let Some(source) = source {
+                    source.for_each_written_body(|metadata, reference, reader| {
+                        attempt.check(vault)?;
+                        let metadata = match metadata {
+                            WrittenSpillMetadata::Published {
+                                raw_key,
+                                raw_file_row,
+                            } => LiveSpillMetadata::Published {
+                                raw_key: raw_key.to_vec(),
+                                raw_file_row: raw_file_row.to_vec(),
+                            },
+                            WrittenSpillMetadata::NativeFile {
+                                name,
+                                finished,
+                                physical_len,
+                            } => LiveSpillMetadata::NativeFile {
+                                name: name.to_owned(),
+                                finished,
+                                physical_len,
+                            },
+                        };
+                        let encoded = Zeroizing::new(
+                            serde_json::to_vec(&metadata).map_err(io::Error::other)?,
+                        );
+                        let source = CaptureSource::LiveSession(order.key.target.clone());
+                        let revision = *blake3::hash(&encoded).as_bytes();
+                        collector.component(
+                            SourceComponent::LiveSessionMetadata,
+                            source.clone(),
+                            metadata.metadata_family(),
+                            metadata.source_key(),
+                            revision,
+                            encoded.len() as u64,
+                            revision,
+                            &mut &encoded[..],
+                            || attempt.check(vault),
+                        )?;
+                        collector.component(
+                            SourceComponent::LiveSessionBody,
+                            source,
+                            metadata.body_family(),
+                            metadata.source_key(),
+                            revision,
+                            reference.raw_len,
+                            reference.raw_blake3,
+                            reader,
+                            || attempt.check(vault),
+                        )?;
+                        copied = copied
+                            .checked_add(1)
+                            .ok_or_else(|| io::Error::other("live legal body count overflow"))?;
+                        Ok(())
+                    })?;
+                }
+                if copied != bodies {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "live legal body count",
                     )
-                })?;
-                collector.finish(0, 1, CaptureExtent::PublishedLiveSessionBodies, || {
+                    .into());
+                }
+                collector.finish(0, 1, copied, CaptureExtent::WrittenLiveSessionSpill, || {
                     attempt.check(vault)
                 })
             })();
             capture.finish(&outcome)?;
             outcome?;
+            vault.host_legal_captures.complete(order, &attempt)?;
         }
-        if self
-            .orders
-            .iter()
-            .all(|order| order.ends_at <= vault.store.clock.now_recorded_at())
-        {
-            return Ok(());
-        }
-        // This supplier covers published bodies only. It does not prove that
-        // an in-progress written spill is absent or captured. An extent ACK
-        // must not authorize normal close/wipe of an unqualified extent.
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "live legal unpublished spill extent unqualified",
-        )
-        .into())
-    }
-
-    pub(crate) fn no_published_spill(&self) -> Result<()> {
-        // Empty published rows are not proof that a written .tmp is absent.
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "live legal written spill extent unqualified",
-        )
-        .into())
+        Ok(())
     }
 }
 

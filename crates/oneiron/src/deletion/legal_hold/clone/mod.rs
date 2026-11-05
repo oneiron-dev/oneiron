@@ -115,7 +115,7 @@ impl HostLegalConnection {
             )
             .into());
         }
-        collector.finish(decisions, 0, CaptureExtent::GateDecisions, check)?;
+        collector.finish(decisions, 0, 0, CaptureExtent::GateDecisions, check)?;
         // Read-only abort, after the exact durable HOST acknowledgement.
         drop(txn);
         Ok(())

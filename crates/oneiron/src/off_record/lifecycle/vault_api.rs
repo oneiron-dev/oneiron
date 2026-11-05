@@ -486,7 +486,7 @@ impl Vault {
                     |source| captures.capture_written(self, source),
                 )? {
                     super::live_spill::WrittenSpillOutcome::NoWrittenSpill => {
-                        captures.no_written_spill()?;
+                        captures.no_written_spill(self)?;
                     }
                     super::live_spill::WrittenSpillOutcome::CapturedWrittenSpill => {}
                 }
