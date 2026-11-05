@@ -13,7 +13,7 @@ cover it.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `7edd615ce268ed8ffda9f4fcdb1fe226b235e03b` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -53,14 +53,14 @@ five to the fork by rev:
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "7edd615ce268ed8ffda9f4fcdb1fe226b235e03b" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "7edd615ce268ed8ffda9f4fcdb1fe226b235e03b" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "7edd615ce268ed8ffda9f4fcdb1fe226b235e03b" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "7edd615ce268ed8ffda9f4fcdb1fe226b235e03b" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "7edd615ce268ed8ffda9f4fcdb1fe226b235e03b" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.16), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.17), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -97,11 +97,16 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.16), over `362becff`:
   Existing constants, guesses, arithmetic and convergence outcomes are unchanged.
   Cashflow intake and individual NPV scans remain unpolled. This patch is
   `0.9.3-oneiron.16`; it makes no new corpus or timing claim.
+- `e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f` polls the same caller token between YIELD and ODDFYIELD Newton
+  iterations and before their final valuations (FIX 186). Cancellation propagates before
+  numeric-result boxing. Existing constants, arithmetic, convergence and the YIELD
+  single-coupon path are unchanged; intake and individual coupon scans remain unpolled.
+  This patch is `0.9.3-oneiron.17`; it makes no new corpus or timing claim.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.16`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.17`.
 
 ## Vendored, modified snapshots
 
