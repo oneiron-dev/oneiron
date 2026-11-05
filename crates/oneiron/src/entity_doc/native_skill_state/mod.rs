@@ -27,8 +27,8 @@ pub(super) use codec::recipient::{
 };
 pub(super) use inherited::reconcile_for_persist;
 pub(super) use inspect::{
-    NativeMapFloorView, NativeMapInventory, NativeMapMutationView, NativeMapWriteView,
-    inspect as inspect_inventory,
+    NativeMapFloorView, NativeMapInventory, NativeMapMutationView, NativeMapReplay,
+    NativeMapWriteView, inspect as inspect_inventory,
 };
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
