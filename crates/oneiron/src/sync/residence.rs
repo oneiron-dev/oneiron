@@ -120,7 +120,7 @@ pub use search::{
     residence_search_revision, with_forwarded_search_page,
 };
 pub(crate) use world_eviction::world_placed_elsewhere;
-pub use world_eviction::{WorldEviction, evict_worlds_placed_elsewhere};
+pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 
 #[cfg(test)]
 use loro::ExportMode;

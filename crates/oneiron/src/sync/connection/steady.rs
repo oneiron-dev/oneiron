@@ -304,6 +304,18 @@ impl SyncConnection {
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
+                        // What the home holds of each world window, as this
+                        // connection last exchanged it: an eviction waits
+                        // until it covers the window (FIX 14534).
+                        let home_vvs: std::collections::HashMap<String, loro::VersionVector> = client
+                            .server_vvs
+                            .iter()
+                            .filter(|(key, _)| {
+                                crate::sync::WindowKey::try_new(key)
+                                    .is_some_and(|key| key.world().is_some())
+                            })
+                            .map(|(key, vv)| (key.clone(), vv.clone()))
+                            .collect();
                         tombstone_task = Some(tokio::task::spawn_blocking(move || {
                             let _batch = tombstone_batch;
                             if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
@@ -313,13 +325,16 @@ impl SyncConnection {
                             }
                             // A world the owner keeps on one other machine
                             // leaves this one (FIX 14534).
-                            match crate::sync::residence::evict_worlds_placed_elsewhere(&vault) {
+                            match crate::sync::residence::evict_worlds_placed_elsewhere(&vault, &home_vvs) {
                                 Ok(eviction) if eviction.worlds > 0 => tracing::info!(
                                     worlds = eviction.worlds,
                                     windows_evicted = eviction.windows_evicted,
                                     windows_busy = eviction.windows_busy,
+                                    windows_unconfirmed = eviction.windows_unconfirmed,
                                     removed = eviction.removed,
                                     kept = eviction.kept,
+                                    cached_items_removed = eviction.cached_items_removed,
+                                    cached_items_held = eviction.cached_items_held,
                                     "world copies placed elsewhere evicted"
                                 ),
                                 Ok(_) => {}
