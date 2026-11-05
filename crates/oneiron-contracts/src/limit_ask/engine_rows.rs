@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 139] = [
+    pub const ALL: [Self; 141] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -145,6 +145,8 @@ impl EngineLimit {
         Self::SharedMergeEvidenceRows,
         Self::RequestedResultRows,
         Self::EmbeddingDimensions,
+        Self::MemoryReasonEvidenceRows,
+        Self::MemoryReasonTokens,
     ];
 
     /// The config key that sets the row.
@@ -289,6 +291,8 @@ impl EngineLimit {
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
+            Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
+            Self::MemoryReasonTokens => "limits.memory_reason_tokens",
         }
     }
 
@@ -507,6 +511,14 @@ impl EngineLimit {
             // in ordinary use. Past it the row asks, and the vault serves
             // as opened.
             Self::EmbeddingDimensions => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonEvidenceRows => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonTokens => 16_777_216,
         }
     }
 }
