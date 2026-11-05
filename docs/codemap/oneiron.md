@@ -2842,7 +2842,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/storage.rs` | src | m | 1 enum · 1 fn · 24 crate-vis | TextField | Transactional entity-document storage, editable fields and immutable row pointers |
 | `src/entity_doc/storage/history.rs` | src | s | 3 crate-vis | — | The retained states of an entity's document, read as record bodies |
 | `src/entity_doc/storage/repo_index.rs` | src | s | 1 crate-vis | — | A document's text index when the repo blob its row stands for is masked again (FIX 7608 slice 3): the… |
-| `src/entity_doc/summary.rs` | src | m | 2 fn · 6 crate-vis | — | Scope-summary documents: retained derivations, purpose and editor `keep` memo |
+| `src/entity_doc/summary.rs` | src | m | 2 fn · 7 crate-vis | — | Scope-summary documents: retained derivations, purpose and editor `keep` memo |
 | `src/entity_doc/sweep.rs` | src | s | 2 crate-vis | — | The sweep's entity documents (FIX 10159): the slot each retained head names, and the owner's own compaction… |
 | `src/entity_doc/sync.rs` | src | m | 8 crate-vis | — | The sync text plane's canonical adapter (FIX 8871, 8872, 8873) |
 | `src/entity_doc/sync/birth_fields.rs` | src | s | 2 crate-vis | — | The canonical-birth field rules of the kinds besides MESSAGE whose text the sync plane births lazily (FIX… |
@@ -5132,7 +5132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/arc_work_store.rs` | src | s | 9 crate-vis | — | The rows of an Arc's work generations (FIX 7509 PR3): one typed side table, keyed by the generation's id and… |
 | `src/scope_summary/codec.rs` | src | m | 3 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage, SummarySourceNote | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/derivation.rs` | src | m | 5 struct · 1 fn · 15 crate-vis | ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan, SummarySourceVersion | Scope-summary derivation envelopes and change-driven re-derivation |
-| `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 22 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
+| `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 26 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
 | `src/scope_summary/doors/note_versions.rs` | src | s | 2 crate-vis | — | A NOTE set's summary at serve and admission (FIX 6321, SCAN C028 parity for NOTEs): its body pins each NOTE… |
 | `src/scope_summary/mod.rs` | src | s | 7 re-export · 9 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `src/scope_summary/producer.rs` | src | s | 3 crate-vis | — | Private admission for locally minted scope-summary bodies |
@@ -6026,7 +6026,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/reader_fold_receipt.rs` | src | s | 12 crate-vis | — | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/store/receipt_identity.rs` | src | s | 1 const · 2 crate-vis | — | The identity marker carried after receipt attribution is erased |
 | `src/store/receipt_row.rs` | src | m | 6 struct · 1 enum · 15 fn · 6 const · 87 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | Receipt row fields, query values, and deterministic ordering |
-| `src/store/record_hooks.rs` | src | s | 1 trait | StoreRecordHooks | The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room… |
+| `src/store/record_hooks.rs` | src | m | 1 trait | StoreRecordHooks | The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room… |
 | `src/store/record_links/blocks.rs` | src | m | 4 crate-vis | — | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/store/record_links/mod.rs` | src | m | 8 crate-vis | — | Pure parsing of record links in Markdown text |
 | `src/store/record_ref.rs` | src | s | 1 struct · 3 fn · 1 const · 5 crate-vis | RecordRef | Typed record references and bounded record display labels |
