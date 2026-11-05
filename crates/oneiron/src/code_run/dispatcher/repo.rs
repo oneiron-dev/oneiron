@@ -328,6 +328,7 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
         effect,
         error: error.code.clone(),
         code: None,
+        disk_floor: None,
     })
 }
 
