@@ -587,8 +587,9 @@ impl EsignSealer for HostedSealer<'_> {
         original: &[u8],
         request: &oneiron::blob_artifact::esign::render::PdfPreparation<'_>,
         chain: [u8; 32],
-        trail: Vec<String>,
-    ) -> Result<oneiron::blob_artifact::esign::render::PreparedEsignPdf, EsignSealerError> {
+        trail: &[String],
+    ) -> Result<Option<oneiron::blob_artifact::esign::render::PreparedEsignPdf>, EsignSealerError>
+    {
         self.prepare_esign_pdf_via_organ(original, request, chain, trail)
     }
 }

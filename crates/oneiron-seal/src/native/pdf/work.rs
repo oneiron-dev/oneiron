@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use crate::api::{SealObservations, SealStage};
-use crate::error::{InputInvalidCode, SealError};
+use crate::api::SealObservations;
+use crate::error::{InputInvalidCode, SealError, SealStage};
 use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 /// Why the ported pipeline gave no result.
@@ -53,9 +53,16 @@ pub(crate) struct WorkLimits<'a> {
     pub observed: &'a SealObservations,
 }
 
-pub(crate) fn inspect_in(bytes: &[u8], limits: &WorkLimits<'_>) -> Result<Vec<super::work_present::PageGeometry>, WorkError> {
+pub(crate) fn inspect_in(
+    bytes: &[u8],
+    limits: &WorkLimits<'_>,
+) -> Result<Vec<super::work_present::PageGeometry>, WorkError> {
     super::work_prepare::inspect_in(bytes, limits)
 }
-pub(crate) fn prepare_in(original: &[u8], request: &super::work_prepare::WorkPrepareRequest<'_>, limits: &WorkLimits<'_>) -> Result<super::work_prepare::WorkPrepared, WorkError> {
+pub(crate) fn prepare_in(
+    original: &[u8],
+    request: &super::work_prepare::WorkPrepareRequest<'_>,
+    limits: &WorkLimits<'_>,
+) -> Result<super::work_prepare::WorkPrepared, WorkError> {
     super::work_prepare::prepare_in(original, request, limits)
 }

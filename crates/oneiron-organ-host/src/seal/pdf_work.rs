@@ -36,8 +36,9 @@ use super::{
     from_value, reply_invalid, to_value,
 };
 use crate::handlers::AskHandlers;
+use crate::host::CallMeasure;
 use crate::resource_memory::MemoryGrow;
-use crate::spec::LentInput;
+use crate::spec::{LentInput, OrganTier};
 
 /// The name of the prepared output (mirror `SEALED_OUTPUT`).
 const PREPARED_OUTPUT: &str = "prepared.pdf";
@@ -192,15 +193,24 @@ impl HostedSealer<'_> {
     /// signing or fetch. `chain`/`trail` are the engine audit replay's
     /// checked output, which the caller ran: the organ takes them lent, and
     /// the returned chain must equal them. The return shape matches
-    /// `prepare_esign_pdf_within`, so the seal task swaps with a one-line
-    /// change.
+    /// `prepare_esign_pdf_within`. A third-party organ cannot choose the
+    /// document the engine signs: `None` keeps its existing trusted engine
+    /// preparation instead. The actual call's slot tier is checked too,
+    /// so a reinstall cannot substitute untrusted prepared bytes.
     pub fn prepare_esign_pdf_via_organ(
         &self,
         original: &[u8],
         request: &PdfPreparation<'_>,
         chain: [u8; 32],
-        trail: Vec<String>,
-    ) -> Result<PreparedEsignPdf, EsignSealerError> {
+        trail: &[String],
+    ) -> Result<Option<PreparedEsignPdf>, EsignSealerError> {
+        if self
+            .host
+            .spec(&self.settings.organ)
+            .is_none_or(|spec| spec.tier != OrganTier::FirstParty)
+        {
+            return Ok(None);
+        }
         // Each field row of this item, validated engine-side: the port's
         // burn takes its fields and values as-is.
         for field in request
@@ -297,7 +307,7 @@ impl HostedSealer<'_> {
                 .collect(),
             raster_index,
             chain: ByteBuf::from(chain.to_vec()),
-            trail,
+            trail: trail.to_vec(),
         })
         .map_err(|_| reply_invalid())?;
         measure_input(self.vault, original);
@@ -313,10 +323,19 @@ impl HostedSealer<'_> {
         ];
         let memory = MemoryGrow;
         let handlers = AskHandlers::none().with(ASK_MEMORY_GROW, &memory);
-        let called = self.sized_call(self.call(VERB_PREPARE, 1, args), lent, &handlers);
+        let mut measure = CallMeasure::default();
+        let called = self.sized_call_measured(
+            self.call(VERB_PREPARE, 1, args),
+            lent,
+            &handlers,
+            &mut measure,
+        );
         // Every ask the call made, however it ended.
         measure_asks(self.vault, &handlers.asked());
         let (reply, outcome) = called?;
+        if measure.tier != Some(OrganTier::FirstParty) {
+            return Ok(None);
+        }
         let (original_sha256, audit_chain_sha256, original_pages, appendix_pages) =
             match from_value(&reply)? {
                 PrepareReply::Failed(failure) => {
@@ -360,13 +379,13 @@ impl HostedSealer<'_> {
         let bytes = prepared.to_vec();
         drop(outcome);
         measure_output(self.vault, original, &bytes);
-        Ok(PreparedEsignPdf {
+        Ok(Some(PreparedEsignPdf {
             bytes,
             original_sha256,
             audit_chain_sha256,
             original_pages,
             appendix_pages,
-        })
+        }))
     }
 }
 
