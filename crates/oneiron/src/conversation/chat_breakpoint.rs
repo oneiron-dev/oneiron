@@ -232,7 +232,8 @@ pub fn chat_breakpoint(
 /// authority): its request is its digest's, every turn it was read from
 /// projects the same fingerprint through the lane its log was read through,
 /// a room's audience through the room's held projection (FIX 5031), every
-/// summary it holds still stands, and every craft note it shows still
+/// summary it holds still stands for that reader (its evidence and words
+/// read through the same lane), and every craft note it shows still
 /// reads, with live support, at the revision it showed (FIX 8135). A handle
 /// of another reader, or a room projection that refuses or holds, finds its
 /// sources moved.
@@ -273,14 +274,11 @@ pub fn chat_breakpoint_stands(
             return Ok(Err(ChatBreakpointStale::SourceMoved));
         }
     }
+    // Each summary is read as a chat log reads it, through the same reader:
+    // its evidence and words must stand for that reader now, not only be
+    // stored (FIX 5027, 5031).
     for summary in &seed.summaries {
-        let standing =
-            crate::ports::EntityStoreRead::port_entity_record(&vault.store, &txn, summary)?
-                .is_some_and(|record| {
-                    record.entity_type == ENTITY_TYPE_SUMMARY
-                        && crate::compaction::decode_epoch_summary_body(&record.body).is_ok()
-                });
-        if !standing {
+        if !crate::compaction::summary_stands_in(&read, &txn, summary)? {
             return Ok(Err(ChatBreakpointStale::SummaryWithdrawn));
         }
     }
