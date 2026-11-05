@@ -20,6 +20,7 @@ mod memory_verbs;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;
+mod refusal_output;
 mod repo;
 mod repo_sources;
 mod routed_entry;
@@ -117,6 +118,8 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// This call's released reason, taken once by its executor recorder.
+    pub(super) task_refusal_output: RefCell<Option<Vec<u8>>>,
     /// The public fold boundary's completed pre chain, for its exact Mark only.
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,

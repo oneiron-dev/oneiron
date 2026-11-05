@@ -78,6 +78,7 @@ impl HostSelfDispatcher<'_> {
         // A hook's view of an earlier call is never this call's, nor is its
         // read-world capture (FIX 6130).
         *self.hook_view.borrow_mut() = None;
+        *self.task_refusal_output.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
         let _run_writes = self
