@@ -7,10 +7,11 @@
 //! books the budget, and the machine's floor when the host has one.
 
 use std::io;
+use std::os::fd::BorrowedFd;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use oneiron_organ_protocol::{FrameBooking, FrameError, ToOrgan, frame_read_cost};
+use oneiron_organ_protocol::{FrameBooking, FrameError, ToOrgan, fd_read_cost, frame_read_cost};
 
 use super::Inbox;
 use super::lifeline::Lifeline;
@@ -116,6 +117,11 @@ impl FrameBooking for Handshake<'_> {
         self.settle(self.room.lease(len, &stopped))
     }
 
+    fn more(&mut self, held: &mut Lease, len: u64) -> Result<(), FrameError> {
+        held.add_frame_bytes(len);
+        self.value(held, len)
+    }
+
     fn value(&mut self, held: &mut Lease, bytes: u64) -> Result<(), FrameError> {
         if self.expired() {
             return Err(FrameError::TimedOut);
@@ -161,21 +167,24 @@ pub(super) fn book_send(
 }
 
 /// The organ's own read of a call or answer the host is about to send it:
-/// the message's frames and the value they decode into, at once, held in
-/// the call's room as the organ's own memory (the class `memory.grow`
-/// holds) until the call ends (FIX 6195). So the organ runtime, which can
-/// ask nothing before a call exists, never decodes a message into memory
-/// the machine does not have, and a first-party organ's kernel limits rise
-/// by it as by a grant. A host with no machine floor reserves nothing here,
-/// as it grants no `memory.grow`; the floor itself refuses the message
-/// before a byte of it leaves.
+/// the message's frames and the value they decode into, at once, plus the
+/// descriptors' room ([`fd_read_cost`]), held in the call's room as the
+/// organ's own memory (the class `memory.grow` holds) until the call ends
+/// (FIX 6195, 12434). So the organ runtime, which can ask nothing before a
+/// call exists, never decodes a message into memory the machine does not
+/// have, and a first-party organ's kernel limits rise by it as by a grant.
+/// A host with no machine floor reserves nothing here, as it grants no
+/// `memory.grow`; the floor itself refuses the message before a byte of it
+/// leaves.
 pub(super) fn reserve_read(
     room: &CallRoom,
     msg: &ToOrgan,
+    fds: &[BorrowedFd<'_>],
     deadline: Instant,
     stopped: &dyn Fn() -> bool,
 ) -> Result<(), FrameError> {
-    match room.grow_native(frame_read_cost(msg)?, deadline, stopped) {
+    let cost = frame_read_cost(msg)?.saturating_add(fd_read_cost(fds.len()));
+    match room.grow_native(cost, deadline, stopped) {
         Ok(()) | Err(NativeRefusal::NoFloor) => Ok(()),
         Err(NativeRefusal::Floor { .. }) => Err(FrameError::Refused(
             "the machine's memory floor cannot hold the organ's read of the frame",

@@ -32,9 +32,17 @@ settlement from resealing a deleted or newer outbox reference. Before replacing
 a settlement cursor, its writer checks the same current RemoteApplied carrier.
 Truthful recording after admitted I/O adds no fresh owner or credential gate.
 
-Passport/index writes still use their existing separate transactions. This
-slice does not claim whole-settlement atomicity or fix every concurrent
-passport/cursor ordering race. There is no migration or old masked-row reader.
+Outbound RemoteApplied settlement publishes its cursor, passport admissions and
+supersessions, UID index, and final Committed outbox row in one writer. Passport
+and subject reads include that writer's pending rows. The existing Active-only
+passport comparison and admitted-or-local UID index rule remain distinct.
+
+A stale carrier guard or final outbox compare-and-swap discards this settlement's
+staged rows and returns the already-admitted provider receipt. A claim, signing,
+or store error also rolls back this settlement; the outbox stays retryable.
+Retirement finishing runs only after the outer commit. This does not serialize
+provider I/O or other inbound operations. There is no migration or old masked-row
+reader.
 
 ## Archived-vault activation
 

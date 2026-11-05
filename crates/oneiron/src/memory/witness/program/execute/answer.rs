@@ -13,16 +13,13 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
-            Landed::Base(receipt) => {
+            Landed::Base { receipt, bodies } => {
                 // A stretch on record took this turn into base; a copy of the
                 // talk reads its messages there.
                 if let Some(session) = on_record_session {
-                    let messages: Vec<(EntityId, u64, &[u8])> = plan
-                        .messages
+                    let messages: Vec<(EntityId, u64, &[u8])> = bodies
                         .iter()
-                        .map(|planned| {
-                            (planned.id, planned.occurred.start, planned.body.as_slice())
-                        })
+                        .map(|(id, occurred_at, body)| (*id, *occurred_at, body.as_slice()))
                         .collect();
                     session.note_on_record_messages(plan.turn_id, &messages);
                 }

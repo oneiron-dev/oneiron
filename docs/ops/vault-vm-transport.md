@@ -481,6 +481,39 @@ drive an open and a restore both boot with. A RAM resume reads no file again,
 so a changed list takes effect at the next cold boot: drop a published snapshot
 first.
 
+## Descriptor-first outbox sets (FIX 11071 / 6685)
+
+VM outbox wire revision **5** sends every descriptor in a set as an `offer`
+frame, without body chunks. The existing `commit_set` flag marks the last
+offer. The receiver applies the same descriptor and root checks and creates
+the actual staging files for the complete set before answering.
+
+A `go` permits the put bodies, in offer order, but is **not** an ACK or a
+durability receipt. The sender keeps the same prepared file handles and
+recorded transfer identities. Only the existing ordered final `ack` frames
+report each transfer's outcome after the original whole-set commit. A set
+that already fails preflight instead gets those ACKs without sending bodies;
+other members retain the existing `set_incomplete` outcome and retry pacing.
+
+On filesystems with native allocation, each put's declared bytes are reserved
+in its own staging file before `go`. The same file owns that allocation
+through receive, digest checking, publication or drop. Preallocation is not
+received-byte proof: length and digest still count only actual body writes.
+`ENOSPC` and `EDQUOT` keep the existing capacity deferral. If allocation is
+unsupported (`EOPNOTSUPP` or `ENOSYS`), the original streamed-write path stays
+available; no working filesystem is newly refused. A `go` does not promise
+that later writes, publication, metadata or carrier records cannot fail.
+Those failures still receive the original final outcomes, so the full
+capacity-retry work remains partial.
+
+Both native ends and the matching guest companion must speak revision 5;
+the hello rejects other revisions, with no old reader. The matching image
+must advertise that revision and meet the engine commit that merges this
+change before a supervisor adopts it. No image is built, repinned or adopted
+by this source change. Shared contract version 3, the ledger's required
+artifact origins and counts, other protocol revisions, file/set limits,
+retry timing, custody and final ACK ownership are unchanged.
+
 ## RAM snapshot custody (FIX 9497)
 
 A sleep's RAM snapshot holds the guest's fscrypt key and decrypted vault
