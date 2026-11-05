@@ -80,7 +80,8 @@ and the document rows the native checkpoint getter assigns wholly to it. The sam
 check covers NOTE heads, head-document indexes and overrides, typed-body heads and head snapshots,
 office source pointers, blob artifact current heads, media vectors with their device provenance,
 and committed codebase snapshot rows, and entity revision state, documents, retained frontiers and
-reverse identity rows. Staged index inputs, staged phonetic codes and vector-refill markers keep
+reverse identity rows, as well as row birth envelopes and born-from indexes. Staged index inputs,
+staged phonetic codes and vector-refill markers keep
 their existing treatment. Forks, proposal snapshots, receipts, bundles, pins, exports,
 blob version histories, code revisions and media refusals keep their existing treatment, as do codebase
 indexes and custody reports. Attachment occurrence
