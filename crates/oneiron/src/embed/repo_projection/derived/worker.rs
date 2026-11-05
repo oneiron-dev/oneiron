@@ -330,10 +330,7 @@ fn source_copies_in(
         }
         // FIX 9949: an ASSET's bytes are the blob it holds by reference.
         let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
-            Ok(vault
-                .store
-                .port_entity_record(txn, blob)?
-                .map(|blob| blob.body))
+            crate::embed::repo_blob_body_in_txn(vault, txn, blob)
         })?
         else {
             continue;

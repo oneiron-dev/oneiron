@@ -387,9 +387,10 @@ fn capture_in_txn(
 ) -> Result<Option<(ImageFold, Parents)>> {
     let posture = store.privacy_posture;
     let peers = crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
-    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    if let Some(adopted) =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
     {
-        match capture_past_adopted(store, txn, &adopted, heads, pin, &peers)? {
+        match capture_past_adopted(store, txn, adopted.as_ref(), heads, pin, &peers)? {
             (AdoptedImageFold::Captured { fold, .. }, parents) => {
                 return Ok(Some((*fold, parents)));
             }
