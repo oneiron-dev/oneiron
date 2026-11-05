@@ -2165,6 +2165,10 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::lens::LensFrameCard': 'LensFrameCard',
+    'crate::claim::ScopedReadResult<crate::lens::LensFrameCard>': 'ScopedReadResultLensFrameCard',
+    'crate::claim::WeaveDigestView': 'WeaveDigestView',
+    'crate::lens::LensListPage': 'LensListPage',
     'crate::agent_inbox_lens::InboxItemView': 'InboxItemView',
     'crate::inbox::NotificationPage': 'NotificationPage',
     'crate::inbox::NotificationRow': 'NotificationRow',

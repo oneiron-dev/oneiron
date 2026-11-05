@@ -984,12 +984,12 @@ export_facade! {
 "vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> Option<WeaveDigestView> = |client| {
     let input: oneiron::claim::WeaveDigestRequest = crate::codec::lower_record("vault.weave.digest", input)?;
     let output = client.vault_weave_digest(&input)?;
-    crate::codec::lift_record("vault.weave.digest", &output)
+    Lift::lift(output)
 };
 "vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveLensRequest) -> LensFrameCard = |client| {
     let input: oneiron::lens::WeaveLensRequest = crate::codec::lower_record("vault.weave.lens", input)?;
     let output = client.vault_weave_lens(&input)?;
-    crate::codec::lift_record("vault.weave.lens", &output)
+    Lift::lift(output)
 };
 "vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.link.wrong", input)?;
@@ -2969,7 +2969,7 @@ export_facade! {
 "vault.lenses.list" => fn vault_lenses_list(&self, input: LensListRequest) -> LensListPage = |client| {
     let input: oneiron::lens::LensListRequest = crate::codec::lower_record("vault.lenses.list", input)?;
     let output = client.vault_lenses_list(&input)?;
-    crate::codec::lift_record("vault.lenses.list", &output)
+    Lift::lift(output)
 };
 "vault.lenses.export_pack" => fn vault_lenses_export_pack(&self, input: LensPackExportRequest) -> LensPackExport = |client| {
     let input: oneiron::lens::LensPackExportRequest = crate::codec::lower_record("vault.lenses.export_pack", input)?;
@@ -2994,7 +2994,7 @@ export_facade! {
 "vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultLensFrameCard = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;
     let output = client.vault_lenses_default(&input)?;
-    crate::codec::lift_record("vault.lenses.default", &output)
+    Lift::lift(output)
 };
 "vault.disclosure.offer" => fn vault_disclosure_offer(&self, input: DisclosureOfferRequest) -> DisclosureOffered = |client| {
     let input: oneiron::task_verb::sdk::DisclosureOfferRequest = crate::codec::lower_record("vault.disclosure.offer", input)?;
