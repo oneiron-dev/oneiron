@@ -53,26 +53,28 @@ pub(crate) fn resolve_repo_queue_target<'v>(
     repo_ref: &RepoRef,
     git_ref: &str,
 ) -> Result<std::result::Result<RepoQueueTarget<'v>, RepoAccessRefusal>> {
-    let Some(repo) = open_local_repo(vault, repo_ref) else {
-        return Ok(Err(RepoAccessRefusal::WrongRef));
-    };
-    let _coordinator = lock_repository(repo.common_dir())?;
-    let queue = match vault.open_served_queue_for_artifact(anchor, repo_ref)? {
+    let (queue, _coordinator) = match vault.open_served_queue_for_artifact(anchor, repo_ref)? {
         Some((queue, _, frozen_ref)) => {
+            let coordinator = lock_repository(queue.repository().common_dir())?;
             if frozen_ref != git_ref {
                 return Ok(Err(RepoAccessRefusal::WrongRef));
             }
-            queue
+            (queue, coordinator)
         }
         None => {
+            let Some(repo) = open_local_repo(vault, repo_ref) else {
+                return Ok(Err(RepoAccessRefusal::WrongRef));
+            };
+            let coordinator = lock_repository(repo.common_dir())?;
             if attached_head(&repo).as_deref() != Some(git_ref) {
                 return Ok(Err(RepoAccessRefusal::WrongRef));
             }
-            match MergeQueue::open(vault, repo_ref.clone()) {
+            let queue = match MergeQueue::open(vault, repo_ref.clone()) {
                 Ok(queue) => queue,
                 Err(held @ Error::ConcurrentWrite(_)) => return Err(held),
                 Err(_) => return Ok(Err(RepoAccessRefusal::WrongRef)),
-            }
+            };
+            (queue, coordinator)
         }
     };
     let pointers = match queue.pointers() {
