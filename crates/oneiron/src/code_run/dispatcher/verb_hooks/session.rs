@@ -19,7 +19,7 @@ use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SessionHookDisposition};
 use crate::error::{Error, Result};
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::runtime_hooks::{VerbCall, hook_class};
+use crate::runtime_hooks::{VerbCall, VerbCallScope, hook_class};
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
 use super::{
@@ -62,7 +62,7 @@ impl HostSelfDispatcher<'_> {
             scope: read_as
                 .as_ref()
                 .and_then(ScopedReadActorKey::room_turn)
-                .map(|turn| format!("room:{}", turn.room.to_hex())),
+                .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex()))),
             board_epoch: None,
             turn: None,
             domain: hook_domain(&call),
