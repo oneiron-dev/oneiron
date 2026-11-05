@@ -61,6 +61,12 @@ impl SessionBinding<'_> {
         Ok(self.script_sink()?.sweeping(known))
     }
 
+    /// This execution's output, with the same run-local sweep as the vault.
+    pub(super) fn output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        let known = self.answered(|| self.session.run_known_source(exec_run))?;
+        Ok(self.script_sink()?.sweeping_run(known))
+    }
+
     /// [`Self::output_sink`] with no sweep, for a step's program, which a
     /// resumed step runs again as stored.
     pub(super) fn script_sink(&self) -> Result<BodySink> {
