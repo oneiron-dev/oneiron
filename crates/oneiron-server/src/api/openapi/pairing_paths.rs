@@ -1,47 +1,6 @@
-//! The pairing/link/redeem/slip-revoke routes in the OpenAPI document (FIX 3936).
-//!
-//! The five routes are wired in `routes.rs:216-220` but absent from the OpenAPI
-//! declarations: `GET /.well-known/oneiron` (`pairing::descriptor`),
-//! `POST /v1/core/pairing/links` (`pairing::create_link`),
-//! `POST /v1/core/pairing/redeem` (`pairing::redeem`),
-//! `POST /v1/core/pairing/oauth` (`pairing::oauth_exchange`) and
-//! `POST /v1/core/slips/revoke` (`pairing::revoke`). This leaf adds their
-//! operations; no other route is touched and no working route changes.
-//!
-//! Pattern: `voice_bank_paths.rs` (one struct table plus an `operation`
-//! builder plus a `merge_*_paths` that inserts each row). Voice bank serves
-//! uniform owner-bearer `/v1/ai` rows, so this leaf carries two small
-//! per-route extensions for pairing's mixed surface: an explicit
-//! `operation` id (mixed `/.well-known` and `/v1/core` prefixes) and
-//! per-route auth (`owner_bearer` for the two owner-act rows, `auth_header`
-//! for the OAuth JWT header). Schemas, security and statuses are otherwise
-//! composed exactly as voice bank composes them.
-//!
-//! Binding: manual JSON transcribed field by field from the actual request
-//! and response types in `api/pairing.rs` and the engine types they name
-//! (`Scope`, `PairingPrincipal`, `PairingLink`, `CommReach`,
-//! `MachineOwnership`, `MachineEnrolment`, `AuthorityCheckpointPin`). Each
-//! schema cites its source lines. No `ToSchema`/`JsonSchema` derive was
-//! added, no handler, auth, ceiling, key, revoke or pairing body was
-//! edited, and no engine type was touched, so every runtime body,
-//! serialization shape and gate is byte unchanged. Requests with
-//! `deny_unknown_fields` set `additionalProperties: false`; responses omit
-//! it, as the manual leaves do.
-//!
-//! Auth and statuses are the handlers' own: `create_link` and `revoke`
-//! require an owner-act credential (`check_request_owner_act`,
-//! `CoreBearer`); `descriptor` and `redeem` take no bearer; `oauth_exchange`
-//! takes an OAuth relay JWT as `Authorization: Bearer` (never a slip).
-//! Success is always 200. Refusals are only the handlers' own 400 (a scope
-//! the vault refuses on link mint), 401 (no or failed credential, proof or
-//! code) and 403 (narrower than owner-act or no live owner); there is no
-//! idempotency 409 (these rows carry no idempotency layer), no 500 and no
-//! new refusal, hold, default, cap or compat.
-//!
-//! Proof limits: source reading only. No cargo, rustc, build, test, server
-//! or probe ran on this host. The `openapi.json` document is assembled at
-//! runtime, so no generated artifact is committed here; `oneiron.skills.md`
-//! and `agent-verbs` are untouched (no new facade verb).
+//! Pairing and slip-revocation operations for the routes in `api/pairing.rs`.
+//! Schemas follow those DTOs and the authority types they carry. Checkpoint
+//! policy and binding internals remain opaque objects.
 
 use serde_json::{Map, Value, json};
 
@@ -57,10 +16,9 @@ struct PairingRoute {
     answer: fn() -> Value,
     refusals: &'static [(&'static str, &'static str)],
     /// True for the two owner-act rows (`create_link`, `revoke`): the
-    /// operation names `CoreBearer`. False names `security: []`.
+    /// operation names `CoreBearer`. Public rows name `security: []`.
     owner_bearer: bool,
-    /// True only for the OAuth row: the operation lists the `Authorization`
-    /// header carrying the relay JWT (never a slip).
+    /// The OAuth row uses a separate bearer scheme for the relay JWT.
     auth_header: bool,
 }
 
@@ -159,6 +117,20 @@ fn refusal_schema() -> Value {
 
 /// Adds each pairing/slip route's operation to `spec`'s paths.
 pub(super) fn merge_pairing_paths(spec: &mut Value) {
+    if let Some(components) = spec.get_mut("components").and_then(Value::as_object_mut) {
+        let schemes = components
+            .entry("securitySchemes")
+            .or_insert_with(|| json!({}));
+        if let Some(schemes) = schemes.as_object_mut() {
+            schemes.insert(
+                "PairingRelayBearer".to_owned(),
+                json!({
+                    "type": "http", "scheme": "bearer", "bearerFormat": "JWT",
+                    "description": "An OAuth relay JWT, not a capability-slip token."
+                }),
+            );
+        }
+    }
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
         return;
     };
@@ -179,21 +151,14 @@ fn operation(route: &PairingRoute) -> Value {
     operation.insert("tags".to_owned(), json!(["pairing"]));
     operation.insert("summary".to_owned(), json!(route.summary));
     operation.insert("operationId".to_owned(), json!(route.operation));
-    if route.owner_bearer {
-        operation.insert("security".to_owned(), json!([{ "CoreBearer": [] }]));
+    let security = if route.owner_bearer {
+        json!([{ "CoreBearer": [] }])
+    } else if route.auth_header {
+        json!([{ "PairingRelayBearer": [] }])
     } else {
-        operation.insert("security".to_owned(), json!([]));
-    }
-    let mut parameters: Vec<Value> = route
-        .path
-        .split('/')
-        .filter_map(|segment| segment.strip_prefix('{')?.strip_suffix('}'))
-        .map(|name| json!({"name": name, "in": "path", "required": true, "schema": {"type": "string"}}))
-        .collect();
-    if route.auth_header {
-        parameters.push(json!({"name": "Authorization", "in": "header", "required": true, "schema": {"type": "string"}, "description": "The OAuth relay JWT as Bearer (never a v2.slip.* token); the vault verifies it against its issuer, audience and keys."}));
-    }
-    operation.insert("parameters".to_owned(), Value::Array(parameters));
+        json!([])
+    };
+    operation.insert("security".to_owned(), security);
     if let Some(body) = route.body {
         operation.insert(
             "requestBody".to_owned(),
@@ -237,6 +202,10 @@ fn descriptor_answer() -> Value {
             "pairing_endpoint": {"type": "string", "description": "Always /v1/core/pairing/redeem."}
         }
     })
+}
+
+fn nullable(schema: Value) -> Value {
+    json!({"oneOf": [schema, {"type": "null"}]})
 }
 
 /// One powerset scope axis: `ScopeAxis<T>` (`scope.rs:30-34`), tagged
@@ -304,11 +273,11 @@ fn principal_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "holder_ref": {"type": "string", "description": "The holder the link is pinned to, when pinned."},
-            "actor_class": {"type": "string", "description": "The actor class the link admits (human, agent or system)."},
-            "org_ref": {"type": "string", "description": "The organization the link is pinned to, when pinned."},
-            "write_facet": {"type": "string", "description": "The facet id (hex) writes are born in when the scope reads several; the smallest when unnamed (mod.rs:101-106)."},
-            "comm": comm_reach_schema()
+            "holder_ref": nullable(json!({"type": "string", "description": "The holder the link is pinned to, when pinned."})),
+            "actor_class": nullable(json!({"type": "string", "description": "The actor class the link admits (human, agent or system)."})),
+            "org_ref": nullable(json!({"type": "string", "description": "The organization the link is pinned to, when pinned."})),
+            "write_facet": nullable(json!({"type": "string", "description": "The facet id (hex) writes are born in when the scope reads several; the smallest when unnamed (mod.rs:101-106)."})),
+            "comm": nullable(comm_reach_schema())
         }
     })
 }
@@ -328,7 +297,7 @@ fn create_link_body() -> Value {
             "scope": scope_schema(),
             "lifetime_secs": {"type": "integer", "minimum": 0, "description": "How long the paired slip lives, in seconds."},
             "principal": principal_schema(),
-            "machine": {"type": "string", "enum": ["yours", "work_school", "rented"], "description": "The owner's answer for a machine this link adds; only yours makes it one of the owner's."}
+            "machine": nullable(json!({"type": "string", "enum": ["yours", "work_school", "rented"], "description": "The owner's answer for a machine this link adds; only yours makes it one of the owner's."}))
         }
     })
 }
@@ -392,8 +361,8 @@ fn redeem_body() -> Value {
             "holder_ref": {"type": "string", "description": "The joining holder as an entity id in hex; it must already exist (pairing.rs:279-288)."},
             "binding_key": {"type": "string", "description": "The joining holder's fresh signing key id, 64 lower hex."},
             "signature": {"type": "string", "description": "The binding signature over the redemption, 128 lower hex."},
-            "machine": machine_enrolment_schema(),
-            "machine_possession": {"type": "string", "description": "The install-key signature over the redemption (machine_possession_transcript), 128 lower hex; read only beside machine, re-pairs an already held machine credential only (pairing.rs:189-194)."}
+            "machine": nullable(machine_enrolment_schema()),
+            "machine_possession": nullable(json!({"type": "string", "description": "The install-key signature over the redemption (machine_possession_transcript), 128 lower hex; read only beside machine, re-pairs an already held machine credential only (pairing.rs:189-194)."}))
         }
     })
 }
@@ -491,7 +460,7 @@ fn oauth_body() -> Value {
             "binding_key": {"type": "string", "description": "The holder's fresh signing key id, 64 lower hex."},
             "nonce": {"type": "string", "description": "The fresh nonce bound into the OAuth binding transcript."},
             "signature": {"type": "string", "description": "The binding signature over the transcript, 128 lower hex."},
-            "lifetime_secs": {"type": "integer", "minimum": 0, "description": "Caller narrowing for the minted slip lifetime; never past the JWT remainder."}
+            "lifetime_secs": nullable(json!({"type": "integer", "minimum": 0, "description": "Caller narrowing for the minted slip lifetime; never past the JWT remainder."}))
         }
     })
 }
