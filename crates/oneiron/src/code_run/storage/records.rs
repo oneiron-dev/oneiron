@@ -174,6 +174,17 @@ impl Vault {
         Ok(wtxn.commit()?)
     }
 
+    /// Persists `record` in the caller's txn; no generation check (FIX 587).
+    pub(crate) fn put_code_run_replay_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &CodeRunReplayRecord,
+    ) -> Result<()> {
+        let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
+        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
+        Ok(())
+    }
+
     /// Persists the replay record only if the stored row still matches `expected`.
     pub fn put_code_run_replay_record_if_generation(
         &self,
@@ -580,11 +591,7 @@ impl Vault {
     /// the occurrence the scan marked only.
     pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
         let rtxn = self.store.env.read_txn()?;
-        RAW_OUTPUT_SECRETS
-            .scan(&self.store, &rtxn)?
-            .into_iter()
-            .map(|(key, detector_reason)| lift_proposal(&key, detector_reason))
-            .collect()
+        self.code_run_secret_lift_proposals_in_txn(&rtxn)
     }
 
     /// Marks `at`, the occurrence `output` is, with the secret scan's
@@ -646,7 +653,10 @@ impl Vault {
 }
 
 /// The lift proposal of the secret mark at `key`.
-fn lift_proposal(key: &str, detector_reason: String) -> Result<CodeRunSecretLiftProposal> {
+pub(super) fn lift_proposal(
+    key: &str,
+    detector_reason: String,
+) -> Result<CodeRunSecretLiftProposal> {
     let (handle, occurrence) = ResultOccurrence::parse_mark_key(key)?;
     Ok(CodeRunSecretLiftProposal {
         suggested_secret_name: format!(

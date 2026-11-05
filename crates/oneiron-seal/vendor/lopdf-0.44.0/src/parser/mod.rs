@@ -1,4 +1,4 @@
-use super::{Dictionary, Object, ObjectId, Reader, Stream, StringFormat};
+use super::{Dictionary, Object, ObjectId, Reader, Stream};
 use crate::Error;
 use crate::content::*;
 use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
@@ -17,14 +17,12 @@ use nom::character::complete::{space0, space1};
 use nom::combinator::cut;
 use nom::combinator::{map, map_opt, map_res, opt, verify};
 use nom::error::{ErrorKind, ParseError};
-use nom::multi::{fold_many0, many0, many0_count};
+use nom::multi::{fold_many0, fold_many1, many0, many0_count};
 use nom::sequence::{delimited, pair, preceded, separated_pair, terminated};
 use nom::{AsBytes, AsChar, IResult, Input, Parser};
 
 pub(crate) mod cmap_parser;
-mod parsed_alloc;
-
-use parsed_alloc::{extend_parsed, fold_parsed, grow_parsed, many_parsed, push_parsed, reserve_dict_parsed};
+mod iterative;
 
 pub(crate) type ParserInput<'a> = &'a [u8];
 // Change this to something else that implements ParseError to get a
@@ -136,10 +134,9 @@ fn oct_char(input: ParserInput) -> NomResult<u8> {
 }
 
 pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
-    let (input, _) = tag(&b"/"[..]).parse(input)?;
-    many_parsed(
-        input,
-        alt((
+    preceded(
+        tag(&b"/"[..]),
+        many0(alt((
             preceded(tag(&b"#"[..]), hex_char),
             map_opt(take(1usize), |c: ParserInput| {
                 if c[0] != b'#' && is_regular(c[0]) {
@@ -148,8 +145,9 @@ pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
                     None
                 }
             }),
-        )),
+        ))),
     )
+    .parse(input)
 }
 
 fn escape_sequence(input: ParserInput) -> NomResult<Option<u8>> {
@@ -169,64 +167,6 @@ fn escape_sequence(input: ParserInput) -> NomResult<Option<u8>> {
     .parse(input)
 }
 
-enum InnerLiteralString<'a> {
-    Direct(ParserInput<'a>),
-    Escape(Option<u8>),
-    Eol(ParserInput<'a>),
-    Nested(Vec<u8>),
-}
-
-impl InnerLiteralString<'_> {
-    fn push<'a>(&self, output: &mut Vec<u8>, input: ParserInput<'a>) -> NomResult<'a, ()> {
-        match self {
-            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => extend_parsed(output, s, input),
-            InnerLiteralString::Escape(Some(byte)) => push_parsed(output, *byte, input),
-            InnerLiteralString::Escape(None) => Ok((input, ())),
-            InnerLiteralString::Nested(n) => extend_parsed(output, n, input),
-        }
-    }
-}
-
-fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u8>> {
-    move |input| {
-        fold_parsed(
-            input,
-            alt((
-                map(take_while1(is_direct_literal_string), InnerLiteralString::Direct),
-                map(escape_sequence, InnerLiteralString::Escape),
-                map(eol, InnerLiteralString::Eol),
-                map(nested_literal_string(depth), InnerLiteralString::Nested),
-            )),
-            Vec::new,
-            |out, value, input| value.push(out, input),
-        )
-    }
-}
-
-fn nested_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u8>> {
-    move |input| {
-        if depth == 0 {
-            map(verify(tag(&b"too deep"[..]), |_: &[u8]| false), |_| vec![]).parse(input)
-        } else {
-            let (input, mut content) =
-                delimited(tag(&b"("[..]), inner_literal_string(depth - 1), tag(&b")"[..])).parse(input)?;
-            grow_parsed(&mut content, 2, input)?;
-            content.insert(0, b'(');
-            content.push(b')');
-            Ok((input, content))
-        }
-    }
-}
-
-fn literal_string(input: ParserInput) -> NomResult<Vec<u8>> {
-    delimited(
-        tag(&b"("[..]),
-        inner_literal_string(crate::reader::MAX_BRACKET),
-        tag(&b")"[..]),
-    )
-    .parse(input)
-}
-
 #[inline]
 fn hex_digit(input: ParserInput) -> NomResult<u8> {
     map_opt(take(1usize), |c: ParserInput| {
@@ -235,34 +175,28 @@ fn hex_digit(input: ParserInput) -> NomResult<u8> {
     .parse(input)
 }
 
+fn literal_string(input: ParserInput) -> NomResult<Vec<u8>> {
+    let refused = Cell::new(None);
+    iterative::literal_string(input, None, &refused)
+}
+
 fn hexadecimal_string(input: ParserInput) -> NomResult<Object> {
-    map(
-        delimited(
-            tag(&b"<"[..]),
-            terminated(
-                |input| {
-                    fold_parsed(
-                        input,
-                        preceded(white_space, hex_digit),
-                        || (Vec::new(), false),
-                        |(out, odd), c, input| {
-                            if *odd {
-                                *out.last_mut().unwrap() |= c;
-                            } else {
-                                push_parsed(out, c << 4, input)?;
-                            }
-                            *odd = !*odd;
-                            Ok((input, ()))
-                        },
-                    )
-                },
-                white_space,
-            ),
-            tag(&b">"[..]),
-        ),
-        |(bytes, _)| Object::String(bytes, StringFormat::Hexadecimal),
-    )
-    .parse(input)
+    let refused = Cell::new(None);
+    iterative::hexadecimal_string(input, None, &refused)
+}
+
+fn array() -> impl Fn(ParserInput) -> NomResult<Vec<Object>> {
+    |input| {
+        let refused = Cell::new(None);
+        iterative::array(input, None, &refused)
+    }
+}
+
+fn inner_dictionary() -> impl Fn(ParserInput) -> NomResult<Dictionary> {
+    |input| {
+        let refused = Cell::new(None);
+        iterative::inner_dictionary(input, None, &refused)
+    }
 }
 
 fn boolean(input: ParserInput) -> NomResult<Object> {
@@ -277,38 +211,9 @@ fn null(input: ParserInput) -> NomResult<Object> {
     map(tag(&b"null"[..]), |_| Object::Null).parse(input)
 }
 
-fn array(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<Object>> {
-    move |input| {
-        delimited(
-            pair(tag(&b"["[..]), space),
-            |input| many_parsed(input, _direct_object(depth)),
-            tag(&b"]"[..]),
-        )
-        .parse(input)
-    }
-}
-
 pub(crate) fn dictionary(input: ParserInput) -> NomResult<Dictionary> {
-    _dictionary(crate::reader::MAX_NESTING_DEPTH)(input)
-}
-
-fn _dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
-    move |input| delimited(pair(tag(&b"<<"[..]), space), inner_dictionary(depth), tag(&b">>"[..])).parse(input)
-}
-
-fn inner_dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
-    move |input| {
-        fold_parsed(
-            input,
-            pair(terminated(name, space), _direct_object(depth)),
-            Dictionary::new,
-            |dict, (key, value), input| {
-                reserve_dict_parsed(dict, &key, input)?;
-                dict.set(key, value);
-                Ok((input, ()))
-            },
-        )
-    }
+    let refused = Cell::new(None);
+    iterative::dictionary(input, None, &refused)
 }
 
 pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
@@ -323,24 +228,20 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
             tag(&b"begin"[..]),
             multispace1,
         ),
-        |input| {
-            fold_parsed(
-                input,
-                terminated(
-                    pair(
-                        terminated(name, space),
-                        _direct_object(crate::reader::MAX_NESTING_DEPTH),
-                    ),
-                    pair(tag(&b"def"[..]), multispace1),
+        fold_many0(
+            terminated(
+                pair(
+                    terminated(name, space),
+                    direct_object_nom,
                 ),
-                Dictionary::new,
-                |dict, (key, value), input| {
-                    reserve_dict_parsed(dict, &key, input)?;
-                    dict.set(key, value);
-                    Ok((input, ()))
-                },
-            )
-        },
+                pair(tag(&b"def"[..]), multispace1),
+            ),
+            Dictionary::new,
+            |mut dict, (key, value)| {
+                dict.set(key, value);
+                dict
+            },
+        ),
         tag(&b"end"[..]),
     )
     .parse(input)
@@ -353,7 +254,11 @@ fn stream<'a>(
     input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>,
     refused: &Cell<Option<DecodeAdmissionError>>,
 ) -> NomResult<'a, Object> {
-    let (i, dict) = terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
+    let (i, dict) = terminated(
+        |input| iterative::dictionary(input, reader.decode_admission.as_deref(), refused),
+        (space, tag(&b"stream"[..]), space0, eol),
+    )
+    .parse(input)?;
 
     let length = dict.get(b"Length").and_then(|value| {
         if let Ok(id) = value.as_reference() {
@@ -406,35 +311,27 @@ fn reference(input: ParserInput) -> NomResult<Object> {
     map(terminated(object_id, tag(&b"R"[..])), Object::Reference).parse(input)
 }
 
-fn _direct_objects(depth: usize) -> impl Fn(ParserInput) -> NomResult<Object> {
-    move |input| {
-        alt((
-            null,
-            boolean,
-            reference,
-            map(real, Object::Real),
-            map(integer, Object::Integer),
-            map(name, Object::Name),
-            map(literal_string, Object::string_literal),
-            hexadecimal_string,
-            map(array(depth), Object::Array),
-            map(_dictionary(depth), Object::Dictionary),
-        ))
-        .parse(input)
-    }
-}
-
-fn _direct_object(depth: usize) -> impl Fn(ParserInput) -> NomResult<Object> {
-    move |input| {
-        if depth == 0 {
-            return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::TooLarge)));
-        }
-        terminated(_direct_objects(depth - 1), space).parse(input)
-    }
+fn direct_object_nom(input: ParserInput) -> NomResult<Object> {
+    let refused = Cell::new(None);
+    iterative::direct_object(input, None, &refused)
 }
 
 pub fn direct_object(input: ParserInput) -> Option<Object> {
-    strip_nom(_direct_object(crate::reader::MAX_NESTING_DEPTH)(input))
+    strip_nom(direct_object_nom(input))
+}
+
+/// Parse one direct object with its graph admitted before allocation. Malformed
+/// input keeps the optional outcome; a refused admission is returned.
+pub fn direct_object_admitted(
+    input: ParserInput,
+    admission: &dyn DecodeAdmission,
+) -> crate::Result<Option<Object>> {
+    let refused = Cell::new(None);
+    let parsed = iterative::direct_object(input, Some(admission), &refused);
+    if let Some(err) = refused.take() {
+        return Err(err.into());
+    }
+    Ok(strip_nom(parsed))
 }
 
 fn object<'a>(
@@ -444,7 +341,7 @@ fn object<'a>(
     terminated(
         alt((
             |input| stream(input, reader, already_seen, refused),
-            _direct_objects(crate::reader::MAX_NESTING_DEPTH),
+            |input| iterative::object(input, reader.decode_admission.as_deref(), refused),
         )),
         space,
     )
@@ -455,14 +352,7 @@ pub fn indirect_object(
     input: ParserInput, offset: usize, expected_id: Option<ObjectId>, reader: &Reader,
     already_seen: &mut HashSet<ObjectId>,
 ) -> crate::Result<(ObjectId, Object)> {
-    // With the reader's admission, the objects parsed here are charged to it.
-    let _scope = decode_admission::ParseScope::enter(reader.decode_admission.as_ref());
-    let parsed = _indirect_object(input.take_from(offset), offset, expected_id, reader, already_seen);
-    // A refused charge is the error, not an invalid object.
-    if let Some(err) = decode_admission::parse_refusal() {
-        return Err(err.into());
-    }
-    let (id, mut object) = parsed?;
+    let (id, mut object) = _indirect_object(input.take_from(offset), offset, expected_id, reader, already_seen)?;
 
     offset_stream(&mut object, offset);
 
@@ -538,79 +428,100 @@ pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
     )
 }
 
-/// Decode CrossReferenceTable. Each section's entries go straight into the
-/// table as they are read. With `admission`, a share of a map node is
-/// admitted before each insert (FIX 8450); a refusal is left in `refused` and
-/// fails the parse for good. An entry whose object number does not fit in
-/// `u32` names no object and is skipped (FIX 8451).
+/// Decode CrossReferenceTable
 fn xref<'a>(
-    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+    input: ParserInput<'a>,
+    admission: Option<&'a dyn DecodeAdmission>,
+    refused: &'a Cell<Option<DecodeAdmissionError>>,
 ) -> NomResult<'a, Xref> {
+    let stopped = Cell::new(false);
+
     let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
-    let mut xref_entry = pair(
+    let xref_entry = pair(
         separated_pair(unsigned_int, tag(&b" "[..]), unsigned_int::<u32>),
         delimited(tag(&b" "[..]), map(one_of("nf"), |k| k == 'n'), xref_eol),
     );
-    let mut section_header = terminated(
-        separated_pair(unsigned_int::<usize>, tag(&b" "[..]), unsigned_int::<u32>),
-        pair(opt(tag(&b" "[..])), eol),
-    );
-    let refuse = |input: ParserInput<'a>, err: DecodeAdmissionError| {
-        refused.set(Some(err));
-        nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail))
-    };
-
-    let (mut input, _) = pair(tag(&b"xref"[..]), preceded(opt(tag(&b" "[..])), eol)).parse(input)?;
-    let mut xref = Xref::new(0, XrefType::CrossReferenceTable);
-    let entry_bytes = decode_admission::btree_entry_bytes::<u32, XrefEntry>();
-    if let Some(admission) = admission {
-        decode_admission::admit_btree::<u32, XrefEntry>(admission, 0).map_err(|err| refuse(input, err))?;
-    }
-    let mut sections = 0_usize;
-    while let Ok((mut rest, (start, _count))) = section_header.parse(input) {
-        let mut index = 0_usize;
-        while let Ok((after, ((offset, generation), is_normal))) = xref_entry.parse(rest) {
-            let id = start.checked_add(index).and_then(|id| u32::try_from(id).ok());
-            if is_normal
-                && let Ok(generation) = generation.try_into()
-                && let Some(id) = id
-            {
-                if let Some(admission) = admission {
-                    admission.admit(entry_bytes).map_err(|err| refuse(rest, err))?;
-                }
-                xref.insert(id, XrefEntry::Normal { offset, generation });
+    let entries = fold_many0(
+        xref_entry,
+        Vec::new,
+        |mut entries, entry| {
+            if stopped.get() {
+                return entries;
             }
-            index += 1;
-            rest = after;
-        }
-        input = rest;
-        sections += 1;
-    }
-    if sections == 0 {
-        return Err(nom::Err::Error(NomError::from_error_kind(input, ErrorKind::Many1)));
-    }
-    let (input, _) = space(input)?;
-    Ok((input, xref))
+            if let Some(admission) = admission
+                && let Err(err) = decode_admission::reserve(admission, &mut entries, 1)
+            {
+                refused.set(Some(err));
+                stopped.set(true);
+                return entries;
+            }
+            entries.push(entry);
+            entries
+        },
+    );
+    let xref_section = pair(
+        separated_pair(unsigned_int::<usize>, tag(&b" "[..]), unsigned_int::<u32>),
+        preceded(pair(opt(tag(&b" "[..])), eol), entries),
+    );
+
+    delimited(
+        pair(tag(&b"xref"[..]), preceded(opt(tag(&b" "[..])), eol)),
+        fold_many1(
+            xref_section,
+            || -> Xref { Xref::new(0, XrefType::CrossReferenceTable) },
+            |mut xref, ((start, _count), entries)| {
+                for (index, ((offset, generation), is_normal)) in entries.into_iter().enumerate() {
+                    if stopped.get() {
+                        break;
+                    }
+                    // Past-u32 ids are skipped, never wrapped (FIX 8451, ported from Q).
+                    if is_normal
+                        && let Ok(generation) = generation.try_into()
+                        && let Some(id) = start.checked_add(index).and_then(|id| u32::try_from(id).ok())
+                    {
+                        if let Some(admission) = admission
+                            && let Err(err) = crate::admitted::xref::admit_entry(admission, xref.entries.is_empty())
+                        {
+                            refused.set(Some(err));
+                            stopped.set(true);
+                            break;
+                        }
+                        xref.insert(id, XrefEntry::Normal { offset, generation });
+                    }
+                }
+                xref
+            },
+        ),
+        space,
+    )
+    .parse(input)
 }
 
-fn trailer(input: ParserInput) -> NomResult<Dictionary> {
-    delimited(pair(tag(&b"trailer"[..]), space), dictionary, space).parse(input)
+fn trailer<'a>(
+    input: ParserInput<'a>,
+    admission: Option<&dyn DecodeAdmission>,
+    refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Dictionary> {
+    delimited(
+        pair(tag(&b"trailer"[..]), space),
+        |input| iterative::dictionary(input, admission, refused),
+        space,
+    )
+    .parse(input)
 }
 
 pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(Xref, Dictionary)> {
     let refused = Cell::new(None);
-    // With the reader's admission, the trailer and xref stream objects parsed here are charged to it.
-    let _scope = decode_admission::ParseScope::enter(reader.decode_admission.as_ref());
     let xref_trailer = map(
         pair(
             |input| xref(input, reader.decode_admission.as_deref(), &refused),
-            trailer,
+            |input| trailer(input, reader.decode_admission.as_deref(), &refused),
         ),
         |(mut xref, trailer)| {
-            xref.size = trailer
-                .get(b"Size")
-                .and_then(Object::as_i64)
-                .map_err(|_| error::ParseError::InvalidTrailer)? as u32;
+        xref.size = trailer
+            .get(b"Size")
+            .and_then(Object::as_i64)
+            .map_err(|_| error::ParseError::InvalidTrailer)? as u32;
             Ok((xref, trailer))
         },
     );
@@ -618,10 +529,10 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
         xref_trailer,
         (|input| {
             _indirect_object(input, 0, None, reader, &mut HashSet::new())
-                .map(|(_, obj)| {
-                    let res = match obj {
+                .map(|(_, mut obj)| {
+                    let res = match &mut obj {
                         Object::Stream(stream) => decode_xref_stream_admitted(
-                            stream,
+                            std::mem::replace(stream, Stream::new(Dictionary::new(), Vec::new())),
                             reader.max_decompressed_size,
                             reader.decode_admission.as_deref(),
                         ),
@@ -641,7 +552,7 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
         }),
     ))
     .parse(input);
-    if let Some(err) = refused.take().or_else(decode_admission::parse_refusal) {
+    if let Some(err) = refused.take() {
         return Err(err.into());
     }
     parsed.map(|(_, o)| o).map_err(|_| error::ParseError::InvalidTrailer)?
@@ -688,7 +599,7 @@ fn operand(input: ParserInput) -> NomResult<Object> {
             map(name, Object::Name),
             map(literal_string, Object::string_literal),
             hexadecimal_string,
-            map(array(crate::reader::MAX_NESTING_DEPTH), Object::Array),
+            map(array(), Object::Array),
             map(dictionary, Object::Dictionary),
         )),
         content_space,
@@ -712,7 +623,7 @@ fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
 }
 
 fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
-    let (input, stream_dict) = inner_dictionary(crate::reader::MAX_NESTING_DEPTH).parse(input)?;
+    let (input, stream_dict) = inner_dictionary().parse(input)?;
     let (input, _) = pair(tag(&b"ID"[..]), content_space).parse(input)?;
     match image_data_stream(input, stream_dict) {
         Ok((input, stream)) => {

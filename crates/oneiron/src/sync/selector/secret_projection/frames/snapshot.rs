@@ -16,7 +16,12 @@ impl SyncSecretProjection {
         let mut json = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
         self.resolve_copy_carriers(store, &mut json);
         let translated = self.translate_history(store, context, &mut json).ok()?;
-        if translated.held.is_empty() || needs_whole_hold(&json) {
+        if translated.held.is_empty()
+            || super::super::history::needs_whole_hold_except_shells(&json, |key| {
+                crate::entity_id::EntityId::from_hex(key)
+                    .is_ok_and(|id| translated.held.iter().all(|held| held.source != id))
+            })
+        {
             return None;
         }
         self.unread_rows(store, context, &json).ok()?;
