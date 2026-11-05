@@ -73,3 +73,10 @@ text node holding its resolved quote's first character, after preceding breaks,
 bookmarks or comment markers, as the chosen-occurrence path already does. Quote
 selection, single-run placement, range ends and tracked-container widening are
 unchanged.
+The final-carrier section change (2026-11-05, FIX 13798) touches
+`src/tracked_model.rs`. After a tracked final-paragraph delete carries its
+predecessor's accepted formatting onto the surviving final-mark carrier, it
+clears the copied paragraph section break and section-property revision on that
+carrier. The original predecessor and the document body's final section remain
+unchanged. This prevents a duplicate section boundary and copied revision from
+being serialized on the carrier; no Word-runtime comparison is claimed.
