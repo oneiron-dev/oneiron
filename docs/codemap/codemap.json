@@ -24444,7 +24444,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -24455,7 +24455,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 6
      }
     },
