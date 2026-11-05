@@ -5,8 +5,10 @@
 //! The rows are the vault's own custody-state rows, ids only: each instance
 //! a row-held response was carried under, by each owner its stamps name
 //! (`PROVENANCE_BODY_RESPONSE_OWNER`); each instance a body digest was bound
-//! under that its row no longer names (`PROVENANCE_BODY_INSTANCE`); and each
-//! instance an owner's erase retired or owes (`PROVENANCE_BODY_ERASED`). The
+//! under that its row no longer names (`PROVENANCE_BODY_INSTANCE`); each
+//! instance an owner's erase retired or owes (`PROVENANCE_BODY_ERASED`); and
+//! each actual historical source fact naming its source, body owner,
+//! published digest, and real vault instance (`PROVENANCE_BODY_SOURCE`). The
 //! writer that adds one journals it as a `BodyHistory` frame, synced, before
 //! it commits, so an aborted writer leaves the journal a row more, never one
 //! less, and the log moves on, so every member's head is sealed and
@@ -56,12 +58,14 @@ const MINTED_RECIPIENT: &[u8] = b"oneiron/custody-body-minted/fold/v1";
 const FOLD_PART_ROWS: usize = 16 * 1024;
 
 /// The families a history row may be of, and the bytes each key holds after
-/// its prefix: an id16 or a digest32, then the instance16.
-fn families() -> [(&'static [u8], usize); 3] {
+/// its prefix: an id16 or a digest32, then the instance16; a source fact
+/// names source16, owner16, and digest32, then the instance16.
+fn families() -> [(&'static [u8], usize); 4] {
     [
         (side_table::PROVENANCE_BODY_ERASED.prefix, 32),
         (side_table::PROVENANCE_BODY_INSTANCE.prefix, 48),
         (side_table::PROVENANCE_BODY_RESPONSE_OWNER.prefix, 32),
+        (side_table::PROVENANCE_BODY_SOURCE.prefix, 80),
     ]
 }
 
