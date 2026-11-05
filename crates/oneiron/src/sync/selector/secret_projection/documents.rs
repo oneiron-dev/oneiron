@@ -32,11 +32,12 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
 use super::rows::HeldEdit;
-use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
+use super::{GENERATION_CONTEXT, SyncSecretProjection};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext};
+use crate::origin::secret_projection::copy_id::copy_id;
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
@@ -103,13 +104,13 @@ impl TextCopy {
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
             blob,
-            stamp: super::UNREAD_STAMP,
+            stamp: SyncSecretProjection::unread_stamp(),
         }
     }
 
     /// Whether this is [`Self::sealed`]: no edit of it can be translated.
     fn unread(&self) -> bool {
-        self.stamp == super::UNREAD_STAMP
+        SyncSecretProjection::stamp_is_unread(&self.stamp)
     }
 }
 
@@ -711,7 +712,7 @@ pub(crate) fn with_copy_generation_in_txn(
 ) -> Result<[u8; 32]> {
     let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
     let generation =
-        (!projection.is_empty()).then(|| projection.generation(projection.sources.keys().copied()));
+        (!projection.is_empty()).then(|| projection.generation(projection.source_ids().copied()));
     let Some(generation) = generation else {
         return Ok(frontier);
     };
