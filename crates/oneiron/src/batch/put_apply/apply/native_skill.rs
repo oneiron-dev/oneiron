@@ -1,0 +1,74 @@
+//! The closed per-put input to native SKILL state publication.
+
+use super::admission::FixedPut;
+use crate::entity_doc::SkillStateSnapshot;
+use crate::error::{Error, Result};
+use crate::skill::{SkillRecord, SkillStateWrite};
+use crate::{EntityId, Vault, WriteActor};
+use heed::RoTxn;
+
+/// Constructed only by this apply module, after its ordinary put checks.
+/// It remains provisional until the batch's actor effects and terminal succeed.
+pub(crate) struct NativeSkillPostGate<'a> {
+    vault: &'a Vault,
+    request: &'a SkillStateWrite,
+    record: SkillRecord,
+    actor: Option<WriteActor>,
+    recorded_at: u64,
+}
+
+impl<'a> NativeSkillPostGate<'a> {
+    pub(super) fn capture(
+        store: &crate::store::Store,
+        txn: &RoTxn<'_>,
+        fixed: &FixedPut<'a>,
+        final_body: &[u8],
+    ) -> Result<Option<Self>> {
+        let Some(request) = fixed.skill_state_write else {
+            return Ok(None);
+        };
+        let context = fixed.native_publication.ok_or(Error::InvariantViolation(
+            "native SKILL state request has no applying Vault",
+        ))?;
+        if !std::ptr::eq(store, &context.vault.store)
+            || fixed.entity_type != crate::registry::ENTITY_TYPE_SKILL
+            || fixed.replicated
+        {
+            return Err(Error::InvariantViolation(
+                "native SKILL state request differs from its applying put",
+            ));
+        }
+        let record = request.recheck_final(store, txn, &fixed.id, final_body)?;
+        Ok(Some(Self {
+            vault: context.vault,
+            request,
+            record,
+            actor: context.actor,
+            recorded_at: fixed.mutation_recorded_at,
+        }))
+    }
+
+    pub(crate) fn vault(&self) -> &'a Vault {
+        self.vault
+    }
+
+    pub(crate) fn entity(&self) -> EntityId {
+        self.request.entity()
+    }
+
+    pub(crate) fn snapshot(&self) -> &SkillStateSnapshot {
+        self.request.snapshot()
+    }
+
+    pub(crate) fn record(&self) -> &SkillRecord {
+        &self.record
+    }
+
+    pub(crate) fn actor(&self) -> Option<WriteActor> {
+        self.actor
+    }
+
+    pub(crate) fn recorded_at(&self) -> u64 {
+        self.recorded_at
+    }
+}

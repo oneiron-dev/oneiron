@@ -133,6 +133,8 @@ use self::edge_apply::*;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
+#[cfg(feature = "sync")]
+pub(crate) use self::put_apply::NativeSkillPostGate;
 use self::put_apply::*;
 use self::short_id::*;
 use self::thread_claim_index::*;
