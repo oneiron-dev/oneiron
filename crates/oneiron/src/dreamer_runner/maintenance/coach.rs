@@ -292,8 +292,9 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Atomically admits the next queued host-run Coach job. The host runs it
-    /// through the `Vault::run_coach_*` door its facet names and settles it on
-    /// the queue; the wake driver never calls this.
+    /// through the `Vault::run_coach_*` door its facet names. A separate Coach
+    /// consumer settles it on the queue; an opted-in wake executor instead
+    /// uses the wake driver's normal dispatch and settlement.
     ///
     /// # Errors
     ///
