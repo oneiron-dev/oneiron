@@ -112,7 +112,9 @@ pub fn run_skill_optimize(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
-    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None, None)
+    run_skill_optimize_bound(
+        vault, attempt, author, occurred, learned_at, None, None, None,
+    )
 }
 
 /// An optimizer job with an explicit host-authenticated preference audience.
@@ -137,6 +139,7 @@ pub fn run_skill_optimize_as(
         learned_at,
         Some(owner),
         None,
+        None,
     )
 }
 
@@ -159,6 +162,22 @@ pub fn run_skill_optimize_for_resident(
         learned_at,
         None,
         Some(resident),
+        None,
+    )
+}
+
+/// The wake worker carries selectors from its actual admitted attempt input.
+pub(crate) fn run_skill_optimize_targeted(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    resident: Option<EntityId>,
+    target: Option<EntityId>,
+) -> Result<SkillOptimizeOutcome> {
+    run_skill_optimize_bound(
+        vault, attempt, author, occurred, learned_at, None, resident, target,
     )
 }
 
@@ -170,6 +189,7 @@ fn run_skill_optimize_bound(
     learned_at: u64,
     owner: Option<crate::write_envelope::WriteActor>,
     resident: Option<EntityId>,
+    target: Option<EntityId>,
 ) -> Result<SkillOptimizeOutcome> {
     let authority = vault.dreamer_attempt_authority(attempt)?.ok_or(invalid(
         "skill optimization requires an admitted Coach attempt",
@@ -185,8 +205,11 @@ fn run_skill_optimize_bound(
         Some(resident) => super::selection::optimize_candidates_for_resident(vault, &resident)?,
         None => optimize_candidates(vault)?,
     };
-    let Some(candidate) = candidates.into_iter().next() else {
-        return affirm_healthy_skill(vault, resident);
+    let Some(candidate) = candidates
+        .into_iter()
+        .find(|candidate| target.is_none_or(|target| candidate.skill == target))
+    else {
+        return affirm_healthy_skill(vault, resident, target);
     };
     let brief = optimize_brief_bound_at(
         vault,
@@ -529,8 +552,15 @@ pub(crate) fn propose_skill_edit_as_owner(
 
 /// Healthy skills do not buy an LLM call or a revision. They still produce a
 /// named no-op with the receipts that support keeping the current instructions.
-fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<SkillOptimizeOutcome> {
-    let Some(candidate) = affirm_candidates(vault, resident)?.into_iter().next() else {
+fn affirm_healthy_skill(
+    vault: &Vault,
+    resident: Option<EntityId>,
+    target: Option<EntityId>,
+) -> Result<SkillOptimizeOutcome> {
+    let Some(candidate) = affirm_candidates(vault, resident)?
+        .into_iter()
+        .find(|candidate| target.is_none_or(|target| candidate.skill == target))
+    else {
         return Ok(SkillOptimizeOutcome {
             skill: None,
             proposal: None,

@@ -691,6 +691,7 @@ impl Masker {
                 ),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
+                model_reveal_allowed: true,
                 value_bytes: std::mem::take(&mut *found.value),
                 status: SecretCustodyStatus::Active,
                 registered_at: at,

@@ -200,6 +200,7 @@ impl Vault {
             name: name.to_owned(),
             class: CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: true,
             value_bytes: value.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at,
