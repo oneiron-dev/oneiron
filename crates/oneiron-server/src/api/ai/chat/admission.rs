@@ -196,6 +196,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // it creates carries that origin to the agent that realizes it; a ref
     // that does not resolve binds none, and the witness refuses it.
     let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
+    let model_call_no_record_at_arrival =
+        super::model_call_keeps_no_record(&vault, actor, auth.off_record_session(), origin, None);
     // A turn in a room bills the payer whose consent on the answering
     // agent's join funds that room (FIX 805), resolved before anything is
     // written: a turn with no payer to bill is refused, typed. A turn that
@@ -503,6 +505,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
             funding,
             budget_units: settings.turn_budget_units,
             credential: credential.clone(),
+            model_call_caller: actor,
+            model_call_room: origin,
+            model_call_no_record_at_arrival,
             keepalive,
             mark,
             breakpoint: self_chat.map(|chat| {
