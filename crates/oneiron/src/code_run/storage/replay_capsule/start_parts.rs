@@ -226,6 +226,7 @@ pub(crate) fn republish_step_start_in_txn(
     capsule.start = Some(ExecutorStepStart {
         body,
         digest: *blake3::hash(bytes).as_bytes(),
+        erased: false,
         ..start
     });
     CAPSULES.put(store, wtxn, &key, &capsule)?;
@@ -393,6 +394,7 @@ pub(crate) fn republish_step_start_in_rows(
     capsule.start = Some(ExecutorStepStart {
         body: output.output_ref(),
         digest: *blake3::hash(bytes).as_bytes(),
+        erased: false,
         ..start
     });
     put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);
