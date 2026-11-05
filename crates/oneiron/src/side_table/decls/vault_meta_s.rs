@@ -362,6 +362,10 @@ side_tables! {
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
     /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
+    /// The key a pending invitation's own slips must bind, as the invitee bound it with an
+    /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
+    /// Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION_KEY: VaultMeta b"shared-vault:invitation-key:v1:" Raw;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
