@@ -29,6 +29,7 @@ mod kind_payload_erase;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
+pub(crate) use payload_erase::ErasedByoaPayloads;
 mod payload_rebind;
 mod ports;
 mod read_set;
