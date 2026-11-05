@@ -23,7 +23,14 @@ refusal, configured limit, wait, floor or timeout. Binding this owner does not
 change media embedding, validation, authority, ranking, cuts, results or
 receipts.
 
-The core-query and MCP adapter thread is not connected in this source bank yet.
-Other pipeline buffers, trace serialization, provider storage, construction and
-return gaps, pre-growth admission and a full working-set bound remain open.
+Core query supplies its existing server memory line to seeded retrieval. The
+MCP adapter borrows that same host-supplied line and forwards it through its
+fresh actor-bound reader to both seeded query and context-pack construction.
+An adapter built without a line keeps its previous unbound behavior. The query
+helper lives in the adapter's `media_query` child; its native search and error
+handling are unchanged apart from this resource argument.
+
+Other pipeline buffers, the adapter's separate borrowed-view slots, trace
+serialization, provider storage, construction and return gaps, pre-growth
+admission and a full working-set bound remain open.
 No runtime, compiler or performance result is implied by these source changes.
