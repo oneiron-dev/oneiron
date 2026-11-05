@@ -53,7 +53,7 @@ impl SettleFlow {
 /// A window member is exactly what the executor's window contract
 /// holds: a plain Micro or Meso partition (the scope's consolidation
 /// kind, its own attempt type) whose preparation is Ready at this wake
-/// revision.
+/// revision, or a sieve rung job this wake's frozen preparation holds.
 /// A budget-pressure warning failure and a raised cancellation keep
 /// their serial pre-dispatch arms instead of joining.
 pub(super) fn window_eligible(
@@ -63,17 +63,24 @@ pub(super) fn window_eligible(
     cancel_requested: bool,
     parallelism: usize,
 ) -> bool {
-    parallelism > 1
-        && pressure_ok
-        && !cancel_requested
-        && crate::dreamer_consolidation::selection::windowed_partition(
-            &admitted.status.attempt.kind,
-            &admitted.status.payload.attempt_type,
-        )
-        && matches!(
-            prepared_wake.preparation(admitted.status.attempt.id),
+    parallelism > 1 && pressure_ok && !cancel_requested && window_member(admitted, prepared_wake)
+}
+
+/// A plain Micro or Meso partition whose preparation is Ready, or a sieve
+/// rung job the frozen preparation holds; a rung it does not hold takes
+/// the serial backlog wait instead.
+fn window_member(admitted: &DreamerAdmittedAttempt, prepared_wake: &PreparedWake) -> bool {
+    let attempt = &admitted.status.attempt;
+    let attempt_type = &admitted.status.payload.attempt_type;
+    if crate::dreamer_consolidation::selection::windowed_partition(&attempt.kind, attempt_type) {
+        matches!(
+            prepared_wake.preparation(attempt.id),
             Some(crate::dreamer_consolidation::AttemptPreparation::Ready(_))
         )
+    } else {
+        crate::dreamer_consolidation::selection::windowed_rung(&attempt.kind, attempt_type)
+            && prepared_wake.contains_attempt(attempt.id)
+    }
 }
 
 impl DreamerWakeDriver<'_> {
