@@ -137,4 +137,41 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `comm::resolve_party_ref_from_store_in_txn`.
+    fn resolve_party_ref_from_store_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        party: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<EntityId>>;
+
+    /// The engine's `comm::comm_party_keys_in_txn`.
+    fn comm_party_keys_in_txn(&self, store: &Store, rtxn: &RoTxn<'_>) -> Result<BTreeSet<String>>;
+
+    /// The engine's `comm::person_party_key_in_txn`.
+    fn person_party_key_in_txn(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<String>>;
+
+    /// The engine's `comm::resolve_party_ref_in_txn`.
+    fn resolve_party_ref_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<EntityId>>;
+
+    /// The engine's `comm::count_active_party_claims_in_txn`.
+    fn count_active_party_claims_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party_ref: EntityId,
+        predicate: &str,
+        channel_class: &str,
+    ) -> crate::write_envelope::communication::CommResult<usize>;
 }

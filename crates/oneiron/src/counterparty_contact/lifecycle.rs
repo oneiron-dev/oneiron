@@ -552,7 +552,10 @@ fn fold_party_opt_out_heads_in_txn(
     rtxn: &heed::RoTxn<'_>,
     record: &mut CounterpartyContactRecord,
 ) -> Result<()> {
-    let Some(party_ref) = crate::comm::resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
+    let Some(party_ref) = vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
         .map_err(comm_fold_error)?
     else {
         return Ok(());
