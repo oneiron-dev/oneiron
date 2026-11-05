@@ -16,6 +16,9 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, OutboundToolDescriptor, abandon_record,
 };
 use crate::secret_custody::SecretUseSend;
+use crate::web_connector::{
+    WEB_CONNECTOR_NAME, WebFetchInput, WebProviderKey, WebSearchInput, WebTool,
+};
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
@@ -110,6 +113,19 @@ pub(super) fn refused(reason: &str) -> Step {
     }
 }
 
+/// The builtin `web` tool's input contract (FIX 11606): a bare string or the
+/// typed object, from the same `WebSearchInput`/`WebFetchInput` the call
+/// parses. Input shape only, never a key or budget promise.
+fn web_tool_input_schema(tool: WebTool) -> crate::Result<Value> {
+    let schema = match tool {
+        WebTool::Search => schemars::schema_for!(WebSearchInput),
+        WebTool::Fetch => schemars::schema_for!(WebFetchInput),
+    };
+    let object = serde_json::to_value(schema)
+        .map_err(|_| Error::InvalidConfig("web connector: the input schema is not JSON".into()))?;
+    Ok(serde_json::json!({ "anyOf": [{ "type": "string" }, object] }))
+}
+
 impl Step {
     /// The reasons a hold or a refusal carries.
     fn into_reasons(self) -> Vec<String> {
@@ -131,6 +147,14 @@ impl Vault {
     /// takes. Reads only; nothing is held, sent or written. Each catalog
     /// key, grant, governing key and slate it reads lists on the answer,
     /// however the read ends (FIX 5816).
+    ///
+    /// The builtin `web` connector (FIX 11606) has no catalogued key or
+    /// approved MCP manifest: its provider tools answer the first-party
+    /// input contract (`WebSearchInput`/`WebFetchInput`, a bare string or
+    /// the typed object), while a hub switch reads the configured
+    /// connector's governing manifest instead. The schema describes the
+    /// input shape only; it promises neither a provider key nor a budget
+    /// to send with.
     pub fn connector_tool_schema(
         &self,
         memory: &Memory<'_>,
@@ -150,7 +174,10 @@ impl Vault {
     }
 
     /// [`Self::connector_tool_schema`] for `principal_ref`, listing each row
-    /// it reads in `read`.
+    /// it reads in `read`. An exact `web` name is intercepted before the
+    /// catalog route, as the server's call is: an unknown web tool is
+    /// unavailable, a hub switch continues below under the configured
+    /// connector's name, and provider tools answer their input contract.
     fn connector_tool_schema_reading(
         &self,
         principal_ref: &str,
@@ -161,6 +188,25 @@ impl Vault {
         let unavailable = |stop: Step| ConnectorToolSchema::Unavailable {
             reasons: stop.into_reasons(),
         };
+        // Match the served web branch before resolving catalog names.
+        let hub_target: Option<String> = if name == WEB_CONNECTOR_NAME {
+            let Some(web_tool) = WebTool::parse(tool) else {
+                return Ok(unavailable(refused("connector_tool_unknown")));
+            };
+            let setting = self.web_connector_setting()?;
+            match &setting.key {
+                WebProviderKey::Hub { connector } => Some(connector.clone()),
+                WebProviderKey::Backend | WebProviderKey::Secret { .. } => {
+                    return Ok(ConnectorToolSchema::Approved {
+                        input_schema: web_tool_input_schema(web_tool)?,
+                        destructive_hint: false,
+                    });
+                }
+            }
+        } else {
+            None
+        };
+        let name = hub_target.as_deref().unwrap_or(name);
         let (route, catalog_key) = self.route_connector_call_listing(name)?;
         read.extend(catalog_key);
         let Some(route) = route else {

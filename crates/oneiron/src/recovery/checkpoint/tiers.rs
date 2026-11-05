@@ -45,7 +45,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"retrieval_trace_key:",
                 b"tasks.create.rate.",
                 b"own_rate.",
-                b"vault_cleanup.scan",
                 b"self_heal:signed:",
                 b"booking:anti_abuse:v1:rate\0",
                 b"booking:anti_abuse:v1:cache\0",

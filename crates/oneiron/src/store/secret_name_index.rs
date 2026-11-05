@@ -6,7 +6,6 @@
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Result, SideTableRowProblem};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::Store;
 
 /// Live secret name -> custody `EntityId` and the name's generation
 /// high-water, keyed by the name itself. `run_bound` reads a run's names
@@ -49,7 +48,7 @@ impl RawValue for NameEntry {
 /// existing txn. `pub(crate)` for SECRET-02's lease doors (ONE-1920), which
 /// hold their own write txn and must not open a nested read txn.
 pub(crate) fn resolve_secret_ref_in_txn(
-    store: &Store,
+    store: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     name: &str,
 ) -> Result<Option<EntityId>> {

@@ -45,6 +45,14 @@ fallback, cancellation, receipts and replay behavior are unchanged. This slice
 does not wire MESSAGE/chat conversation capture, add a Dreamer reader, export
 reasoning, or settle the opaque-reasoning custody question.
 
+## Actor erase custody
+
+An owner-in-person actor erase passes its existing owner act to the model-call
+scrub before the generic actor hooks run. Custody records minted by that row use
+the existing revoke carry to the owner's other machines, under its normal rules.
+Archive, replay and checkpoint-restore scrubs gain no owner act and keep their
+local-only path. MESSAGE occurrences remain owned by their MESSAGE.
+
 ## MCP execute_code capture
 
 The served code-mode backend can copy its existing configuration with one

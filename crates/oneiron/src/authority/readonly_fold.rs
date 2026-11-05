@@ -495,13 +495,11 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
     }
 }
 
-/// [`fold_stored_tail_in_txn`], every guest slip it holds whose Grant this
-/// vault withdrew tombstoned (FIX-LIST 1978): one merged in after the
-/// withdrawal, from whichever replica minted it, confers nothing. Every
-/// view of this vault's own log takes it, cached or not; the base a later
-/// generation resumes from and a checkpoint image, which folds the log
-/// afresh, never do: a local withdrawal is no row of the log. The signed
-/// `SlipGrantRevoke` the same withdrawal logs is, and carries it to both.
+/// [`fold_stored_tail_in_txn`] for this vault's own log. The withdrawal's
+/// signed `SlipGrantRevoke` tombstones guest slips under that grant,
+/// including one merged after withdrawal, from any replica (FIX-LIST 1978).
+/// It reaches cached and uncached views, continuation bases and checkpoint
+/// images through that same signed log.
 fn fold_authority_checkpoint_tail_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -511,25 +509,7 @@ fn fold_authority_checkpoint_tail_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
     arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Result<AuthorityTailFold> {
-    let mut folded =
-        fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)?;
-    if let AuthorityTailFold::Complete { view, .. } = &mut folded {
-        let grant_bound = view
-            .fold
-            .slips
-            .mints
-            .values()
-            .any(|mint| mint.action.claims.grant_ref.is_some());
-        if grant_bound {
-            // The view was built just now, so it is not shared yet.
-            Arc::make_mut(&mut view.fold)
-                .slips
-                .tombstone_withdrawn_grants(|grant| {
-                    super::guest_revoke::guest_grant_known_withdrawn_in_txn(store, txn, grant)
-                });
-        }
-    }
-    Ok(folded)
+    fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)
 }
 
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the

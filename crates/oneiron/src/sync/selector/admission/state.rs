@@ -61,6 +61,11 @@ impl AdmittedUpdate {
         self.bytes
     }
 
+    /// The text admission allowed beside the rows, outside their Loro bytes.
+    pub(crate) fn born_with(&self) -> &[super::super::born_with::CarriedText] {
+        &self.born_with
+    }
+
     /// The writes the update asks of this vault: its rows and edges, and the
     /// stamps that wait out of it (Astra-b F2 on #1432).
     pub(crate) fn writes(&self) -> u64 {
@@ -198,10 +203,16 @@ pub(in crate::sync) fn release_landed_stamps(
 pub(crate) struct StagedBirths {
     lane: String,
     births: Vec<(EntityId, Vec<u8>)>,
+    peer_rows: Vec<(EntityId, [u8; 32])>,
 }
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
+    /// The peer-origin rows recomputed from the receipt-bound admitted bytes.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+        &self.peer_rows
+    }
+
     /// The rows the confirmation's import must watch, each with the bytes
     /// the artifact brings.
     pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
@@ -225,7 +236,7 @@ impl StagedBirths {
 pub(in crate::sync) fn staged_births(
     vault: &Vault,
     (receipt_id, stamps_digest): (&[u8; 32], Option<[u8; 32]>),
-    parts: &[(WindowKey, Vec<u8>)],
+    parts: &[crate::batch::export::StagedWindowPart],
 ) -> Result<Vec<StagedBirths>> {
     let lane = staged_lane(receipt_id);
     // A receipt binds all per-window records before any is selected or held.
@@ -242,7 +253,8 @@ pub(in crate::sync) fn staged_births(
         return Err(Error::CorruptedIndex("staged facet stamps"));
     }
     let mut staged = Vec::with_capacity(parts.len());
-    for (key, update) in parts {
+    for part in parts {
+        let (key, update) = (&part.key, &part.update);
         let record = records
             .remove(key.as_str())
             .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
@@ -262,6 +274,7 @@ pub(in crate::sync) fn staged_births(
         staged.push(StagedBirths {
             lane: lane.clone(),
             births,
+            peer_rows: crate::sync::ingest::admitted_peer_rows(&admitted),
         });
     }
     Ok(staged)

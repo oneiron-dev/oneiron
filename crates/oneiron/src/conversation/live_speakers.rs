@@ -109,8 +109,9 @@ impl RoomLiveSpeakerEntries {
         self.calls > 0
     }
 
-    /// Whether a live call brings a listener the room's members do not
-    /// cover: a speaker it must place, or a call with no stored roster.
+    /// Whether a live call brings a listener neither the room's members
+    /// nor a known vault Owner covers: a speaker it must place, or a call
+    /// with no stored roster.
     /// Such a listener's clearance is an unknown's.
     #[must_use]
     pub fn reads_unknown(&self) -> bool {
@@ -163,56 +164,55 @@ impl RoomLiveSpeakerEntries {
 }
 
 /// One speaker a live call must place in its room: heard on its roster and
-/// not positively a member.
+/// not covered by a member or a live vault Owner.
 pub(crate) struct RequiredSpeaker<'a> {
     pub(crate) speaker_key: &'a str,
     /// Placed by print or invite: it enters with no "who is this?" ask.
     pub(crate) placed: bool,
 }
 
-/// The speakers of `roster` that `members` do not cover, in the order first
-/// heard: every speaker the roster could not place, and every placed one
-/// whose placed identity is not a member on every segment that placed it.
-/// A placement that matches no member, or matches only partly, is not one.
+/// The speakers of `roster` that neither `members` nor a positive live
+/// vault Owner covers, in the order first heard. Every placed identity of
+/// a speaker must be covered; a wholly unplaced speaker remains required.
+/// This coverage changes no interlocutor identity or supervision.
 pub(crate) fn required_live_speakers<'a>(
     roster: &'a VoiceSessionRosterV1,
     members: &[EntityId],
-) -> Vec<RequiredSpeaker<'a>> {
+    is_owner: impl Fn(EntityId) -> Result<bool>,
+) -> Result<Vec<RequiredSpeaker<'a>>> {
     let mut keys: Vec<&str> = Vec::new();
     for segment in &roster.segments {
         if !keys.contains(&segment.speaker_key.as_str()) {
             keys.push(segment.speaker_key.as_str());
         }
     }
-    keys.into_iter()
-        .filter_map(|speaker_key| {
-            let placed: Vec<EntityId> = roster
-                .segments
-                .iter()
-                .filter(|segment| segment.speaker_key == speaker_key)
-                .filter_map(|segment| match &segment.evidence {
-                    VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
-                        Some(*subject_ref)
-                    }
-                    VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
-                        Some(*attendee_ref)
-                    }
-                    VoiceAttributionEvidence::ResidualCluster { .. } => None,
-                })
-                .collect();
-            if placed.is_empty() {
-                return Some(RequiredSpeaker {
-                    speaker_key,
-                    placed: false,
-                });
-            }
-            let covered = placed.iter().all(|identity| members.contains(identity));
-            (!covered).then_some(RequiredSpeaker {
-                speaker_key,
-                placed: true,
+    let mut required = Vec::new();
+    for speaker_key in keys {
+        let placed: Vec<EntityId> = roster
+            .segments
+            .iter()
+            .filter(|segment| segment.speaker_key == speaker_key)
+            .filter_map(|segment| match &segment.evidence {
+                VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => Some(*subject_ref),
+                VoiceAttributionEvidence::InviteElimination { attendee_ref } => Some(*attendee_ref),
+                VoiceAttributionEvidence::ResidualCluster { .. } => None,
             })
-        })
-        .collect()
+            .collect();
+        let mut covered = !placed.is_empty();
+        for identity in &placed {
+            if !members.contains(identity) && !is_owner(*identity)? {
+                covered = false;
+                break;
+            }
+        }
+        if !covered {
+            required.push(RequiredSpeaker {
+                speaker_key,
+                placed: !placed.is_empty(),
+            });
+        }
+    }
+    Ok(required)
 }
 
 fn hold(room: EntityId, call: EntityId) -> Error {
@@ -312,7 +312,9 @@ impl Vault {
                 live.rosterless = true;
                 continue;
             };
-            for speaker in required_live_speakers(&roster, members) {
+            for speaker in required_live_speakers(&roster, members, |identity| {
+                crate::disclosure::live_vault_owner_person_in_txn(self, txn, identity)
+            })? {
                 let entry = crate::task_verb::attendee_entry_id(
                     room,
                     &ContainerAttendee::Speaker {

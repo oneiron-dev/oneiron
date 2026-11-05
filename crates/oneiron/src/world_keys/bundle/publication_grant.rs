@@ -13,6 +13,9 @@
 //!   it opens, as one more anonymous capsule as long as a reader's and padded
 //!   with them, so no holder tells it from one. The request itself is an
 //!   authority entry and carries no key.
+//! - An asked executor not mine here that seals a new generation grants
+//!   itself its two fresh outer keys for that exact pending request. It can
+//!   then recognize its own committed generation after a lost reply.
 //! - The executor opens a grant only to publish for that request, and only
 //!   when no capsule of its own opens the object
 //!   ([`Vault::open_latest_for_publication`]). The object's AEAD proves the
@@ -74,6 +77,19 @@ pub(super) fn publication_grantees(
         );
     }
     out
+}
+
+/// The creator's own pending publication request, using the same recipient
+/// and key selection as a publisher mine here. No other request is granted.
+pub(super) fn own_publication_grantee(
+    fold: &AuthorityFold,
+    holder: Destination,
+    request: AuthorityEntryHash,
+    executor: EntityId,
+) -> Option<PublicationGrantee> {
+    publication_grantees(fold, holder)
+        .into_iter()
+        .find(|grantee| grantee.request == request && grantee.executor == executor)
 }
 
 /// The encryption key of the identity `machine` proves itself by here, as

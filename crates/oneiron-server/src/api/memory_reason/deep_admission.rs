@@ -120,7 +120,7 @@ pub(crate) fn admit_deep_retrieval(
         let line = host.guard.read().attempt_id;
         server
             .vault
-            .budget_denied_hooks(&error, &host.guard, &line, None);
+            .budget_denied_hooks(&error, &host.guard, &line, None, None);
         ApiError::deep_retrieval_unavailable()
     })?;
     Ok(Some(DeepAdmission {

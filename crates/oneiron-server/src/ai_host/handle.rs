@@ -50,6 +50,7 @@ impl AiHandle {
                 ChatSettings {
                     history_turns: 0,
                     turn_budget_units: 0,
+                    turn_opener: crate::config::models::TurnOpener::default(),
                 },
                 |models| models.chat,
             ),

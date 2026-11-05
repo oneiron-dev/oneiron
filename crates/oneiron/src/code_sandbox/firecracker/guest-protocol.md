@@ -26,6 +26,17 @@ The host must provide:
 
 `ONEIRON_MICROVM_CONFIG` names JSON matching `FirecrackerHostConfig`.
 `configured(config)` provides the same host-only input without environment use.
+
+OCI sessions resolve their artifact paths from the host's
+`ONEIRON_MICROVM_OCI_IMAGES` registry. Each selected OCI reference must also
+have its own `oci_pins` entry in `FirecrackerHostConfig`, keyed by that exact
+reference and containing its kernel, rootfs and component BLAKE3 digests.
+Those pins come from the host profile, not from the path registry or the guest.
+Both OCI boot doors use the selected entry for verification and evidence;
+`pins` remains the raw-boot triplet. The current profile format requires
+`oci_pins` (an empty object for a raw-boot-only profile). No old-format reader
+or image artifact is supplied by this source change.
+
 The binary-only constructor never authorizes boot. There is no automatic dev
 fallback in debug, test, or release builds. No network device is configured.
 

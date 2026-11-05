@@ -928,6 +928,16 @@ impl StoreGateHooks for EngineGateHooks {
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn campaign_compliance_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+        now_utc: u64,
+    ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>> {
+        crate::campaign::compliance::campaign_compliance_gate(store, txn, effect, now_utc)
+    }
 }
 
 /// The engine's core write operations.

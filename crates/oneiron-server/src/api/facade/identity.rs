@@ -97,6 +97,10 @@ pub(super) fn facade_invocation<'v>(
     memory: oneiron::Memory<'v>,
     call: &FacadeCall<'_>,
 ) -> Result<oneiron::Memory<'v>, FacadeApiError> {
+    let memory = match call.signing_request_transport() {
+        Some(transport) => memory.with_signing_request_transport(transport),
+        None => memory,
+    };
     let memory = match call.session_ref() {
         Some(session_ref) => memory.in_off_record_session(session_ref),
         None => memory,

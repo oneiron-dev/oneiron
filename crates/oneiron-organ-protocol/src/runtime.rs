@@ -546,6 +546,8 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
 }
 
 fn map_inputs(inputs: Vec<Input>, fds: Vec<OwnedFd>) -> Result<Vec<InputBytes>, OrganError> {
+    // Pre-funded by the host's `reserve_read` (`fd_read_cost`, FIX 12434):
+    // this collect beside the fds buffer, on the call's floor+budget.
     let mut slots: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
     inputs
         .into_iter()
