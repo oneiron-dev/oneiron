@@ -466,9 +466,6 @@ pub(crate) use group_commit::{
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
-pub(crate) use key_custody::{
-    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
-};
 pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
@@ -479,6 +476,9 @@ pub(crate) use key_custody::{
     Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
     TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+};
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
 };
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
 #[allow(
