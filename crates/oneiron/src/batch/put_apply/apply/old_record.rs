@@ -22,6 +22,16 @@ pub(super) fn apply_old_record(
     dispatch: &super::admission::Dispatch,
     portable_agent_source: &mut Option<(EntityId, Vec<u8>)>,
 ) -> Result<OldRecord> {
+    #[cfg(feature = "sync")]
+    if let Some(candidate) = fixed.record_document
+        && (candidate.entity()? != fixed.id
+            || candidate.logical_body() != data
+            || !candidate.recheck_in_txn(wtxn)?)
+    {
+        return Err(Error::InvariantViolation(
+            "record document candidate changed before staging",
+        ));
+    }
     let mut body_changed = true;
     let mut consolidation_dirty = true;
     let mut stored_before = false;
@@ -39,6 +49,15 @@ pub(super) fn apply_old_record(
         stored_before = true;
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+        #[cfg(feature = "sync")]
+        let prior_body = match fixed.record_document {
+            Some(candidate) if old_type == ENTITY_TYPE_SKILL => candidate
+                .logical_prior_body()
+                .ok_or(Error::InvariantViolation(
+                    "record document prior body missing",
+                ))?,
+            _ => prior_body,
+        };
         #[cfg(feature = "sync")]
         let prior_body = match fixed.skill_state_write {
             Some(request) => request.rechecked_prior_body(store, wtxn, &fixed.id, data)?,

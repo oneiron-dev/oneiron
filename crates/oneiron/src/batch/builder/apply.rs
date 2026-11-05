@@ -10,6 +10,12 @@ use heed::RwTxn;
 use crate::Vault;
 use crate::error::{Error, Result};
 
+enum ApplyOutcome {
+    Applied,
+    #[cfg(feature = "sync")]
+    DocumentStands(crate::entity_doc::RecordDocumentStand),
+}
+
 impl BatchBuilder<'_> {
     /// Applies all queued operations to the given write transaction without committing.
     ///
@@ -34,6 +40,7 @@ impl BatchBuilder<'_> {
             #[cfg(feature = "sync")]
             None,
         )
+        .map(|_| ())
     }
 
     /// The typed SKILL door's caller-transaction terminal. The request remains
@@ -52,6 +59,7 @@ impl BatchBuilder<'_> {
             None,
             None,
         )
+        .map(|_| ())
     }
 
     /// [`Self::apply`] for the replicated put a sync window's ingest door
@@ -62,6 +70,8 @@ impl BatchBuilder<'_> {
     /// replicated MESSAGE put meets the witness check with `own_device`, the
     /// lane the door gave its row when one of the owner's own machines sent
     /// it, which counts only for that row and its exact bytes (FIX 9600).
+    /// A selected document that stands returns its preparation outcome without
+    /// staging the pointer or running the batch's landed-write tails.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_ingested(
         self,
@@ -69,7 +79,7 @@ impl BatchBuilder<'_> {
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
         record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
-    ) -> Result<()> {
+    ) -> Result<Option<crate::entity_doc::RecordDocumentStand>> {
         self.apply_with_gate_mode(
             wtxn,
             ApplyOpsGateMode::new(false, true),
@@ -78,6 +88,10 @@ impl BatchBuilder<'_> {
             own_device,
             record_document,
         )
+        .map(|outcome| match outcome {
+            ApplyOutcome::Applied => None,
+            ApplyOutcome::DocumentStands(stand) => Some(stand),
+        })
     }
 
     /// Applies queued promotion operations while recording their gate decisions
@@ -92,6 +106,7 @@ impl BatchBuilder<'_> {
             #[cfg(feature = "sync")]
             None,
         )
+        .map(|_| ())
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
@@ -106,6 +121,7 @@ impl BatchBuilder<'_> {
             #[cfg(feature = "sync")]
             None,
         )
+        .map(|_| ())
     }
 
     fn apply_with_gate_mode(
@@ -116,7 +132,7 @@ impl BatchBuilder<'_> {
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
         #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
-    ) -> Result<()> {
+    ) -> Result<ApplyOutcome> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
         if let Some(error) = self.validation_error.take() {
@@ -143,7 +159,7 @@ impl BatchBuilder<'_> {
             let mut staged = vault.store.env.nested_write_txn(wtxn)?;
             let scope =
                 has_owner.then(|| super::vad_postcommit::VadPostcommitScope::new(vault, &staged));
-            self.apply_staged(
+            let outcome = self.apply_staged(
                 &mut staged,
                 gate_mode,
                 Some(&actor),
@@ -152,11 +168,13 @@ impl BatchBuilder<'_> {
                 #[cfg(feature = "sync")]
                 record_document,
             )?;
-            staged.commit()?;
-            if let Some(scope) = scope {
-                super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+            if matches!(outcome, ApplyOutcome::Applied) {
+                staged.commit()?;
+                if let Some(scope) = scope {
+                    super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+                }
             }
-            Ok(())
+            Ok(outcome)
         } else {
             self.apply_staged(
                 wtxn,
@@ -178,8 +196,36 @@ impl BatchBuilder<'_> {
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
         #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
-    ) -> Result<()> {
+    ) -> Result<ApplyOutcome> {
         let vault = self.vault;
+        #[cfg(feature = "sync")]
+        let prepared_record = if record_document.is_some() && self.ops.len() == 1 {
+            let operation = self.ops.remove(0);
+            match super::record_document::RecordDocumentOp::prepare_in_txn(
+                record_document,
+                wtxn,
+                operation,
+            )? {
+                super::record_document::RecordDocumentOp::Ordinary(operation) => {
+                    self.ops.push(operation);
+                    None
+                }
+                super::record_document::RecordDocumentOp::Prepared(prepared) => {
+                    self.ops.push(prepared.semantic_operation());
+                    Some(prepared)
+                }
+                super::record_document::RecordDocumentOp::Stands { operation, outcome } => {
+                    self.ops.push(operation);
+                    return Ok(ApplyOutcome::DocumentStands(outcome));
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(feature = "sync")]
+        let record_document = prepared_record
+            .as_ref()
+            .map(|prepared| prepared.candidate());
         // Preserve original-position admission before routing removes a Put.
         // Actual head changes and the remaining ops get their own final checks.
         let original = actor
@@ -327,7 +373,7 @@ impl BatchBuilder<'_> {
         drop(native_input);
         #[cfg(not(feature = "sync"))]
         drop((native_outputs, content_writes));
-        Ok(())
+        Ok(ApplyOutcome::Applied)
     }
 }
 
