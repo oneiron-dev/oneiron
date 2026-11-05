@@ -143,7 +143,17 @@ pub(crate) async fn core_query(
     let (mut media_memory, media) = (server.memory.empty_lease(), media);
     media_memory.materialized(
         0,
-        (media.capacity() as u64).saturating_mul(std::mem::size_of::<MediaSeed>() as u64),
+        media.iter().fold(
+            (media.capacity() as u64).saturating_mul(std::mem::size_of::<MediaSeed>() as u64),
+            |bytes, seed| {
+                bytes
+                    .saturating_add(seed.space.capacity() as u64)
+                    .saturating_add(
+                    (seed.kinds.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64),
+                )
+            },
+        ),
     );
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;

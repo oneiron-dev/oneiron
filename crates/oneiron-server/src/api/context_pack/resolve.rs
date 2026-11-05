@@ -167,12 +167,14 @@ pub(crate) async fn run_context_pack(
             (media.capacity() as u64)
                 .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
             |bytes, seed| {
+                let vector_bytes = (seed.vector.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<f32>() as u64);
+                let kind_bytes = (seed.kinds.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64);
                 bytes
                     .saturating_add(seed.space.capacity() as u64)
-                    .saturating_add(
-                    (seed.kinds.capacity() as u64)
-                        .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64),
-                )
+                    .saturating_add(vector_bytes)
+                    .saturating_add(kind_bytes)
             },
         ),
     );

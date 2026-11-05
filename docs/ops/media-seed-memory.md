@@ -10,12 +10,16 @@ their existing reads and waits. The buffer drops before the charge on normal
 completion, errors, unwinding and cancellation of those futures. The reader
 choice `none` still skips embedding and produces an empty vector.
 
-The context-pack consumer's same initial charge also includes the retained
-capacity of each seed's owned space string and kind-filter vector. It counts
-these capacities once beside the existing outer buffer, using the concrete
-`InputKind` size for the kind filters. The builder copies those borrowed fields;
-its copies are outside this charge. The returned seeds and their guard keep the
-same drop order.
+The context-pack and core-query consumers' initial charges also include the
+retained capacity of each seed's owned space string and kind-filter vector.
+Each charge counts those capacities once beside the existing outer buffer,
+using the concrete `InputKind` size. The native pipeline's copies of the
+borrowed fields are outside these charges. The returned seeds and their guards
+keep the same drop order.
+
+The context-pack charge also includes the returned embedding-vector backing,
+using each vector's actual capacity and `size_of::<f32>()`. The MCP and
+core-query vector backings are not covered by their current charges.
 
 The MCP door keeps its original fallback and error handling. It drains the
 returned seeds into the existing `EmbeddedMediaSeed` result vector, keeping the
@@ -43,8 +47,8 @@ new configuration field is introduced.
 
 This is post-allocation accounting, not admission before allocation. It adds
 no memory-admission wait, refusal, configured limit, timeout or sparse fallback.
-Provider internals, embedding-vector backing, other query storage and a full
-working-set bound remain outside these charges. This does not prove queue
+Provider internals, the MCP and core-query embedding-vector backings, other
+query storage and a full working-set bound remain outside these charges. This does not prove queue
 fairness, pre-growth admission, runtime performance or a
 machine-derived embedding-width floor. The shared embedding producer, paid-call
 policy, authority, results and receipts are unchanged.
