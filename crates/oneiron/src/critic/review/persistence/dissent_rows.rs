@@ -116,16 +116,23 @@ pub(in crate::critic::review) fn save_dissent(
     verdict: &EntityId,
     state: &ReviewDissent,
 ) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let hash = result_hash(vault, txn, verdict)?;
-        let mut stored = RESULT
-            .get(&vault.store, txn, &hash)?
-            .ok_or(Error::EntityNotFound)?;
-        stored
-            .dissent
-            .insert(state.artifact_id.clone(), state.clone());
-        RESULT.put(vault, txn, &hash, &stored)
-    })
+    vault.with_write_txn_grouped(|txn| save_dissent_in_txn(vault, txn, verdict, state))
+}
+
+pub(in crate::critic::review) fn save_dissent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    verdict: &EntityId,
+    state: &ReviewDissent,
+) -> Result<()> {
+    let hash = result_hash(vault, txn, verdict)?;
+    let mut stored = RESULT
+        .get(&vault.store, txn, &hash)?
+        .ok_or(Error::EntityNotFound)?;
+    stored
+        .dissent
+        .insert(state.artifact_id.clone(), state.clone());
+    RESULT.put(vault, txn, &hash, &stored)
 }
 
 pub(in crate::critic::review) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {

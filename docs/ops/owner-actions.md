@@ -42,7 +42,7 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
-The server's status also carries `link_bytes`: what every sync link moved since the process
+The server's status also carries `link_bytes`: what every sync and LLM mesh link moved since the process
 started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
 `out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
 `in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
@@ -1051,6 +1051,13 @@ archived until you accept, and the engine refuses the automatic posture.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
+The per-item `vault.cleanup.review` answer reads each record through the owner's native
+`vault.get` admission and projection in the same snapshot as its eligibility, evidence and
+revision. Completed-attempt content also shares that snapshot. NOTE document text still reads
+through `vault.notes.read` after it, with the existing room and diary handling. The review keeps
+its three-read bound and marks a slot that continues changing; that NOTE text can still be newer
+than the facts beside it. The record snapshot change does not add an archive or delete action.
+
 ## Review NOTE tombstones
 
 Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
@@ -2001,6 +2008,11 @@ clearance (the `vault.disclosure.offer` verb, under an agent credential that car
 `propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
 contact offer.
 
+- `GET /v1/owner/disclosure/offers?limit=20` lists your open offers, unresolved and
+  unexpired, in proposal-reference order. The reply holds `offers` (the same frozen views as
+  the singular read) and `next_after`. Pass that reference as `after` for the next page;
+  `next_after: null` means done. Choose `limit` on every request; zero returns an empty page.
+  The list grants nothing and never includes another owner's offers.
 - `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
   the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
 - `POST /v1/owner/disclosure/confirm` with

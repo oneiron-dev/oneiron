@@ -3315,7 +3315,7 @@ impl OneironClient {
                     oneiron::office_body::DeckPreview,
                 >(client, verb, &input),
                 "vault.artifacts.append" => remote_agent_verb_output::<
-                    oneiron::memory::BlobVersionView,
+                    oneiron::memory::BlobVersionAppendOutcome,
                 >(client, verb, &input),
                 "vault.artifacts.read" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::BlobContent>,
@@ -16964,7 +16964,7 @@ impl OneironClient {
     pub fn vault_artifacts_append(
         &self,
         input: &oneiron::task_verb::sdk::AppendBlobVersionRequest,
-    ) -> Result<oneiron::memory::BlobVersionView, MemoryError> {
+    ) -> Result<oneiron::memory::BlobVersionAppendOutcome, MemoryError> {
         if input.content_base64.len() > oneiron::memory::caps::MAX_BLOB_BASE64_LEN {
             return Err(MemoryError::bad_request(
                 "blob base64 exceeds the content ceiling",
