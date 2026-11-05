@@ -84,13 +84,28 @@ impl ForkProvenance {
 
 /// Re-keys every pair naming `entity` and rebinds CHECK's exact fork
 /// references without changing a measurement. New fork paths are opaque
-/// from birth, so keeping their bodies keeps no target-derived path.
+/// from birth, so keeping their bodies keeps no target-derived path. A row
+/// that no longer decodes (one written before FIX 3607 changed the row)
+/// cannot say whom it names, so the erase deletes it rather than fail.
 pub(crate) fn erase_contribution_forks_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
-    let rows = FORKS.scan(&vault.store, wtxn)?;
+    let mut rows = Vec::new();
+    let mut undecodable = Vec::new();
+    for key in FORKS.scan_keys(&vault.store, wtxn, &[])? {
+        let Some(bytes) = FORKS.get_bytes(&vault.store, wtxn, &key)? else {
+            continue;
+        };
+        match FORKS.decode_value(&bytes) {
+            Ok(row) => rows.push((key, row)),
+            Err(_) => undecodable.push(key),
+        }
+    }
+    for key in &undecodable {
+        FORKS.delete(&vault.store, wtxn, key)?;
+    }
     let affected: BTreeSet<_> = rows
         .iter()
         .filter(|(_, row)| row.provenance.subjects.contains(entity))
