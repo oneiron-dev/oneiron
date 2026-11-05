@@ -6,11 +6,13 @@ native birth still land through their existing gates before its source is
 created in the same writer. Other noncanonical contexts and unsupported births
 keep their full native raw path.
 
-`COMM_RECORD` has a required `source_position` key. Ordinary events, gates and
-receipts encode `nil`. A scoped, explicitly born `TouchAsserted` can instead
-carry the five-element tuple: world id, facet id, project id, native sensitivity
-band, and a 32-byte admitted-origin digest. This requires `original_head`.
-There is no old-format reader or migration.
+`COMM_RECORD` has a required `source_position` key. Ordinary events without an
+original head, gates and receipts encode `nil`. Every explicitly born
+`TouchAsserted`, canonical base-world touches included, carries the five-element
+tuple: world id, facet id, project id, native sensitivity band, and a 32-byte
+admitted-origin digest. `original_head` and `source_position` must be present
+together. There is no old-format reader or migration. All born source ids use
+`COMM_BORN_TOUCH_EVENT` with the same typed position and origin binding.
 
 The digest covers the actual original stored row and its immutable base birth.
 The scoped source identity binds the original id, digest, frozen position and
@@ -54,6 +56,12 @@ candidate's actual CLAIM context before supersession: normalized world,
 relationship, facet, project, opaque scope, native sensitivity and session tag.
 This applies to both scoped events and ordinary canonical events. A base event
 cannot close a world-bearing head, nor the reverse. Other communication rules
-keep their existing matching and admission. The ordinary canonical source path
-still uses its existing identity and checks. No runtime or full privacy claim
-is made.
+keep their existing matching and admission. Canonical born sources meet the
+same original-CLAIM disclosure and audience requirements as world-bearing
+ones; a COMM_RECORD-only selector cannot expose their CLAIM data.
+
+Within one deferred batch, an earlier touch excludes the later unprocessed
+original heads from its winner and supersession set. Those later Puts remain
+untouched until their own source is recorded and projected in original batch
+order. The later assertion wins a time tie. Normal source and housekeeping
+passes carry no such exclusion. No runtime or full privacy claim is made.

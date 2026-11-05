@@ -8,7 +8,6 @@ use super::records::{
     CommEventKind, CommRecord, decode_comm_record, next_event_sequence_in_txn,
     put_comm_record_in_txn,
 };
-use crate::entity_id::derived_domains::COMM_BORN_TOUCH_EVENT;
 use crate::ports::EntityStoreRead;
 use crate::provenance::birth::RowBirth;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD};
@@ -60,7 +59,9 @@ impl DeferredBornTouches {
             None => HeadAdmission::default(),
         };
         let mut projection = RecordedEventProjection::default();
+        let mut later_born_heads: BTreeSet<_> = self.touches.iter().map(|touch| touch.id).collect();
         for touch in self.touches {
+            later_born_heads.remove(&touch.id);
             // A mask or another native operation may have changed the input.
             // Such a write keeps its ordinary raw result, not a fabricated event.
             let Some(row) = vault.store.port_entity_record(txn, &touch.id)? else {
@@ -80,14 +81,9 @@ impl DeferredBornTouches {
             let body = crate::claim::decode_claim_body(&row.body, false)?;
             let claim = CommClaim::from_claim_body(&body)
                 .map_err(super::generic_put_routing::source_event_error)?;
-            let (id, source_position) = touch_event_binding(
-                touch.id,
-                &row.encode(),
-                &touch.birth,
-                &body,
-                &claim.value,
-            )
-            .map_err(super::generic_put_routing::source_event_error)?;
+            let (id, source_position) =
+                touch_event_binding(touch.id, &row.encode(), &touch.birth, &body, &claim.value)
+                    .map_err(super::generic_put_routing::source_event_error)?;
             let mut event = touch.event;
             event.channel_class = event
                 .channel_class
@@ -119,7 +115,7 @@ impl DeferredBornTouches {
                     && channel_class == event.channel_class
                     && occurred_at == event.occurred_at
                     && original_head == touch.id
-                    && resident_source == source_position => {}
+                    && resident_source.as_ref() == Some(&source_position) => {}
                 Some(_) => return Err(Error::InvalidClaimBody("comm touch source id collision")),
                 None => {
                     let record = CommRecord::Event {
@@ -132,14 +128,21 @@ impl DeferredBornTouches {
                         occurred_at: event.occurred_at,
                         projected: false,
                         original_head: Some(touch.id),
-                        source_position,
+                        source_position: Some(source_position),
                     };
                     put_comm_record_in_txn(vault, txn, id, &record)
                         .map_err(super::generic_put_routing::source_event_error)?;
                 }
             }
             projection
-                .project_in_txn(vault, txn, id, CommEventKind::TouchAsserted, &mut admission)
+                .project_in_txn(
+                    vault,
+                    txn,
+                    id,
+                    CommEventKind::TouchAsserted,
+                    &mut admission,
+                    Some(&later_born_heads),
+                )
                 .map_err(super::generic_put_routing::source_event_error)?;
         }
         Ok(projection.into_written())
@@ -154,7 +157,7 @@ pub(super) fn adopt_born_touch_head_in_txn(
     source_event_id: EntityId,
     id: EntityId,
     value: &CommClaimValue,
-    source_position: Option<&crate::write_envelope::communication_record::ScopedTouchSource>,
+    source_position: &crate::write_envelope::communication_record::ScopedTouchSource,
 ) -> CommResult<Option<EntityId>> {
     let row = vault
         .store
@@ -198,7 +201,7 @@ pub(super) fn adopt_born_touch_head_in_txn(
     // merely because that revision still states the same touch value.
     let (bound_id, bound_source) =
         touch_event_binding(id, &row.encode(), &birth, &body, &claim.value)?;
-    if bound_id != source_event_id || bound_source.as_ref() != source_position {
+    if bound_id != source_event_id || &bound_source != source_position {
         return Err(CommError::InvalidRecord);
     }
     if !vault
@@ -213,12 +216,6 @@ pub(super) fn adopt_born_touch_head_in_txn(
     Ok(Some(id))
 }
 
-fn born_touch_event_id(id: EntityId, row: &[u8], birth: &RowBirth) -> Result<EntityId> {
-    let birth_bytes = rmp_serde::to_vec_named(birth)
-        .map_err(|_| Error::InvariantViolation("comm touch birth encoding failed"))?;
-    EntityId::derive(COMM_BORN_TOUCH_EVENT, &[id.as_bytes(), row, &birth_bytes])
-}
-
 fn touch_event_binding(
     id: EntityId,
     row: &[u8],
@@ -227,11 +224,8 @@ fn touch_event_binding(
     value: &CommClaimValue,
 ) -> CommResult<(
     EntityId,
-    Option<crate::write_envelope::communication_record::ScopedTouchSource>,
+    crate::write_envelope::communication_record::ScopedTouchSource,
 )> {
-    if body.world.unwrap_or_else(crate::claim::base_world_id) == crate::claim::base_world_id() {
-        return Ok((born_touch_event_id(id, row, birth)?, None));
-    }
     let CommClaimValue::LastTouch {
         party_ref,
         channel_class,
@@ -248,5 +242,5 @@ fn touch_event_binding(
         channel_class,
         *occurred_at,
     )?;
-    Ok((event, Some(source)))
+    Ok((event, source))
 }

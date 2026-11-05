@@ -80,7 +80,7 @@ impl CommSourceEvent {
         )
         .map_err(source_event_error)?;
         projection
-            .project_in_txn(vault, wtxn, event_id, self.kind, admission)
+            .project_in_txn(vault, wtxn, event_id, self.kind, admission, None)
             .map_err(source_event_error)
     }
 }

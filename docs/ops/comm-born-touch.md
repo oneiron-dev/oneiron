@@ -37,8 +37,13 @@ LastTouch slot selection compares the full context for every source, so a
 base event and a world-bearing head cannot supersede each other.
 
 `COMM_RECORD` has the required `original_head` key: an entity id for this
-TouchAsserted case, `nil` otherwise. Its required `source_position` key remains
-`nil` on this canonical path; the scoped source format is described in
-`comm-scoped-touch-source.md`. Deploy matching engine/server binaries
+TouchAsserted case, `nil` otherwise. Every original-head source also requires
+its typed `source_position`, including canonical base-world sources. They
+retain the original CLAIM disclosure band and audience requirements; they are
+not readable through a COMM_RECORD-only selector. The strict format and
+unified born-source id binding are described in `comm-scoped-touch-source.md`.
+Later unprocessed born Puts are excluded from an earlier deferred projection,
+so the original assertion order is preserved and a later time tie wins.
+Deploy matching engine/server binaries
 at the normal authorized release. There is no migration, old-format reader,
 new configuration, policy cap, or numeric default.
