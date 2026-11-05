@@ -250,6 +250,14 @@ impl Vault {
                 return Err(invalid("import ID collides with different entity data"));
             }
             if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+                let state =
+                    crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &wtxn, &id)?;
+                if state.deleted
+                    || state.stale
+                    || self.local_hard_delete_marker_exists_in_txn(&wtxn, &id)?
+                {
+                    return Err(invalid("import ID collides with a deleted entity"));
+                }
                 crate::comm::import_claim_class_descriptor_in_txn(
                     self,
                     &mut wtxn,
