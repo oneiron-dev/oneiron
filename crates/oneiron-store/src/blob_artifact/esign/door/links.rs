@@ -4,7 +4,6 @@
 //! undelegated, a person's, live) and its read lane reaches the draft
 //! ([`super::super::lane_scope`]). Its proof authorizes this one mint and
 //! no other act; no owner proof is made from it.
-use crate::write_envelope::claim_body::lexical_query_hint::ScopedRead;
 use oneiron_base::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
