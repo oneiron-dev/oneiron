@@ -100,7 +100,7 @@ impl MergeQueue<'_> {
                 contract_outputs: plan.contract_outputs.clone(),
                 environment: environment.clone(),
             };
-            let mut receipt = new_receipt(work, inputs)?;
+            let mut receipt = new_receipt(work, &config.approval, inputs)?;
             let tree = self.pinned_tree(&config.baseline_tree)?;
             let invocation = QueueCheckInvocation {
                 target: &receipt.inputs.target,

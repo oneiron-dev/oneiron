@@ -142,9 +142,9 @@ impl MergeQueue<'_> {
             receipt.inputs_digest == digest
                 && receipt.verdict_ref.as_deref() == Some(verdict.id.as_str())
         }) {
-            Some(receipt) => receipt.clone(),
+            Some(receipt) => receipt.inputs.clone(),
             None => match self.bound_receipt(digest, &verdict.id)? {
-                Some(receipt) => receipt,
+                Some(receipt) => receipt.inputs,
                 None => return Ok(false),
             },
         };
@@ -168,9 +168,9 @@ impl MergeQueue<'_> {
             plan_digest: config.plan.digest.clone(),
             commands: plan.phase(phase).to_vec(),
             contract_outputs: plan.contract_outputs.clone(),
-            environment: receipt.inputs.environment.clone(),
+            environment: receipt.environment.clone(),
         };
-        Ok(rebuilt.digest()? == digest && receipt.inputs.digest()? == digest)
+        Ok(rebuilt.digest()? == digest && receipt.digest()? == digest)
     }
 
     /// `check` with the bound inputs of claimed check `work`: the frozen
@@ -270,7 +270,7 @@ impl MergeQueue<'_> {
             contract_outputs: plan.contract_outputs.clone(),
             environment,
         };
-        let mut receipt = new_receipt(work, inputs)?;
+        let mut receipt = new_receipt(work, &config.approval, inputs)?;
         if !step.force_refresh
             && receipt.inputs.reusable()
             && let Some(prior) = self.reusable_receipt(&receipt.inputs_digest)?
@@ -444,6 +444,7 @@ pub(super) struct BoundCheck {
 /// A fresh receipt of claimed `work` for `inputs`.
 pub(super) fn new_receipt(
     work: &QueueCheckWork,
+    approval: &crate::consent::QueuedCheckApproval,
     inputs: QueueCheckInputs,
 ) -> Result<QueueCheckReceipt> {
     let lease = work
@@ -453,6 +454,8 @@ pub(super) fn new_receipt(
     Ok(QueueCheckReceipt {
         inputs_digest: inputs.digest()?,
         inputs,
+        recorded_actor: approval.recorded_actor(),
+        completion_approval: Some(approval.clone()),
         attempt: work
             .attempt
             .ok_or(Error::InvariantViolation("an unclaimed queue check ran"))?,
