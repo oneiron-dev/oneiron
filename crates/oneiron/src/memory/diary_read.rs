@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
+use crate::batch::secret_scan::LiftedKeys;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -656,6 +657,7 @@ impl Memory<'_> {
                     });
                 }
             }
+            self.mask_diary_entries_in_txn(txn, &mut entries)?;
             let receipt = gate.finish_in_txn(self.vault, txn)?;
             let Some(read) = receipt.agents.into_iter().next() else {
                 return Ok(DiaryReadOutcome::Granted {
@@ -680,6 +682,22 @@ impl Memory<'_> {
                 _ => DiaryReadOutcome::NotCovered,
             })
         })
+    }
+
+    fn mask_diary_entries_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entries: &mut [DiaryEntry],
+    ) -> MemoryResult<()> {
+        if !entries.is_empty() && self.reads_lifted_keys_masked_in_txn(txn)? {
+            for entry in entries {
+                let keys = LiftedKeys::of_in_txn(&self.vault.store, txn, [&entry.markdown])?;
+                if let Some(markdown) = keys.masked(&entry.markdown) {
+                    entry.markdown = markdown;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `self.memory.diary.review`: this agent's Y/N to a reader's reason.
@@ -898,6 +916,7 @@ impl Memory<'_> {
                     });
                 }
             }
+            self.mask_diary_entries_in_txn(txn, &mut entries)?;
             if reader == agent {
                 return Ok(DiaryReadOutcome::Granted {
                     read: None,
