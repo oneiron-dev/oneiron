@@ -252,7 +252,7 @@ fn derived_position(
 }
 
 fn foreign_base_position_kept(prior: &Scope, proposed: &Scope) -> bool {
-    proposed.worlds == crate::federation::base_world_axis()
+    proposed.worlds == super::pact_scope::base_world_axis()
         && matches!(&prior.worlds, ScopeAxis::Some(worlds)
             if !worlds.is_empty() && worlds.iter().all(|world|
                 crate::entity_id::is_foreign_world_id_range(world.0)))
