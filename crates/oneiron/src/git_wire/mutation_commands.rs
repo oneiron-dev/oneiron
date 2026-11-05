@@ -110,5 +110,6 @@ pub(crate) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
     match repo_ref {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { .. } => repo_ref.canonical(),
+        RepoRef::LocalCapture { .. } => repo_ref.canonical(),
     }
 }

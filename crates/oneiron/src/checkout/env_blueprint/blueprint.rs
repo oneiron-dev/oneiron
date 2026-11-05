@@ -524,6 +524,9 @@ impl EnvBlueprintStore for VaultEnvBlueprintStore<'_> {
 /// exactly `local:<path>` or `github:<owner>/<repo>`. Distinct local-path
 /// spellings stay distinct; v1 performs no alias normalization.
 pub(crate) fn env_blueprint_repo_identity(repo_ref: &RepoRef) -> String {
+    if let RepoRef::LocalCapture { .. } = repo_ref {
+        return repo_ref.canonical();
+    }
     let mut canonical = repo_ref.canonical();
     let commit_separator = canonical
         .rfind('#')

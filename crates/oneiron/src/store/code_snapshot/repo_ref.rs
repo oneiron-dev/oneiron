@@ -14,6 +14,10 @@ pub enum RepoRef {
         path: String,
         commit: String,
     },
+    /// Current local folder bytes, without a Git commit witness.
+    LocalCapture {
+        path: String,
+    },
     GitHubAtCommit {
         owner: String,
         repo: String,
@@ -34,6 +38,19 @@ impl RepoRef {
             )));
         }
 
+        if let Some(path) = input.strip_prefix("capture:") {
+            validate_bounded_text(
+                path,
+                CODEBASE_FILE_PATH_MAX_BYTES,
+                "capture repo_ref path must be non-empty and at most 4096 bytes",
+            )?;
+            if path.trim() != path {
+                return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                    "capture repo_ref path must not have leading or trailing whitespace",
+                )));
+            }
+            return Ok(Self::LocalCapture { path: path.to_owned() });
+        }
         if let Some(path) = input.strip_prefix("local:") {
             return parse_local_repo_ref(path);
         }
@@ -74,6 +91,7 @@ impl RepoRef {
     pub fn canonical(&self) -> String {
         match self {
             Self::LocalFolder { path, commit } => format!("local:{path}#{commit}"),
+            Self::LocalCapture { path } => format!("capture:{path}"),
             Self::GitHubAtCommit {
                 owner,
                 repo,
@@ -88,6 +106,7 @@ impl RepoRef {
     pub fn commit_hash(&self) -> Option<&str> {
         match self {
             Self::LocalFolder { commit, .. } => Some(commit.as_str()),
+            Self::LocalCapture { .. } => None,
             Self::GitHubAtCommit { commit, .. } => Some(commit.as_str()),
         }
     }
@@ -95,7 +114,10 @@ impl RepoRef {
     /// Stable repository identity, without the revision carried by `RepoRef`.
     pub(crate) fn same_repository(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::LocalFolder { path: a, .. }, Self::LocalFolder { path: b, .. }) => a == b,
+            (
+                Self::LocalFolder { path: a, .. } | Self::LocalCapture { path: a },
+                Self::LocalFolder { path: b, .. } | Self::LocalCapture { path: b },
+            ) => a == b,
             (
                 Self::GitHubAtCommit {
                     owner: a_owner,
