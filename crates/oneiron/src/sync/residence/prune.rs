@@ -57,15 +57,15 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
     })
 }
 
-/// The four rows of a native read cache whose blob matches the selected row
-/// bytes. The caller establishes that row's world placement. A checkpoint
-/// leaves the cache whole unless its opened window, document and touch row
-/// read as the producer wrote them. Removing its opened marker permits refetch.
+/// The four rows of a native read cache whose blob is still the exact
+/// canonical row the caller selected. A checkpoint leaves the cache whole
+/// unless its opened window, document and touch row read as the producer
+/// wrote them. Removing its opened marker with the bytes permits refetch.
 pub(crate) fn checkpoint_read_cache_keys(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     item: EntityId,
-    selected: &[u8],
+    canonical: &[u8],
 ) -> Result<Option<[String; 4]>> {
     let id = item.to_hex();
     let opened = format!("ro:e:{id}");
@@ -89,7 +89,7 @@ pub(crate) fn checkpoint_read_cache_keys(
     let Some(raw) = store.sync_state.get(txn, &blob_key)? else {
         return Ok(None);
     };
-    if raw != selected {
+    if raw != canonical {
         return Ok(None);
     }
     let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
@@ -132,45 +132,6 @@ pub(crate) fn checkpoint_read_cache_keys(
         return Ok(None);
     }
     Ok(Some([blob_key, document_key, opened, touched]))
-}
-
-/// Native read caches with no core row whose WORLD blob places its words in
-/// that world alone. Other kinds may need birth, edge or stamp rows that a
-/// read cache does not carry, so no placement is inferred for them here.
-pub(crate) fn checkpoint_world_read_cache_keys(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Vec<(EntityId, [String; 4])>> {
-    use crate::ports::EntityStoreRead;
-
-    let mut caches = Vec::new();
-    for row in store.sync_state.prefix_iter(txn, "ro:e:")? {
-        let (key, _) = row?;
-        let Some(item) = key
-            .strip_prefix("ro:e:")
-            .and_then(|id| EntityId::from_hex(id).ok())
-        else {
-            continue;
-        };
-        if store.port_entity_raw(txn, &item)?.is_some() {
-            continue;
-        }
-        let Some(raw) = store
-            .sync_state
-            .get(txn, &format!("ri:b:{}", item.to_hex()))?
-        else {
-            continue;
-        };
-        if !crate::batch::EntityMetadataHeader::parse(&raw)
-            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_WORLD)
-        {
-            continue;
-        }
-        if let Some(keys) = checkpoint_read_cache_keys(store, txn, item, &raw)? {
-            caches.push((item, keys));
-        }
-    }
-    Ok(caches)
 }
 
 /// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
