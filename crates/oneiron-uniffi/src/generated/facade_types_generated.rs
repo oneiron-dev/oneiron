@@ -30116,6 +30116,8 @@ pub enum ResearchReservationLine {
 pub enum RsiSettlement {
     #[serde(rename = "Spent")]
     Spent(u64),
+    #[serde(rename = "Unknown")]
+    Unknown,
     #[serde(rename = "Exposure")]
     Exposure(u64),
     #[serde(rename = "Refunded")]
