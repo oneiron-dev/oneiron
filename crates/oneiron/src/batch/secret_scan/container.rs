@@ -65,8 +65,9 @@ const EXPANDED_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
 /// this machine now (FIX 7943): the fixed minimum, or the memory measured
 /// free past the reserve above when that is more. Raise-only, so a file a
 /// walk serves on the fixed floor is served on every machine; where no
-/// memory reads, the fixed minimum stands. Read at each walk's start, as
-/// the probes are read live.
+/// memory reads, the fixed minimum stands. Read live, once per walk, when
+/// the walk first decodes a member: a walk over bytes that hold no
+/// container reads no memory at all (L15 recall speed).
 fn expanded_floor() -> usize {
     use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
     let reserve = machine_memory_bytes().map_or(EXPANDED_RESERVE_FLOOR_BYTES, |total| {
@@ -291,10 +292,12 @@ enum ContainerReadMode {
 /// spends none of it. Every walk keeps the containers it is inside.
 struct Budget {
     mode: ContainerReadMode,
-    /// The walk's own byte floor ([`expanded_floor`] at its start): what
-    /// `expanded` counts down from, and what a rebuilt copy is held to.
-    floor: usize,
-    expanded: usize,
+    /// The walk's own byte floor ([`expanded_floor`], read the first time
+    /// the walk asks for it, then fixed for the walk): what `spent` counts
+    /// up to, and what a rebuilt copy is held to.
+    floor: std::cell::Cell<Option<usize>>,
+    /// The decoded bytes the walk has charged.
+    spent: usize,
     /// Whether the walk also reads the bytes no reader shows (FIX 2470): a
     /// PDF's superseded revisions and a ZIP's bytes outside its central
     /// directory's entries. Only a scan reads them; a mark or a rebuild never
@@ -315,11 +318,10 @@ impl Budget {
     }
 
     fn of(mode: ContainerReadMode) -> Self {
-        let floor = expanded_floor();
         Self {
             mode,
-            floor,
-            expanded: floor,
+            floor: std::cell::Cell::new(None),
+            spent: 0,
             hidden: false,
             ancestors: Vec::new(),
             root_digest: None,
@@ -339,6 +341,21 @@ impl Budget {
         self
     }
 
+    /// The walk's byte floor, read on the first ask.
+    fn floor(&self) -> usize {
+        if let Some(floor) = self.floor.get() {
+            return floor;
+        }
+        let floor = expanded_floor();
+        self.floor.set(Some(floor));
+        floor
+    }
+
+    /// What the floor leaves after the bytes charged so far.
+    fn expanded(&self) -> usize {
+        self.floor().saturating_sub(self.spent)
+    }
+
     /// Whether the byte floor holds for this walk.
     fn capped(&self) -> bool {
         self.mode == ContainerReadMode::Generic
@@ -348,7 +365,7 @@ impl Budget {
     /// when no floor holds.
     fn limit(&self) -> usize {
         if self.capped() {
-            self.expanded
+            self.expanded()
         } else {
             usize::MAX
         }
@@ -357,18 +374,19 @@ impl Budget {
     /// The most bytes a PDF's loader may decompress one stream to; `None`
     /// when no floor holds.
     fn decompressed_ceiling(&self) -> Option<usize> {
-        self.capped().then_some(self.expanded)
+        self.capped().then(|| self.expanded())
     }
 
     /// Whether a rebuilt copy of `len` bytes is past the byte floor.
     fn copy_over(&self, len: usize) -> bool {
-        self.capped() && len > self.floor
+        self.capped() && len > self.floor()
     }
 
     /// Charges `len` decoded bytes.
     fn spend(&mut self, len: usize) -> Walked<()> {
         if self.capped() {
-            self.expanded = self.expanded.checked_sub(len).ok_or_else(over_budget)?;
+            self.expanded().checked_sub(len).ok_or_else(over_budget)?;
+            self.spent += len;
         }
         Ok(())
     }
