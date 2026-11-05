@@ -357,9 +357,14 @@ pub(crate) async fn context_board_hydrate(
     // explicit TASKS-row slice above its effective cap is refused before ANY
     // retrieval runs.
     let board_budget_request = oneiron::context_board::BoardBudgetRequest {
+        // The owner's board cap stands in for the harness default; a
+        // standing block's remaining budget bounds it further.
         harness_default_tok: standing.as_ref().map_or_else(
             || layout::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK),
-            |prefix| prefix.other_context_tokens,
+            |prefix| {
+                layout::board_cap_tok(&server.vault, prefix.other_context_tokens)
+                    .min(prefix.other_context_tokens)
+            },
         ),
         caller_limit_tok: req.board_budget_tok,
         explicit_override_tok: None,
@@ -508,15 +513,6 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(|pack| pack.capabilities.as_slice())
         .unwrap_or_default();
-    // PEOPLE: every person by handle, with names inline for those the
-    // caller's cached prefix roster does not hold.
-    let (people, resident) = board::board_people(
-        &server,
-        &auth,
-        &read,
-        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
-    )
-    .await?;
     // The actor's own board layout (BOARD-LAYOUT): a TURN, or a native
     // chat turn's answering agent, projects the pending batch now and the
     // SAME accepted TURN commit activates the exact candidate; without a
@@ -529,6 +525,18 @@ pub(crate) async fn context_board_hydrate(
         board_turn.is_some(),
         req.chat_layout_actor,
     )?;
+    // PEOPLE: every person by handle, with names inline for those the
+    // caller's cached prefix roster does not hold; at an epoch boundary the
+    // roster is predicted under the layout's `people` share, as the prefix
+    // emitted beside this board is laid out.
+    let (people, resident) = board::board_people(
+        &server,
+        &auth,
+        &read,
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+        layout.layout.share_tok("people", cap_tok),
+    )
+    .await?;
     let mut parts = board::board_parts(
         &server,
         &auth,
@@ -862,7 +870,7 @@ pub(crate) async fn describe_self_for_auth(
     })?;
     validate_session_id(session_id, "session_id")?;
     let read = super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let (people, _) = board::board_people(server, auth, &read, Some(session_id)).await?;
+    let (people, _) = board::board_people(server, auth, &read, Some(session_id), None).await?;
     let mut runs = server.self_brief_sessions.lock().await;
     let run = runs
         .get_mut(&(actor, session_id.to_owned()))

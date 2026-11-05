@@ -545,6 +545,9 @@ pub(super) fn board_parts(
                             people.kind(id).map(super::person_class)
                         })
                     }) {
+                        // Filtered off the list, the row still counts on the
+                        // fold line, so a keyed replay re-admits its sources.
+                        inbox_sources.extend(admitting);
                         continue;
                     }
                     match sender {
@@ -556,15 +559,41 @@ pub(super) fn board_parts(
                     rows.push((item, state));
                 }
             }
-            oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
-                .map_err(board_frame_error)?
-                .map(|section| match inbox_who {
-                    Some(_) => section.with_fold_summary(
-                        oneiron::context_board::FoldSummary::total(admitted + later)
-                            .count("later", later),
-                    ),
-                    None => section,
-                })
+            let section =
+                oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
+                    .map_err(board_frame_error)?;
+            match (section, inbox_who) {
+                (section, None) => section,
+                // A filter that leaves no row listed still shows the section
+                // and its live count (BOARD-LAYOUT).
+                (section, Some(_)) => {
+                    let section = match section {
+                        Some(section) => Some(section),
+                        None if admitted > 0 => Some(
+                            BoardSection::new(
+                                "INBOX",
+                                Vec::new(),
+                                vec![format!("count: 0 filtered: {admitted}")],
+                                vec![format!("count: 0 filtered: {admitted}")],
+                                oneiron::context_board::SectionPolicy {
+                                    pinned: false,
+                                    shed_rank: Some(
+                                        oneiron::context_board::ShedRank::TasksToCounts,
+                                    ),
+                                },
+                            )
+                            .map_err(board_frame_error)?,
+                        ),
+                        None => None,
+                    };
+                    section.map(|section| {
+                        section.with_fold_summary(
+                            oneiron::context_board::FoldSummary::total(admitted + later)
+                                .count("later", later),
+                        )
+                    })
+                }
+            }
         }
         None => None,
     };
@@ -676,6 +705,7 @@ pub(super) async fn board_people(
     auth: &CoreAuth,
     read: &oneiron::claim::ScopedRead<'_>,
     session_id: Option<&str>,
+    people_budget_tok: Option<usize>,
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -711,7 +741,13 @@ pub(super) async fn board_people(
             Some(run) => {
                 let mut pinned = vec![run.state.self_ref, run.state.principal];
                 pinned.extend(run.state.cast.iter().copied());
-                people.residence(&pinned).resident
+                people
+                    .residence_within(
+                        &pinned,
+                        people_budget_tok
+                            .unwrap_or(oneiron::context_board::PEOPLE_PREFIX_BUDGET_TOK),
+                    )
+                    .resident
             }
             None => BTreeSet::new(),
         },
