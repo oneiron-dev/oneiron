@@ -5,6 +5,11 @@
 use super::*;
 
 impl AiHandle {
+    /// The wording resolved when this host was built, including model-free defaults.
+    pub(super) fn dreamer_wording(&self) -> &crate::config::models::DreamerWording {
+        &self.dreamer_wording
+    }
+
     /// The control the Dreamer's passes read their pause through, when this
     /// host attached under one: `None` where no owner pause can hold a pass.
     pub(crate) fn dreamer_control(&self) -> Option<DreamerControl> {
@@ -67,6 +72,11 @@ impl AiHandle {
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
+            dreamer_wording: Arc::new(
+                models
+                    .map(|models| models.dreamer.wording.clone())
+                    .unwrap_or_default(),
+            ),
             confession: confession_wording::of(models),
             dreamer_control: None,
         }

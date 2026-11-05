@@ -74,12 +74,7 @@ pub(super) fn run(
     let vault = server.vault();
     let host = server.decision_host();
     let coach = coach_ladder(server);
-    let wording = server
-        .config
-        .models
-        .as_ref()
-        .map(|models| models.dreamer.wording.clone())
-        .unwrap_or_default();
+    let wording = server.ai.dreamer_wording();
     let decisions = CodeFixDecisions {
         reproduced_wording: wording.code_fix_reproduced().to_owned(),
         fixed_wording: wording.code_fix_fixed().to_owned(),
