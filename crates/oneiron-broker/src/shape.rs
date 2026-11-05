@@ -326,10 +326,7 @@ const OPENAI_MODELS: Row = openai(
 
 const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
 
-/// Top-level body keys, or form fields, that pick the model or the route by
-/// another way than the one selector: a fallback list, a route or a provider
-/// preference.
-pub(crate) const ROUTE_OVERRIDES: [&str; 3] = ["models", "route", "provider"];
+pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
 const MAX_NAME: usize = 256;
