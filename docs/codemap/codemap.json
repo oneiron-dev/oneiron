@@ -126050,7 +126050,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/soniox.rs",
@@ -126075,6 +126075,16 @@
      "notable": [],
      "path": "src/models/soniox/quota.rs",
      "purpose": "A live hearing's rate and quota refusals (FIX 9515)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/soniox/segment.rs",
+     "purpose": "One admitted Soniox socket segment",
      "surface": {
       "crate-vis": 5
      }
@@ -129909,7 +129919,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 116,
+     "files": 117,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130063,9 +130073,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 48,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1567,
+   "source_files": 1568,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
