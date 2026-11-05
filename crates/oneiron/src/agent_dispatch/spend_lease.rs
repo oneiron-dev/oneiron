@@ -582,6 +582,7 @@ impl AgentDispatcher<'_> {
             None => None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
+        self.vault.revise_research_spend_in_txn(txn, &scope)?;
         // A run an exploration trial routed is charged what it spent.
         crate::skill::settle_exploration_route_in_txn(
             self.vault,

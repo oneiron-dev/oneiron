@@ -317,8 +317,17 @@ impl Pass<'_> {
                 return Err(invalid("a held-out basis dispatches no run"));
             }
         }
-        self.settle(running.reservation, run)?;
-        self.save(row, next)?;
+        next.updated_at = self.now;
+        let key = (*row.root.as_bytes(), row.work.key());
+        self.vault.with_write_txn_grouped(|txn| {
+            if CONTINUATION.get(&self.vault.store, txn, &key)?.as_ref() != Some(row) {
+                return Err(Error::ConcurrentWrite(
+                    "another pass advanced this research continuation",
+                ));
+            }
+            settle_research_run_in_txn(self.vault, txn, self.root(), running.reservation, run)?;
+            CONTINUATION.put(&self.vault.store, txn, &key, &next)
+        })?;
         Ok(Flow::Next)
     }
 
@@ -627,23 +636,6 @@ impl Pass<'_> {
         Ok(research_reservations(self.vault, self.root())?
             .into_iter()
             .find(|row| row.id == id))
-    }
-
-    /// Settle a finished run's reservation with what it spent, once.
-    fn settle(&self, id: EntityId, run: AttemptId) -> Result<()> {
-        if let Some(row) = self.reservation(id)?
-            && row.settlement.is_none()
-        {
-            match run_spend_units(self.vault, run)? {
-                Some(actual) => {
-                    settle_research_work(self.vault, self.root(), id, actual)?;
-                }
-                None => {
-                    settle_research_work_unknown(self.vault, self.root(), id)?;
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Refund a reservation nothing was dispatched on, once.

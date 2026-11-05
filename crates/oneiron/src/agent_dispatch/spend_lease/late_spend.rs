@@ -63,6 +63,7 @@ impl AgentDispatcher<'_> {
         if scope.state != SpendState::Closed {
             return Ok(());
         }
+        self.vault.revise_research_spend_in_txn(txn, &scope)?;
         if let Some(attempt) = scope.exploration_attempt {
             crate::skill::revise_exploration_route_in_txn(
                 self.vault,

@@ -1,6 +1,7 @@
 //! Vault-local durable reserve/settle/refund ledger for research-loop spend.
+use crate::agent_dispatch::{SpendScope, SpendScopeId, SpendState};
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{EntityId, Vault};
+use crate::{AttemptId, EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -16,6 +17,13 @@ struct Reservation {
     share: Option<String>,
     settlement: Option<RsiSettlement>,
     overdraft: Option<RsiOverdraftReceipt>,
+    research: Option<ResearchSpendBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ResearchSpendBinding {
+    scope: SpendScopeId,
+    root: AttemptId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +284,7 @@ impl Vault {
                 share: share.clone(),
                 settlement: None,
                 overdraft: None,
+                research: None,
             },
         );
         let admission = (|| {
@@ -347,12 +356,6 @@ impl Vault {
         self.finish_rsi_reservation(id, RsiSettlement::Spent(spent))
     }
 
-    /// End token work with no token-denominated native spend total. Keep its
-    /// reservation committed without claiming that the amount was spent.
-    pub(crate) fn settle_rsi_budget_unknown(&self, id: EntityId) -> RsiResult<()> {
-        self.finish_rsi_reservation(id, RsiSettlement::Unknown)
-    }
-
     /// Settle exploration exposure once, releasing unused reserved exposure.
     pub fn settle_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
         self.finish_rsi_reservation(id, RsiSettlement::Exposure(exposure))
@@ -365,7 +368,18 @@ impl Vault {
 
     fn finish_rsi_reservation(&self, id: EntityId, settlement: RsiSettlement) -> RsiResult<()> {
         let mut txn = self.store.env.write_txn()?;
-        let mut line = load(self, &txn)?;
+        self.finish_rsi_reservation_in_txn(&mut txn, id, settlement)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(())
+    }
+
+    pub(crate) fn finish_rsi_reservation_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        settlement: RsiSettlement,
+    ) -> RsiResult<()> {
+        let mut line = load(self, txn)?;
         let row = line
             .reservations
             .get_mut(&id.to_hex())
@@ -395,9 +409,79 @@ impl Vault {
             return Err(RsiBudgetError::Exhausted);
         }
         row.settlement = Some(settlement);
-        save(self, &mut txn, &line)?;
-        txn.commit().map_err(crate::Error::from)?;
-        Ok(())
+        save(self, txn, &line)
+    }
+
+    /// Binds a host-observed run's native total to its existing reservation.
+    /// The caller read both the persisted running pair and this scope in `txn`.
+    pub(crate) fn settle_research_spend_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        root: AttemptId,
+        scope: Option<&SpendScope>,
+    ) -> RsiResult<RsiSettlement> {
+        let settlement = scope.map_or(RsiSettlement::Unknown, |scope| {
+            RsiSettlement::Spent(scope.spent_units)
+        });
+        self.finish_rsi_reservation_in_txn(txn, id, settlement.clone())?;
+        if let Some(scope) = scope {
+            let mut line = load(self, txn)?;
+            let row = line
+                .reservations
+                .get_mut(&id.to_hex())
+                .ok_or(RsiBudgetError::ReservationRequired)?;
+            row.research = Some(ResearchSpendBinding {
+                scope: scope.scope.clone(),
+                root,
+            });
+            save(self, txn, &line)?;
+        }
+        Ok(settlement)
+    }
+
+    /// Revises only already-bound native totals. This records incurred spend;
+    /// it changes no cap, hold, suspension, or future admission.
+    pub(crate) fn revise_research_spend_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        scope: &SpendScope,
+    ) -> crate::Result<()> {
+        if scope.state != SpendState::Closed || scope.unit != crate::run_budget::LeaseUnit::tokens()
+        {
+            return Ok(());
+        }
+        let Some(mut line) = RSI_LINE.get(&self.store, txn, &())? else {
+            return Ok(());
+        };
+        let mut updates = Vec::new();
+        for (id, row) in &mut line.reservations {
+            let Some(binding) = &row.research else {
+                continue;
+            };
+            if binding.scope != scope.scope || row.line != RsiLine::Tokens {
+                continue;
+            }
+            if let Some(RsiSettlement::Spent(previous)) = row.settlement
+                && scope.spent_units > previous
+            {
+                row.settlement = Some(RsiSettlement::Spent(scope.spent_units));
+                updates.push((binding.root, EntityId::from_hex(id)?));
+            }
+        }
+        if updates.is_empty() {
+            return Ok(());
+        }
+        for (root, id) in updates {
+            crate::autoreason_campaign::research::revise_research_work_in_txn(
+                self,
+                txn,
+                root,
+                id,
+                scope.spent_units,
+            )?;
+        }
+        RSI_LINE.put(&self.store, txn, &(), &line)
     }
 
     /// A suspension holds new work; admitted work can still settle honestly.
