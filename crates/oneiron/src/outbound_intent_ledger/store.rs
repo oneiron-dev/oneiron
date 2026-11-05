@@ -577,7 +577,9 @@ pub(crate) fn record_definite_non_delivery(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |_, _| Ok(()),
+        |wtxn, record| {
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)
+        },
     )
 }
 
@@ -596,7 +598,10 @@ pub(crate) fn record_provider_refusal(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |wtxn, _| super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive),
+        |wtxn, record| {
+            super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive)?;
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)
+        },
     )
 }
 
@@ -624,10 +629,11 @@ pub(crate) fn begin_definite_non_delivery_retry(
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         None,
         now_ms,
-        // The retry this claim opens ends the provider's wait (FIX 8818); a
-        // takeover's abandon gives its reserved budget back (FIX 7964).
+        // The retry restores its released budget and ends the provider's
+        // wait; a takeover's abandon never restores the old reservation.
         |wtxn, record| {
             super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
+            super::settlement::restore_retry_reservation_in_txn(vault, wtxn, record)?;
             super::settlement::settle_reservation_in_txn(vault, wtxn, record)
         },
     )

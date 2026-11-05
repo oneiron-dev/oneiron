@@ -14,6 +14,7 @@ use super::types::{IntentId, IntentLedgerRecord, IntentLedgerResult, IntentState
 use crate::Vault;
 use crate::connector_key::{
     ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorBudgetLocation,
+    EffectorBudgetRowSource,
 };
 use crate::side_table::{self, Named, SideTable};
 
@@ -117,7 +118,8 @@ pub enum ReservationStatus {
     Reserved,
     /// The send was delivered: the reserved debit is its charge.
     Settled,
-    /// The send certainly did not go and never will: its debit came out.
+    /// The send certainly did not go: its debits are out. A still-pending
+    /// retry restores them before transport.
     Released,
 }
 
@@ -271,14 +273,68 @@ pub(crate) fn keep_reported_cost(
     Ok(())
 }
 
-/// Settles `record`'s reserved budget by the state it now stands in, in the
-/// writer that moved it (FIX 7964): a delivered send's reservation is its
-/// charge, its preauthorized spend reconciled to the actual cost its
-/// provider reported when it reported one (FIX 11662); a send that stopped
-/// and certainly never went gives its debit back, in the window it was
-/// taken in. A send that may have gone, waits on a provider or a remote
-/// task, or may still be retried keeps its reservation. A reservation
-/// settles or releases once.
+/// Releases a certain non-delivery's key-only budget in the outcome writer.
+/// Prior possible delivery keeps it. Charter rows also keep today's behavior:
+/// charter re-stamping resets positional usage, which retries must not revive.
+pub(super) fn release_non_delivery_reservation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    if record.delivery_uncertain {
+        return Ok(());
+    }
+    let mut settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
+    let Some(reservation) = settlement.reservation.as_mut() else {
+        return Ok(());
+    };
+    if reservation.status != ReservationStatus::Reserved
+        || reservation
+            .debits
+            .iter()
+            .any(|debit| debit.row.source == EffectorBudgetRowSource::Charter)
+        || reservation
+            .spend_rows
+            .iter()
+            .any(|location| location.row.source == EffectorBudgetRowSource::Charter)
+    {
+        return Ok(());
+    }
+    crate::connector_key::release_effector_debits_in_txn(&vault.store, wtxn, &reservation.debits)?;
+    reservation.status = ReservationStatus::Released;
+    SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
+    Ok(())
+}
+
+/// Restores a released reservation in the retry claim's writer. A dedupe
+/// takeover has abandoned the row and must not restore its debits.
+pub(super) fn restore_retry_reservation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    if record.state != IntentState::Pending {
+        return Ok(());
+    }
+    let mut settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
+    let Some(reservation) = settlement.reservation.as_mut() else {
+        return Ok(());
+    };
+    if reservation.status != ReservationStatus::Released {
+        return Ok(());
+    }
+    crate::connector_key::restore_effector_debits_in_txn(&vault.store, wtxn, &reservation.debits)?;
+    reservation.status = ReservationStatus::Reserved;
+    SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
+    Ok(())
+}
+
+/// Settles `record`'s live reserved budget by its terminal state in the
+/// writer that moved it (FIX 7964). Delivery keeps the charge and reconciles
+/// preauthorized spend to reported actual cost (FIX 11662); a certain stop
+/// releases it once. Possible delivery and accepted remote tasks retain it.
+/// A certain key-only non-delivery releases in its outcome writer and
+/// restores only at retry claim, so a later stop cannot release it twice.
 ///
 /// # Errors
 /// Storage faults.

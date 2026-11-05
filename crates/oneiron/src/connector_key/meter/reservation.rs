@@ -46,3 +46,22 @@ pub(crate) fn release_effector_debits_in_txn(
     }
     Ok(())
 }
+
+/// Restores debit multiplicity in retained usage rows at the original charge
+/// instants. Missing rows stay gone. Native reads prune expired entries before
+/// summing; no retry extends a window or emits another ladder event here.
+pub(crate) fn restore_effector_debits_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    debits: &[EffectorBudgetDebit],
+) -> Result<()> {
+    for debit in debits {
+        let key = (debit.key_ref, debit.row.usage_key());
+        let Some(mut usage) = USAGE.get(store, wtxn, &key)? else {
+            continue;
+        };
+        usage.entries.push((debit.at, debit.amount));
+        USAGE.put(store, wtxn, &key, &usage)?;
+    }
+    Ok(())
+}
