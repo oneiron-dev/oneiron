@@ -20,11 +20,12 @@ not confirmed bytes lent to the organ. Signing facts are retained independently
 of delivery, including a prehash recorded before a key failed.
 
 When a final peer receipt arrives, its order, refusals, answer bytes, fetch facts
-and timing remain authoritative. The asking node augments matching lines with
-its own recorded signing facts. It retains unmatched local lines instead of
-losing a signature; only then does it restore ask-id order for that one serving
-call. The returned successful `CallReceipt` and the lines retained by the supplied
-handlers use the same reconciled records.
+and timing remain authoritative. The asking node augments each matching peer
+occurrence at most once with its own recorded signing facts. Repeated identities
+do not merge callbacks. Unmatched local lines are appended only after matching
+is complete, then ask-id order is restored for that one serving call. The returned
+successful `CallReceipt` and the lines retained by the supplied handlers use the
+same reconciled records.
 
 ## Attempt identity and rollout
 
