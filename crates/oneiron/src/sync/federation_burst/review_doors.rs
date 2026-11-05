@@ -23,7 +23,7 @@ pub(super) fn retained_in_txn(
         .prefix_iter(txn, b"m:federation-review:v1:")?
         .map(|row| {
             let (_, bytes) = row?;
-            rmp_serde::from_slice(&bytes).map_err(|_| corrupt())
+            super::review_memory::decode(&bytes)
         })
         .collect()
 }
@@ -38,7 +38,7 @@ pub(super) fn retain_in_txn(
     };
     let key = key(&work.peer);
     let mut bundle: FederationBurstReviewBundle = match vault.store.sync_queue.get(txn, &key)? {
-        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        Some(bytes) => super::review_memory::decode(&bytes)?,
         None => FederationBurstReviewBundle {
             bundle_ref: format!(
                 "federation-review:{}",
@@ -81,7 +81,7 @@ pub(super) fn scrub_in_txn(
 ) -> Result<()> {
     let key = key(peer);
     let mut bundle: FederationBurstReviewBundle = match store.sync_queue.get(txn, &key)? {
-        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        Some(bytes) => super::review_memory::decode(&bytes)?,
         None => return Ok(()),
     };
     let request_ref = blake3::Hash::from(*id).to_hex().to_string();
