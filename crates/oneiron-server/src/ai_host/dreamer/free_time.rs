@@ -108,6 +108,7 @@ impl ResidentLend<'_> {
                 cancel: ctx.device_cancel.clone().unwrap_or_default(),
                 ..Default::default()
             });
+        let window_tokens = ladder.input_window(self.windows);
         let backend = SourcedRunBackend::new(ladder, run);
         // Its durable step meters on a line of its own: one meter on both
         // layers would charge twice.
@@ -121,7 +122,6 @@ impl ResidentLend<'_> {
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([model.clone()])));
-        let window_tokens = self.windows.get(&model).copied();
         let lent = ResidentDreamModel {
             backend: &backend,
             guard: &step,

@@ -50,6 +50,7 @@ mod gemini_media;
 mod host_budgets;
 mod hosted_speech;
 mod http;
+mod input_window;
 #[cfg(test)]
 mod kept_on_device_tests;
 mod ladder;
