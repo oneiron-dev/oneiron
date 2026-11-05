@@ -160,6 +160,16 @@ pub(crate) fn put_attempt_pack_attribution_in_txn(
     fields: &PackAttributionFields,
 ) -> Result<()> {
     fields.validate()?;
+    // Bind the receipt's two type stamps at the producer write, not at completion.
+    if let Some(record) =
+        crate::attempt_queue::AttemptQueue::from_store(store).get_in_txn(txn, id)?
+        && let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(&record)
+        && TypeRef::from(&type_ref) != fields.type_ref
+    {
+        return Err(Error::InvalidClaimBody(
+            "attempt type disagrees with attribution stamp",
+        ));
+    }
     let key = *id.as_bytes();
     if let Some(previous) = ATTEMPT_ATTRIBUTION.get(store, txn, &key)?
         && !fields.extends(&previous)

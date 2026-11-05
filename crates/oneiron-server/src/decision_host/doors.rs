@@ -361,14 +361,19 @@ impl DecisionHost {
         &'a self,
         principal: EntityId,
         state: &'a serde_json::Value,
-    ) -> ReviewDecisions<'a> {
-        ReviewDecisions {
+        vault: &Vault,
+    ) -> oneiron::Result<ReviewDecisions<'a>> {
+        Ok(ReviewDecisions {
             ladder: self.ladder.ladder(),
             principal,
             dial: REVIEW_DIAL,
             bands: self.bands.clone(),
             state,
-            budget: REVIEW_LENS_BUDGET,
+            budget: oneiron::llm::decision::questions::question_call_budget_with_fallback(
+                vault,
+                None,
+                REVIEW_LENS_BUDGET,
+            )?,
             wording: ReviewWording {
                 verdict: REVIEW_VERDICT_WORDING.to_owned(),
                 severity: REVIEW_SEVERITY_WORDING.to_owned(),
@@ -376,7 +381,7 @@ impl DecisionHost {
                 out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
             },
             notes: Some(&self.notes),
-        }
+        })
     }
 
     /// A campaign split's taste pack through this ladder for `principal`, the

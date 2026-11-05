@@ -27,7 +27,7 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
     ) -> Result<Vec<ScoredEntity>> {
         let mut scope = query.matches_scope;
         let options = crate::bm25::Bm25SearchOptions {
-            recency: None,
+            recency: query.recency,
             exact_posting_matches_scope: &mut scope,
             private_note_ids: query.private_note_ids,
         };
