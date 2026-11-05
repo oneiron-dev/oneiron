@@ -55,9 +55,9 @@ pub(crate) struct Restored {
     /// (PAD-1), each as the engine words it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_object_notes: Vec<String>,
-    /// Staging directories earlier interrupted restores of this vault left
-    /// beside it (FIX 2706), each left whole where it is and named here so
-    /// it is not lost track of.
+    /// Outcomes for staging directories earlier interrupted restores left
+    /// beside this vault (FIX 2706): each is claimed as a pre-restore archive
+    /// or left whole where it is, with the outcome named here.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) staging_notes: Vec<String>,
 }

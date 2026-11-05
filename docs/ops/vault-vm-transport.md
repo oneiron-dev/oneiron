@@ -94,7 +94,11 @@ credential.
   first boot of an image with guest runtime bindings, whose bootstrap imports
   both guest images before the engine starts; later boots import nothing.
   The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
-- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+- The outbox carrier (FIX 6683, FIX 11073): `Ping`'s `vm_outbox_revision`
+  is read live, and `vm_outbox_companion` names the last completed probe's
+  answer: `up` with the revision it reported, `down` when it answered
+  nothing. A `null` means no probe has completed yet, never that the
+  companion is healthy; `down` is not proof its process ended.
   The engine looks at the outbox companion every 5 s, with at most one
   status question in flight. A question that fails (the companion ended, or
   its socket errs) clears the revision, as a VM without one reads; a
@@ -151,6 +155,16 @@ credential.
   at the member's name is deleted. Other notices carry `action` `answered`.
   These frames are outbox wire revision 4, and each end refuses revision 3
   at the hello.
+- The host's retained member statuses, read only.
+  `managed::read_vm_outbox_member_statuses(&VmOutboxHostRoots)` (`managed/vm_outbox/host_status.rs`,
+  re-exported at `managed::` and `vm_outbox::`) projects the same `store` member records into
+  `VmOutboxHostMemberStatus` (`source_digest_mismatch`, `diverged_unagreed`, `kept_aside`) with
+  answer and removal-failure presence as booleans only. It wakes no guest, opens no carrier, and
+  creates or writes nothing: `None` only when the store root or its `members/` directory is missing,
+  `Some([])` only when a readable `members/` holds no such status, any other read or parse failure
+  is `Err`. What it returns is observed retained metadata (names, digests, lengths, aside names), not
+  live, current, drain, or physical-erase proof. The caller supplies the trusted host roots; there is
+  no new authenticated door.
 
 ## The channel
 
