@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1234 facade rows, 4493 declarations.
-Inputs: 1165 of 1234 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1069 of 1234 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1235 facade rows, 4497 declarations.
+Inputs: 1166 of 1235 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1070 of 1235 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -8074,6 +8074,15 @@ class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
     evidence_turn_refs: NotRequired[list[str]]
+class OffRecordArtifactSaveRequest(TypedDict):
+    session_ref: str
+    artifact_ref: str
+class OffRecordRoomShortIdPair(TypedDict):
+    room: str
+    vault: str
+class OffRecordArtifactSaved(TypedDict):
+    replayed: list[str]
+    short_ids: list[OffRecordRoomShortIdPair]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
@@ -8247,7 +8256,7 @@ class OffRecordWaitAnswered(TypedDict):
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
-OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
+OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saved_artifact", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
 class OffRecordRoomNotice(TypedDict):
     act: OffRecordNoticeAct
     by: str
@@ -8274,9 +8283,6 @@ class OffRecordRoomWitnessRequest(TypedDict):
     session_ref: str
     turn: WitnessTurn
     summary: NotRequired[str | None]
-class OffRecordRoomShortIdPair(TypedDict):
-    room: str
-    vault: str
 class OffRecordRoomSavedTurn(TypedDict):
     turn: str
     replayed: list[str]
@@ -22110,12 +22116,17 @@ class FoldUnfoldRequest(TypedDict):
 class FoldReplyRefused(TypedDict):
     error: str
 FoldReply = T | FoldReplyRefused
-FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str]})
-FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldKind = Literal["repl_output"]
+class FoldedOutput(TypedDict):
+    step: int
+    handles: list[str]
+    ids: list[str]
+FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str], "kind": NotRequired[FoldKind | None], "note": NotRequired[str | None], "outputs": NotRequired[list[FoldedOutput]]})
+FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
 FoldHistoryRequest = TypedDict("FoldHistoryRequest", {"live_run": str, "from": int, "limit": int})
-FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int})
-FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int, "kind": NotRequired[FoldKind | None]})
+FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 class FoldList(TypedDict):
     folds: list[FoldSpan]
     pending: list[FoldPending]
@@ -23185,8 +23196,8 @@ class MemorySupersedeInput(TypedDict):
     now: int
 class MemoryWriteOutput(TypedDict):
     id: EntityId
-FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
-FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
+FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
+FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool, "kind": NotRequired[FoldKind | None]})
 class FoldCompactRequest(TypedDict):
     live_run: str
     note: NotRequired[str | None]
