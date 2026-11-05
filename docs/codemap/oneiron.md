@@ -330,7 +330,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/consolidation_evidence.rs` | src | s | 2 struct · 1 enum · 2 fn | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind | Entity-addressed provenance carried by consolidated evidence |
 | `src/authority/conversation_training.rs` | src | s | 1 re-export · 11 crate-vis | — | Folds each person's signed "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420) |
 | `src/authority/conversation_training/door.rs` | src | s | 1 struct · 2 fn | ConversationTrainingView | The person's own "Learn from my conversations" opt-out door (FIX 4489, FIX 5502 owner rulings, OF-420)… |
-| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 3 fn · 15 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
+| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 3 fn · 16 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
 | `src/authority/critical_confirm_door.rs` | src | s | 1 crate-vis | — | Signed critical-claim answers, under the existing host-root owner ceremony |
 | `src/authority/current_scope.rs` | src | m | 22 crate-vis | — | The current scope a pact and a guest's credential stand in (Phase2 C) |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
@@ -1774,7 +1774,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/code_wait_state.rs` | src | s | 3 enum · 3 fn · 6 crate-vis | CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState | Consent-wait choices, settlement outcomes and bound call identities |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 15 crate-vis | — | — |
 | `src/consent/contact_clearance.rs` | src | m | 3 struct · 3 enum · 12 fn · 8 const · 4 crate-vis | ContactClearanceAct, ContactDisclosureOffer, ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt, DisclosureOfferMode | Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the… |
-| `src/consent/contact_clearance/engine_offer.rs` | src | s | 1 fn · 1 crate-vis | — | The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an… |
+| `src/consent/contact_clearance/engine_offer.rs` | src | s | 1 fn · 2 crate-vis | — | The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an… |
 | `src/consent/contact_clearance/standing.rs` | src | s | 4 fn · 2 crate-vis | — | The owner's disclosure-mode knob, trusted-set pre-clearance and the bound-use receipts |
 | `src/consent/doors.rs` | src | m | 2 struct · 11 fn · 25 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/doors/decision_slot.rs` | src | s | 2 crate-vis | — | The owner-decision slots: one 32-byte key per thing an owner decides, taken once beside the approve-once… |
@@ -1803,7 +1803,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tool_scope.rs` | src | s | 4 struct · 4 enum · 7 fn · 2 crate-vis | DataClass, ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef, ToolGrantDataClass | Payload-aware scope axes, consent decisions, and batch evaluation |
 | `src/consent/widen/contact_verdict_index.rs` | src | s | 3 crate-vis | — | The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan… |
 | `src/consent/widen/mod.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
-| `src/consent/widen/offers.rs` | src | s | 1 fn | — | Owner-scoped pages of the existing open contact-disclosure offers |
+| `src/consent/widen/offers.rs` | src | s | 1 fn · 1 crate-vis | — | Owner-scoped pages of the existing open contact-disclosure offers |
 | `src/consent_graduation/api.rs` | src | m | 15 struct · 5 enum · 11 fn | GraduationAnswer, GraduationAnswerReceipt, GraduationAnswerRequest, GraduationChanged, GraduationDemoteRequest, GraduationDemotionReason, GraduationMode, GraduationOffer +12 | Typed consent-graduation public door |
 | `src/consent_graduation/doors.rs` | src | m | 11 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
 | `src/consent_graduation/fold.rs` | src | m | 16 crate-vis | — | Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold |
@@ -1927,7 +1927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_projection/resolution.rs` | src | m | 3 struct · 3 fn · 1 const · 1 re-export · 7 crate-vis | ContextResolutionRequest, ResolvedContextProjection, WorkflowOutputContextRef | Dispatch-time resolution of a `ContextSpec` against live vault state |
 | `src/context_projection/spec.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/contract_oracle/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Persisted, deterministic Rust API, schema and command-output contracts |
-| `src/conversation/attendee.rs` | src | m | 2 struct · 1 enum · 6 fn · 3 crate-vis | ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
+| `src/conversation/attendee.rs` | src | m | 2 struct · 1 enum · 7 fn · 3 crate-vis | ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
 | `src/conversation/body.rs` | src | s | 4 fn · 1 re-export · 4 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
 | `src/conversation/chat_breakpoint.rs` | src | m | 2 struct · 1 enum · 6 fn · 2 crate-vis | ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale | `chat_breakpoint_storage` (FIX 4465 D): a self agent's per-reply chat breakpoint, the restart-readable seed… |
 | `src/conversation/deletion/mod.rs` | src | m | 3 fn · 7 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
@@ -4926,7 +4926,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/pad_reopen.rs` | src | m | 2 struct · 1 enum · 1 fn | PadReopenFault, PadReopenReport, PadReopenStage | Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS… |
 | `src/recovery/checkpoint/payload/actors.rs` | src | s | 4 crate-vis | — | Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each… |
 | `src/recovery/checkpoint/payload/capture.rs` | src | s | 3 crate-vis | — | KS7-5 capture: the snapshot's rows placed in its own read transaction ([`project_image`]), then, once that… |
-| `src/recovery/checkpoint/payload/mod.rs` | src | L | 30 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
+| `src/recovery/checkpoint/payload/mod.rs` | src | L | 31 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
 | `src/recovery/checkpoint/payload/preflight.rs` | src | m | 10 crate-vis | — | The payload registry's preflight (KS7-6, Engine 10-30 11:12): the gaps in the registry ([`super::rows`])… |
 | `src/recovery/checkpoint/payload/restore.rs` | src | m | 7 crate-vis | — | KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody… |
 | `src/recovery/checkpoint/payload/rows.rs` | src | m | 13 crate-vis | — | The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's… |
@@ -6110,7 +6110,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/checkpoint_payload/frame.rs` | src | s | 2 crate-vis | — | A window carrier's own spelling (KS7-3b): what KS7-5 keeps of a split window under the image's outer seal |
 | `src/sync/checkpoint_payload/mod.rs` | src | m | 43 crate-vis | — | The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary… |
 | `src/sync/checkpoint_payload/operations.rs` | src | m | 5 crate-vis | — | A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint… |
-| `src/sync/checkpoint_payload/owners.rs` | src | m | 9 crate-vis | — | Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's… |
+| `src/sync/checkpoint_payload/owners.rs` | src | m | 10 crate-vis | — | Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's… |
 | `src/sync/checkpoint_payload/parts.rs` | src | s | 3 crate-vis | — | Which holders each part of a parted window value has (KS7-3a) |
 | `src/sync/checkpoint_payload/restore.rs` | src | m | 1 crate-vis | — | A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688) |
 | `src/sync/checkpoint_payload/rows.rs` | src | s | 6 crate-vis | — | The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached… |
