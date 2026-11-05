@@ -3050,8 +3050,8 @@ class Oneiron:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
         @property
         def body(self) -> "Oneiron._VaultArtifactsBodyVerbs": ...
-        def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionView:
-            """Appends one version of bytes to a blob artifact's append-only chain."""
+        def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionAppendOutcome:
+            """Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
     class _VaultArtifactsLivePreviewVerbs:
