@@ -35,17 +35,30 @@ impl ClaimBodyReadError {
 pub struct ClaimScopeReadMemory<'a> {
     memory: &'a MachineMemory,
     stopped: &'a dyn Fn() -> bool,
+    pinned: u64,
 }
 
 impl<'a> ClaimScopeReadMemory<'a> {
-    pub fn new(memory: &'a MachineMemory, stopped: &'a dyn Fn() -> bool) -> Self {
-        Self { memory, stopped }
+    /// `pinned` is distinct caller-held input that cannot drop during this read.
+    pub fn new(memory: &'a MachineMemory, stopped: &'a dyn Fn() -> bool, pinned: u64) -> Self {
+        Self {
+            memory,
+            stopped,
+            pinned,
+        }
+    }
+
+    /// Adds distinct input that this caller must retain until the read returns.
+    pub fn with_additional_pinned_bytes(mut self, bytes: u64) -> Self {
+        self.pinned = self.pinned.saturating_add(bytes);
+        self
     }
 
     pub(super) fn admit(self, count: usize) -> Result<MemoryLease, MemoryRefusal> {
         let mut lease = self.memory.empty_lease();
         let bytes = relationship_bytes(count);
         if bytes != 0 {
+            lease.check_irreducible_peak(self.pinned, bytes)?;
             lease.grow_untimed(bytes, self.stopped)?;
         }
         Ok(lease)
@@ -79,6 +92,11 @@ impl ClaimBodyRead {
             lease
         });
         Self::new(body, memory)
+    }
+
+    /// Actual relationship storage held by this body's private lease.
+    pub fn leased_relationship_bytes(&self) -> u64 {
+        self._memory.as_ref().map_or(0, MemoryLease::bytes)
     }
 
     /// Extracts a body only when no relationship backing is leased.

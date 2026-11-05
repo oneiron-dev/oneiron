@@ -84,6 +84,7 @@ impl ContextInputWork {
                     oneiron::write_envelope::claim_body::ClaimScopeReadMemory::new(
                         &self.memory,
                         &|| answer.is_closed(),
+                        self.req._storage.bytes(),
                     ),
                 ),
             )?;

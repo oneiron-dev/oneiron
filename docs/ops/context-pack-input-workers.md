@@ -49,8 +49,13 @@ body keeps its own guard until it drops, including while a replacement is built.
 The contact fold moves only the value out of each retained body; its relationship
 set drops before that body's lease. Leases do not accumulate across contacts or
 across bodies already consumed by the fold. Direct decoded heads that are later
-ignored also release their own guard. Channel-pair and voice-roster lookups stay
-unbound.
+ignored also release their own guard. Before each admitted read, the memory floor
+includes the request controls still held by this worker and the actual leases of
+prior heads still retained by this contact. This is distinct pinned input, not a
+second ledger charge or a sum of other workers' leases. A required simultaneous
+peak that cannot fit on an idle machine returns the original typed floor instead
+of waiting on this contact's own retained heads. Channel-pair and voice-roster
+lookups stay unbound.
 
 Native store and validation errors retain their existing response mapping. A
 memory floor is `MEMORY_FLOOR` (507, with `needed` and `available`); a stopped
