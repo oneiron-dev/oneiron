@@ -9,8 +9,13 @@ on the host serving the vault, not on the calling client.
 - `vault.code.snapshots.capture` takes `project_id` and `local_folder`. It reads
   current ordinary files and symlink target text. It includes untracked and
   ignored files. It skips `.git` metadata, indexed gitlinks and linked or nested
-  repository directories; it never follows a symlink into another tree. An
+  repository directories. Capture holds no-follow directory handles and opens
+  descendants relative to them, so replacing a directory with a symlink does
+  not redirect its file reads. Symlinks contribute target text only. An
   ordinary folder does not need a Git repository.
+
+Windows capture records absolute symlink targets with their public verbatim
+path prefix; it does not resolve their target contents.
 
 A capture records `capture:<canonical-host-folder>` and `commit: null`. Its fork
 hash is the codebase manifest's content hash, not a Git commit and not the

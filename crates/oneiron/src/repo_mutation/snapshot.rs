@@ -26,8 +26,10 @@ use crate::git_wire::bundle_tree::{
 };
 use crate::store::code_tree_blob::MODE_GITLINK;
 
+mod capture;
 mod checkout;
 mod pinned;
+pub(crate) use capture::CaptureEntry;
 pub(crate) use checkout::visit_code_capture_files;
 pub(super) use pinned::RepoPinnedBase;
 
