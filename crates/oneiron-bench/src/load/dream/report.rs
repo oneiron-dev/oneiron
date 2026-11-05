@@ -138,6 +138,12 @@ fn cycle_json(m: &Measured<'_>) -> Value {
         "end_reason": waited.reason,
         "wall_ms": end - t0,
         "first_stage_line_ms_after_t0": first_line,
+        "sitting_close": m
+            .scan
+            .closes
+            .iter()
+            .find(|seen| seen.at_ms >= t0)
+            .map(|seen| json!(seen.fields)),
         "bound_s": m.run.plan.cycle_timeout.as_secs(),
         "partition_attempts": cycle::outcomes(m.scan, t0).0.len(),
         "outcomes": cycle::outcomes(m.scan, t0).0,
@@ -242,7 +248,8 @@ pub(super) fn report(m: &Measured<'_>) -> Value {
         "hint_errors": m.seeded.hint_errors,
         // No facade read names a sitting's turns: the turns the round
         // planned show in the stage lines' `turns`.
-        "sitting_membership": "not readable on the facade; see cycle.turns_planned",
+        "sitting_membership": "not readable on the facade; see cycle.sitting_close.member_turns",
+        "sitting_open": m.scan.opens.first().map(|seen| json!(seen.fields)),
     });
     let corpus = json!({
         "path": m.run.plan.corpus.display().to_string(),

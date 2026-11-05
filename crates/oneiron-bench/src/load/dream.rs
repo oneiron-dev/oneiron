@@ -55,9 +55,6 @@ const BASELINE: usize = 20;
 const QUERY_CAP: usize = 40;
 /// How long the recall loop runs past the cycle's end.
 const AFTER: Duration = Duration::from_secs(30);
-/// Between the sitting's open and the first write: the driver applies the
-/// hint off the request.
-const OPEN_SETTLE: Duration = Duration::from_secs(2);
 /// An activity hint this often while seeding keeps the sitting open.
 const ACTIVITY_EVERY: Duration = Duration::from_secs(60);
 
@@ -378,8 +375,14 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
     let reader = Agent::new(&http, base, &run.credentials[1], skew)?;
     let ready = cycle::dreamer_ready(&seeder, &http, base)?;
     say(&format!("dreamer {}; opening the sitting", ready.state));
+    let mut tail = Tail::new(run.vault.dir.join(LOG_NAME));
+    let mut scan = Scan::default();
     cycle::hint(&seeder, &http, base, "open")?;
-    std::thread::sleep(OPEN_SETTLE);
+    // The driver applies the hint off the request, after any pass in
+    // flight; a TURN witnessed before that joins no sitting.
+    if !cycle::await_open(&mut tail, &mut scan, run.origin) {
+        say("no sitting open line; seeding anyway");
+    }
     let seeded = seed(run, &seeder, &http);
     say(&format!(
         "seeded {} witness and {} claim writes in {:.1} s",
@@ -396,8 +399,6 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
         })
         .collect::<Vec<_>>();
     let baseline_seconds = baseline_started.elapsed().as_secs_f64();
-    let mut tail = Tail::new(run.vault.dir.join(LOG_NAME));
-    let mut scan = Scan::default();
     let ran = cycle_with_recalls(run, &seeder, &reader, &http, &mut tail, &mut scan);
     scan.read(&mut tail, run.origin);
     let mut landed = proof::landed_from_stages(&scan, ran.t0_ms);

@@ -22,6 +22,9 @@ const STEP: Duration = Duration::from_millis(500);
 /// (or, on a server without the stage lines, one that ran an attempt) counts
 /// as finished.
 const QUIET: Duration = Duration::from_secs(30);
+/// How long the bench waits for the sitting's open line after the open
+/// hint; a server that does not log it is waited for this long.
+const OPEN_WAIT: Duration = Duration::from_secs(60);
 
 /// Ms from `origin` to `at`.
 pub(super) fn ms_between(origin: Instant, at: Instant) -> f64 {
@@ -63,6 +66,24 @@ pub(super) fn hint(agent: &Agent, http: &Client, base: &str, event: &str) -> Res
     ai(agent, http, &url, Some(&json!({"event": event})))
         .map(drop)
         .map_err(|e| format!("session {event}: {e}"))
+}
+
+/// Waits until the sitting's `dreamer sitting open` line is read, so every
+/// TURN seeded after it joins the sitting: the server answers the open hint
+/// before its driver applies it, and a pass in flight holds the hint back.
+/// `false` when the line did not come within `OPEN_WAIT`.
+pub(super) fn await_open(tail: &mut Tail, scan: &mut Scan, origin: Instant) -> bool {
+    let started = Instant::now();
+    loop {
+        scan.read(tail, origin);
+        if !scan.opens.is_empty() {
+            return true;
+        }
+        if started.elapsed() >= OPEN_WAIT {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// The Dreamer's line of `GET /v1/ai/status` (`ai_host/status.rs`
@@ -203,7 +224,8 @@ pub(super) fn recall_loop(
 #[derive(Debug, Serialize)]
 pub(super) struct Waited {
     /// `all_partitions_ended`, `ended_then_quiet`, `status_quiet` (a server
-    /// without the stage lines), `dreamer_idle:<reason>`, `timeout`, or
+    /// without the stage lines), `no_meso_round` (the close queued no Meso
+    /// partition), `dreamer_idle:<reason>`, `timeout`, or
     /// `end_refused:<error>`.
     pub(super) reason: String,
     /// When the round ended, in ms since the run began: when the bench read
@@ -259,6 +281,19 @@ pub(super) fn outcomes(scan: &Scan, t0_ms: f64) -> (BTreeMap<String, String>, f6
     (last, at_ms)
 }
 
+/// The sitting's close line read at or after `t0_ms`, when there is one:
+/// how many Meso partition attempts the close owes (queued now or found
+/// queued), and when the bench read the line.
+pub(super) fn round(scan: &Scan, t0_ms: f64) -> Option<(usize, f64)> {
+    scan.closes
+        .iter()
+        .find(|seen| seen.at_ms >= t0_ms)
+        .and_then(|seen| {
+            let owed = seen.fields.get("meso_partitions")?.parse().ok()?;
+            Some((owed, seen.at_ms))
+        })
+}
+
 /// How many partition attempts of each scope the stage lines read at or
 /// after `t0_ms` named, a parked one that resumed counted once.
 pub(super) fn attempts_by_scope(scan: &Scan, t0_ms: f64) -> BTreeMap<String, usize> {
@@ -281,7 +316,8 @@ pub(super) struct Wait<'a> {
     pub(super) base: &'a str,
     pub(super) origin: Instant,
     pub(super) bound: Duration,
-    /// The round plans one partition per conversation, at most.
+    /// The round plans one partition per conversation, at most: the count
+    /// the wait expects until the close line names the round's own.
     pub(super) conversations: usize,
 }
 
@@ -332,7 +368,12 @@ impl Wait<'_> {
             let (last, last_ms) = outcomes(scan, t0_ms);
             let ended = !last.is_empty() && last.values().all(|o| terminal(o));
             let quiet = changed.elapsed() >= QUIET && now_status.still();
-            if ended && last.len() >= self.conversations {
+            let owed = round(scan, t0_ms);
+            if let Some((0, at_ms)) = owed {
+                break ("no_meso_round".to_owned(), at_ms);
+            }
+            let expected = owed.map_or(self.conversations, |(count, _)| count);
+            if ended && last.len() >= expected {
                 break ("all_partitions_ended".to_owned(), last_ms);
             }
             if ended && quiet {
