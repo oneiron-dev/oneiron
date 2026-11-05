@@ -52,6 +52,8 @@ mod owner_storage;
 mod peer;
 /// Private live previews on a session-owned origin.
 pub mod preview;
+/// Native supervisor registration for the same private preview lease.
+pub mod preview_route;
 mod relay;
 /// The relay locker delete this engine executes (FIX 6826).
 mod relay_delete;
