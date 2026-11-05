@@ -11,6 +11,20 @@ use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use std::collections::BTreeSet;
 
+/// A live-entity read that admits its file-plane bytes before they allocate:
+/// the store's own error, or the admission's.
+#[derive(Debug)]
+pub(crate) enum BodyReadError<E> {
+    Store(crate::Error),
+    Admission(E),
+}
+
+impl<E> From<crate::Error> for BodyReadError<E> {
+    fn from(error: crate::Error) -> Self {
+        Self::Store(error)
+    }
+}
+
 impl Vault {
     /// [`EntityStore::port_entity_get`] read through `store`, a room's view
     /// included. A NOTE's document, an entity document and an LFS chunk's
@@ -21,11 +35,34 @@ impl Vault {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityRecord>> {
+        match self
+            .live_entity_in_txn_with_file_admission(store, txn, id, |_| Ok::<(), crate::Error>(()))
+        {
+            Ok(Some((row, _guard))) => Ok(Some(row)),
+            Ok(None) => Ok(None),
+            Err(BodyReadError::Store(error)) => Err(error),
+            Err(BodyReadError::Admission(error)) => Err(error),
+        }
+    }
+
+    /// [`Self::live_entity_in_txn`] with its file-plane bytes admitted before
+    /// they allocate: `admit` runs after `asset_file_in_txn` admits the
+    /// manifest, before `asset_file_body` reads it, and its guard rides with
+    /// the row. Every other gate reads as it always has.
+    pub(crate) fn live_entity_in_txn_with_file_admission<G, E>(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(EntityRecord, Option<G>)>, BodyReadError<E>> {
         let Some(mut row) = store.port_entity_record(txn, id)? else {
             return Ok(None);
         };
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_record::reject_secret_custody_byte());
+            return Err(BodyReadError::Store(
+                crate::secret_record::reject_secret_custody_byte(),
+            ));
         }
         // Withdrawn words, a stale body of any kind, or a recorded source
         // that no longer stands read as absent.
@@ -45,19 +82,20 @@ impl Vault {
         if row.entity_type == ENTITY_TYPE_ASSET
             && let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, &row.body)?
         {
+            let guard = admit(manifest.facts.len).map_err(BodyReadError::Admission)?;
             row.body = self.asset_file_body(txn, &manifest)?;
-            return Ok(Some(row));
+            return Ok(Some((row, Some(guard))));
         }
         if crate::entity_doc::has_record_head(&self.store, txn, id)? {
             if row.entity_type == ENTITY_TYPE_NOTE {
                 crate::note::ensure_citations_ready(&self.store, txn, *id)?;
             }
             row.body = crate::entity_doc::resolve_record_body(&self.store, txn, id, &row.body)?;
-            return Ok(Some(row));
+            return Ok(Some((row, None)));
         }
         row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
             .into_owned();
-        Ok(Some(row))
+        Ok(Some((row, None)))
     }
 }
 

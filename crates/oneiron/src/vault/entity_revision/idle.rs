@@ -315,7 +315,7 @@ impl Vault {
             )?;
             crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
-            if self.config.tagging.is_some() {
+            if self.tagging_marker_config().is_some() {
                 self.store.notify_attempt_observers();
             }
             published(IndexedPublication {
