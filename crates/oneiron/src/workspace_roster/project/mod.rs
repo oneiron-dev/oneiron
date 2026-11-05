@@ -1001,6 +1001,22 @@ impl Vault {
             None => Ok(None),
         }
     }
+
+    /// The same visible project and the complete entity rows that read used.
+    pub(crate) fn visible_project_with_sources_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<(
+        Option<ProjectRecord>,
+        Option<std::collections::BTreeSet<EntityId>>,
+    )> {
+        let Some(reader) = ProjectReader::new(&self.store, txn, self.privacy_posture())? else {
+            return Ok((None, None));
+        };
+        let record = reader.visible(id)?;
+        Ok((record, reader.source_rows()))
+    }
     pub(crate) fn project_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
