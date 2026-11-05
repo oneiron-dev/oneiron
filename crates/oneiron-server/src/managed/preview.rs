@@ -1,8 +1,9 @@
 //! Native forwarding for a manifest-declared private session port.
 //!
 //! The runtime supplies a connector to the verified process inside its sandbox.
-//! Each lease gets an origin with no vault API, and only a loopback listener.
-//! A remote host carries it over the existing vault transport, not a tunnel.
+//! Each lease keeps its loopback origin with no vault API. A managed native
+//! host may project that same private lease through its supervisor's origin;
+//! the same tokens, invitations and revocations still govern every request.
 
 use std::future::Future;
 use std::io;
@@ -24,8 +25,12 @@ use zeroize::Zeroizing;
 
 use super::{ManagedShutdown, ShutdownSignal};
 
+mod hosted;
 #[path = "preview/http.rs"]
 mod http;
+pub(crate) use hosted::{PreviewRouteListener, PreviewRoutes};
+
+use super::preview_route::PreviewRouteGuard;
 
 /// The adapter may connect to a guest socket, a local child, or a stream on
 /// the vault's existing transport. No destination comes from an HTTP request.
@@ -102,6 +107,7 @@ impl PreviewPortHost for LocalPreviewHost {
                 process: Arc::clone(&self.process),
                 closed: ManagedShutdown::new(),
                 audience_changed: watch::channel(()).0,
+                hosted: tokio::sync::OnceCell::new(),
             });
             {
                 let mut active = self.active.lock().expect("preview host lock");
@@ -131,6 +137,58 @@ pub struct PreviewLease {
 }
 
 impl PreviewLease {
+    /// The same held lease owns this registration. Await outside the server's
+    /// preview map lock, so a silent supervisor cannot stall other leases.
+    pub(crate) async fn bind_hosted(&self, routes: &Arc<PreviewRoutes>) -> anyhow::Result<()> {
+        let shared = &self.shared;
+        let hosted = shared
+            .hosted
+            .get_or_try_init(|| async {
+                anyhow::ensure!(shared.is_live(), "preview lease has ended");
+                let manifest = shared
+                    .preview
+                    .lock()
+                    .expect("preview lock")
+                    .manifest()
+                    .clone();
+                let guard = tokio::select! {
+                    biased;
+                    () = shared.closed.triggered() => anyhow::bail!("preview lease has ended"),
+                    () = routes.stopped.triggered() => anyhow::bail!("preview ingress stopped"),
+                    guard = routes.client.open(&manifest) => guard?,
+                };
+                guard
+                    .map(|guard| {
+                        let authority = guard
+                            .binding()
+                            .origin
+                            .parse::<axum::http::Uri>()?
+                            .authority()
+                            .ok_or_else(|| anyhow::anyhow!("preview origin has no authority"))?
+                            .as_str()
+                            .to_owned();
+                        Ok::<_, anyhow::Error>(HostedPreviewRoute {
+                            guard,
+                            authority,
+                            routes: Arc::clone(routes),
+                        })
+                    })
+                    .transpose()
+            })
+            .await?;
+        if let Some(hosted) = hosted {
+            if !shared.is_live() || routes.stopped.is_triggered() {
+                hosted.guard.close();
+                anyhow::bail!("preview ingress stopped");
+            }
+            if let Err(error) = routes.insert(shared) {
+                hosted.guard.close();
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub fn endpoint(&self) -> &PreviewEndpoint {
         &self.shared.endpoint
     }
@@ -211,17 +269,60 @@ struct SharedPreview {
     process: Arc<dyn PreviewProcess>,
     closed: ManagedShutdown,
     audience_changed: watch::Sender<()>,
+    hosted: tokio::sync::OnceCell<Option<HostedPreviewRoute>>,
+}
+
+struct HostedPreviewRoute {
+    guard: PreviewRouteGuard,
+    authority: String,
+    routes: Arc<PreviewRoutes>,
+}
+
+#[derive(Clone)]
+struct PreviewOrigin {
+    authority: String,
+    url: String,
+    stopped: ManagedShutdown,
 }
 
 impl SharedPreview {
+    fn hosted(&self) -> Option<&HostedPreviewRoute> {
+        self.hosted.get().and_then(Option::as_ref)
+    }
+
     fn is_live(&self) -> bool {
         !self.closed.is_triggered() && self.preview.lock().expect("preview lock").is_live(now_ts())
     }
 
+    fn hosted_is_live(&self) -> bool {
+        self.is_live()
+            && self
+                .hosted()
+                .is_some_and(|hosted| !hosted.guard.is_stopped())
+    }
+
+    fn local_origin(&self) -> PreviewOrigin {
+        PreviewOrigin {
+            authority: self.authority.clone(),
+            url: self.endpoint.local_url.clone(),
+            stopped: self.closed.clone(),
+        }
+    }
+
+    fn hosted_origin(&self) -> Option<PreviewOrigin> {
+        let hosted = self.hosted().filter(|_| self.hosted_is_live())?;
+        Some(PreviewOrigin {
+            authority: hosted.authority.clone(),
+            url: hosted.guard.binding().origin.clone(),
+            stopped: hosted.guard.shutdown(),
+        })
+    }
+
     fn access_url(&self, token: &TokenHex) -> Zeroizing<String> {
+        let origin = self.hosted_origin().unwrap_or_else(|| self.local_origin());
         Zeroizing::new(format!(
             "{}/__oneiron_preview_access?token={}",
-            self.endpoint.local_url,
+            origin.url,
             token.expose()
         ))
     }
@@ -237,6 +338,10 @@ impl SharedPreview {
 
     fn close(&self) {
         self.closed.trigger();
+        if let Some(hosted) = self.hosted() {
+            hosted.guard.close();
+            hosted.routes.remove(&hosted.authority, self);
+        }
         self.preview
             .lock()
             .expect("preview lock")
@@ -251,26 +356,29 @@ struct Access {
     shared: Arc<SharedPreview>,
     token: TokenHex,
     changed: watch::Receiver<()>,
+    origin: PreviewOrigin,
 }
 
 impl Access {
-    fn authorize(shared: &Arc<SharedPreview>, token: &str) -> Option<Self> {
+    fn authorize(shared: &Arc<SharedPreview>, token: &str, origin: &PreviewOrigin) -> Option<Self> {
         let changed = shared.audience_changed.subscribe();
-        shared.admits(token).then(|| Self {
+        (shared.admits(token) && !origin.stopped.is_triggered()).then(|| Self {
             shared: Arc::clone(shared),
             token: TokenHex::new(token.to_owned()),
             changed,
+            origin: origin.clone(),
         })
     }
 
     async fn revoked(mut self) {
         loop {
-            if !self.shared.admits(self.token.expose()) {
+            if !self.shared.admits(self.token.expose()) || self.origin.stopped.is_triggered() {
                 return;
             }
             tokio::select! {
                 biased;
                 () = self.shared.closed.triggered() => return,
+                () = self.origin.stopped.triggered() => return,
                 changed = self.changed.changed() => if changed.is_err() { return; },
             }
         }

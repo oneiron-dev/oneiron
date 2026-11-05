@@ -51,6 +51,8 @@ pub(super) struct ConnState {
     /// This socket's last touch that named an item by reference, so its
     /// parts slice one export (FIX 12116); the next touch replaces it.
     pub(super) residence_touch: Option<crate::livequery::ResidenceTouchStage>,
+    /// Tracked durable-work attachments, independent of the verb-RPC gate.
+    pub(super) residence_work: crate::livequery::ResidenceWorkState,
     /// The authority entry this socket's machine appends in parts, held
     /// until it is whole; it goes with the socket (FIX 8246).
     pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
@@ -94,6 +96,7 @@ impl ConnState {
             locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
             residence_touch: None,
+            residence_work: Default::default(),
             authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,

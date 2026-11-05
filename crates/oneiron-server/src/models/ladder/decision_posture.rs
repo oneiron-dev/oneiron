@@ -41,6 +41,7 @@ impl OfferLadder {
                 ..self.scope
             },
             prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
         }))
     }
 }

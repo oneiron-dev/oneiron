@@ -145,6 +145,43 @@ impl Memory<'_> {
         Ok(receipt)
     }
 
+    /// The already-bound ask for this editor, artifact and current owner set.
+    /// Used when a new blob-head claim makes the original ask spec fail replay.
+    pub(crate) fn existing_live_edit_ask_group(
+        &self,
+        artifact: &EntityId,
+        editor: &EntityId,
+    ) -> MemoryResult<Option<EntityId>> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .existing_live_edit_ask_group(artifact, editor);
+        }
+        let vault = self.vault();
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let mut owners = crate::policy_model::owners_in_txn(vault, &txn)?;
+        if owners.is_empty() {
+            return Ok(None);
+        }
+        owners.sort();
+        let route = LiveEditRoute {
+            artifact: *artifact,
+            editor: *editor,
+            revision: live_edit_revision(artifact, editor, &owners),
+            owners,
+        };
+        for (group, bound) in LIVE_EDIT_GROUPS.scan(&vault.store, &txn)? {
+            if bound == route {
+                return Ok(Some(group));
+            }
+        }
+        Ok(None)
+    }
+
     /// Where the live-edit ask `ask` stands (FIX 596): pending while open,
     /// accepted on a definitive owner ACCEPT while its coverage still
     /// holds, rejected on a definitive owner REJECT, lapsed once settled

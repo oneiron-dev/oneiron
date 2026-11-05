@@ -117,7 +117,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
     )?;
     PROPOSAL.delete(&vault.store, wtxn, proposal)?;
     // The owner's answer is the proposal's review, and it reached a person.
-    crate::failure_ladder::oversight::reviewed_in_txn(
+    crate::store::healer_oversight::reviewed_in_txn(
         vault,
         wtxn,
         &row.id.to_hex(),
@@ -166,7 +166,7 @@ pub(super) fn reject_cleanup_proposal_in_txn(
         return Err(not_found());
     }
     let reviewed_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    crate::failure_ladder::oversight::reviewed_in_txn(
+    crate::store::healer_oversight::reviewed_in_txn(
         vault,
         wtxn,
         &row.id.to_hex(),
