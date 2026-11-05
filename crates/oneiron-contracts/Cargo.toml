@@ -23,7 +23,7 @@ rand_core = { workspace = true }
 # The Beta posterior seam (`posterior`) samples with these; same versions as `oneiron`.
 rand = "0.8"
 rand_distr = "0.4"
-loro = { version = "1.10", optional = true }
+loro = { workspace = true, optional = true }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
