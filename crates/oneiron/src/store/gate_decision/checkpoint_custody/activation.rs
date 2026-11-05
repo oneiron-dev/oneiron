@@ -146,6 +146,7 @@ impl Store {
     /// credentials planned, and what came of the pad objects.
     pub(crate) fn activate_archived(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         source: &LiveCustody,
         expected: Option<&ExpectedPadObjects>,
     ) -> Result<(
@@ -210,9 +211,9 @@ impl Store {
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
         let mut landing = PadObjectsLanding::NotAttempted;
         let committed = self
-            .prune_bodies_in_txn(&mut wtxn, &prune, source)
+            .prune_bodies_in_txn(write, &mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
-            .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(self, &mut wtxn, &erased_pads))
+            .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(write, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
@@ -263,6 +264,7 @@ impl Store {
     /// whose erase retired it (FIX 7470, 9066).
     fn prune_bodies_in_txn(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         wtxn: &mut heed::RwTxn<'_>,
         prune: &ArchivePrune,
         source: &LiveCustody,
@@ -321,7 +323,7 @@ impl Store {
                 self.side_sync_state()?.delete(wtxn, row)?;
                 continue;
             }
-            family.retire_in_txn(self, wtxn, key, &carriage)?;
+            family.retire_in_txn(write, wtxn, key, &carriage)?;
         }
         replay.apply_in_txn(self, wtxn)?;
         // A step claim whose response's artifact version rests in a body its
@@ -329,7 +331,7 @@ impl Store {
         // goes with what the archive no longer holds (FIX 6225). The retired
         // ASSETs and files were read off the bindings before they went.
         let files: BTreeSet<[u8; 32]> = prune.files.iter().copied().collect();
-        crate::llm::prune_step_response_pins_in_txn(self, wtxn, &prune.assets, &files)
+        crate::llm::prune_step_response_pins_in_txn(write, wtxn, &prune.assets, &files)
     }
 
     /// Reads back, under the custody `txn` binds (the forked one), every
