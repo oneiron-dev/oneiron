@@ -11,7 +11,7 @@
 //! What a pass does with a carried batch is read from durable facts: its
 //! intent ledger row (absent, retryable on an owner's recorded press, or
 //! settled), the Gate's newest decision on a send of it when none was
-//! admitted (only a hold for the owner keeps it), and the owner's denial of
+//! admitted, its receipt's paced wait, and the owner's denial of
 //! its digest in the Gate's decisions since it was staged. Its settlement
 //! takes exactly the quantities and records it froze, once, in one writer
 //! with the row's removal: the row still there is what says they are owed.
@@ -36,8 +36,9 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::gate::{ExternalEffectGateInput, GateOutcome, external_effect_decision_on};
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult,
-    outbound_approve_once_digest, outbound_dispatch_attempt_id, outbound_gate_effect,
+    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
+    OutboundDispatchResult, outbound_approve_once_digest, outbound_dispatch_attempt_id,
+    outbound_gate_effect,
 };
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, RecordedOutboundOutcome,
@@ -80,17 +81,21 @@ pub(super) struct HeldBatch {
     /// Seconds since the epoch.
     created_at: u64,
     stage: HeldStage,
+    /// The last dispatch receipt's absolute Unix-second retry edge.
+    retry_at: Option<u64>,
 }
 
-/// Where a kept batch stood after its last send. A record: what a pass does
-/// with a carried batch is read from durable facts, and this counts only
-/// where the Gate's decisions on it are gone, to say the Gate held it once.
+/// Where a kept batch stood after its last send. Owner holds and paced
+/// waits are distinct custody records; neither grants permission to send.
+/// An earlier owner hold still counts when its Gate decisions are gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum HeldStage {
     /// Written before its send.
     Staged,
     /// The Gate held it for the owner.
     Held,
+    /// The allowed send waits for its receipt's edge, not an owner's press.
+    Paced,
     /// Admitted on the owner's press and failed definitely: it retries
     /// under its own ref on that recorded press (CALLS `FIX 6679 held batch
     /// retry proof`).
@@ -103,6 +108,13 @@ pub(super) struct BatchSend {
     pub(super) held: HeldBatch,
     pub(super) request: OutboundDispatchRequest,
     pub(super) approval_digest: Option<String>,
+}
+
+/// A carried batch either runs its original send or waits without selecting
+/// a replacement. Waiting is custody, not approval authority.
+pub(super) enum CarriedBatch {
+    Send(BatchSend),
+    Waiting { approval_digest: Option<String> },
 }
 
 impl HeldBatch {
@@ -146,6 +158,7 @@ impl HeldBatch {
             floor,
             created_at: now,
             stage: HeldStage::Staged,
+            retry_at: None,
         })
     }
 
@@ -224,11 +237,11 @@ impl Vault {
     /// digest (an erase's frozen shares among them), is retired. A batch no
     /// send of which was admitted goes again only while the Gate's newest
     /// decision on it holds it for the owner and it may still leave to the
-    /// same endpoint; a Gate Deny, any other decision on it, or none on one
-    /// only ever staged retires it, and the pass selects afresh as it
-    /// always did. One admitted and failed definitely retries under its own
-    /// ref only when its admission spent the owner's press; one a grant
-    /// admitted is retired. One whose ledger row is settled or unresolved
+    /// same endpoint, or while its allowed send waits for a receipted edge.
+    /// A paced wait carries no owner press. An admitted definite failure
+    /// retries under its own ref on the owner's recorded press or its
+    /// receipt's paced wait; other grant-admitted failures retire. One whose
+    /// ledger row is settled or unresolved
     /// is carried, so its replay resolves it with no wire before anything
     /// is selected anew.
     pub(super) fn carried_failure_signal_batch(
@@ -236,7 +249,7 @@ impl Vault {
         endpoint: &str,
         sender: EntityId,
         now: u64,
-    ) -> std::result::Result<Option<BatchSend>, OutboundDispatchError> {
+    ) -> std::result::Result<Option<CarriedBatch>, OutboundDispatchError> {
         let held = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             HELD.get_bytes(&self.store, &txn, &())?.map(|bytes| {
@@ -257,7 +270,7 @@ impl Vault {
         let approval_digest =
             outbound_approve_once_digest(self, &request)?.map(|digest| digest.to_hex());
         let effect = outbound_gate_effect(self, &request)?;
-        let carry = {
+        let (carry, replay) = {
             let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             let attempt = outbound_dispatch_attempt_id(&held.send_ref())?;
@@ -267,20 +280,36 @@ impl Vault {
                     && held.eligible_in(self, &txn, approval_digest.as_deref())?)
             };
             match read_intent_for_attempt_in_txn(self, &txn, attempt, 0)? {
-                None => may_leave(owner_held_in(self, &txn, &held, &effect)?)?,
-                Some(row) if retryable(&row) => may_leave(row.admitted_approval.is_some())?,
-                Some(_) => true,
+                None => (
+                    may_leave(
+                        owner_held_in(self, &txn, &held, &effect)?
+                            || held.stage == HeldStage::Paced,
+                    )?,
+                    false,
+                ),
+                Some(row) if retryable(&row) => (
+                    may_leave(row.admitted_approval.is_some() || held.stage == HeldStage::Paced)?,
+                    false,
+                ),
+                Some(_) => (true, true),
             }
         };
         if !carry {
             self.retire_failure_signal_batch(false)?;
             return Ok(None);
         }
-        Ok(Some(BatchSend {
+        // Settled and unresolved ledger rows replay immediately, without a
+        // wire, even if an older attempt named a future edge.
+        if !replay && held.retry_at.is_some_and(|at| now < at) {
+            return Ok(Some(CarriedBatch::Waiting {
+                approval_digest: approval_digest.filter(|_| held.stage == HeldStage::Held),
+            }));
+        }
+        Ok(Some(CarriedBatch::Send(BatchSend {
             held,
             request,
             approval_digest,
-        }))
+        })))
     }
 
     /// [`HeldBatch::may_still_leave_in`] on a snapshot of its own, just
@@ -306,8 +335,9 @@ impl Vault {
         &self,
         held: &HeldBatch,
         stage: HeldStage,
+        retry_at: Option<u64>,
     ) -> Result<()> {
-        if held.stage == stage {
+        if held.stage == stage && held.retry_at == retry_at {
             return Ok(());
         }
         self.with_write_txn_grouped(|txn| {
@@ -318,6 +348,7 @@ impl Vault {
                 return Ok(());
             }
             kept.stage = stage;
+            kept.retry_at = retry_at;
             HELD.put(&self.store, txn, &(), &kept)
         })
     }
@@ -381,9 +412,9 @@ impl Vault {
 
     /// Where a batch the dispatch neither delivered nor left ambiguous
     /// stands, `None` to discard it (CALLS `FIX 6679 held failure-signal
-    /// batch carries over`). The Gate holding it for the owner (`pending`;
-    /// a delivery window, budget or suppression hold the Gate allowed is
-    /// not one) keeps it. So does an admitted send that failed definitely,
+    /// batch carries over`). The Gate holding it for the owner (`pending`)
+    /// keeps it. An allowed Held send with a receipt edge keeps it as Paced,
+    /// without claiming an owner hold. So does an admitted send that failed definitely,
     /// its ledger row still Pending, when its admission spent the owner's
     /// press: it retries under its own ref on that press. A Gate Deny, and
     /// every other ending, discards it, as a fresh batch always was.
@@ -394,6 +425,12 @@ impl Vault {
     ) -> std::result::Result<Option<HeldStage>, OutboundDispatchError> {
         if result.gate_outcome == GateOutcome::Pending.as_str() {
             return Ok(Some(HeldStage::Held));
+        }
+        if result.gate_outcome == GateOutcome::Allow.as_str()
+            && result.outcome == OutboundDispatchOutcome::Held
+            && result.retry_at().is_some()
+        {
+            return Ok(Some(HeldStage::Paced));
         }
         if result.gate_outcome == GateOutcome::Deny.as_str()
             || !matches!(result.resolution, Some(IntentResolution::Pending { .. }))
@@ -497,7 +534,7 @@ fn owner_denied_in(
 /// owner's hold; a Gate Deny, or any other decision, is none, and no
 /// ledger row alone is no hold. Where no decision on it is left, a batch
 /// the Gate held on an earlier pass (its stage says so) still waits, and
-/// one only ever staged was never shown.
+/// one only ever staged was never shown. A paced wait alone is no owner hold.
 fn owner_held_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -515,7 +552,7 @@ fn owner_held_in(
             false
         },
     )?;
-    Ok(newest.unwrap_or(held.stage != HeldStage::Staged))
+    Ok(newest.unwrap_or(matches!(held.stage, HeldStage::Held | HeldStage::Admitted)))
 }
 
 /// An erase of `actor` retires the carried batch with no ack of anything

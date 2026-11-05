@@ -61,8 +61,8 @@ pub struct HeldFailureSignalBatchView {
     pub training_permitted: bool,
     /// Seconds since the epoch.
     pub created_at: u64,
-    /// Where its custody stood after its last send: `staged`, `held` or
-    /// `admitted`. A record only, never proof the owner is still awaited.
+    /// Where its custody stood after its last send: `staged`, `held`,
+    /// `paced` or `admitted`. A record only, never proof the owner is still awaited.
     pub custody_stage: String,
 }
 
@@ -153,6 +153,7 @@ fn custody_stage(stage: HeldStage) -> &'static str {
     match stage {
         HeldStage::Staged => "staged",
         HeldStage::Held => "held",
+        HeldStage::Paced => "paced",
         HeldStage::Admitted => "admitted",
     }
 }

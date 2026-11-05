@@ -224,6 +224,9 @@ pub struct ReportDeliveryRecord {
     pub hold: Option<ReportDeliveryHold>,
     /// The last send's ordinary outbound receipt.
     pub receipt: Option<String>,
+    /// The last dispatch receipt's absolute Unix-second retry edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<u64>,
     /// The last send's outcome.
     pub outcome: Option<ReportDeliveryOutcome>,
     /// The last send's dispatch error, until a send records an outcome.
@@ -240,6 +243,7 @@ impl ReportDeliveryRecord {
             send: None,
             hold: None,
             receipt: None,
+            retry_at: None,
             outcome: None,
             last_error: None,
             updated_at: now,
@@ -550,7 +554,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             return DELIVERIES.get(&self.store, &txn, &row);
         }
-        if record.hold.is_none() {
+        if record.hold.is_none() && !record.retry_at.is_some_and(|at| now < at) {
             self.dispatch_report_signature(&mut record, transport, now)?;
             let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
             // The send's outcome lands on its ED-08 signature in the lane's
@@ -706,6 +710,7 @@ impl Vault {
         };
         match self.dispatch_outbound_intent_recorded(request, &mut sink) {
             Ok(result) => {
+                record.retry_at = result.retry_at();
                 record.last_error = None;
                 record.receipt = Some(result.receipt.receipt_id);
                 record.outcome = Some(match result.outcome {

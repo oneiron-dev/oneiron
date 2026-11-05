@@ -6,6 +6,8 @@
 //! delivered, so a failed send loses nothing. A batch the Gate holds for the
 //! owner is staged before it leaves and sent again as it was on the passes
 //! after it, so his one press releases the batch he saw (FIX 6679, `held`).
+//! An allowed send's receipt-named wait keeps the same batch until its edge,
+//! without inventing an owner hold or asking for a press.
 //!
 //! Consent is the owner's "Help improve Oneiron" switch
 //! ([`FailureSignalConfig::exports`](crate::config::failure_signals::FailureSignalConfig::exports)):
@@ -24,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Tier1FailureCount;
 use super::code_fix::CodeFixExport;
-use super::held::{BatchSend, HeldBatch};
+use super::held::{BatchSend, CarriedBatch, HeldBatch};
 use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -201,7 +203,8 @@ impl Vault {
     /// code-fix records. A batch the Gate held for the owner is sent again
     /// exactly as it was, under its own refs, until it is settled or retired;
     /// counts and records that came since wait for the batch after it (FIX
-    /// 6679). `now` is seconds since the epoch.
+    /// 6679). A receipt-named paced wait also keeps the same batch and is
+    /// retried no earlier than its edge. `now` is seconds since the epoch.
     pub fn deliver_failure_signals(
         &self,
         target: &str,
@@ -219,7 +222,15 @@ impl Vault {
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
-        let send = if let Some(send) = self.carried_failure_signal_batch(target, sender, now)? {
+        let carried = self.carried_failure_signal_batch(target, sender, now)?;
+        if let Some(CarriedBatch::Waiting { approval_digest }) = carried {
+            self.keep_failure_signal_participation(sender, true, now)?;
+            return Ok(FailureSignalDelivery::NotDelivered {
+                outcome: OutboundDispatchOutcome::Held,
+                approval_digest,
+            });
+        }
+        let send = if let Some(CarriedBatch::Send(send)) = carried {
             self.keep_failure_signal_participation(sender, true, now)?;
             send
         } else {
@@ -281,7 +292,9 @@ impl Vault {
             _ => {
                 if !retired {
                     match self.next_failure_signal_stage(&held, &result)? {
-                        Some(stage) => self.keep_failure_signal_batch(&held, stage)?,
+                        Some(stage) => {
+                            self.keep_failure_signal_batch(&held, stage, result.retry_at())?
+                        }
                         None => self.retire_failure_signal_batch(false)?,
                     }
                 }
