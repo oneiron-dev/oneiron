@@ -77,6 +77,8 @@ pub use delete::{
 pub use erase::CorruptClaimRepair;
 #[cfg(unix)]
 pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection};
+#[cfg(unix)]
+pub(crate) use legal_hold::clone::HostLegalCaptures;
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
     LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
