@@ -76,7 +76,10 @@ use crate::store::setting_seed::SettingSpec;
 use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
 
+mod accounted;
 mod detached;
+
+use super::native_write::NativeWriteAttempt;
 
 pub(crate) use detached::{AfterCommit, DetachedWrite, release_vault_handle};
 use detached::{DetachedGroup, DetachedWrites};
@@ -732,13 +735,34 @@ impl Store {
     where
         E: From<Error>,
     {
+        self.group_write_as_accounted(callback, announced, None, write)
+    }
+
+    pub(crate) fn group_write_as_accounted<T, E>(
+        &self,
+        callback: Callback,
+        announced: Option<Announced<'_>>,
+        attempt: Option<&NativeWriteAttempt>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        let callback = if attempt.is_some() {
+            Callback::Opaque
+        } else {
+            callback
+        };
         // A keyed request's intent open here counts this write (FIX 10379).
         let write = super::idempotency_intent::counting_commits(self, write);
         if active_write_txn_depth() > 0 {
             drop(announced);
-            return self.solo_write(write);
+            return match attempt {
+                Some(attempt) => self.solo_write_accounted(attempt, write),
+                None => self.solo_write(write),
+            };
         }
-        self.queue_write(callback, announced, write, None)
+        self.queue_write_accounted(callback, announced, write, None, attempt)
     }
 
     /// Queues `write` behind the open group, or leads one, and runs it there.
@@ -750,6 +774,20 @@ impl Store {
         announced: Option<Announced<'_>>,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
         closing: Option<&Vault>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        self.queue_write_accounted(callback, announced, write, closing, None)
+    }
+
+    fn queue_write_accounted<T, E>(
+        &self,
+        callback: Callback,
+        announced: Option<Announced<'_>>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+        closing: Option<&Vault>,
+        attempt: Option<&NativeWriteAttempt>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -769,11 +807,21 @@ impl Store {
         };
         drop(announced);
         let Some(ticket) = ticket else {
-            return self.lead(callback, write, closing);
+            return match attempt {
+                Some(attempt) => self.lead_accounted(attempt, write, closing),
+                None => self.lead(callback, write, closing),
+            };
         };
         match ticket.wait_for_turn() {
-            Assigned::Lead => self.lead(callback, write, closing),
-            Assigned::Run(shared) => self.join(&ticket, shared, write, AnswerAt::Commit),
+            Assigned::Lead => match attempt {
+                Some(attempt) => self.lead_accounted(attempt, write, closing),
+                None => self.lead(callback, write, closing),
+            },
+            Assigned::Run(shared) => {
+                // Accounted tickets are opaque; next_member never lends to one.
+                assert!(attempt.is_none(), "an accounted writer must lead its root");
+                self.join(&ticket, shared, write, AnswerAt::Commit)
+            }
         }
     }
 
@@ -1141,13 +1189,42 @@ impl StoreCore {
     #[allow(clippy::too_many_arguments)]
     fn close_group(
         self: &Arc<Self>,
+        shared: RwTxn<'_>,
+        limits: &Limits,
+        opened: Instant,
+        counts: (usize, usize),
+        closes: bool,
+        refusals: Option<RefusalBatch<'_>>,
+        mut detached: DetachedGroup<'_>,
+    ) -> heed::Result<()> {
+        let committed = self.settle_group(
+            shared,
+            limits,
+            opened,
+            counts,
+            closes,
+            refusals,
+            &mut detached,
+            None,
+        );
+        self.group_commit.hand_off(Some((self, limits)));
+        detached.release();
+        committed
+    }
+
+    /// Settles a group while its caller retains leadership and all detached
+    /// vault handles. The caller hands off before releasing those handles.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_group(
+        self: &Arc<Self>,
         mut shared: RwTxn<'_>,
         limits: &Limits,
         opened: Instant,
         (ran, mut kept): (usize, usize),
         mut closes: bool,
         refusals: Option<RefusalBatch<'_>>,
-        mut detached: DetachedGroup<'_>,
+        detached: &mut DetachedGroup<'_>,
+        own_attempt: Option<&NativeWriteAttempt>,
     ) -> heed::Result<()> {
         let group = &self.group_commit;
         let mut members = Vec::new();
@@ -1166,7 +1243,7 @@ impl StoreCore {
                 // closes elsewhere goes back to the head, and the group
                 // closes for that close to run it.
                 Arrival::Detached(write) => {
-                    if let Some(back) = self.run_detached(&mut shared, write, &mut detached) {
+                    if let Some(back) = self.run_detached(&mut shared, write, detached) {
                         group.requeue_detached(back);
                         closes = true;
                     }
@@ -1190,6 +1267,11 @@ impl StoreCore {
         let committed = shared.commit();
         #[cfg(test)]
         let committed = group.hooks.commit(shared);
+        if committed.is_ok()
+            && let Some(attempt) = own_attempt
+        {
+            attempt.mark_committed();
+        }
         let kept = kept + detached.kept();
         if committed.is_ok() && kept > 0 {
             self.diagnostics.group_commit.record(kept as u64);
@@ -1221,8 +1303,6 @@ impl StoreCore {
         for ticket in &members {
             ticket.set(Turn::Settled(committed.as_ref().err().map(replicate)));
         }
-        group.hand_off(Some((self, limits)));
-        detached.release();
         committed
     }
 
