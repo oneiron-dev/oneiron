@@ -229,8 +229,17 @@ impl AgentDispatcher<'_> {
         leader: AttemptId,
     ) -> Result<Option<PlannedLeaderLaunch>> {
         let txn = self.vault.store.env.read_txn()?;
+        self.planned_launch_for_leader_in_txn(&txn, leader)
+    }
+
+    /// Reads the leader's frozen launch in the caller's snapshot.
+    pub(crate) fn planned_launch_for_leader_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        leader: AttemptId,
+    ) -> Result<Option<PlannedLeaderLaunch>> {
         Ok(self
-            .planned_leader_in_txn(&txn, leader)?
+            .planned_leader_in_txn(txn, leader)?
             .map(|(_, launch)| launch))
     }
 

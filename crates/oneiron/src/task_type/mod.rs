@@ -976,11 +976,27 @@ pub fn validate_type_ref(
 ) -> Result<()> {
     r.validate()?;
     let tree = type_tree(vault, project)?;
+    validate_type_ref_in_tree(r, &tree.inner)
+}
+
+/// Validates a type stamp against the tree in the caller's snapshot.
+pub(crate) fn validate_type_ref_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    r: &TypeRef,
+) -> Result<()> {
+    r.validate()?;
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
+    validate_type_ref_in_tree(r, &tree)
+}
+
+fn validate_type_ref_in_tree(r: &TypeRef, tree: &TaskTypeTree) -> Result<()> {
     let stamp = TaskTypeRef::from(r);
-    if stamp.tree_version >= tree.inner.version {
-        return tree.inner.validate_current_ref(&stamp);
+    if stamp.tree_version >= tree.version {
+        return tree.validate_current_ref(&stamp);
     }
-    match tree.inner.node(&stamp.node_id) {
+    match tree.node(&stamp.node_id) {
         Some(_) => Ok(()),
         None => Err(invalid_type_ref("typeRef names a node outside the tree")),
     }

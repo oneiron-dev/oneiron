@@ -379,8 +379,16 @@ fn works_well_for_prior(binding: &PatternSkill) -> Prior {
 /// Storage errors.
 pub fn pattern_skills(vault: &Vault) -> Result<Vec<PatternSkill>> {
     let rtxn = vault.store.env.read_txn()?;
+    pattern_skills_in_txn(vault, &rtxn)
+}
+
+/// Reads the bound pattern skills in the caller's snapshot.
+pub(crate) fn pattern_skills_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<PatternSkill>> {
     Ok(PATTERN_SKILL
-        .scan(&vault.store, &rtxn)?
+        .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, row)| row)
         .collect())

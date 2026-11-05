@@ -599,5 +599,14 @@ pub fn close_market(vault: &Vault, team_ref: &str, now: u64) -> Result<MarketRes
 /// Storage errors.
 pub fn market(vault: &Vault, team_ref: &str) -> Result<Option<Market>> {
     let rtxn = vault.store.env.read_txn()?;
-    MARKET.get(&vault.store, &rtxn, &team_ref.to_owned())
+    market_in_txn(vault, &rtxn, team_ref)
+}
+
+/// Reads one run's market in the caller's snapshot.
+pub(crate) fn market_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    team_ref: &str,
+) -> Result<Option<Market>> {
+    MARKET.get(&vault.store, txn, &team_ref.to_owned())
 }
