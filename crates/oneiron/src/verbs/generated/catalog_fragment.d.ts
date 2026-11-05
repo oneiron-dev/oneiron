@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1279 code-mode rows (1239 host rows, 40 run rows), 4531 declarations.
-// Replies: 1093 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4539 declarations.
+// Replies: 1097 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -38,6 +38,11 @@ declare namespace Sdk {
   type CommitmentWakeProposal = { proposal_ref: string; instance_ref: string; phase: CommitmentWakePhase; fire_at: number; due_at: number; occurred_at: number; idempotency_key: string; trigger_ref: string; verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; dedupe_key?: string | null; approval: string };
   type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] };
   type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] };
+  type EmptyRequest = Record<string, never>;
+  type CommitmentReminderVoice = { persona_ref?: string | null };
+  type CommitmentReminderRoute = { channel: string; verb: string; target: string; utc_offset_minutes?: number | null; iana_timezone?: string | null; voice?: CommitmentReminderVoice | null };
+  type CommitmentReminderRouteReply = { route?: CommitmentReminderRoute | null };
+  type CommitmentReminderRouteSetRequest = { route?: CommitmentReminderRoute | null };
   type WebFetchRequest = { url: string };
   type RendererKind = "readability" | "headless" | "firecrawl";
   type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind };
@@ -94,7 +99,6 @@ declare namespace Sdk {
   type DiaryReviewAnswer = { request: string; approve: boolean };
   type OwnStandingBlockRequest = { world_ref: EntityId };
   type StandingBlockView = { handle: string; agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
-  type EmptyRequest = Record<string, never>;
   type StandingBlockEditRequest = { world_ref: EntityId; field: string; value: string; run_ref: string; evidence_refs?: EntityId[] };
   type StandingBlockEditReceipt = { handle: string; claim_ref: EntityId; field: string };
   type IdentityAnswerEvidenceRequest = { ask: string; choice: string; evidence_refs?: string[] };
@@ -683,7 +687,7 @@ declare namespace Sdk {
   type RetrievalTraceChannelRecord = { stage: RetrievalTraceStage; signal: RetrievalSignal; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTraceStageRecord = { stage: RetrievalTraceStage; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTrace = { fork_hash?: RetrievalTraceForkHash; per_channel: RetrievalTraceChannelRecord[]; fused: RetrievalTraceStageRecord; blended: RetrievalTraceStageRecord; reranked: RetrievalTraceStageRecord; final: RetrievalTraceStageRecord; fusion_list_length?: number };
-  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
+  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; query_expander_id?: string | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
   type RetrievalRewardEvidence = { retrievalRunIds: RetrievalRunId[]; turn_id: number[]; gate_score: number; confirmed_fact_hit: boolean; latency_scale_us: number; cost_weight: number };
   type RetrievalOutcomeRecord = { version: number; run_id: RetrievalRunId; key: string; reward?: number | null; accepted?: boolean | null; metadata: Record<string, string>; updated_at: number; reward_evidence?: RetrievalRewardEvidence | null };
   type RetrievalRunEvidence = { run: RetrievalRunRecord; outcomes: RetrievalOutcomeRecord[] };
@@ -1093,6 +1097,7 @@ declare namespace Sdk {
   type SkillCodeAutoInstallRequest = { enabled: boolean };
   type SkillFitChoice = "rule_fit" | "owner_asked";
   type SkillFitSetRequest = { setting: SkillFitChoice };
+  type SkillAdvisoryAskRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
   type SkillOptimizeStartRequest = { skill?: EntityId | null; resident?: EntityId | null; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type SkillGovernanceView = { entity: EntityId; skill_id: string; version: string; lifecycle: SkillLibraryLifecycle; verdict: string; tier?: string | null; protected: boolean; optimizable: boolean };
@@ -1442,6 +1447,8 @@ declare namespace Sdk {
   type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases";
+  type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number };
   type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
   type RetainedWorkWaitSetRequest = { queue: RetainedWorkQueue; secs?: number | null };
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
@@ -3013,8 +3020,9 @@ declare namespace Sdk {
   type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][]; presentation?: DeckPresentation };
   type DeckEmissionNames = { text: string; table: string; chart: string; picture: string; figure: string; sheet: string };
   type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null };
+  type CreatedInput = { source: ArtifactVersionRef; content_hash: number[]; provenance_kind: string };
   type CreatedSlide = { part: string; sld_id: number; page: string; layout: string };
-  type DeckCreationRecord = { artifact: EntityId; version: number; content_hash: number[]; outline: EntityId; outline_version: string; outline_hash: number[]; template: ArtifactVersionRef; template_hash: number[]; run_ref: string; made_by?: EntityId | null; slides: CreatedSlide[]; write_set: string[]; omitted: string[]; fit_unverified: [string, string, number][]; estimates: CreatedEstimate[]; created_at: number };
+  type DeckCreationRecord = { artifact: EntityId; version: number; content_hash: number[]; outline: EntityId; outline_version: string; outline_hash: number[]; template: ArtifactVersionRef; template_hash: number[]; asset_inputs: Record<string, CreatedInput>; font_inputs: CreatedInput[]; run_ref: string; made_by?: EntityId | null; slides: CreatedSlide[]; write_set: string[]; omitted: string[]; fit_unverified: [string, string, number][]; estimates: CreatedEstimate[]; created_at: number };
   type DeckEmissionOutcome = { state: "created"; record: DeckCreationRecord } | { state: "ask"; pages: string[] };
   type DeckInspectRequest = { artifact_ref: string; version?: number | null };
   type Digest = string;
@@ -3051,7 +3059,7 @@ declare namespace Sdk {
   type DeckTransactionRefusal = { kind: "invalid"; detail: string } | { kind: "base_changed" } | { kind: "not_editable" } | { kind: "step"; step: number; verb: string; refusal: DeckStepRefusal } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "package"; detail: string } | { kind: "deck"; detail: string };
   type DeckProposeRejection = { inspection: DeckRejectionInspection; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
-  type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null };
+  type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null; read_rows?: string[] };
   type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView };
   type ParagraphJudgment = { block: string; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null };
   type PptxReviewIdentity = { thread_id: EntityId; asked_by: EntityId; answered_by: EntityId; export_author_guid: string; export_author_name: string };
@@ -3296,7 +3304,7 @@ declare namespace Sdk {
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs" | "reasoning_summary";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost";
+  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string; code?: string | null } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
   type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string };
@@ -3330,7 +3338,7 @@ declare namespace Sdk {
   type AiReply = { reply: string; model: string; receipt_refs: string[]; l2_base?: AiReplyL2Base | null };
   type ContextReceiptFields = { persona_compile_stamp: string; activated_memory_ids: string[]; board_state_ref: string; substrate_ref?: string | null; model?: string | null; reasoning_effort?: string | null; prompt_input_ref?: string | null; disclosure_stamp?: string | null };
   type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields };
-  type ManifestKind = "skill_index" | "skill" | "actor_claim";
+  type ManifestKind = "skill_index" | "skill" | "actor_claim" | "workflow_context_row";
   type RevisionRef = number[];
   type ManifestEntry = { kind: ManifestKind; reference: string; version: string; at: number; revision?: [EntityId, RevisionRef] | null };
   type AsrOpenRequest = { utterance_id: string; scope?: RecallScope; fire_limit?: number | null; final_limit?: number | null; deadline_ms?: number | null };
@@ -5796,6 +5804,12 @@ declare const vault: Sdk.VaultHost & {
     proposals(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentWakeProposal[] | StoredResult>;
     /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
     release(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    reminder_route: {
+      /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.CommitmentReminderRouteReply | StoredResult>;
+      /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+      set(input: Sdk.CommitmentReminderRouteSetRequest): Promise<Sdk.CommitmentReminderRouteReply | StoredResult>;
+    };
     /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
     supersede(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
   };
@@ -7407,6 +7421,10 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skills: {
+    advisory_ask: {
+      /** The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way. */
+      set(input: Sdk.SkillAdvisoryAskRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
     /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
     archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     attribution: {
@@ -7578,6 +7596,10 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
   };
   sync: {
+    quarantine: {
+      /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+      held_edits(input: Sdk.EmptyRequest): Promise<[number, Sdk.SyncHeldEditEvidence][] | StoredResult>;
+    };
     retained_work: {
       wait: {
         /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */

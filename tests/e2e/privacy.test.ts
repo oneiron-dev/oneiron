@@ -1,11 +1,16 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { inflateRawSync } from "node:zlib";
+import { decode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
-import { EngineFixture } from "./support/engine.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpError } from "./support/clients.ts";
 import type { PublicHttpClient } from "./support/clients.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import type { McpClient } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import type { ProviderStep } from "./support/providers.ts";
 import { defineFile, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -14,7 +19,7 @@ const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
 
 // The suite-plan owns the IDs, registry rows and canon anchors. Bindings were
-// read at main 5ecd5af5bea2c70e25760f0583f276790f49fba4; they are not oracles.
+// read from the e2440c33 worktree. Source inspection is not runtime evidence.
 interface PrivacyFixtures {
   sharedBlobs: { names: [string, string]; versions: string[] };
   legalHold: {
@@ -31,7 +36,7 @@ interface PrivacyFixtures {
   };
 }
 
-type DeleteReceipt = FacadeResult<"vault.records.erase_confirm">["first"];
+type DeleteReceipt = Extract<FacadeResult<"vault.records.erase_confirm">, { first: unknown }>["first"];
 type Artifact = FacadeResult<"vault.artifacts.put">;
 
 interface RedactionAudit {
@@ -42,7 +47,13 @@ interface RedactionAudit {
   soft_complete_at: number;
   hard_purge_complete_at: number;
   sweep_queued_at: number | null;
+  sweep_deadline_at: number | null;
   sweep_complete_at: number | null;
+  erase_complete_at: number | null;
+  affected_revision_ids: string[];
+  custody_retirements: string[];
+  capture_failures?: unknown[];
+  verification: Record<string, string>;
 }
 
 // POST /v1/owner/maintain returns HousekeepingReport/SweepWork, not a job
@@ -97,6 +108,7 @@ async function eraseRecord(client: PublicHttpClient, record: string): Promise<De
   const outcome = await client.call("vault.records.erase_confirm", {
     record, preview_digest: preview.preview_digest, also_same_bytes: false,
   });
+  if (!("first" in outcome)) throw new Error("Erase confirm answered no first receipt");
   expect(outcome.first_act ?? null).toBeNull(); // Personal vault: no shared-owner veto.
   expect(outcome.same_bytes).toEqual([]); // Same-bytes fan-out was not requested.
   expect(outcome.first.existed).toBe(true);
@@ -122,10 +134,24 @@ async function readAudit(
   // Canon permits opaque IDs, times, the delete reason and attestation only.
   const allowed = new Set([
     "request_id", "scope", "reason", "requested_at", "soft_complete_at",
-    "hard_purge_complete_at", "sweep_queued_at", "sweep_complete_at",
-    "affected_revision_ids", "actor_ref", "room_ref", "room_role", "verification",
+    "hard_purge_complete_at", "sweep_queued_at", "sweep_deadline_at", "sweep_complete_at",
+    "affected_revision_ids", "actor_ref", "room_ref", "room_role", "erase_complete_at",
+    "custody_retirements", "capture_failures", "verification",
   ]);
   expect(Object.keys(body).every(key => allowed.has(key))).toBe(true);
+  for (const id of [...body.scope.entity_ids, ...body.scope.revision_ids, ...body.affected_revision_ids]) {
+    expect(id).toMatch(/^[a-f0-9]{32}$/i);
+  }
+  // These fixtures provoke no corrupt-CLAIM capture exception.
+  expect(body.capture_failures ?? []).toEqual([]);
+  for (const retirement of body.custody_retirements) {
+    expect(retirement).toMatch(/^[a-z0-9_]+\.[a-f0-9]{32}\.[a-f0-9]+$/i);
+  }
+  expect(Object.keys(body.verification).sort()).toEqual(["att_client", "att_pk", "att_sig", "att_v"]);
+  expect(body.verification.att_client).toMatch(/^[a-f0-9]{16}$/);
+  expect(body.verification.att_pk).toMatch(/^[a-f0-9]{64}$/);
+  expect(body.verification.att_sig).toMatch(/^[a-f0-9]{128}$/);
+  expect(body.verification.att_v).toBe("1");
   return body;
 }
 
@@ -164,70 +190,602 @@ async function finishHistoricalSweep(engine: EngineFixture): Promise<void> {
   await engine.artifacts.json("historical-sweep.json", reply.body);
 }
 
-// PRIVACY-01 — Archive restoration without erasure should work.
-// Canon: ARCH-0038 #harderase-v1, ARCH-0053 #r4-lifecycle; OF-449/OF-045.
-// Existing HTTP shapes (owner/cleanup.rs, openapi/owner_paths.rs):
-//   POST /v1/owner/cleanup
-//     {posture?: "propose_first" | "auto_with_digest", task_retention_days?: number}
-//   GET /v1/owner/cleanup -> {posture, task_retention_days,
-//     proposals: [{id, candidates: [{entity, kind}], impact}], digests,
-//     archived: [{entity, kind: "record" | "completed_attempt", archived_at?}]}
-//   POST /v1/owner/cleanup/accept {proposal: string} -> {proposal, archived, skipped, digest}
-//   POST /v1/owner/cleanup/restore {entity: string, kind?: string} -> review
-// Neither review nor maintain runs the Dreamer's archive cron. No typed run
-// door exists; manual restore is not the required re-mention restoration.
-// Continuation with privacy-scenarios.archive: create an old empty structure
-// and a nonempty protected one through their public creation verbs, trigger
-// cleanup, accept only the fixture's proposal if propose-first, and assert:
-// normal view omits only the empty record; archived view retains that same
-// ID/body; a public mention restores that ID, not a duplicate; protected
-// records stay normal; receipts contain no delete/erase act. Do not turn
-// auto on while the integrity prerequisite is open, or substitute a delete.
-suite.todo(test, "PRIVACY-01",
-  "waits on typed archive-cleanup run and re-mention restoration doors — Archive restoration without erasure should work");
 
-// PRIVACY-02 — Hard erase across public reads should work.
-// Canon: ARCH-0038 #harderase-v1; OF-013/OF-044/OF-283/OF-270.
-// Bound request/result types already exist:
-//   FacadeInput<"vault.records.erase_preview"> = {record: EntityId}
-//   FacadeInput<"vault.records.erase_confirm"> =
-//     {record: EntityId, preview_digest: string, also_same_bytes?: boolean}
-//   FacadeResult<"vault.records.erase_confirm"> = {first, first_act?, same_bytes}
-//   vault.get {entity_ref}, vault.hydrate {refs}, vault.recall
-//     {query, effort: "light", limit}, vault.search.bm25 {query, limit},
-//   vault.neighbors {entity_ref, opts: {limit}}, vault.refs.resolve {reference},
-//   vault.export {format: "archive"}; MCP tools carry these DTOs in arguments.spec.
-// The current redaction body has requested_at, hard_purge_complete_at and
-// sweep_queued_at, but no deadline. Do not manufacture a deadline by adding
-// 30 days to the engine's queued time. Source-linked summary creation also
-// lacks a typed fixture door: structural.put is not a summary-authoring API.
-// Continuation with privacy-scenarios.hardErase: use a pinned source citation,
-// a dependent claim/summary, the independent vector table and phonetic probe.
-// First prove each channel finds its fixture and the unrelated control.
-// Confirm erase, then immediately (NO awaitReceipt/poll/sweep before reads)
-// assert ID/hydrate, lexical/vector/phonetic/hybrid recall, edges, short ID,
-// MCP reads and every decompressed export member reveal no source or derived
-// text. The unrelated control must still work. Inspect an opaque-only audit
-// and the separately queued historical sweep's explicit <=30-day deadline.
-suite.todo(test, "PRIVACY-02",
-  "waits on typed source-linked summary creation and historical-sweep deadline read — Hard erase across public reads should work");
+function object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a public object");
+  }
+  return value as Record<string, unknown>;
+}
 
-// PRIVACY-03 — Erasure resists offline replay should work.
-// Canon: ARCH-0038 #harderase-v1, ARCH-0023b #two-planes; OF-282/OF-143.
-// Existing get/hydrate/recall/erase DTOs above are reusable. The missing
-// binding is authenticated document-key/fork sync, not a fabricated facade
-// verb such as sync.replay. A replay fixture must be captured from the real
-// same-build wire, including valid peer grants and acknowledgments.
-// Continuation with privacy-scenarios.offlineReplay: create source and every
-// entity-document fork, sync A/B, capture a valid B update, disconnect B,
-// erase at A, reconnect B and replay exactly that captured update. Hydrate
-// and recall must remain empty for the source AND every fork on both peers.
-// Observe the wire acknowledgment, restart A and repeat those public reads.
-// No tombstone/LMDB/Loro editing. The pinned plan assigns this file one slot;
-// EngineFixture.start({peers:1}) needs two. The coordinator must resolve that
-// declaration before enabling this multi-peer flow; this writer cannot edit it.
+// Read every central-directory entry, including binary file members. The
+// archive contract is ZIP; this small fresh vault uses neither ZIP64 nor encryption.
+function zipMembers(bytes: Buffer): Map<string, Buffer> {
+  let end = bytes.length - 22;
+  while (end >= Math.max(0, bytes.length - 65557)
+    && bytes.readUInt32LE(end) !== 0x06054b50) end--;
+  if (end < 0 || bytes.readUInt32LE(end) !== 0x06054b50) throw new Error("Missing ZIP directory");
+  expect(bytes.readUInt16LE(end + 4)).toBe(0);
+  expect(bytes.readUInt16LE(end + 6)).toBe(0);
+  const count = bytes.readUInt16LE(end + 10);
+  expect(count).toBeGreaterThan(0);
+  expect(count).not.toBe(0xffff);
+  let cursor = bytes.readUInt32LE(end + 16);
+  const members = new Map<string, Buffer>();
+  for (let index = 0; index < count; index++) {
+    expect(bytes.readUInt32LE(cursor)).toBe(0x02014b50);
+    const flags = bytes.readUInt16LE(cursor + 8);
+    const method = bytes.readUInt16LE(cursor + 10);
+    const size = bytes.readUInt32LE(cursor + 20);
+    const expandedSize = bytes.readUInt32LE(cursor + 24);
+    const nameSize = bytes.readUInt16LE(cursor + 28);
+    const extraSize = bytes.readUInt16LE(cursor + 30);
+    const commentSize = bytes.readUInt16LE(cursor + 32);
+    const local = bytes.readUInt32LE(cursor + 42);
+    const name = bytes.subarray(cursor + 46, cursor + 46 + nameSize).toString("utf8");
+    expect(flags & 1).toBe(0);
+    expect([0, 8]).toContain(method);
+    expect(bytes.readUInt32LE(local)).toBe(0x04034b50);
+    const start = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+    expect(start + size).toBeLessThanOrEqual(bytes.length);
+    const compressed = bytes.subarray(start, start + size);
+    const body = method === 8 ? inflateRawSync(compressed) : compressed;
+    expect(body.length).toBe(expandedSize);
+    expect(members.has(name)).toBe(false);
+    members.set(name, body);
+    cursor += 46 + nameSize + extraSize + commentSize;
+  }
+  return members;
+}
+
+// Export rows may wrap binary bodies in base64 or byte arrays. Inspect those
+// too, rather than searching only the JSONL spelling or the compressed ZIP.
+function exportedText(members: Map<string, Buffer>): string {
+  const strings = new Set<string>();
+  function bytes(value: Uint8Array): void {
+    const text = Buffer.from(value).toString("utf8");
+    if (strings.has(text)) return;
+    strings.add(text);
+    try { visit(decode(value)); } catch { /* A file need not be MessagePack. */ }
+    for (const line of text.split("\n")) {
+      try { visit(JSON.parse(line)); } catch { /* A member need not be JSONL. */ }
+    }
+  }
+  function visit(value: unknown): void {
+    if (typeof value === "string") {
+      if (strings.has(value)) return;
+      strings.add(value);
+      if (value.length >= 8 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+        const decoded = Buffer.from(value, "base64");
+        if (decoded.toString("base64") === value) bytes(decoded);
+      }
+    } else if (value instanceof Uint8Array) bytes(value);
+    else if (Array.isArray(value)) {
+      if (value.length && value.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        bytes(Uint8Array.from(value));
+      } else for (const item of value) visit(item);
+    } else if (value && typeof value === "object") {
+      for (const item of Object.values(value)) visit(item);
+    }
+  }
+  for (const [name, body] of members) { strings.add(name); bytes(body); }
+  return [...strings].join("\n");
+}
+
+async function exportMembers(client: PublicHttpClient): Promise<Map<string, Buffer>> {
+  const exported = await client.call("vault.export", { format: "archive", delivery: "inline" });
+  if (!("archive" in exported)) throw new Error("Inline export returned a transfer");
+  const bytes = Buffer.from(exported.archive, "base64");
+  expect(Buffer.from(blake3(bytes)).toString("hex")).toBe(exported.digest);
+  return zipMembers(bytes);
+}
+async function exportText(client: PublicHttpClient): Promise<string> {
+  return exportedText(await exportMembers(client));
+}
+
+function excludes(value: unknown, forbidden: readonly string[]): void {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  for (const content of forbidden) expect(text.includes(content)).toBe(false);
+}
+
+// Tool-first MCP verb envelope (BOOT-07 pattern): the schema_version const
+// comes from tools/list and consent is caller-declared; the verb input goes
+// under arguments.spec. A refused call proves nothing, so every MCP read
+// below asserts isError === false — including the post-erase exclusions.
+interface McpTool { name: string; inputSchema: { properties: { schema_version: { const: string } } } }
+interface McpTools { surfaceMode: string; tools: McpTool[] }
+interface McpToolResult { isError: boolean; structuredContent: unknown }
+function mcpArguments(tools: McpTools, name: string, spec: unknown): Record<string, unknown> {
+  const tool = tools.tools.find(item => item.name === name);
+  if (!tool) throw new Error(`Required public MCP tool not registered: ${name}`);
+  return { schema_version: tool.inputSchema.properties.schema_version.const,
+    consent: { policy_ref: "policy:privacy-session", purpose: "privacy hard-erase journey" },
+    arguments: { spec } };
+}
+async function mcpRead(mcp: McpClient, tools: McpTools, name: string, spec: unknown): Promise<unknown> {
+  const reply = await mcp.callTool(name, mcpArguments(tools, name, spec)) as McpToolResult;
+  expect(reply.isError).toBe(false);
+  return reply;
+}
+
+const receiptKinds = [
+  "outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle",
+  "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook",
+  "reference_refusal", "task_lifecycle",
+];
+async function allReceipts(client: PublicHttpClient) {
+  const rows: FacadeResult<"vault.receipts">["receipts"] = [];
+  let after: string | undefined;
+  do {
+    const page = await client.call("vault.receipts", { limit: 100, kinds: receiptKinds, ...(after === undefined ? {} : { after }) });
+    expect(page.undecodable).toBe(0);
+    rows.push(...page.receipts);
+    after = page.next_after ?? undefined;
+  } while (after !== undefined);
+  return rows.sort((a, b) => a.receipt_ref.localeCompare(b.receipt_ref));
+}
+
+function turn(conversation: string, text: string): FacadeInput<"vault.witness"> {
+  return {
+    conversation_ref: conversation, occurred_at: Math.floor(Date.now() / 1000),
+    messages: [{ author: "user", message_type: "text", content: text, is_visible: true, order: 0 }],
+  };
+}
+async function ownerRoom(engine: EngineFixture, title: string, name?: string, occurredAt?: number) {
+  return engine.client.call("vault.conversations.create", {
+    ...(occurredAt === undefined ? {} : { occurred_start: occurredAt, occurred_end: occurredAt }),
+    body: { v: 1, kind: "direct", member_ids: [engine.pairedActor.principalRef], title,
+      ...(name === undefined ? {} : { name }) },
+    text: [{ field: "title", value: title }],
+  });
+}
+
+async function anonymousPolicy(engine: EngineFixture, policyRow: string): Promise<void> {
+  const ownerPolicy = await engine.client.call("vault.policy.owner.get", {});
+  const shape = await engine.client.call("vault.shape.read", {});
+  const manifest = shape.live.rows.find(row => row.kind === "manifest"
+    && row.manifest_ref === ownerPolicy.manifest_ref);
+  if (!manifest || manifest.kind !== "manifest" || !manifest.body) {
+    throw new Error("Owner policy has no manifest in the public shape");
+  }
+  const body = object(decode(Buffer.from(manifest.body, "hex")));
+  const configured = {
+    ...body,
+    owner_policy_enabled: true,
+    owner_policy_rows: [{ row_ref: policyRow, text: "Do not reveal the ending of the fixture story.",
+      active: true, action: "block" }],
+    owner_policy_patterns: [{ id: "privacy.story-ending", pattern: "privacyanonymousblock",
+      category: policyRow, role: "decide" as const }],
+  };
+  const rows = shape.live.rows.map(row => row === manifest
+    ? { kind: "manifest" as const, manifest_ref: manifest.manifest_ref, json: configured }
+    : row);
+  const plan = await engine.client.call("vault.shape.plan", { seed: { rows } });
+  expect(plan.items.some(item => item.target.kind === "manifest"
+    && item.target.manifest_ref === manifest.manifest_ref)).toBe(true);
+  const applied = await engine.client.call("vault.shape.apply", {
+    plan, approve: plan.items.map(item => item.seq),
+  });
+  expect(applied.done).toBe(true);
+  for (const item of applied.items) expect(item.state.state).toBe("landed");
+  const readback = await engine.client.call("vault.policy.owner.get", {});
+  expect(readback.enabled).toBe(true);
+  expect(readback.configuration.owner_policy_patterns).toEqual(configured.owner_policy_patterns);
+}
+
+function dreamerConfig(providers: ScriptedProviders, summary = false): string {
+  return `
+[models]
+extraction_egress = true
+[models.providers.privacy]
+kind = "local-openai-compat"
+base_url = "${providers.urls.extraction}"
+revision = "e2e-v1"
+[models.roles.extraction_teacher]
+model = "privacy:privacy-extract"
+[models.providers.summary]
+kind = "local-openai-compat"
+base_url = "${providers.urls.summary ?? providers.urls.extraction}"
+revision = "e2e-v1"
+[models.roles.dreamer_current]
+model = "summary:privacy-summary"
+[models.dreamer]
+enabled = true
+${summary ? 'summary_prompt = "Summarize the admitted source text and retain its location fact."' : ""}
+[models.workflows]
+enabled = false
+`;
+}
+
+async function grantExtraction(engine: EngineFixture): Promise<void> {
+  // Public stopped-vault owner command. Do this before authoring any source,
+  // never by editing defaults, the vault, a lease or an engine clock on disk.
+  await engine.kill();
+  const grant = await engine.cli.run(["dreamer", "grant", "--config", `${engine.root}/oneiron.toml`,
+    "--extraction-route", "own_server"]);
+  expect(grant.exitCode).toBe(0);
+  await engine.restart();
+}
+async function extract(engine: EngineFixture, turnRef: string, providers: ScriptedProviders) {
+  const ticket = await engine.client.call("vault.memory.signal_extraction", { turn_refs: [turnRef] });
+  expect(ticket.job_refs.length).toBeGreaterThan(0);
+  providers.releaseBarrier("extract");
+  const results: NonNullable<FacadeResult<"vault.memory.signal_extraction.result">>[] = [];
+  for (const job_ref of ticket.job_refs) {
+    const result = await awaitPublic(
+      () => engine.client.call("vault.memory.signal_extraction.result", { job_ref }),
+      value => value?.job.state === "completed",
+      { label: "production signal extraction" },
+    );
+    if (!result) throw new Error("Completed extraction has no typed result");
+    expect(result.job.last_error ?? null).toBeNull();
+    results.push(result);
+  }
+  return results.flatMap(result => result.claims);
+}
+function turnId(receipt: FacadeResult<"vault.witness">): string {
+  if (!receipt.turn) throw new Error("Witness returned no typed TURN record");
+  return receipt.turn.id;
+}
+async function people(client: PublicHttpClient) {
+  const rows: FacadeResult<"vault.people.list">["people"] = [];
+  let page = 0;
+  for (;;) {
+    const result = await client.call("vault.people.list", { page });
+    rows.push(...result.people);
+    if (!result.more) return rows;
+    page++;
+  }
+}
+function exportedRecord(members: Map<string, Buffer>, id: string): Record<string, unknown> {
+  const matches: Record<string, unknown>[] = [];
+  for (const [path, bytes] of members) {
+    if (!path.endsWith(".jsonl")) continue;
+    for (const line of bytes.toString("utf8").split("\n").filter(Boolean)) {
+      const row = object(JSON.parse(line));
+      if (row.id === id && "entity_type" in row) matches.push(row);
+    }
+  }
+  expect(matches).toHaveLength(1);
+  return matches[0]!;
+}
+
+async function expectReferenceGone(client: PublicHttpClient, reference: string, forbidden: readonly string[]): Promise<void> {
+  try {
+    const result = await client.call("vault.refs.resolve", { reference });
+    excludes(result, forbidden);
+    expect(result.value.snippet ?? null).toBeNull();
+    expect(result.value.revision ?? null).toBeNull();
+    // A surviving opaque reference must not resolve back to a retained body.
+    expect((await client.call("vault.get", { entity_ref: reference })).value).toBeNull();
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    excludes(error.reply.body, forbidden);
+    expect([404, 422]).toContain(error.reply.status);
+    const code = error.error?.code;
+    if (code === undefined) throw error;
+    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(code);
+  }
+}
+
+// PRIVACY-01. The real extraction response mints eligible PERSON records;
+// ordinary owner-created PERSONs have no extraction provenance and are not candidates.
+suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<{ archive: {
+    occurredAt: number;
+    empty: { body: { name: string } }; protected: { body: { name: string }; claimText: string };
+    cleanup: { posture: "propose_first"; task_retention_days: number }; mention: string;
+  } }>("privacy-scenarios");
+  const spec = data.archive;
+  const names = [spec.empty.body.name, spec.protected.body.name];
+  redactor.add(...names, spec.protected.claimText);
+  const providers = await ScriptedProviders.start({ id: "privacy-archive", steps: [{
+    id: "eligible-people", origin: "extraction", role: "extraction_teacher", purpose: "extract witnessed people",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    response: openaiText("eligible-people", "privacy-extract", JSON.stringify({ candidates: [],
+      persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
+      { inputTokens: 128, outputTokens: 64 }),
+  }] });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
+    await grantExtraction(engine);
+    const room = await ownerRoom(engine, "Privacy archive source", undefined, spec.occurredAt);
+    const source = await engine.client.call("vault.witness", {
+      ...turn(room.id, `${names[0]}. ${names[1]}. ${spec.protected.claimText}`),
+      occurred_at: spec.occurredAt,
+    });
+    await extract(engine, turnId(source), providers);
+    const rows = await people(engine.client);
+    const empty = rows.filter(row => row.name === names[0]);
+    const protectedRows = rows.filter(row => row.name === names[1]);
+    expect(empty).toHaveLength(1);
+    expect(protectedRows).toHaveLength(1);
+    const emptyId = empty[0]!.person;
+    const protectedId = protectedRows[0]!.person;
+    const before = (await engine.client.call("vault.get", { entity_ref: emptyId })).value;
+    expect(before?.kind).toBe("PERSON");
+    expect(object(before?.body).name).toBe(spec.mention);
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const protection = await engine.client.call("vault.claims.upsert", {
+      subject_ref: protectedId, predicate: "privacy.archive_protection", value: spec.protected.claimText,
+      confidence: 1, source: "user_stated", scope,
+    });
+    expect(protection.approval).toBe("auto");
+    const protectedBefore = (await engine.client.call("vault.get", { entity_ref: protectedId })).value;
+    // Save the public, credential-nulled archive representation before the mark.
+    const storedBefore = exportedRecord(await exportMembers(engine.client), emptyId);
+    await engine.client.request("POST", "/v1/owner/cleanup", spec.cleanup);
+    const run = await engine.client.call("vault.cleanup.run", {});
+    expect(run.posture).toBe("propose_first");
+    expect(run.archived).toEqual([]);
+    expect(run.candidates.some(row => row.entity === emptyId)).toBe(true);
+    expect(run.candidates.some(row => row.entity === protectedId)).toBe(false);
+    if (!run.proposal) throw new Error("Eligible empty PERSON produced no cleanup proposal");
+    const review = await engine.client.call("vault.cleanup.review", { proposal: run.proposal });
+    const item = review.items.find(row => row.entity === emptyId);
+    expect(item?.evidence?.extraction_minted).toBe(true);
+    expect(item?.evidence?.live_claims).toBe(0);
+    expect(item?.content?.record?.value?.body).toEqual(before?.body);
+    const decided = await engine.client.call("vault.cleanup.decide", {
+      proposal: run.proposal, expected_revision: review.revision,
+      choices: review.items.map(row => ({ slot: row.slot,
+        decision: row.entity === emptyId ? "accept" : "reject" })),
+    });
+    expect(decided.items.find(row => row.entity === emptyId)?.outcome).toBe("archived");
+    expect((await engine.client.call("vault.get", { entity_ref: emptyId })).value).toBeNull();
+    expect((await engine.client.call("vault.get", { entity_ref: protectedId })).value).toEqual(protectedBefore);
+    const archived = await engine.client.request<{ archived: { entity: string; kind: string }[] }>(
+      "GET", "/v1/owner/cleanup",
+    );
+    expect(archived.body.archived).toContainEqual(expect.objectContaining({ entity: emptyId, kind: "record" }));
+    expect(archived.body.archived.some(row => row.entity === protectedId)).toBe(false);
+    const storedArchived = exportedRecord(await exportMembers(engine.client), emptyId);
+    expect(storedArchived.body).toEqual(storedBefore.body); // Same ID and retained body, not just a count.
+    // Author the resolver's actual confidence CLAIM only after the archive.
+    // Putting it on the empty PERSON before the pass would protect that PERSON.
+    const evidence = await engine.client.call("vault.claims.upsert", {
+      subject_ref: emptyId, predicate: "provider.enrichment", value: { provider: "privacy", name: spec.mention },
+      confidence: 0.99, source: "user_stated", scope,
+    });
+    expect(evidence.approval).toBe("auto");
+    if (!evidence.claim) throw new Error("Mention confidence claim has no typed record ref");
+    expect((await engine.client.call("vault.get", { entity_ref: emptyId })).value).toBeNull();
+    const stillArchived = await engine.client.request<{ archived: { entity: string }[] }>(
+      "GET", "/v1/owner/cleanup",
+    );
+    expect(stillArchived.body.archived.some(row => row.entity === emptyId)).toBe(true);
+    const mention = await engine.client.call("vault.entities.mention", {
+      candidates: [{ subject: emptyId, confidence_claim_ref: evidence.claim.id }],
+    });
+    expect(mention.selected).toBe(emptyId);
+    expect(mention.route).toBe("hard_link");
+    expect(mention.claims_suppressed).toBe(0);
+    expect((await engine.client.call("vault.get", { entity_ref: emptyId })).value?.body).toEqual(before?.body);
+    const after = await people(engine.client);
+    expect(after.filter(row => row.name === spec.mention).map(row => row.person)).toEqual([emptyId]);
+    expect((await engine.client.call("vault.get", { entity_ref: protectedId })).value).toEqual(protectedBefore);
+    const receipts = await allReceipts(engine.client);
+    expect(receipts.filter(row => /delete|erase/i.test([row.kind, row.outcome, ...row.reason_codes].join(" "))))
+      .toEqual([]);
+    expect(providers.seenFixtureCalls).toHaveLength(1);
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});
+
+// PRIVACY-02. The source is a real conversation containing a witnessed TURN.
+// Its name drives phonetic indexing; the production extractor and Dreamer
+// create the dependent CLAIM and SUMMARY, with their real source-version pins.
+suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<{ hardErase: {
+    sourceText: string; claimText: string; summaryText: string; unrelatedText: string;
+    phoneticName: string; phoneticQuery: string;
+    vectorTable: { dimensions: number; source: number[]; claim: number[]; summary: number[];
+      unrelated: number[]; query: number[] };
+    expected: { historicalSweepMaxSeconds: number };
+  } }>("privacy-scenarios");
+  const spec = data.hardErase;
+  const forbidden = [spec.sourceText, spec.claimText, spec.summaryText, spec.phoneticName];
+  redactor.add(...forbidden, spec.unrelatedText);
+  const providers = await ScriptedProviders.start({ id: "privacy-erase", steps: [{
+    id: "source-claim", origin: "extraction", role: "extraction_teacher", purpose: "extract cited location",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    response: openaiText("source-claim", "privacy-extract", JSON.stringify({
+      persons: [{ id: "new:P1", name: "Mira", evidence_turn_refs: ["T1"] }],
+      candidates: [{ subject: "new:P1", predicate: "privacy.location", value: spec.claimText,
+        confidence: 0.95, evidence_refs: [{ source: "T1", quote: spec.sourceText }] }],
+    }), { inputTokens: 128, outputTokens: 96 }),
+  }, {
+    id: "source-summary", origin: "summary", role: "dreamer_current", purpose: "summarize declared source",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary" },
+    response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
+      { inputTokens: 128, outputTokens: 48 }),
+  }] });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
+      initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
+    await grantExtraction(engine);
+    const source = await ownerRoom(engine, spec.sourceText, spec.phoneticName);
+    const witnessed = await engine.client.call("vault.witness", turn(source.id, spec.sourceText));
+    const sourceTurn = turnId(witnessed);
+    const extracted = await extract(engine, sourceTurn, providers);
+    const dependent = extracted.filter(row => row.claim.predicate === "privacy.location"
+      && row.claim.value === spec.claimText);
+    expect(dependent).toHaveLength(1);
+    const claim = dependent[0]!;
+    expect(claim.claim.source).toBe("generated");
+    expect(claim.sources.some(pin => pin.source_ref === sourceTurn)).toBe(true);
+    for (const pin of claim.sources) {
+      expect(pin.content_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(pin.messages.length).toBeGreaterThan(0);
+      for (const message of pin.messages) {
+        expect(message.revision).toMatch(/^[a-f0-9]{64}$/);
+        expect(message.byte_range[1]).toBeGreaterThan(message.byte_range[0]);
+      }
+    }
+    const queued = await engine.client.call("vault.summaries.create", {
+      scope: { conversation_ref: source.id, path: "canonical" },
+    });
+    const completed = await awaitPublic(
+      () => engine!.client.call("vault.summaries.status", { attempt: queued.attempt }),
+      value => value.state === "completed", { label: "source-linked SUMMARY" },
+    );
+    if (!completed.result) throw new Error("Completed summary has no result");
+    const summaryId = completed.result.summary;
+    const summary = await engine.client.call("vault.summaries.read", { summary_ref: summaryId });
+    expect(summary.value?.text).toBe(spec.summaryText);
+    expect(summary.value?.covers).toContain(sourceTurn);
+    expect(summary.value?.metadata.derivation.sources.some(pin => pin.id === sourceTurn)).toBe(true);
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const controlRoom = await ownerRoom(engine, spec.unrelatedText, "Copper Telescope");
+    const unrelated = await engine.client.call("vault.claims.upsert", {
+      subject_ref: controlRoom.id, predicate: "privacy.unrelated_control",
+      value: spec.unrelatedText, confidence: 1, source: "user_stated", scope,
+    });
+    expect(unrelated.approval).toBe("auto");
+    if (!unrelated.claim) throw new Error("Unrelated control has no typed record ref");
+    const controlId = unrelated.claim.id;
+    const targets = [source.id, claim.claim.claim_ref, summaryId];
+    for (const [entity_ref, vector] of [
+      [source.id, spec.vectorTable.source], [claim.claim.claim_ref, spec.vectorTable.claim],
+      [summaryId, spec.vectorTable.summary], [controlId, spec.vectorTable.unrelated],
+    ] as const) await engine.client.call("vault.vectors.put", { entity_ref, vector: [...vector] });
+    const sourceRow = (await engine.client.call("vault.get", { entity_ref: source.id })).value;
+    const claimRow = (await engine.client.call("vault.get", { entity_ref: claim.claim.claim_ref })).value;
+    const summaryRow = (await engine.client.call("vault.get", { entity_ref: summaryId })).value;
+    if (!sourceRow?.short_ref || !claimRow?.short_ref || !summaryRow?.short_ref) {
+      throw new Error("Created erase targets have no public short refs");
+    }
+    const hydratedBefore = await engine.client.call("vault.hydrate", { refs: [...targets, controlId] });
+    for (const id of [...targets, controlId]) expect(hydratedBefore.value.map(row => row.id_hex)).toContain(id);
+    for (const row of [sourceRow, claimRow, summaryRow]) {
+      expect((await engine.client.call("vault.refs.resolve", { reference: row.short_ref! })).value.record.id)
+        .toBe(row.id_hex);
+    }
+    const controlLexical = { query: spec.unrelatedText.split(":")[0]!, limit: 100 };
+    expect((await engine.client.call("vault.search.bm25", controlLexical)).value
+      .some(hit => hit.record?.id === controlId || hit.short_id === unrelated.claim_short_id)).toBe(true);
+    const lexicalQueries = [spec.sourceText.split(":")[0]!, spec.claimText.split(":")[0]!,
+      spec.summaryText.split(":")[0]!];
+    for (const [index, query] of lexicalQueries.entries()) {
+      const hits = await engine.client.call("vault.search.bm25", { query, limit: 100 });
+      expect(hits.value.some(hit => hit.record?.id === targets[index]
+        || hit.short_id === [sourceRow, claimRow, summaryRow][index]!.short_ref)).toBe(true);
+    }
+    const vectorBefore = await engine.client.call("vault.search.vector", { query: spec.vectorTable.query, limit: 100 });
+    for (const id of targets) expect(vectorBefore.value.hits.map(hit => hit.entity_ref)).toContain(id);
+    // Standard English Soundex, authored from Selina/Saleena Aurelium: S-L-N-R => S456.
+    // Only the public index key prefix is a transport binding, not an oracle.
+    expect(spec.phoneticName).toBe("Selina Aurelium");
+    expect(spec.phoneticQuery).toBe("Saleena Aurelium");
+    const phonetic = { phonetic_codes: ["en:soundex:S456"], limit: 100 } satisfies FacadeInput<"vault.search.hybrid">;
+    expect((await engine.client.call("vault.search.hybrid", phonetic)).value.map(hit => hit.entity_ref)).toContain(source.id);
+    // The unrelated room's independently named control has Soundex C163.
+    const controlPhonetic = { phonetic_codes: ["en:soundex:C163"], limit: 100 };
+    expect((await engine.client.call("vault.search.hybrid", controlPhonetic)).value.map(hit => hit.entity_ref))
+      .toContain(controlRoom.id);
+    expect((await engine.client.call("vault.search.vector", { query: spec.vectorTable.unrelated, limit: 100 }))
+      .value.hits.map(hit => hit.entity_ref)).toContain(controlId);
+    const hybrid = { ...phonetic, query: lexicalQueries.join(" "), query_vector: spec.vectorTable.query };
+    const hybridBefore = await engine.client.call("vault.search.hybrid", hybrid);
+    for (const id of targets) expect(hybridBefore.value.map(hit => hit.entity_ref)).toContain(id);
+    const packBefore = await engine.client.call("vault.recall", { query: "cobalt notebook", effort: "light", limit: 100 });
+    expect(packBefore.items.some(item => item.value_text.includes(spec.claimText))).toBe(true);
+    expect((await engine.client.call("vault.neighbors", { entity_ref: source.id, opts: { limit: 100 } })).value.length)
+      .toBeGreaterThan(0);
+    await engine.mcp.initialize();
+    const tools = await engine.mcp.request<McpTools>("tools/list");
+    expect(JSON.stringify(await mcpRead(engine.mcp, tools, "vault.get", { entity_ref: source.id }))).toContain(spec.sourceText);
+    const mcpHydrateBefore = await mcpRead(engine.mcp, tools, "vault.hydrate", { refs: [...targets, controlId] });
+    expect(JSON.stringify(mcpHydrateBefore)).toContain(spec.sourceText);
+    expect(JSON.stringify(mcpHydrateBefore)).toContain(spec.unrelatedText);
+    expect(JSON.stringify(await mcpRead(engine.mcp, tools, "vault.recall", {
+      query: "cobalt notebook", effort: "light", limit: 100,
+    }))).toContain(spec.claimText);
+    const exportedBefore = await exportText(engine.client);
+    for (const text of [...forbidden, spec.unrelatedText]) expect(exportedBefore.includes(text)).toBe(true);
+    expect((await engine.client.call("vault.recall", { query: "privacyeraseunrelated", effort: "light", limit: 100 }))
+      .items.some(item => item.value_text.includes(spec.unrelatedText))).toBe(true);
+    const controlNeighbors = (await engine.client.call("vault.neighbors", { entity_ref: controlId, opts: { limit: 100 } })).value;
+    expect(controlNeighbors.length).toBeGreaterThan(0);
+    const controlBefore = (await engine.client.call("vault.get", { entity_ref: controlId })).value;
+    expect(controlBefore).not.toBeNull();
+    const receipt = await eraseRecord(engine.client, source.id);
+    expect(receipt.state).toBe("applied");
+    // No poll, receipt read or sweep may precede any of these active-store reads.
+    const allIds = [...targets, sourceTurn, ...(witnessed.messages ?? []).map(row => row.id)];
+    for (const entity_ref of allIds) {
+      expect((await engine.client.call("vault.get", { entity_ref })).value).toBeNull();
+    }
+    expect((await engine.client.call("vault.hydrate", { refs: allIds })).value).toEqual([]);
+    for (const query of lexicalQueries) {
+      expect((await engine.client.call("vault.search.bm25", { query, limit: 100 })).value).toEqual([]);
+    }
+    const vectorAfter = await engine.client.call("vault.search.vector", { query: spec.vectorTable.query, limit: 100 });
+    for (const id of allIds) expect(vectorAfter.value.hits.map(hit => hit.entity_ref)).not.toContain(id);
+    expect((await engine.client.call("vault.search.hybrid", phonetic)).value).toEqual([]);
+    for (const spec of [hybrid, { query: "cobalt notebook", limit: 100 }]) {
+      const hits = await engine.client.call("vault.search.hybrid", spec);
+      for (const id of allIds) expect(hits.value.map(hit => hit.entity_ref)).not.toContain(id);
+      excludes(hits, forbidden);
+    }
+    const packAfter = await engine.client.call("vault.recall", { query: "cobalt notebook", effort: "light", limit: 100 });
+    excludes(packAfter, forbidden);
+    for (const id of allIds) expect(packAfter.items.map(item => item.record?.id)).not.toContain(id);
+    expect((await engine.client.call("vault.neighbors", { entity_ref: source.id, opts: { limit: 100 } })).value).toEqual([]);
+    for (const row of [sourceRow, claimRow, summaryRow]) {
+      await expectReferenceGone(engine.client, row.short_ref!, forbidden);
+    }
+    for (const [name, spec] of [
+      ["vault.get", { entity_ref: source.id }], ["vault.hydrate", { refs: allIds }],
+      ["vault.recall", { query: "cobalt notebook", effort: "light", limit: 100 }],
+    ] as const) excludes(await mcpRead(engine.mcp, tools, name, spec), forbidden);
+    expect((await engine.client.call("vault.get", { entity_ref: controlId })).value).toEqual(controlBefore);
+    expect((await engine.client.call("vault.recall", { query: "privacyeraseunrelated", effort: "light", limit: 100 }))
+      .items.some(item => item.value_text.includes(spec.unrelatedText))).toBe(true);
+    expect((await engine.client.call("vault.search.vector", { query: spec.vectorTable.unrelated, limit: 100 }))
+      .value.hits.map(hit => hit.entity_ref)).toContain(controlId);
+    expect((await engine.client.call("vault.search.hybrid", controlPhonetic)).value.map(hit => hit.entity_ref))
+      .toContain(controlRoom.id);
+    expect((await engine.client.call("vault.search.bm25", controlLexical)).value
+      .some(hit => hit.record?.id === controlId || hit.short_id === unrelated.claim_short_id)).toBe(true);
+    expect((await engine.client.call("vault.neighbors", { entity_ref: controlId, opts: { limit: 100 } })).value)
+      .toEqual(controlNeighbors);
+    expect(JSON.stringify(await mcpRead(engine.mcp, tools, "vault.get", { entity_ref: controlId })))
+      .toContain(spec.unrelatedText);
+    const exported = await exportText(engine.client);
+    excludes(exported, forbidden);
+    expect(exported.includes(spec.unrelatedText)).toBe(true);
+    await readAudit(engine.client, receipt.receipt_ref, source.id, forbidden);
+    if (!receipt.receipt_ref) throw new Error("Erase has no redaction receipt");
+    const sweep = await engine.client.call("vault.records.erase_sweep", { receipt_ref: receipt.receipt_ref });
+    if (!sweep || sweep.deadline_at == null || sweep.sweep_queued_at == null) {
+      throw new Error("Erase has no recorded historical-sweep deadline and queue time");
+    }
+    expect(sweep.deadline_at).toBeGreaterThanOrEqual(sweep.requested_at);
+    expect(sweep.deadline_at - sweep.requested_at).toBeLessThanOrEqual(spec.expected.historicalSweepMaxSeconds);
+    await finishHistoricalSweep(engine);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary")).toHaveLength(1);
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});
+
+// PRIVACY-03. ARCH-0038 #harderase-v1 and ARCH-0023b #two-planes.
+// Keep the full replay scenario: capture a valid same-build peer update with
+// grants and ACKs, disconnect B, erase at A, reconnect and replay that exact
+// update. Source and every document fork must stay absent on both peers,
+// before and after restart. No raw WS counterfeit or private storage edits.
+// WsClient handles app RPC, not entity-document sync. EngineFixture.peers
+// creates independent vaults, not enrolled copies of one vault. This file's
+// one slot is unchanged; increasing it would not supply either missing setup.
 suite.todo(test, "PRIVACY-03",
-  "waits on typed entity-document/fork sync replay and a two-slot peer allocation — Erasure resists offline replay should work");
+  "waits on typed HTTP+SDK entity-document/fork sync replay with ACK observation and genuine same-vault peer enrolment setup; slots remain 1. Erasure resists offline replay should work");
 
 suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should work", async () => {
   const catalog = await loadFixtures();
@@ -324,7 +882,21 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     const narrow = await engine.pairActor({
       principalRef: engine.pairedActor.principalRef, actorClass: "human", scope: ["core:read"],
     });
-    const liftInput = { records: [record.id_hex] } satisfies FacadeInput<"vault.legal_holds.lift_and_erase">;
+    const standing = await engine.client.call("vault.legal_holds.list", {});
+    const shown = standing.find(row => row.hold_id === hold.hold_id);
+    if (!shown) throw new Error("Placed hold is not standing");
+    const liftInput = {
+      records: [record.id_hex],
+      shown_state: {
+        title: "Lift the hold and erase?",
+        prompt: "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.",
+        records: [record.id_hex],
+        holds: [{
+          hold_id: shown.hold_id, targets: shown.targets, placed_by: shown.placed_by ?? null,
+          placed_at: shown.placed_at, matter_ref: shown.matter_ref ?? null,
+        }],
+      },
+    } satisfies FacadeInput<"vault.legal_holds.lift_and_erase">;
     const denied = await narrow.client.raw("POST", "/v1/core/facade/vault.legal_holds.lift_and_erase", liftInput);
     expect(denied.status).toBe(spec.expected.unprivilegedLiftStatus);
     const stillHeld = await engine.client.call("vault.legal_holds.list", {});
@@ -357,92 +929,170 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
   }
 });
 
-// PRIVACY-06 — Off-record session discard should work.
-// Canon: ARCH-0052 #target, ARCH-0032 #writers, ARCH-0069 #handles; OF-326/OF-597.
-// Existing owner HTTP shapes (owner/off_record.rs):
-//   POST /v1/owner/off-record {session_ref, mode: "off_record", backend: "local"}
-//   POST /v1/owner/off-record/witness {session_ref, turn: WitnessTurn, summary?}
-//   GET /v1/owner/off-record?session_ref=... ->
-//     {session_ref, mode, backend, entered_at, promoted_turns, closing}
-//   POST /v1/owner/off-record/close {session_ref} ->
-//     {session_ref, turns_dropped, context_receipts_dropped,
-//      emit_receipts_dropped, emit_receipts_kept, promoted_turns_kept}
-// x-oneiron-session already binds receipt/reference-refusal context; it is
-// NOT proof that vault.recall/claims/notes or an MCP executor uses the overlay.
-// No shipped typed route binds a run to the session. Do not send ordinary
-// durable note/claim/tool writes with that header and call them off-record.
-// Continuation with privacy-scenarios.overlay: witness durable memory first,
-// enter off-record, then bind note, claim and spilling MCP tool-output writes
-// to the session. Own union reads must find base AND overlay; ordinary owner
-// reads must find base only. Decode a real full-vault export, backup and sync
-// capture while the session is LIVE and assert no overlay/spill body bytes.
-// Close without saving, restart, assert session-not-found, absent overlay
-// content/receipts/spill handles, and unchanged durable memory. No floor event
-// is provoked here, so there is no floor-receipt exception to those assertions.
+// PRIVACY-06. ARCH-0052 #target, ARCH-0032 #writers and ARCH-0069 #handles.
+// Session-bound start/witness/notes.create/claims.upsert/recall/discard now
+// have generated HTTP+SDK types. self.off_record.execute genuinely owns a
+// session-bound production code run; an unowned self.run.attach is not setup.
+// Do not replace the original scenario with a note-only discard test. It
+// needs durable base + overlay union reads, an actual spilling MCP output,
+// and decoded full export, backup AND authenticated sync captures while the
+// overlay is LIVE. All three carriers must contain zero overlay/spill bytes.
+// Close without saving, restart, then prove session-not-found, absent overlay
+// bodies/receipts/spill handles and unchanged durable memory. No floor event
+// is provoked, so no floor-receipt exception applies here.
+// The public session calls do not provide a typed sync-carrier capture or
+// same-vault receiver. App WS RPC or a second independent vault proves neither.
 suite.todo(test, "PRIVACY-06",
-  "waits on typed session-bound note/claim/MCP executor and union-read doors — Off-record session discard should work");
+  "waits on typed HTTP+SDK authenticated sync-carrier capture and same-vault receiver setup for the LIVE overlay/spill exclusion assertion; session write/read/execute doors exist. Off-record session discard should work");
 
-// PRIVACY-07 — Off-record save from the middle should work.
-// Canon: ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings; OF-326.
-// HTTP already exists in api/off_record_rooms.rs; generated FacadeInputs and
-// SDKs do NOT yet name these calls. G01 forbids replacing their typed SDK
-// calls with arbitrary facade names or an execute_code escape hatch.
-// Current typed HTTP request/result design to carry into that projection:
-//   Start = {room: EntityId, session_ref: string, backend: "local" | "remote_provider"}
-//   Stretch = {room: EntityId, session_ref: string}
-//   Witness = Stretch & {turn: WitnessTurn, summary?: string | null}
-//   Room = {session_ref, room, started_by, mode, backend, entered_at, closing,
-//     notices: [{act, by, at}], waiting_suggestions: [{by, at}]}
-//   Saved = {saved: [{turn, replayed: EntityId[], short_ids: [{room, vault}]}]}
-//   Export = {session_ref, room, exported_at,
-//     turns: [{turn, speaker, occurred_at, saved, messages}]}
-// POST /v1/core/off-record/start -> Room; /witness -> WitnessReceipt;
-// /save and /confirm-save -> Saved; /save-from-here, /suggest-save and
-// /decline-save -> Room; /export -> Export attachment; GET -> Room (NO talk).
-// No request names a destination vault. Credentials/grants/roster are separate.
-// Continuation with privacy-scenarios.room, one room and FOUR own credentials:
-// 1. Person holder starts; speak only in live membership windows. A propose-only
-//    agent suggests; assert zero persisted turns, and waiting_suggestions.
-// 2. Decline as a holder, assert zero writes and content-free save_declined;
-//    suggest again, confirm as a holder, then assert only visible full turns
-//    persist. Hidden reasoning, summaries and out-of-window speech stay out.
-// 3. Person holder and vault-agent holder EACH save a new whole-talk segment
-//    and EACH use save-from-here; only subsequent admitted turns land in base.
-//    Saving authority is the LIVE vault write grant, never human versus agent.
-// 4. Human guest exports only their visible talk as an attachment, writes no
-//    vault and gets 403 attempting save. Propose-only agent's save gets 403.
-// 5. Revoke saver write grant OR leave, then witness. The lapse refuses that
-//    landing, later speech stays off-record and saving_stopped names the act.
-//    Rejoin/regrant without a new save-from-here MUST NOT resume persistence.
-//    Read public base data after every boundary, not just save responses.
-// 6. Notices name actor+act+time only, never quote content; close removes the
-//    notices. This multi-person room is NOT the quiet companion 1:1 exception.
+// PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
+// rooms.start/witness/status/save/save_from_here/suggest_save/confirm_save/
+// decline_save/export all have generated HTTP+SDK types now. Export attachment
+// headers are on POST /v1/core/off-record/export, not on the facade JSON reply.
+// Preserve one room and four genuine credentials: a person holder, a vault
+// agent holder, a propose-only agent and a human guest with no save grant.
+// A suggestion or decline saves nothing; each holder must save whole visible
+// turns AND save from here. Exclude hidden reasoning, temporary summaries and
+// out-of-window speech. Guest export writes no vault; guest/ proposer save =403.
+// The missing step is an actual live saver-grant loss or room leave and then
+// regrant/rejoin without restarting the stretch. Next landing must not save;
+// later speech stays off record, saving_stopped names the act, and rejoining
+// alone must not resume it. Check base after every boundary, not just replies.
+// The SDK has join/invite/consent but no room-leave verb. members.change/remove
+// changes shared-vault membership, not room membership. In the four-personal-
+// vault-credential setup the human saver is the owner; the last owner cannot
+// be demoted. agents.grants.revoke does not revoke the actor binding used by
+// is_vault_agent_in. token revoke is a stopped-vault CLI act, which would
+// evaporate this live stretch. No raw leave route, fake saver or fifth actor
+// is substituted. Once that setup exists, also assert content-free notices
+// {act,by,at}, guest-only visible attachment talk, and notice removal at close.
 suite.todo(test, "PRIVACY-07",
-  "waits on generated typed off-record room save/suggest/export SDK calls — Off-record save from the middle should work");
+  "waits on a named typed HTTP+SDK live room-leave or saver-grant revoke/regrant setup for the four real participants; existing room save/suggest/export DTOs are not the blocker. Off-record save from the middle should work");
 
-// PRIVACY-08 — Anonymous chat has no memory should work.
-// Canon: OF-500, ARCH-0040 #mcp-actor-ceilings; G10 is RULED B, not unresolved.
-// api/anonymous_chat.rs already serves POST /v1/ai/anonymous-chat outside
-// idempotency/wire receipts. It has no generated typed SDK call or OpenAPI
-// operation yet. Preserve its real DTO, not an invented anonymous facade:
-//   Request = {text: string, target?: "house_mind" | "plain_model", model?: ModelId}
-//   Reply = {type: "reply", content, notices, skipped_checks, model_notices}
-//   Block = {type: "blocked", input: boolean, notice, preceding_notices,
-//     reason: "policy" | "human_review_unavailable", model_notices}
-// Each notice has audience=user_and_model and an explained policy row. This
-// response explanation is ephemeral: it does NOT justify any durable receipt.
-// Continuation with privacy-scenarios.anonymous: author a deterministic owner
-// policy via vault.shape.plan/apply and public manifest data, route the real
-// model wire to ScriptedProviders (two independent single-turn responses),
-// retain separate normal memory, send the unique anonymous input, and make a
-// NEW request with followUp. Inspect provider inputs: no previous anonymous
-// text and no durable memory may enter that new request. Do not treat the
-// fake model's answer as proof of forgetting. Search memory/receipt surfaces
-// and decoded export content for input/output sentinels; assert NONE, then
-// provoke the fixture policy block and inspect both user/model notice channels.
-// No input reaches the responder on an input block. Search/export again after
-// block and restart. Normal session memory stays retrievable throughout.
-// G10: ZERO anonymous transcript, memory, telemetry or receipts, including
-// hash-only safety receipts. No owner-question TODO and no promotion/flip.
-suite.todo(test, "PRIVACY-08",
-  "waits on typed anonymous-chat OpenAPI and SDK call — Anonymous chat has no memory should work");
+// PRIVACY-08. ARCH-0052 anonymous mode and G10=B require zero durable
+// records, including hash-only safety receipts. Script only the external model wire.
+suite.test(test, "PRIVACY-08", "Anonymous chat has no memory should work", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<{
+    anonymous: { input: string; followUp: string; normalText: string; blockedInput: string;
+      policyRow: string; modelReplies: [string, string] };
+  }>("privacy-scenarios");
+  const spec = data.anonymous;
+  const privateText = [spec.input, spec.followUp, spec.blockedInput, ...spec.modelReplies];
+  redactor.add(...privateText, spec.normalText);
+  const providers = await ScriptedProviders.start({
+    id: "privacy-anonymous",
+    steps: spec.modelReplies.map((reply, index): ProviderStep => ({
+      id: `anonymous-${index + 1}`, origin: "responder", role: "generative_reasoner",
+      purpose: "standalone anonymous reply",
+      request: { method: "POST", path: "/v1/chat/completions", model: "privacy-anonymous" },
+      response: openaiText(`anonymous-${index + 1}`, "privacy-anonymous", reply,
+        { inputTokens: 32, outputTokens: 16 }),
+    })),
+  });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "PRIVACY-08", profile, serverConfig: `
+[models.providers.privacy]
+kind = "local-openai-compat"
+base_url = "${providers.urls.responder}"
+revision = "e2e-v1"
+[models.roles.generative_reasoner]
+model = "privacy:privacy-anonymous"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+` });
+    await engine.requireHttpDoor("/v1/ai/anonymous-chat", "POST");
+    await engine.requireHttpDoor("/v1/core/facade/ai.anonymous_chat", "POST");
+    await anonymousPolicy(engine, spec.policyRow);
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const normal = await engine.client.call("vault.claims.upsert", {
+      subject_ref: engine.pairedActor.principalRef, predicate: "privacy.normal_memory",
+      value: spec.normalText, confidence: 1, source: "user_stated", scope,
+    });
+    expect(normal.approval).toBe("auto");
+    const normalRow = await engine.client.call("vault.get", { entity_ref: normal.claim_short_id });
+    expect(normalRow.value).not.toBeNull();
+    const baselineReceipts = await allReceipts(engine.client);
+    const baselineTelemetry = await engine.client.call("vault.retrieval.runs", { limit: 100 });
+    const requestIds: string[] = [];
+    async function chat(text: string) {
+      const input = { text, target: "house_mind" } satisfies FacadeInput<"ai.anonymous_chat">;
+      const reply = await engine!.client.request<FacadeResult<"ai.anonymous_chat">>(
+        "POST", "/v1/ai/anonymous-chat", input,
+      );
+      expect(reply.headers.get("cache-control")).toBe("no-store");
+      expect(reply.headers.get("x-oneiron-receipt-ref")).toBe("none; no-record");
+      const requestId = reply.headers.get("x-request-id");
+      if (!requestId) throw new Error("Anonymous response has no request id");
+      requestIds.push(requestId);
+      return reply.body;
+    }
+    const first = await chat(spec.input);
+    if (first.type !== "reply") throw new Error("Ordinary anonymous turn was blocked");
+    expect(first.content).toBe(spec.modelReplies[0]);
+    expect(first.skipped_checks).toEqual([]);
+    const second = await chat(spec.followUp);
+    if (second.type !== "reply") throw new Error("Independent anonymous turn was blocked");
+    expect(second.content).toBe(spec.modelReplies[1]);
+    expect(second.skipped_checks).toEqual([]);
+    const calls = providers.seenFixtureCalls;
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[0]!.body)).toContain(spec.input);
+    expect(JSON.stringify(calls[1]!.body)).toContain(spec.followUp);
+    excludes(calls[0]!.body, [spec.normalText]);
+    excludes(calls[1]!.body, [spec.input, spec.modelReplies[0], spec.normalText]);
+    // These reads do not search for secret text. A test probe containing it
+    // would itself be a normal recorded request, invalidating the export check.
+    expect(await allReceipts(engine.client)).toEqual(baselineReceipts);
+    expect(await engine.client.call("vault.retrieval.runs", { limit: 100 })).toEqual(baselineTelemetry);
+    const forbidden = [...privateText, ...privateText.flatMap(text => [
+      createHash("sha256").update(text).digest("hex"),
+      Buffer.from(blake3(new TextEncoder().encode(text))).toString("hex"),
+    ])];
+    excludes(await exportText(engine.client), forbidden);
+    const blockReceipts = await allReceipts(engine.client);
+    const blockTelemetry = await engine.client.call("vault.retrieval.runs", { limit: 100 });
+    const blocked = await chat(spec.blockedInput);
+    if (blocked.type !== "blocked") throw new Error("Owner's story-ending policy did not block");
+    expect(blocked.input).toBe(true);
+    expect(blocked.reason).toBe("policy");
+    expect(blocked.notice.audience).toBe("user_and_model");
+    expect(blocked.notice.row_ref).toBe(spec.policyRow);
+    expect(blocked.notice.body.length).toBeGreaterThan(0);
+    expect(blocked.model_notices).toContainEqual(blocked.notice);
+    expect(providers.seenFixtureCalls).toHaveLength(2); // Input block never reaches the responder.
+    expect(await allReceipts(engine.client)).toEqual(blockReceipts);
+    expect(await engine.client.call("vault.retrieval.runs", { limit: 100 })).toEqual(blockTelemetry);
+    for (const id of requestIds) {
+      expect(await engine.client.call("vault.receipts.get", { receipt_ref: `call:${id}` })).toBeNull();
+    }
+    async function memoryAndExport() {
+      const found = await engine!.client.call("vault.recall", {
+        query: "privacynormalmemory", effort: "light", limit: 10,
+      });
+      expect(found.items.some(item => item.value_text.includes(spec.normalText))).toBe(true);
+      // BM25 matches tokens, not arbitrary prefixes of the fixture markers.
+      // Probe the exact unique input tokens, not the complete secret sentences.
+      for (const query of [spec.input, spec.blockedInput].map(text => text.split(":")[0]!)) {
+        const absent = await engine!.client.call("vault.search.bm25", { query, limit: 100 });
+        expect(absent.value).toEqual([]);
+      }
+      expect((await engine!.client.call("vault.get", { entity_ref: normal.claim_short_id })).value)
+        .toEqual(normalRow.value);
+      excludes(await exportText(engine!.client), forbidden);
+    }
+    await memoryAndExport();
+    // Snapshot again after the suite's own ordinary reads and export, before restart.
+    const beforeRestartReceipts = await allReceipts(engine.client);
+    const beforeRestartTelemetry = await engine.client.call("vault.retrieval.runs", { limit: 100 });
+    await engine.restart();
+    expect(await allReceipts(engine.client)).toEqual(beforeRestartReceipts);
+    expect(await engine.client.call("vault.retrieval.runs", { limit: 100 })).toEqual(beforeRestartTelemetry);
+    await memoryAndExport();
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});

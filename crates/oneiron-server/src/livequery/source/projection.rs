@@ -39,8 +39,12 @@ impl LiveQuerySource for BoundSource {
             serde_json::from_value(view.filter.clone().unwrap_or_else(|| json!({})))
                 .map_err(|_| AppError::bad_request("invalid scoped view filter", Some("filter")))?;
         let limit = match channel {
-            // Read in scoped pages with a continuation: any count (FIX 8859).
-            Channel::Receipts | Channel::PendingConsent => facade_count(filter.limit, 100)?,
+            // Read any count: receipts/consent in scoped pages with a continuation
+            // (FIX 8859); notifications in one inbox page that already loops to the
+            // whole limit (FIX 13283).
+            Channel::Receipts | Channel::PendingConsent | Channel::Notifications => {
+                facade_count(filter.limit, 100)?
+            }
             _ => facade_limit(filter.limit, 100)?,
         };
         if channel != Channel::View

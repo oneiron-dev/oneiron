@@ -10,7 +10,8 @@ use super::assembly::SealContext;
 /// is not emitted in v1 (§7.5 step 5).
 pub(crate) struct DssMaterial {
     pub certs_der: Vec<Vec<u8>>,
-    pub ocsps_der: Vec<Vec<u8>>,
+    /// OCSP responses keep the fetch's own admitted bytes until DSS serialization.
+    pub ocsps_der: Vec<SharedBytes>,
     /// Each CRL is its fetch's own admitted bytes, held with their
     /// reservation until the DSS is written, and read in place (FIX 7655).
     pub crls_der: Vec<SharedBytes>,

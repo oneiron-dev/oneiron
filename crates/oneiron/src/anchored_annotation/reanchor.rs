@@ -324,6 +324,70 @@ pub(super) fn col_to_letters(mut col: u32) -> String {
 }
 
 impl Vault {
+    /// Direct HTML appends move only HTML anchors from the previous HEAD.
+    /// Keep and edit settlement keep their existing behavior and results.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn reanchor_html_append_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        media_type: &str,
+        from_version: u64,
+        to_version: u64,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        if !matches!(
+            super::anchor_text::UnitFormat::from_media_type(media_type),
+            Some(super::anchor_text::UnitFormat::Html)
+        ) {
+            return Ok(());
+        }
+        self.require_anchor_version_in_txn(wtxn, artifact_id, to_version)?;
+        let threads = self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)?;
+        let html = super::recovery::HtmlReanchor::load(
+            self,
+            wtxn,
+            artifact_id,
+            from_version,
+            to_version,
+            &threads,
+        )?;
+        for thread in threads {
+            if thread.is_drifted()
+                || thread.anchor.version != from_version
+                || !matches!(thread.anchor.locator, Locator::Html { .. })
+            {
+                continue;
+            }
+            let (head, drifted) = plan_reanchored_head(
+                &thread,
+                from_version,
+                to_version,
+                &[],
+                None,
+                None,
+                html.as_ref(),
+            );
+            if drifted {
+                self.record_detached_in_txn(wtxn, artifact_id, &thread, to_version, learned_at)?;
+            } else {
+                self.record_prior_anchor_in_txn(wtxn, artifact_id, &thread, to_version)?;
+            }
+            self.apply_reanchor_head_in_txn(
+                wtxn,
+                artifact_id,
+                &thread,
+                &head,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Re-anchors every live, non-drifted thread on the artifact whose anchor
     /// resolves against `from_version`, replaying `ops` (the edit-manifest for
     /// the `from_version → to_version` bump).
