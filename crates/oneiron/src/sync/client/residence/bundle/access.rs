@@ -234,12 +234,31 @@ async fn serve_generation(
     // The current object, opened here: with this machine's capsule, or
     // a grant it holds itself.
     let mut grants = Vec::new();
-    if vault.open_key_pads(&pads).is_err() {
-        grants.extend(own_grant(vault, rpc, &pads, asks).await?);
+    let mut resource_error = None;
+    if let Err(error) = vault.open_key_pads(&pads) {
+        if opening_out_of_memory(&error) {
+            resource_error = Some(error);
+        }
+        match own_grant(vault, rpc, &pads, asks).await {
+            Ok(grant) => grants.extend(grant),
+            Err(OwnGrantError::Resource(error)) => {
+                resource_error.get_or_insert(error);
+            }
+            Err(OwnGrantError::Transport(error)) => return Err(error),
+        }
     }
     let sealed: Vec<SealedPadAdmissionGrant> = {
-        let Ok(opened) = vault.open_key_pads_to_erase(&pads, None, &grants) else {
-            return Ok(0);
+        let opened = match vault.open_key_pads_to_erase(&pads, None, &grants) {
+            Ok(opened) => opened,
+            Err(error) => {
+                if opening_out_of_memory(&error) {
+                    resource_error.get_or_insert(error);
+                }
+                return match resource_error {
+                    Some(error) => Err(storage(error)),
+                    None => Ok(0),
+                };
+            }
         };
         // A target this machine does not stand as the owner's under that
         // key stays pending.
@@ -277,6 +296,21 @@ async fn offer(
         .is_ok())
 }
 
+pub(super) enum OwnGrantError {
+    Resource(Error),
+    Transport(TransportError),
+}
+
+impl From<TransportError> for OwnGrantError {
+    fn from(error: TransportError) -> Self {
+        Self::Transport(error)
+    }
+}
+
+pub(super) fn opening_out_of_memory(error: &Error) -> bool {
+    matches!(error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory)
+}
+
 /// This machine's usable grant of `pads`, a kept generation's current pad
 /// object, from the home: addressed to it under its current key, issued by
 /// authority here, and its key opens the object. A generation with none is
@@ -286,7 +320,7 @@ pub(super) async fn own_grant(
     rpc: &mut ResidenceRpc,
     pads: &SealedKeyPads,
     asks: &mut OwnAsks,
-) -> Result<Option<SealedPadAdmissionGrant>, TransportError> {
+) -> Result<Option<SealedPadAdmissionGrant>, OwnGrantError> {
     let me = vault.pad_admission_self_target().map_err(storage)?;
     let generation = pads.generation();
     let reply = rpc
@@ -297,6 +331,7 @@ pub(super) async fn own_grant(
         .await?;
     let reply: GetReply = serde_json::from_value(reply).map_err(|_| refused())?;
     let mut offered = false;
+    let mut resource_error = None;
     for row in reply.grants {
         if sealed_digest_from_hex(&row.key) != Some(me.encryption_key_digest) {
             continue;
@@ -305,19 +340,30 @@ pub(super) async fn own_grant(
             continue;
         };
         offered = true;
-        let Some(grant) = base64::engine::general_purpose::STANDARD
-            .decode(grant)
-            .ok()
-            .and_then(|bytes| SealedPadAdmissionGrant::from_bytes(&bytes).ok())
-        else {
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(grant) else {
             continue;
         };
-        if grant.generation() == generation
-            && grant.recipient() == me
-            && vault.open_key_pads_with_grant(pads, &grant).is_ok()
-        {
-            return Ok(Some(grant));
+        let grant = match SealedPadAdmissionGrant::from_bytes(&bytes) {
+            Ok(grant) => grant,
+            Err(error) if opening_out_of_memory(&error) => {
+                resource_error.get_or_insert(error);
+                continue;
+            }
+            Err(_) => continue,
+        };
+        if grant.generation() != generation || grant.recipient() != me {
+            continue;
         }
+        match vault.open_key_pads_with_grant(pads, &grant) {
+            Ok(_) => return Ok(Some(grant)),
+            Err(error) if opening_out_of_memory(&error) => {
+                resource_error.get_or_insert(error);
+            }
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = resource_error {
+        return Err(OwnGrantError::Resource(error));
     }
     if offered {
         asks.invalid.push(generation);
@@ -409,7 +455,8 @@ impl SyncClient {
                 report.pending.push(generation);
                 continue;
             };
-            let pads = SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
+            let pads =
+                SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
             if pads.generation() != generation {
                 return Err(refused());
             }

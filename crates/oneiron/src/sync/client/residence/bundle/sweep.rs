@@ -183,24 +183,44 @@ pub(super) async fn sweep_erased(
     let mut grants = Vec::new();
     let mut asks = OwnAsks::default();
     let mut unopened = 0;
+    let mut resource_error = None;
     for object in kept.values_mut() {
         // This machine's capsule first; the home's grant only past it.
         let held = |opened: OpenedKeyPads| -> Vec<WorldKeyId> { opened.keys().copied().collect() };
-        object.keys = vault
-            .open_key_pads_to_erase(&object.pads, None, &[])
-            .ok()
-            .map(held);
-        if object.keys.is_none() {
-            if let Some(grant) = access::own_grant(vault, rpc, &object.pads, &mut asks).await? {
-                grants.push(grant);
+        let mut opening_error = None;
+        object.keys = match vault.open_key_pads_to_erase(&object.pads, None, &[]) {
+            Ok(opened) => Some(held(opened)),
+            Err(error) => {
+                if access::opening_out_of_memory(&error) {
+                    opening_error = Some(error);
+                }
+                None
             }
-            object.keys = vault
-                .open_key_pads_to_erase(&object.pads, kit, &grants)
-                .ok()
-                .map(held);
+        };
+        if object.keys.is_none() {
+            match access::own_grant(vault, rpc, &object.pads, &mut asks).await {
+                Ok(Some(grant)) => grants.push(grant),
+                Ok(None) => {}
+                Err(access::OwnGrantError::Resource(error)) => {
+                    opening_error.get_or_insert(error);
+                }
+                Err(access::OwnGrantError::Transport(error)) => return Err(error),
+            }
+            object.keys = match vault.open_key_pads_to_erase(&object.pads, kit, &grants) {
+                Ok(opened) => Some(held(opened)),
+                Err(error) => {
+                    if access::opening_out_of_memory(&error) {
+                        opening_error.get_or_insert(error);
+                    }
+                    None
+                }
+            };
         }
         if object.keys.is_none() {
             unopened += 1;
+            if let Some(error) = opening_error {
+                resource_error.get_or_insert(error);
+            }
         }
     }
     // What this machine lacks is asked for even when the kit opened it: the
@@ -211,6 +231,10 @@ pub(super) async fn sweep_erased(
         .iter()
         .map(|entry| entry.generation)
         .collect();
+    if let Some(error) = resource_error {
+        asked?;
+        return Err(storage(error));
+    }
     if unopened > 0 {
         match SEALED_PAD_GRANT_UNAVAILABLE {
             GrantUnavailable::PendingNeverEraseSuccess => {
