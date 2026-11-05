@@ -891,6 +891,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&0u64.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
     let hash = blake3::hash(&body);

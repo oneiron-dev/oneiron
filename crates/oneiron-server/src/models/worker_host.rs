@@ -589,6 +589,23 @@ pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
     }
 }
 
+/// Takes up the configured `[models.sessions]` policy (I1 = C).
+pub(super) fn prepare_policy(policy: crate::config::models::sessions::SessionPreparePolicy) {
+    #[cfg(unix)]
+    session::set_prepare_policy(policy);
+    #[cfg(not(unix))]
+    let _ = policy;
+}
+
+/// The next turn's prepared tails as this process stands; `None` off Unix.
+pub(super) fn prepared_tail_status() -> Option<super::status::PreparedTailStatus> {
+    #[cfg(unix)]
+    let status = Some(session::prepared_tail_status());
+    #[cfg(not(unix))]
+    let status = None;
+    status
+}
+
 /// Sealed snapshot parking as this process stands; `None` off Unix.
 pub(super) fn snapshot_status() -> Option<super::SnapshotStatus> {
     #[cfg(unix)]
