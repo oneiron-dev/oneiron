@@ -341,6 +341,9 @@ impl ManagedArgs {
             // auth layer: the OAuth relay also needs the issuer and JWKS
             // flags, which managed mode refuses.
             oauth_resource_indicator: nonempty(args.oauth_resource_indicator.as_deref()),
+            // The host's Git door a run's checkout bind names (FIX 7181),
+            // checked by the flag's own parser.
+            git_door_base: nonempty(args.git_door_base.as_deref()),
             kit_bundle_public_urls: crate::config::normalize_list(
                 args.kit_bundle_public_urls.clone().unwrap_or_default(),
             ),

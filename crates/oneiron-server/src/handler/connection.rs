@@ -294,6 +294,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         | SyncMessage::LfsChunks(_)
         | SyncMessage::AssetBody { .. }
         | SyncMessage::LeafKey { .. }
+        | SyncMessage::SealedUpdate(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }
