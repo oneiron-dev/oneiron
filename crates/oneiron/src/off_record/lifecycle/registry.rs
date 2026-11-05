@@ -48,6 +48,8 @@ pub(super) enum SessionStart {
 
 pub(super) struct OffRecordSessionEntry {
     pub(super) overlay: Arc<SessionOverlay>,
+    #[cfg(unix)]
+    pub(super) live_spill: Arc<crate::store::LiveSpillSources>,
     /// Who entered this instance through a creator's door, set once at entry
     /// and dropped with the entry (WILL-PLAN L13 row 03): RAM only, never on
     /// the record a caller reads, so a name taken again after close starts
@@ -224,6 +226,8 @@ impl OffRecordSessionRegistry {
         }
         let entry = Arc::new(OffRecordSessionEntry {
             overlay,
+            #[cfg(unix)]
+            live_spill: crate::store::LiveSpillSources::new(session_ref),
             creator,
             created_name,
             state: Mutex::new(OffRecordSessionEntryState {
