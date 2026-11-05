@@ -9,7 +9,9 @@ It does not copy the teaching package or another full replay prefix.
 On reopening, the child reads that exact owned occurrence, with its body
 digest, secret and taint marks, and actor erasure checked. A released,
 withheld, erased or changed seed is not a witness. The config marker alone
-cannot reconstruct the task or authorize a continuation.
+cannot reconstruct the task or authorize a continuation. Marker validation uses
+the caller's transaction and custody guard, with its own body pin. It never
+re-enters the public reader while holding that guard or a seed writer.
 
 The leased-successor binding, approved continuation, failed predecessor,
 source replay row, selected capsule generation and start digest stay live

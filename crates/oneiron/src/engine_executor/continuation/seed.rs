@@ -14,7 +14,7 @@ use crate::code_run::{
     step_replay_capsules_in_txn,
 };
 use crate::engine_executor::record::{
-    executor_config_marker_bytes, validate_executor_config_marker,
+    executor_config_marker_bytes, validate_executor_config_marker_in_txn,
 };
 use crate::engine_executor::store::{CONFIG_OUTPUT_PATH, terminal_output_seq};
 use crate::engine_executor::types::{
@@ -136,6 +136,7 @@ pub(super) fn reopen(
     let config = state.config(template);
     validate_child(
         vault,
+        txn,
         child,
         &config,
         &state.prompt_fingerprint,
@@ -225,6 +226,7 @@ fn prove_seeded_source(
 
 fn validate_child(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     child: &CodeRunReplayRecord,
     config: &EngineExecutorConfig,
     fingerprint: &str,
@@ -233,8 +235,9 @@ fn validate_child(
     if child.determinism != Some(config.determinism) {
         return Err(ContinuationRefusal::Occupied);
     }
-    match validate_executor_config_marker(
-        &ExecutorStorage::Canonical(vault),
+    match validate_executor_config_marker_in_txn(
+        vault,
+        txn,
         child,
         config,
         fingerprint,
