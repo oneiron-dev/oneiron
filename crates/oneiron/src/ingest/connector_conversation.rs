@@ -5,7 +5,9 @@
 //! the source's, never the owner's: no turn carries a byline, and the sender
 //! stays named in the message's provenance. Conversation, turn and message
 //! ids derive from the exchange, so a rerun lands the same rows at the same
-//! ids and stages nothing new. The reply worker reads the conversation back
+//! ids. An inbound witness can also record the native archive version its
+//! source names; that metadata binding stays frozen once recorded. The reply
+//! worker reads the conversation back
 //! through the agent's own read lane, every page of it, as the history its
 //! next reply answers in. The lane admits the conversation's MESSAGEs by the
 //! read grant the agent's first witness of it issues (FIX 10895,
@@ -93,6 +95,7 @@ impl Vault {
             message,
             origin.received_at,
             now,
+            Some(origin),
             effect,
         )
     }
@@ -155,7 +158,16 @@ impl Vault {
             order: 0,
             quote: None,
         };
-        self.witness_connector_turn(agent, origin, &side, message, occurred_at, now, effect)
+        self.witness_connector_turn(
+            agent,
+            origin,
+            &side,
+            message,
+            occurred_at,
+            now,
+            None,
+            effect,
+        )
     }
 
     /// Every message of the conversation `origin` belongs to that `agent`'s
@@ -222,12 +234,14 @@ impl Vault {
         mut message: WitnessMessage,
         occurred_at: u64,
         now: u64,
+        archive_source: Option<&SurfaceConnectorPayload>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<ConnectorWitness> {
         let conversation = connector_conversation_id(origin)?;
         let conversation_hex = conversation.to_hex();
         let turn_id = derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, side)?;
-        message.id = Some(derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, side)?.to_hex());
+        let message_id = derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, side)?;
+        message.id = Some(message_id.to_hex());
         let turn = WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
@@ -244,7 +258,19 @@ impl Vault {
         };
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)
-                .witness_imported(&turn, &stamp, |txn| effect(txn, conversation))?;
+                .witness_imported(&turn, &stamp, |txn| {
+                    effect(txn, conversation)?;
+                    if let Some(source) = archive_source {
+                        super::connector_archive_link::record_in_txn(
+                            self,
+                            txn,
+                            conversation,
+                            message_id,
+                            source,
+                        );
+                    }
+                    Ok(())
+                })?;
         let read_grant_repair = self
             .issue_connector_witness_read_grant(agent, conversation, now)
             .err()
