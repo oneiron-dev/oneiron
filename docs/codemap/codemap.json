@@ -12338,7 +12338,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -34548,7 +34548,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks/record_hooks.rs",
@@ -90896,7 +90896,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 153,
+   "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6383,
    "test_files": 895
@@ -119648,7 +119648,7 @@
      "path": "src/device_sync/dial.rs",
      "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -119669,6 +119669,16 @@
      "purpose": "The reap freeze a managed vault's device sync works under (WILL-PLAN L14 row 14, FIX 5127)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/host.rs",
+     "purpose": "The existing served host, or an app's already-open device vault",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -119725,6 +119735,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/url.rs",
+     "purpose": "A verified TLS carrier for the ordinary URL sync connection",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/document_memory.rs",
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
      "surface": {
@@ -119740,7 +119760,7 @@
      "surface": {
       "crate-vis": 7,
       "fn": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -119757,6 +119777,19 @@
      "surface": {
       "fn": 15,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EmbeddedDeviceSync"
+     ],
+     "path": "src/embedded/device.rs",
+     "purpose": "Device sync for an app that already opened and profiled its own vault",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -127670,7 +127703,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 11,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -127684,7 +127717,7 @@
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)"
     },
     "embedded": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -128008,7 +128041,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1590,
+   "source_files": 1593,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
