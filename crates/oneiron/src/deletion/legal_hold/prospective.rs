@@ -4,7 +4,9 @@
 //! Default off: only a `CaptureScope::ProspectiveMessages` request stands one.
 //! While it stands and before its `ends_at`, every new base MESSAGE row is
 //! sealed to the order's public key inside the writer that stores it and kept
-//! in the order's outbox. The clone owns that ciphertext from the moment the
+//! in the order's outbox; at the end of that batch, in the same writer, so
+//! are the outgoing edge rows the batch wrote for it (its turn, conversation,
+//! author, parent and reply links). The clone owns that ciphertext from the moment the
 //! message lands, so the user's own erase, scrub or compaction of the message
 //! is never gated. The order's connection drains the outbox in batches, each
 //! acknowledged on its own. Release or expiry destroys the standing and its
@@ -58,6 +60,9 @@ pub(crate) struct Standing {
     ends_at: u64,
     recipient: Vec<u8>,
     next_ordinal: u64,
+    /// The first outbox ordinal whose message's edge rows are not sealed
+    /// yet: the entries of the batch now being written.
+    edges_from: u64,
 }
 
 /// The order's own selector, kept with its standing and applied to each new
@@ -90,22 +95,35 @@ impl Standing {
     }
 }
 
-/// One outbox entry: a message row sealed when it landed, or the truthful
-/// record that it landed and could not be sealed.
+/// One outbox entry: a message row sealed when it landed, one outgoing edge
+/// row of it sealed at the end of its birth batch, or the truthful record
+/// that a message landed and its rows could not all be sealed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub(crate) enum OutboxEntry {
-    Sealed {
+    SealedRow {
         message: [u8; 16],
-        /// The exact Descriptor and Content frames, ciphertext only.
-        frames: Vec<u8>,
-        /// BLAKE3 of the exact encoded descriptor sealed in `frames`.
-        descriptor_digest: [u8; 32],
-        plaintext_len: u64,
+        /// The revision its components carry: the BLAKE3 of the row.
+        revision: [u8; 32],
+        sealed: SealedComponent,
+    },
+    SealedEdge {
+        message: [u8; 16],
+        sealed: SealedComponent,
     },
     Missed {
         message: [u8; 16],
     },
+}
+
+/// One component's exact Descriptor and Content frames, ciphertext only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SealedComponent {
+    pub(crate) frames: Vec<u8>,
+    /// BLAKE3 of the exact encoded descriptor sealed in `frames`.
+    pub(crate) descriptor_digest: [u8; 32],
+    pub(crate) plaintext_len: u64,
 }
 
 fn order_prefix((order, generation): OrderKey) -> Vec<u8> {
@@ -136,23 +154,37 @@ pub(crate) fn seal_prospective_message_in_txn(
     };
     let now = store.clock.now_recorded_at();
     let message = *id.as_bytes();
+    let revision = *blake3::hash(&row).as_bytes();
     let mut sealed_any = false;
     for (key, mut standing) in STANDINGS.scan(store, wtxn)? {
         if now >= standing.ends_at || !standing.covered.covers(id) {
             continue;
         }
-        let ordinal = standing.next_ordinal;
-        let entry = seal_row(&standing, key, ordinal, &message, &row).unwrap_or_else(|error| {
-            tracing::warn!(
-                error = %error,
-                "a new message could not be sealed to its prospective legal order; recorded as missed"
-            );
-            OutboxEntry::Missed { message }
-        });
-        OUTBOX.put(store, wtxn, &(key.0, key.1, ordinal), &entry)?;
-        standing.next_ordinal = ordinal
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("legal prospective ordinal"))?;
+        let entry = match seal_component(
+            &standing,
+            key,
+            standing.next_ordinal,
+            SourceComponent::MessageRow,
+            &message,
+            "entities",
+            &message,
+            revision,
+            &row,
+        ) {
+            Ok(sealed) => OutboxEntry::SealedRow {
+                message,
+                revision,
+                sealed,
+            },
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "a new message could not be sealed to its prospective legal order; recorded as missed"
+                );
+                OutboxEntry::Missed { message }
+            }
+        };
+        append_in_txn(store, wtxn, key, &mut standing, &entry)?;
         STANDINGS.put(store, wtxn, &key, &standing)?;
         sealed_any = true;
     }
@@ -162,40 +194,161 @@ pub(crate) fn seal_prospective_message_in_txn(
     Ok(())
 }
 
-fn seal_row(
+/// Appends `entry` at `standing`'s next ordinal. The caller stores the
+/// standing.
+fn append_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: OrderKey,
+    standing: &mut Standing,
+    entry: &OutboxEntry,
+) -> Result<()> {
+    let ordinal = standing.next_ordinal;
+    OUTBOX.put(store, wtxn, &(key.0, key.1, ordinal), entry)?;
+    standing.next_ordinal = ordinal
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("legal prospective ordinal"))?;
+    Ok(())
+}
+
+/// Seals the outgoing edge rows of each message this batch sealed into a
+/// standing order's outbox, as the batch left them, in the writer that wrote
+/// them: called once at the end of every base batch. Each row is its own
+/// entry after the message's, under the revision its row carried. A message
+/// whose row the same batch replaced or removed after it was sealed has no
+/// edges sealed as its own: it is recorded as missed. Edges a later batch
+/// adds are later edits, not captured. A seal that fails keeps the user's
+/// batch: the message is recorded as missed. Only a storage error fails.
+pub(crate) fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    if !prospective_standing_in_txn(store, wtxn)? {
+        return Ok(());
+    }
+    let mut sealed_any = false;
+    for (key, mut standing) in STANDINGS.scan(store, wtxn)? {
+        if standing.edges_from == standing.next_ordinal {
+            continue;
+        }
+        let mut born = Vec::new();
+        for ordinal in standing.edges_from..standing.next_ordinal {
+            if let Some(OutboxEntry::SealedRow {
+                message, revision, ..
+            }) = OUTBOX.get(store, wtxn, &(key.0, key.1, ordinal))?
+            {
+                born.push((message, revision));
+            }
+        }
+        for (message, revision) in born {
+            let current = store.entities().get(wtxn, &message[..])?;
+            if current.is_none_or(|row| *blake3::hash(&row).as_bytes() != revision) {
+                append_in_txn(
+                    store,
+                    wtxn,
+                    key,
+                    &mut standing,
+                    &OutboxEntry::Missed { message },
+                )?;
+                sealed_any = true;
+                continue;
+            }
+            for (edge_key, value) in edge_rows_in_txn(store, wtxn, &message)? {
+                let sealed = seal_component(
+                    &standing,
+                    key,
+                    standing.next_ordinal,
+                    SourceComponent::MessageEdge,
+                    &message,
+                    "edges_out",
+                    &edge_key,
+                    revision,
+                    &value,
+                );
+                let entry = match sealed {
+                    Ok(sealed) => OutboxEntry::SealedEdge { message, sealed },
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "a new message's edge could not be sealed to its prospective legal order; recorded as missed"
+                        );
+                        OutboxEntry::Missed { message }
+                    }
+                };
+                let missed = matches!(entry, OutboxEntry::Missed { .. });
+                append_in_txn(store, wtxn, key, &mut standing, &entry)?;
+                sealed_any = true;
+                if missed {
+                    break;
+                }
+            }
+        }
+        standing.edges_from = standing.next_ordinal;
+        STANDINGS.put(store, wtxn, &key, &standing)?;
+    }
+    if sealed_any {
+        store.host_legal_prospective.bump();
+    }
+    Ok(())
+}
+
+/// The exact stored outgoing edge rows of `message`, key and value.
+fn edge_rows_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    message: &[u8; 16],
+) -> Result<Vec<(Vec<u8>, Zeroizing<Vec<u8>>)>> {
+    let mut rows = Vec::new();
+    let range = (
+        std::ops::Bound::Included(&message[..]),
+        std::ops::Bound::<&[u8]>::Unbounded,
+    );
+    for row in store.edges_out().range(txn, &range)? {
+        let (key, value) = row?;
+        if !key.starts_with(&message[..]) {
+            break;
+        }
+        rows.push((key.to_vec(), Zeroizing::new(value.to_vec())));
+    }
+    Ok(rows)
+}
+
+/// One stored row of `message` sealed under `standing`'s binding at
+/// `ordinal`, whole, its fingerprint the BLAKE3 of `value`.
+#[allow(clippy::too_many_arguments)]
+fn seal_component(
     standing: &Standing,
     key: OrderKey,
     ordinal: u64,
+    component: SourceComponent,
     message: &[u8; 16],
-    row: &[u8],
-) -> Result<OutboxEntry> {
+    family: &str,
+    source_key: &[u8],
+    revision: [u8; 32],
+    value: &[u8],
+) -> Result<SealedComponent> {
     let public = HybridPublicKey::from_bytes(&standing.recipient)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "legal prospective recipient"))?;
-    let fingerprint = *blake3::hash(row).as_bytes();
     let mut frames = Vec::new();
     let encoded = seal_frames(
         &public,
         &standing.binding(key),
         ordinal,
-        SourceComponent::MessageRow,
+        component,
         CaptureSource::Message(*message),
-        "entities",
-        message,
-        fingerprint,
-        row.len() as u64,
-        fingerprint,
-        &mut &row[..],
+        family,
+        source_key,
+        revision,
+        value.len() as u64,
+        *blake3::hash(value).as_bytes(),
+        &mut &value[..],
         &|| Ok(()),
         &mut |kind, member, part, payload| {
             push_frame(&mut frames, kind, member, part, payload);
             Ok(())
         },
     )?;
-    Ok(OutboxEntry::Sealed {
-        message: *message,
+    Ok(SealedComponent {
         frames,
         descriptor_digest: *blake3::hash(&encoded).as_bytes(),
-        plaintext_len: row.len() as u64,
+        plaintext_len: value.len() as u64,
     })
 }
 
@@ -264,6 +417,7 @@ pub(crate) fn stand_in_txn(
                 ends_at: request.ends_at,
                 recipient: request.recipient.clone(),
                 next_ordinal: 0,
+                edges_from: 0,
             },
         ),
     }

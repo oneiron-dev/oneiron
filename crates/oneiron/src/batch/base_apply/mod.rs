@@ -608,5 +608,8 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
+    // A new message a HOST prospective order sealed in this batch takes its
+    // outgoing edge rows, as the batch wrote them, in this writer.
+    crate::deletion::seal_prospective_edges_in_txn(store, wtxn)?;
     tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
 }
