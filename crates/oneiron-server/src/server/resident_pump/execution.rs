@@ -554,7 +554,9 @@ fn enter_run(
         // FIX 6867, FIX 8268: the run's repo proposals take the vault's own review policy.
         .with_repo_review_policy(Arc::new(
             oneiron::memory::repo_doors::OwnerProposalReviewPolicy::new(Arc::clone(vault)),
-        ));
+        ))
+        // FIX 7181: the operator's own Git door base wins over the run's.
+        .with_git_door_base(door.git_door_base());
     let meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
