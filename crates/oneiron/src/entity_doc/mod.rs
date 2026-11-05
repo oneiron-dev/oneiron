@@ -60,6 +60,13 @@ pub(crate) use recovery::{
     restore_proposals as restore_canonical_proposals,
     restore_with_source as restore_canonical_with_source,
 };
+
+pub(crate) fn validate_canonical_skill_state(
+    row: &crate::store::canonical_document::CanonicalEntityDocument,
+) -> crate::error::Result<()> {
+    native_skill_state::validate_witnesses(row)
+}
+
 mod verbs;
 
 #[cfg(feature = "sync")]
