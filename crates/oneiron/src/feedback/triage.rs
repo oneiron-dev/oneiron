@@ -43,6 +43,7 @@ mod github;
 mod jobs;
 mod owner;
 mod source;
+mod sweep_pending;
 mod work;
 mod work_store;
 
