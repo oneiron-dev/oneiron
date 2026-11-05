@@ -407,10 +407,15 @@ impl Vault {
         let Some(body) = body else {
             return Ok(Some(None));
         };
-        let Some(sealed) = SealedSnapshot::parse(&body).ok().filter(|sealed| {
-            sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
-        }) else {
-            return Ok(Some(None));
+        let sealed = match SealedSnapshot::parse(&body) {
+            Ok(sealed)
+                if sealed.seal_id() == record.seal_id
+                    && body.len() as u64 == record.sealed_bytes =>
+            {
+                sealed
+            }
+            Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
+            Err(error) => return Err(error),
         };
         let plaintext = match open_snapshot_with_expected_len(
             &key,
