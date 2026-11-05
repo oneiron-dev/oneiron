@@ -231,12 +231,18 @@ pub(super) fn open_parts(
     leaf: &CredentialLeaf,
     binding: &InputBinding<'_>,
     secret: &MachineSecret,
-) -> Option<(Zeroizing<Vec<u8>>, Option<Attached>)> {
+) -> Result<Option<(Zeroizing<Vec<u8>>, Option<Attached>)>> {
     let mut count = [0; COUNT_BYTES];
-    rows.read_exact(&mut count).ok()?;
+    if rows.read_exact(&mut count).is_err() {
+        return Ok(None);
+    }
     let count = u32::from_be_bytes(count);
-    let sealed = len.checked_sub(COUNT_BYTES as u64)?;
-    let plain = plain_len(count, sealed)?;
+    let Some(sealed) = len.checked_sub(COUNT_BYTES as u64) else {
+        return Ok(None);
+    };
+    let Some(plain) = plain_len(count, sealed) else {
+        return Ok(None);
+    };
     let mut parts = OpeningParts {
         carrier,
         leaf,
@@ -247,9 +253,11 @@ pub(super) fn open_parts(
         opened: Zeroizing::new(Vec::new()),
         at: 0,
     };
-    let opened = open_framed(binding, &mut parts, plain, secret)?;
+    let Some(opened) = open_framed(binding, &mut parts, plain, secret)? else {
+        return Ok(None);
+    };
     // Every part opened and read out: none missing, none left over.
-    (parts.next == count && parts.at == parts.opened.len()).then_some(opened)
+    Ok((parts.next == count && parts.at == parts.opened.len()).then_some(opened))
 }
 
 /// The surface's input's length under `count` parts that seal into
