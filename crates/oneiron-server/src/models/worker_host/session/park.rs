@@ -161,12 +161,10 @@ struct Candidate {
     basis: Arc<Basis>,
 }
 
-/// Whether `worker_id`'s device is under pressure: less than
+/// Whether a session's device is under pressure: less than
 /// [`PARK_PRESSURE_HEADROOMS`] headrooms free. Unknown room is none.
-fn pressed(worker_id: &str) -> bool {
-    super::super::device_ledger(worker_id)
-        .and_then(|ledger| ledger.room_mib(headroom_mib() * PARK_PRESSURE_HEADROOMS))
-        == Some(0)
+fn pressed(ledger: Option<&DeviceLedger>) -> bool {
+    ledger.and_then(|ledger| ledger.room_mib(headroom_mib() * PARK_PRESSURE_HEADROOMS)) == Some(0)
 }
 
 /// Whether any candidate stands on a worker that exports snapshots.
@@ -184,8 +182,14 @@ fn candidates_stand() -> bool {
 /// device under pressure. A candidate with nothing to park goes back to
 /// ready.
 fn next_due() -> Option<Candidate> {
-    let worker_ids: Vec<String> = registry::lock().keys().cloned().collect();
-    let pressed: BTreeSet<String> = worker_ids.into_iter().filter(|id| pressed(id)).collect();
+    let worker_ledgers: Vec<_> = registry::lock()
+        .iter()
+        .map(|(worker_id, worker)| (worker_id.clone(), worker.place.ledger.clone()))
+        .collect();
+    let pressed: BTreeSet<String> = worker_ledgers
+        .into_iter()
+        .filter_map(|(worker_id, ledger)| pressed(ledger.as_deref()).then_some(worker_id))
+        .collect();
     let mut workers = registry::lock();
     for (worker_id, worker) in &mut *workers {
         if !matches!(worker.serves, Serves::Yes(ops) if ops.snapshot) {
@@ -279,7 +283,7 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
         return Err(Some(Skip::Oversize));
     }
     room(estimate.unwrap_or(0)).await?;
-    let ledger = super::super::device_ledger(&candidate.worker_id);
+    let ledger = candidate.place.ledger.clone();
     if estimate.is_some_and(|bytes| !device_room(ledger.as_deref(), bytes)) {
         return Err(Some(Skip::NoRoom));
     }

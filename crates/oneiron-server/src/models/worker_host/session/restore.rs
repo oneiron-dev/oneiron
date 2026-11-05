@@ -189,7 +189,7 @@ impl Restore<'_> {
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
-        let ledger = super::super::device_ledger(self.worker_id);
+        let ledger = self.place.ledger.clone();
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
