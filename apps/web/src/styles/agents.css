@@ -1,0 +1,659 @@
+/* ── the agents page — THE ROOM (owner 09-07: chat integrated with the
+   agents; chatting with an agent is also how you set it up; progressive
+   disclosure) ──
+   the roster stands left; the room right is the conversation with the chosen
+   agent. setup and runs are the disclosed layers under the room head: one
+   click down, same column. finished work is a CARD that points at the world
+   (the inbox row, the claim, the receipt) — the room never carries the work.
+   the house is a room too: every agent and you, handoffs visible.
+   no gauges, no charts. the name in the agent's ink is the identity. ── */
+
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 0;
+  overflow: hidden;                        /* the room scrolls, not the sheet */
+  display: flex; flex-direction: column; gap: 12px;
+}
+.pane-tools .act { font-size: 12px; }
+
+/* ── the grid: roster · room ── */
+.agents-grid {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
+}
+/* the picker lives in the rail (owner 09-08, both auditors); the roster column
+   below stays only as a bench shape behind the tuner (well · sidebar) */
+html[data-picker="well"] .agents-grid, html[data-picker="sidebar"] .agents-grid { grid-template-columns: 248px minmax(0, 1fr); }
+@media (max-width: 980px) {
+  html[data-picker="well"] .agents-grid, html[data-picker="sidebar"] .agents-grid { grid-template-columns: 220px minmax(0, 1fr); column-gap: 14px; }
+}
+
+/* ── the roster: one row per agent, name in ink over one mono line (what it
+   does right now, or when it wakes). the house row closes the list. the
+   selected row wears the well (its chrome rides the tuner, see safelight) ── */
+/* the roster is a well column (owner 09-08: the list and the conversation on
+   different shades) — the same rule as the vault's inspector and the work
+   pane: a tinted zone divides. the picked row lifts onto the sheet tone. */
+.roster { display: none; flex-direction: column; gap: 2px; padding: 8px 6px; overflow-y: auto; min-height: 0; background: var(--bg-well); border-radius: 6px; align-self: start; max-height: 100%; }
+.rrow {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 7px 10px 7px 8px; border-radius: 5px; cursor: pointer;
+  transition: background 160ms ease;
+}
+.rrow:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.rrow:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: -2px; }
+.rrow.on { background: var(--bg-elevated); }
+.rrow .rtext { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rname { font-family: var(--serif); font-size: 14.5px; color: var(--silver-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rname.aname { color: var(--p-ink); }   /* the name in its ink IS the identity in the row (A, owner 09-07) */
+.rname .unnamed { color: var(--silver-4); font-style: italic; }
+.rdoing {
+  font-family: var(--mono); font-size: 11px; line-height: 1.4; letter-spacing: 0.02em; color: var(--silver-3);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-feature-settings: "tnum" 1;
+}
+/* the new-agent row: a quiet last row, not a button */
+.rrow.new .rname { color: var(--silver-3); font-size: 13.5px; }
+.rrow.new .rdoing { color: var(--silver-4); }
+.rrow.new:hover .rname { color: var(--silver-1); }
+.rrow.draft .rdoing { color: var(--silver-4); }
+/* live = the doing-text shimmers (rule 36); the row never rests red */
+@keyframes ag-shimmer { to { background-position: -200% 0; } }
+.rrow.live .rdoing {
+  background: linear-gradient(90deg, var(--silver-3) 35%, var(--silver-1) 50%, var(--silver-3) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: ag-shimmer 2.4s linear infinite;
+}
+.rrow.live:hover .rdoing, .rrow.live.on .rdoing { animation: none; background: none; color: var(--silver-2); }
+/* space, never a rule, divides the house from the agents */
+.rsep { height: 12px; flex: none; }
+/* the roster face rides the tuner (portrait · mark · none); none = A (owner 09-07) */
+.rrow .face { display: none; flex: none; }
+html[data-roster-face="portrait"] .rrow .face { display: inline-block; width: 30px; height: 30px; }
+html[data-roster-face="mark"] .rrow .face {
+  display: inline-block; width: 18px; height: 18px;
+  -webkit-mask-image: var(--face-mark); mask-image: var(--face-mark);
+}
+.rrow .creature-none { display: block; width: 18px; height: 18px; border-radius: 4px; border: 1px dashed var(--rule-strong); opacity: 0.6; flex: none; }
+.rrow .creature-none { display: none; }
+html[data-roster-face="portrait"] .rrow .creature-none,
+html[data-roster-face="mark"] .rrow .creature-none { display: block; }
+
+/* ── the room ── */
+/* the room = one column at one measure (owner 09-08, "ultrathink about
+   widths"): head, thread, cards and composer all end at the same edge.
+   --room-w = 620px ≈ 82 characters of the 14px serif. The air beside it
+   stays air (a browser screen can dock there later). */
+.room { --room-w: 620px; display: flex; gap: 18px; min-height: 0; min-width: 0; align-items: stretch; }
+.room-main { flex: 0 1 var(--room-w); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+/* the head: the portrait at 72 (the sheet's identity, owner 09-07), the name
+   in its ink, the role line, then the layer switch */
+.room-head { display: flex; gap: 20px; align-items: flex-start; padding: 2px 0 10px; }
+.rh-face { flex: none; width: 72px; min-height: 64px; display: flex; align-items: center; justify-content: center; }
+.rh-face .creature-none { display: block; width: 44px; height: 44px; border-radius: 6px; border: 1px dashed var(--rule-strong); opacity: 0.6; }
+.rh-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rh-title { display: flex; align-items: center; gap: 10px; }
+.rh-name { font-family: var(--serif); font-size: 22px; font-weight: 550; letter-spacing: -0.01em; color: var(--silver-1); line-height: 1.25; }
+/* the setup door: a gear beside the name (owner 09-08), pressed while in setup */
+.rh-gear {
+  appearance: none; border: 0; background: none; padding: 4px; margin: 0; border-radius: 4px;
+  color: var(--silver-4); cursor: pointer; display: inline-flex; align-items: center; transition: color 160ms ease, background 160ms ease;
+}
+.rh-gear svg { width: 15px; height: 15px; }
+.rh-gear:hover, .rh-gear:focus-visible { color: var(--silver-1); }
+.rh-gear:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; }
+.rh-gear[aria-pressed="true"] { color: var(--silver-1); background: var(--bg-well); }
+.rh-name.aname { color: var(--p-ink); }
+.rh-name .unnamed { color: var(--silver-4); font-style: italic; font-weight: 450; }
+.rh-role { font-family: var(--serif); font-size: 14px; color: var(--silver-2); line-height: 1.45; }
+.rh-role .unnamed { color: var(--silver-4); font-style: italic; }
+.rh-line { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding-top: 5px; }
+.rh-line .views { display: inline-flex; align-items: baseline; gap: 10px; }
+.rh-line .views .act[aria-pressed="true"] { color: var(--silver-1); }
+.rh-line .views .act[aria-pressed="true"]:hover { color: var(--silver-1); }
+.rh-line .views .sep { font-family: var(--mono); font-size: 11px; color: var(--silver-4); }
+.rh-line .rh-acts { display: inline-flex; align-items: baseline; gap: 14px; margin-left: 6px; }
+.rh-line .always { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--silver-4); cursor: default; }
+.rh-line .meta-line { margin-left: auto; }
+.saved { color: var(--silver-4); }
+
+/* ── the thread: a printed transcript. names in ink (or the human seal)
+   left, serif voice, cards in the body column, time hover-tier ── */
+.room-thread {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 13px;
+  padding: 8px 6px 14px 2px;
+}
+.rmsg { display: flex; gap: 12px; align-items: baseline; }
+/* the who column exists only in the house: face + name in ink at the head of
+   a speaker's group, an empty column under it so the voices share one margin */
+.rmsg .rwho { flex: none; width: 96px; display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.rmsg .rwho .aname { font-family: var(--serif); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rmsg .rwho .face { position: relative; top: 5px; flex: none; }
+.room-thread.house .rmsg.head { margin-top: 4px; }
+.room-thread.solo .rday { padding-left: 0; }
+.room-thread.house .rday { padding-left: 108px; }
+/* your voice (owner 09-08): never a name. RIGHT by default (his pick): your
+   turns end at the text column's right edge, no bubble. The tuner offers
+   indent · mono · glyph. In the house the column is measured from the shared margin. */
+.rmsg.mine { padding-left: 0; justify-content: flex-end; }
+.rmsg.mine .rbody { flex: 0 1 auto; max-width: 60%; }
+.room-thread.house .rmsg.mine { padding-left: 108px; }
+html[data-voice="indent"] .rmsg.mine { padding-left: 22%; justify-content: flex-start; }
+html[data-voice="indent"] .rmsg.mine .rbody { flex: 1; max-width: none; }
+html[data-voice="indent"] .room-thread.house .rmsg.mine { padding-left: calc(108px + 16%); }
+html[data-voice="mono"] .rmsg.mine,
+html[data-voice="glyph"] .rmsg.mine { padding-left: 0; justify-content: flex-start; }
+html[data-voice="mono"] .rmsg.mine .rbody,
+html[data-voice="glyph"] .rmsg.mine .rbody { flex: 1; max-width: none; }
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine { padding-left: 108px; }
+html[data-voice="mono"] .rmsg.mine .rtext { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; letter-spacing: 0.01em; }
+html[data-voice="glyph"] .rmsg.mine .rtext::before { content: "\203A\00a0"; color: var(--silver-4); }
+/* the ground under your turns (owner 09-08 asked for "some visual bubble"): the
+   surface ladder is whitespace → hairline → well, so the options are exactly
+   those. Flat, 3px, no tail, no shadow. */
+.rmsg.mine .rbody { background: var(--bg-well); padding: 7px 12px; border-radius: 3px; }
+html[data-voice-ground="none"] .rmsg.mine .rbody { background: none; padding: 0; }
+html[data-voice-ground="hairline"] .rmsg.mine .rbody { background: none; box-shadow: inset 0 0 0 1px var(--rule); }
+.rmsg .rbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.rmsg .rtext { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); }
+.rmsg.mine .rtext { color: var(--silver-1); }
+.rmsg.live .rtext {
+  background: linear-gradient(90deg, var(--silver-2) 35%, var(--silver-1) 50%, var(--silver-2) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: ag-shimmer 2.4s linear infinite;
+}
+.rmsg .rat {
+  flex: none; align-self: baseline;
+  font-family: var(--mono); font-size: 10.5px; color: var(--silver-4);
+  font-feature-settings: "tnum" 1; opacity: 0; transition: opacity 160ms ease;
+}
+.rmsg:hover .rat { opacity: 1; }
+/* a handoff between agents: one mono line, the arrow carries it */
+.rhand { display: flex; gap: 8px; align-items: baseline; font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); }
+.rhand .aname { font-family: var(--mono); font-size: 11.5px; }
+.rhand .arrow { color: var(--silver-4); }
+/* the day opens with the house mind's line (the digest voice, serif) */
+.rday { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4); padding: 2px 0 0 88px; }
+
+/* cards: the chat's widget grammar (chassis .cwidget); in the room they sit
+   in the body column with no extra inset */
+.rbody .cwidget { margin-left: 0; max-width: 100%; }
+.cwidget .cw-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); }
+.cwidget .cw-meta { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); }
+.cwidget .cw-foot { justify-content: flex-start; gap: 12px; padding-top: 5px; flex-wrap: wrap; align-items: baseline; }
+.cwidget .cw-foot .meta-line { display: inline; }
+.cwidget.settled .cw-title { color: var(--silver-2); }
+/* a proposal (new agent): the name large, editable in place; the values as rungs */
+.cwidget .cw-name { font-family: var(--serif); font-size: 17px; font-weight: 550; color: var(--silver-1); line-height: 1.3; }
+.cwidget .cw-name .edit, .cwidget .cw-line .edit { display: inline-block; min-width: 4ch; }
+.cwidget .cw-vals { display: flex; gap: 4px; flex-wrap: wrap; align-items: baseline; }
+.cwidget .cw-vals .rung { cursor: default; }
+.cwidget .cw-vals .rung.on { color: var(--silver-1); background: var(--bg-elevated); }
+.cwidget .cw-vals .chan { padding-left: 6px; }
+.cwidget .cw-vals .chan.on { background: var(--bg-elevated); }
+
+/* ── the composer, pinned at the room's foot (the panel's chat-line grammar) ── */
+.room-line { flex: none; display: flex; gap: 10px; align-items: center; padding: 10px 0 12px; }
+.room-line .gask-input { flex: 1; }
+.room-line .agent-chip { cursor: default; }
+.room-line .agent-chip.switch { cursor: pointer; }
+.room-line .rhint { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
+/* pause lives at the line's end (owner 09-08): it is the agent's verb, next to where you steer */
+.room-line .line-acts { flex: none; display: flex; gap: 12px; align-items: baseline; }
+/* the switcher pops above the composer, anchored to the room */
+.room { position: relative; }
+.room .amenu { bottom: 56px; left: 0; }
+
+/* ── the setup layer: the former sheet body, one click down, scrolls in the room ── */
+.setup { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; padding: 6px 6px 24px 2px; }
+.runs-layer { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 6px 6px 24px 2px; }
+
+/* editable text: the field is the text; a soft well only while it has focus,
+   a placeholder when empty. no border at rest, no edit button (ruling 4). */
+.edit { display: block; outline: none; border-radius: 4px; margin: -2px -6px; padding: 2px 6px; transition: background 160ms ease; cursor: text; }
+.edit:hover { background: color-mix(in srgb, var(--silver-4) 8%, transparent); }
+.edit:focus { background: var(--bg-well); }
+.edit:empty::before, .edit[data-empty]::before { content: attr(data-placeholder); color: var(--silver-4); font-style: italic; }
+.edit.detail, .edit.voice { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
+.edit.rh-name:empty::before { font-weight: 450; }
+
+/* a section: mono label · content · the quiet stamp under it */
+.sec { display: flex; flex-direction: column; gap: 9px; }
+.sec > .label { display: block; }
+.sec .saved { padding-top: 2px; }
+.sec .empty { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.sec .empty .act { margin-left: 4px; }
+.chans .chan-door { align-self: center; margin-left: 6px; font-size: 12px; }
+
+/* the creature picker (new agent): the three creatures + none */
+.picker { display: flex; gap: 8px; align-items: stretch; }
+.pick {
+  width: 72px; height: 60px; display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; background: transparent;
+  transition: background 160ms ease, opacity 160ms ease;
+  opacity: 0.7;
+}
+.pick:hover { opacity: 1; background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.pick.on { opacity: 1; background: var(--bg-well); }
+.pick .pick-none { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--silver-3); }
+.pick .creature-none { display: block; width: 24px; height: 24px; border-radius: 4px; border: 1px dashed var(--rule-strong); opacity: 0.6; }
+
+/* channels: chips on/off, the glyph carries the state ink itself */
+.chans { display: flex; gap: 8px; flex-wrap: wrap; }
+.chan {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+  color: var(--silver-4); padding: 4px 10px 4px 8px; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.chan .chan-glyph { display: flex; }
+.chan .chan-glyph svg { width: 14px; height: 14px; display: block; }
+.chan:hover { color: var(--silver-2); }
+.chan.on { color: var(--silver-1); background: var(--bg-well); }
+.chan:not(.on) .chan-name { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--silver-4) 60%, transparent); }
+
+/* scopes: the grants it holds. scope · what · by seal · when · revoke */
+.grants { display: flex; flex-direction: column; }
+.grant {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) 15px 48px 128px;
+  column-gap: 12px; align-items: baseline;
+  padding: 5px 8px; border-radius: 5px; transition: background 160ms ease, opacity 200ms ease;
+}
+.grant:hover { background: color-mix(in srgb, var(--silver-4) 8%, transparent); }
+.grant .g-scope { font-family: var(--mono); font-size: 12px; color: var(--silver-1); font-feature-settings: "tnum" 1; }
+.grant .g-what { font-family: var(--serif); font-size: 13px; color: var(--silver-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grant .seal { align-self: center; }
+.grant .g-when { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.grant .g-acts { display: flex; gap: 10px; justify-content: flex-end; align-items: baseline; }
+.grant .g-acts .meta-line { white-space: nowrap; }
+/* revoke arms red on the first click (touch = the one red), settles on the second */
+.grant .revoke.armed, .grant .revoke.armed:hover { color: var(--safelight); }
+.grant .revoke.armed::before, .grant .revoke.armed::after { opacity: 1; }
+.grant.revoked { opacity: 0.6; }
+.grant.revoked .g-scope { text-decoration: line-through; color: var(--silver-3); }
+
+/* schedule + budget: a ladder of mono rungs, the chosen one silver-1 in a well */
+.ladder { display: flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
+.rung {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em; font-feature-settings: "tnum" 1;
+  color: var(--silver-3); padding: 3px 9px; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+button.rung:hover { color: var(--silver-1); }
+.rung.on { color: var(--silver-1); background: var(--bg-well); }
+.rung.local { color: var(--silver-2); cursor: default; }
+.ladder .spent { font-family: var(--mono); font-size: 11.5px; color: var(--silver-4); margin-left: 8px; font-feature-settings: "tnum" 1; }
+
+/* recent: the receipts tail */
+.rd-tail { max-width: 460px; display: flex; flex-direction: column; gap: 5px; }
+.tl { display: flex; align-items: baseline; gap: 10px; }
+.tl .when { font-family: var(--mono); font-size: 11px; color: var(--silver-4); flex: none; width: 36px; font-feature-settings: "tnum" 1; }
+.tl .what { font-family: var(--serif); font-size: 13px; line-height: 1.45; color: var(--silver-2); flex: 1; }
+.tl .act { font-size: 11px; }
+
+/* ── RUNS (the disclosed layer): flat sections, serif heads, dividers are space ── */
+.ag-sec { display: flex; flex-direction: column; }
+.ag-sec + .ag-sec { margin-top: 20px; }
+.ag-sec.closed + .ag-sec { margin-top: 0; }
+.ag-head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; }
+.ag-head .ag-title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.ag-head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.ag-head:hover .fold-hint, .ag-head:focus-visible .fold-hint { opacity: 1; }
+.ag-head:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: 2px; border-radius: 5px; }
+.ag-sec.closed .ag-head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.ag-head .meta-line { margin-left: auto; display: none; }
+.ag-sec.closed .ag-head .meta-line { display: inline; }
+.ag-sec.closed .ag-rows, .ag-sec.closed .ag-voice { display: none; }
+.ag-voice { display: flex; gap: 9px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 76ch; padding: 1px 0 3px; }
+.ag-none { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding: 2px 0 4px; }
+
+/* now: the live runs. name in ink + doing text; stop settles in place (rule 34) */
+.now { --ncols: minmax(0, 1fr) 84px 64px 64px 56px 128px; display: flex; flex-direction: column; }
+.nhead, .nline {
+  display: grid; grid-template-columns: var(--ncols);
+  column-gap: 12px; align-items: baseline;
+}
+.nhead { padding: 0 8px 8px; }
+.nhead .h-num, .nline .n-num { text-align: right; }
+.nline { padding: 6px 8px; border-radius: 5px; transition: background 160ms ease; }
+.nline:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.nwho { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.nwho .aname { font-family: var(--serif); font-size: 14px; }
+.ndoing { font-family: var(--serif); font-size: 14px; color: var(--silver-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nrow.live .ndoing {
+  background: linear-gradient(90deg, var(--silver-2) 35%, var(--silver-1) 50%, var(--silver-2) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: ag-shimmer 2.4s linear infinite;
+}
+.nrow.live .nline:hover .ndoing { animation: none; background: none; color: var(--silver-1); }
+.nrow.still .ndoing { color: var(--silver-4); }
+.nrow.still .aname { opacity: 0.55; }
+.ncell { font-family: var(--mono); font-size: 12px; color: var(--silver-3); font-feature-settings: "tnum" 1; white-space: nowrap; }
+.nacts { display: flex; gap: 12px; justify-content: flex-end; align-items: baseline; }
+.nacts .meta-line { white-space: nowrap; }
+.nreceipt { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); padding: 0 8px 4px; }
+
+/* run history: the ledger keeps only spacing under its column heads (rule 6) */
+.hist-wrap { overflow-x: auto; }
+table.hist { table-layout: fixed; }
+table.ledger.hist td { border-top: 0; height: 32px; }
+table.ledger.hist thead th { padding-bottom: 8px; }
+table.hist th:first-child, table.hist td:first-child { padding-left: 8px; }
+table.hist th:last-child, table.hist td:last-child { padding-right: 8px; }
+table.hist .c-by { width: 92px; }
+table.hist .c-num { width: 66px; }
+table.hist .c-rcpt { width: 78px; }
+table.hist .c-wake { width: 156px; }
+@media (hover: hover) {
+  table.hist tbody tr:hover td { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+  table.hist tbody tr:hover td:first-child { border-radius: 5px 0 0 5px; }
+  table.hist tbody tr:hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+table.hist .th-in { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+table.hist th.num .th-in { flex-direction: row-reverse; }
+table.hist .th-sort {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: var(--silver-3); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: color 160ms ease;
+}
+table.hist .th-sort:hover, table.hist th.sorted .th-sort { color: var(--silver-1); }
+table.hist .th-sort .arrow { font-family: var(--mono); font-size: 10px; letter-spacing: 0; color: var(--silver-2); width: 8px; text-align: left; }
+table.hist .ran { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); }
+table.hist .aname { font-family: var(--mono); font-size: 12px; transition: color 160ms ease; cursor: pointer; }
+table.hist .cnt { font-family: var(--mono); font-size: 12.5px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+table.hist .cnt.none { color: var(--silver-4); }
+table.hist a.cnt { transition: color 160ms ease; }
+table.hist a.cnt:hover, table.hist a.cnt:focus-visible { color: var(--safelight); }
+table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 156px; display: block; }
+
+/* the closing line: what waits lives in the inbox — one home per item */
+.ag-quiet { display: flex; align-items: baseline; gap: 12px; padding-top: 6px; max-width: 78ch; flex-wrap: wrap; }
+.ag-quiet .digest { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+
+/* the face beside a name in the ledgers (name-in-ink stays the mark) */
+.aname.withface { display: inline-flex; align-items: center; gap: 6px; }
+.aname.withface .face.mark { opacity: 0.9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rrow, .edit, .chan, .rung, .pick, .grant { transition: none; }
+  .rrow.live .rdoing, .rmsg.live .rtext, .nrow.live .ndoing { animation: none; background: none; color: var(--silver-2); }
+}
+
+/* ── the live run in the thread (owner 09-08): a card at the foot of the
+   conversation, its helpers as mono rows, the one red dot on what needs
+   you. Steering is replying; stop sits at rest in the foot. ── */
+.cwidget.rlive .cw-title { color: var(--silver-1); }
+.rlive-tree { display: flex; flex-direction: column; gap: 3px; padding: 2px 0 2px 2px; }
+.rlive .cw-foot { display: flex; align-items: baseline; gap: 14px; }
+.rlive .cw-foot .meta-line { margin: 0; }
+.pm-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 5px; vertical-align: 1px; }
+/* the agent bar (cross-arch-0009b): a thin mono line above the composer,
+   only while the live card is scrolled out of view */
+.agent-bar {
+  appearance: none; border: 0; background: none; padding: 6px 2px 0; margin: 0; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-3);
+}
+.agent-bar:hover { color: var(--silver-1); }
+.agent-bar .chev { color: var(--silver-4); }
+.agent-bar:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 3px; }
+.rp-helper { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.rp-hwhat::before { content: "· "; color: var(--silver-4); margin-left: -10px; }
+.rp-hstate { white-space: nowrap; color: var(--silver-4); font-feature-settings: "tnum" 1; }
+.rp-helper.needs, .rp-helper.needs .rp-hstate { color: var(--silver-1); }
+.rp-helper.needs .rp-hstate::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 6px; vertical-align: 1px; }
+
+
+/* ── the picker (owner 09-08, html[data-picker]): well = the roster as a well
+   column beside the room (as built) · sidebar = the column belongs to the
+   sheet, flush to its left edge top to bottom (the Slack shape) · rail = the
+   agents are rows under `agents` in the rail, no second column. ── */
+html[data-picker="sidebar"] .agents-grid { column-gap: 26px; padding-top: 0; }
+html[data-picker="sidebar"] .roster {
+  border-radius: 0; align-self: stretch; max-height: none;
+  margin: calc(-1 * var(--pane-pad-y)) 0 0 calc(-1 * var(--pane-pad-x));
+  padding: 16px 8px 16px calc(var(--pane-pad-x) - 6px);
+}
+html[data-picker="well"] .roster, html[data-picker="sidebar"] .roster { display: flex; }
+
+/* ── the work pane (owner 09-08, html[data-work-axis="pane"]): closed = one mono
+   mark at the room's top-right corner, in the air (the Codex floatie); open =
+   a well column docked at the room's right edge. The thread's live card and
+   the agent bar stand down under this axis. ── */
+.rpane { display: none; }
+html[data-work-axis="pane"] .rlive-row, html[data-work-axis="pane"] .agent-bar { display: none; }
+html[data-work-axis="pane"] .rpane:not(.tpane) { display: flex; position: absolute; top: 0; right: 0; }
+html[data-work-axis="pane"] .rpane.open {
+  position: static; flex: none; width: 316px; margin-left: auto; min-height: 0;
+  background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto;
+  flex-direction: column; gap: 12px;
+}
+.rp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.rp-body { display: flex; flex-direction: column; gap: 10px; }
+.rp-body .label { margin-top: 4px; }
+.rp-body .ag-none { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.rp-run { display: flex; flex-direction: column; gap: 4px; }
+.rp-gname { font-family: var(--serif); font-size: 13.5px; }
+.rp-doing { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; color: var(--silver-1); }
+.rp-run > .meta-line { margin: 0 0 2px; }
+.rp-acts { display: flex; gap: 12px; padding-left: 10px; padding-top: 2px; opacity: 0; transition: opacity 160ms ease; }
+.rp-run:hover .rp-acts, .rp-acts:focus-within { opacity: 1; }
+.rp-earlier { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.rp-ewhat { font-family: var(--serif); font-size: 13px; line-height: 1.4; color: var(--silver-3); }
+.rp-estate { font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
+/* the closed mark: one mono line, top right, in the air */
+.pmark {
+  appearance: none; border: 0; background: none; padding: 6px 0 0; cursor: pointer;
+  color: var(--silver-3); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; white-space: nowrap;
+}
+.pmark:hover { color: var(--silver-1); }
+.pmark:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 3px; }
+.pmark .pm-dot { margin-right: 5px; vertical-align: 1px; }
+.pm-chev { color: var(--silver-4); }
+/* a narrow room: the column gives way before the pane overlays anything */
+.room { container-type: inline-size; container-name: room; }
+@container room (max-width: 980px) {
+  .room:has(.rpane.open) .room-main { flex: 1 1 0; }
+}
+
+/* ── pause is a button with the glyph, not a word (owner 09-08): two bars at
+   rest, the play triangle while paused; the stamp reads beside it ── */
+.pause-btn {
+  appearance: none; flex: none; width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid var(--rule-strong); background: none; color: var(--silver-3);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.pause-btn svg { width: 11px; height: 11px; fill: currentColor; display: block; }
+.pause-btn:hover, .pause-btn:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
+.pause-btn:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; }
+.pause-btn[aria-pressed="true"] { color: var(--silver-1); background: var(--bg-well); }
+
+/* ── the column's place (owner 09-08, "we are getting a bit empty"; Claude and
+   ChatGPT center the conversation, html[data-room-column]): left = as built ·
+   center = the column centers in the space beside the pane, and in the whole
+   room while the pane is closed (the ChatGPT rule; the mark keeps the corner)
+   · dock = the pane sits beside the column at the left, the air stays right ── */
+html[data-room-column="center"] .room-main { margin: 0 auto; }
+html[data-room-column="center"] .rpane.open, html[data-room-column="dock"] .rpane.open { margin-left: 0; }
+
+/* ── reply · quote · thread (owner 09-08: "quote = selection, reply = message,
+   thread = message branch"). reply is the 0010 pointer, on every message;
+   quote is the same pointer with the span (OF-248), on the words you pick;
+   thread is a branch HEAD never enters (0006a), on a group's trunk only.
+   the verbs ride the time's hover tier at the message's right. ── */
+/* the hover chip (owner 09-08: the buttons "look outside of chat bounds"):
+   the time and the verbs in ONE raised chip at the message's top-right
+   corner, inside the text column, straddling the row's top edge (Slack,
+   Discord). it rises on hover and stays while a row or the search is open. */
+.rmsg { position: relative; }
+.rmsg .rtier {
+  position: absolute; top: -13px; right: 0; z-index: 2;
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px 5px; border-radius: 6px;
+  background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--rule), var(--shadow-pop);
+  opacity: 0; pointer-events: none; transition: opacity 120ms ease;
+}
+.rmsg:hover .rtier, .rmsg .rtier:focus-within, .rmsg.picking .rtier { opacity: 1; pointer-events: auto; }
+.rmsg .rtier .rat { opacity: 1; padding: 0 5px 0 3px; }
+.rmsg .racts { display: inline-flex; gap: 0; align-items: center; }
+/* the head row's own time (house, pane): always there, after the name */
+.rwho .rat { opacity: 1; margin-left: 2px; }
+.room-thread ::selection, .tpane ::selection { background: color-mix(in srgb, var(--safelight) 22%, transparent); }
+/* the verbs are glyphs (owner 09-08, "use symbols more"): the reply arrow,
+   the thread bubble; the word rides the tooltip and the label */
+.gact {
+  appearance: none; border: 0; background: none; margin: 0; padding: 3px; border-radius: 4px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--silver-3);
+  transition: color 160ms ease, background 160ms ease;
+}
+.gact svg { width: 14px; height: 14px; display: block; }
+.gact:hover, .gact:focus-visible { color: var(--silver-1); background: color-mix(in srgb, var(--silver-4) 12%, transparent); }
+.gact:focus-visible { outline: 2px solid var(--safelight); outline-offset: 1px; }
+/* the pointer renders as a strip above the words: whose, and which. it is a
+   door (the click travels to the message, which lights up for a beat) */
+.rquote { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rq-go {
+  appearance: none; border: 0; background: none; margin: 0; cursor: pointer; text-align: left;
+  padding: 1px 0 1px 10px; border-left: 2px solid var(--rule-strong);
+  display: flex; gap: 8px; align-items: baseline; min-width: 0; color: var(--silver-3);
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.rq-go:hover, .rq-go:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
+.rq-go:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 2px; }
+.rq-who { flex: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; color: var(--silver-3); }
+.rq-text { min-width: 0; font-family: var(--serif); font-size: 12.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the strip in the composer: what the next message answers, droppable */
+.room-main > .rquote.pending { flex: none; padding: 6px 0 0; }
+.rq-x { appearance: none; border: 0; background: none; padding: 0 4px; margin: 0; cursor: pointer; font-family: var(--mono); font-size: 13px; line-height: 1; color: var(--silver-4); }
+.rq-x:hover, .rq-x:focus-visible { color: var(--silver-1); }
+.rq-x:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 3px; }
+/* the door under a message that has a thread */
+.rthread { appearance: none; border: 0; background: none; padding: 0; margin: 0; align-self: flex-start; font-size: 11px; }
+/* the message a strip travelled to */
+.rmsg.lit { animation: rmsg-lit 1.4s ease-out; border-radius: 4px; }
+@keyframes rmsg-lit { 0%, 40% { background: color-mix(in srgb, var(--silver-4) 14%, transparent); } 100% { background: transparent; } }
+
+/* ── the thread pane: the right slot the work pane uses, docked on any work
+   axis. the root whole at the top, a hairline, the chain, its own composer. ── */
+.rpane.tpane {
+  display: flex; position: static; flex: none; width: 316px; margin-left: auto; min-height: 0;
+  background: var(--bg-well); border-radius: 6px; padding: 12px 16px 12px; overflow: hidden;
+  flex-direction: column; gap: 10px;
+}
+html[data-room-column="center"] .rpane.tpane, html[data-room-column="dock"] .rpane.tpane { margin-left: 0; }
+@container room (max-width: 980px) {
+  .room:has(.tpane) .room-main { flex: 1 1 0; }
+}
+.tp-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+.tp-rule { flex: none; height: 1px; background: var(--rule); margin: 2px 0; }
+/* in the narrow pane a message stacks: the head row holds who (or nothing,
+   for your turns) with the hover tier at its right; the words take the
+   whole width under it */
+.tpane .rmsg { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; align-items: baseline; }
+.tpane .rmsg .rwho { grid-row: 1; width: auto; gap: 10px; }
+.tpane .rmsg .rwho:empty { display: none; }
+.tpane .rmsg .rbody { grid-row: 2; }
+.tpane .rmsg:not(.head) .rbody { grid-row: 1; }
+.tpane .rmsg.mine, html[data-voice="indent"] .tpane .rmsg.mine { padding-left: 0; }
+/* your turns lift off the well onto the sheet tone (the pane is a well) */
+.tpane .rmsg.mine .rbody { max-width: none; background: var(--bg-elevated); }
+.tpane .rmsg .rtext { font-size: 13.5px; }
+.tp-foot { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.tp-foot .gask-input { width: 100%; }
+.tp-also { display: flex; gap: 7px; align-items: center; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); cursor: pointer; }
+.tp-also input { margin: 0; width: 12px; height: 12px; accent-color: var(--safelight); }
+.tp-also:hover { color: var(--silver-2); }
+@media (prefers-reduced-motion: reduce) {
+  .rmsg.lit { animation: none; background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
+}
+
+/* ── the house stacks (owner 09-08: "slack-stack in groups"; agent rooms stay
+   AI-shaped). three columns: the gutter, the text, the hover tier. a head
+   row (speaker change) = face + name in ink + the time, always; the words
+   under it in the text column; a folded line keeps the gutter, its time on
+   hover. your turn rides html[data-my-turn]: well (as ruled: right, on a
+   well, no name) · stack (a head row that says you, the words under it). ── */
+.room-thread.house { --gutter: 30px; }
+.room-thread.house .rmsg,
+html[data-voice="indent"] .room-thread.house .rmsg.mine,
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine {
+  display: grid; grid-template-columns: var(--gutter) minmax(0, 1fr); column-gap: 0; row-gap: 3px;
+  align-items: baseline; padding-left: 0; justify-content: stretch;
+}
+.room-thread.house .rmsg.head { margin-top: 6px; }
+/* the old 108px voice indent has no place in the grid */
+.room-thread.house .rmsg.mine,
+html[data-voice="indent"] .room-thread.house .rmsg.mine,
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine { padding-left: 0; }
+.room-thread.house .rmsg .rwho { grid-column: 1 / -1; grid-row: 1; width: auto; gap: 10px; }
+.room-thread.house .rmsg .rwho:empty { display: none; }
+.room-thread.house .rmsg .rbody { grid-column: 2; grid-row: 2; }
+.room-thread.house .rmsg:not(.head) .rbody { grid-row: 1; }
+/* a head row already shows the time, so its chip carries only the verbs */
+.room-thread.house .rmsg.head .rtier .rat, .tpane .rmsg.head .rtier .rat { display: none; }
+html:not([data-my-turn="stack"]) .room-thread.house .rmsg.mine .rtier .rat,
+html:not([data-my-turn="stack"]) .tpane .rmsg.mine .rtier .rat { display: inline; }
+.room-thread.house .rday { padding-left: var(--gutter); }
+.rme { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; color: var(--silver-3); }
+/* no face for you: the word starts where the names start */
+.room-thread.house .rmsg.mine .rwho { padding-left: var(--gutter); }
+/* well (default): your words end at the text column's right edge on a well, no head row */
+html:not([data-my-turn="stack"]) .room-thread.house .rmsg.mine .rwho,
+html:not([data-my-turn="stack"]) .tpane .rmsg.mine .rwho { display: none; }
+html:not([data-my-turn="stack"]) .room-thread.house .rmsg.mine .rbody { grid-row: 1; justify-self: end; max-width: 72%; }
+/* stack: your turn reads like everyone's, a head row that says you, the words plain */
+html[data-my-turn="stack"] .room-thread.house .rmsg.mine .rbody,
+html[data-my-turn="stack"] .tpane .rmsg.mine .rbody { justify-self: stretch; max-width: none; background: none; padding: 0; box-shadow: none; }
+html[data-my-turn="stack"] .room-thread.house .rmsg.mine.head .rbody { grid-row: 2; }
+
+/* ── reactions (owner 09-08): pills under the words, a glyph and a count;
+   yours wears the well. the smiley on the hover tier opens the glyph row. ── */
+.rreacts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding-top: 1px; }
+.rpill {
+  appearance: none; margin: 0; padding: 1px 8px 1px 6px; border-radius: 11px; cursor: pointer;
+  border: 1px solid var(--rule-strong); background: none; color: var(--silver-3);
+  display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; line-height: 18px;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.rpill .n { font-family: var(--mono); font-size: 10.5px; font-feature-settings: "tnum" 1; }
+.rpill:hover, .rpill:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
+.rpill:focus-visible { outline: 2px solid var(--safelight); outline-offset: 1px; }
+.rpill.mine { background: var(--bg-well); border-color: var(--silver-3); color: var(--silver-1); }
+.rmsg.mine .rpill.mine, .tpane .rpill.mine { background: var(--bg-elevated); }
+/* the glyph row floats off the chip's left edge, in the air: no layout shift */
+.rpick {
+  position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 3;
+  display: inline-flex; gap: 1px; align-items: center; padding: 2px 3px; border-radius: 6px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop); white-space: nowrap;
+}
+.rpick button { appearance: none; border: 0; background: none; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; }
+.rpick button:hover, .rpick button:focus-visible { background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
+.rpick .plus { font-family: var(--mono); font-size: 13px; color: var(--silver-3); padding: 2px 7px; }
+.rpick .plus:hover, .rpick .plus:focus-visible { color: var(--silver-1); }
+/* the search: a fixed card off the chip (portaled), eight glyphs to a row */
+.rsearch {
+  position: fixed; z-index: 70; width: 252px; transform: translateX(-100%);
+  padding: 8px; border-radius: 8px; background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--rule), var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.rsearch .rs-in {
+  width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--rule-strong); border-radius: 5px; background: var(--bg-well); color: var(--silver-1);
+}
+.rsearch .rs-in::placeholder { color: var(--silver-4); }
+.rsearch .rs-in:focus { outline: none; border-color: var(--silver-4); }
+.rsearch .rs-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; }
+.rsearch .rs-grid button { appearance: none; border: 0; background: none; padding: 3px 0; border-radius: 4px; cursor: pointer; font-size: 16px; line-height: 1.2; }
+.rsearch .rs-grid button:hover, .rsearch .rs-grid button:focus-visible { background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
+.rsearch .rs-none { grid-column: 1 / -1; font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); padding: 4px 2px; }
