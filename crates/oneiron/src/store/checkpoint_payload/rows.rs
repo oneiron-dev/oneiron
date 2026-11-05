@@ -194,6 +194,10 @@ pub(crate) struct OwnerRows {
     /// join spells back from its author's part (FIX 6075). In memory only,
     /// for the projection's claim on the row; never framed.
     pub(crate) image_keys: BTreeMap<RowLocator, Vec<u8>>,
+    /// The payload-free image of an exact owned row that also holds pending
+    /// work. In memory only: capture strips the full row, then carries this
+    /// skeleton even when the payload's owner was erased after the read.
+    pub(crate) image_skeletons: BTreeMap<RowLocator, Vec<u8>>,
 }
 
 impl OwnerRows {
@@ -206,6 +210,7 @@ impl OwnerRows {
             actor_parts: Vec::new(),
             dependencies: Vec::new(),
             image_keys: BTreeMap::new(),
+            image_skeletons: BTreeMap::new(),
         }
     }
 
@@ -222,6 +227,7 @@ impl OwnerRows {
         self.actor_parts.extend(other.actor_parts);
         self.dependencies.extend(other.dependencies);
         self.image_keys.extend(other.image_keys);
+        self.image_skeletons.extend(other.image_skeletons);
     }
 }
 
@@ -301,6 +307,20 @@ impl Captured {
 
     pub(crate) fn exact(&mut self, owner: OwnerRef, at: RowLocator, value: Vec<u8>) {
         self.owner(owner).rows.push(RowPart::Exact { at, value });
+    }
+
+    /// One exact owned row with its family's payload-free image. This is one
+    /// projected row, not a second structure claim on the same physical key.
+    pub(crate) fn projected_exact(
+        &mut self,
+        owner: OwnerRef,
+        at: RowLocator,
+        value: Vec<u8>,
+        skeleton: Vec<u8>,
+    ) {
+        let rows = self.owner(owner);
+        rows.image_skeletons.insert(at.clone(), skeleton);
+        rows.rows.push(RowPart::Exact { at, value });
     }
 
     /// Records that `owner`'s part at `at` holds only while `on` does.

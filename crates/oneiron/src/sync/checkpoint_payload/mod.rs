@@ -59,7 +59,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    ActorPart, OpenedOwnerRows, OtherClient, OwnerRef, RoundTripPolicy, RowDb, RowLocator,
+    ActorPart, OpenedOwnerRows, OtherClient, OwnerRef, RoundTripPolicy, RowDb, RowLocator, bad_part,
 };
 use crate::sync::carrier_parts::Parts;
 
@@ -525,6 +525,25 @@ pub(crate) fn restore_checkpoint_sync(
         }
     }
     Ok(restored)
+}
+
+/// Checks an owned queue row against its already-restored payload-free
+/// image before its content overwrites that image. Other rows need no read.
+pub(crate) fn check_projected_sync_row_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+) -> Result<()> {
+    if at.db != RowDb::SyncQueue {
+        return Ok(());
+    }
+    self::rows::check(at, value)?;
+    let skeleton = dbs.sync_queue().get(txn, &at.key)?.ok_or_else(bad_part)?;
+    if !crate::sync::queue::checkpoint::embed_job_matches_skeleton(&at.key, value, &skeleton)? {
+        return Err(bad_part());
+    }
+    Ok(())
 }
 
 /// `entity`'s document basis in the capture's one view `txn` (FIX 10932),

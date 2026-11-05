@@ -2,8 +2,9 @@
 
 use super::codec::{
     decode_delete_bearing_key, decode_embed_job_value, decode_last_update_seq_metadata,
-    decode_update_key, encode_delete_bearing_key, encode_embed_job_value, encode_embed_key,
-    encode_update_key, encode_update_value, unix_millis_now,
+    decode_update_key, embed_job_home_claim_copy, encode_delete_bearing_key,
+    encode_embed_job_value, encode_embed_key, encode_update_key, encode_update_value,
+    unix_millis_now,
 };
 use super::{DELETE_BEARING_PREFIX, LAST_UPDATE_SEQ_KEY, UPDATE_PREFIX};
 use crate::Vault;
@@ -44,6 +45,26 @@ pub(crate) fn push_embed_job_in_txn(
     };
     store.sync_queue.put(wtxn, &key, &value)?;
     Ok(())
+}
+
+/// Drops only a carried copy, retaining the native job's original priority
+/// and enqueue time. The caller holds the source rewrite's own writer.
+pub(crate) fn clear_embed_job_home_claim_copy_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    let key = encode_embed_key(entity_id);
+    let Some(existing) = store.sync_queue.get(wtxn, &key)? else {
+        return Ok(false);
+    };
+    if embed_job_home_claim_copy(&existing)?.is_none() {
+        return Ok(false);
+    }
+    let (priority, queued_at) = decode_embed_job_value(&existing)?;
+    let value = encode_embed_job_value(priority, queued_at);
+    store.sync_queue.put(wtxn, &key, &value)?;
+    Ok(true)
 }
 
 pub(crate) fn delete_embed_job_in_txn(
