@@ -138,7 +138,13 @@ impl SyncConnection {
             let granted =
                 verdict == UpdateVerdict::Portable && client.residence_granted(&update.window_key);
             if verdict != UpdateVerdict::Portable || !granted {
+                let interrupted = pending.is_some();
                 forget_pending(client, &update.window_key, pending);
+                if interrupted {
+                    // The home may hold a prefix. Ending this socket drops
+                    // its connection-local assembly instead of orphaning it.
+                    return Err("multipart window release changed".to_owned());
+                }
             }
             match verdict {
                 UpdateVerdict::Withheld => {
