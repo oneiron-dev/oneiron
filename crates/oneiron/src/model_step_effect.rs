@@ -9,7 +9,7 @@ use oneiron_model::llm::LlmRequest;
 /// Exact durable-step identity frozen beside an outbound payload. This is a
 /// correlation key, never a caller-authored permission bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StepEffectBinding {
+pub struct StepEffectBinding {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
 }

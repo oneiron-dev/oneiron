@@ -97,12 +97,13 @@ pub(super) const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
 /// was filed, keeps the row's erased skeleton, and files nothing.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
-    step_hash: &[u8; 32],
+    binding: crate::model_step_effect::StepEffectBinding,
     request: &LlmRequest,
     response: &LlmResponse,
     payload: &[u8],
     terminal: StepTerminal,
 ) -> DurableStepResult<Option<EntityId>> {
+    let step_hash = &binding.step_hash;
     let params_hash = request_params_hash(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
@@ -118,7 +119,7 @@ pub(super) fn log_terminal_step(
     } else {
         None
     };
-    let existing_started_at = step_state_read(ctx.vault, ctx.attempt_id, step_hash)?
+    let existing_started_at = step_state_read(ctx.vault, binding.attempt_id, step_hash)?
         .map_or(ctx.now_ms, |row| row.started_at);
 
     ctx.vault
@@ -131,7 +132,7 @@ pub(super) fn log_terminal_step(
             let logged = step_state_put_in_txn(
                 ctx.vault,
                 wtxn,
-                ctx.attempt_id,
+                binding.attempt_id,
                 step_hash,
                 &StepStateRow {
                     progression: StepProgression::Logged,
@@ -154,7 +155,7 @@ pub(super) fn log_terminal_step(
             crate::self_heal::blocked_reports::bind_step_claim_in_txn(
                 ctx.vault,
                 wtxn,
-                ctx.attempt_id,
+                binding.attempt_id,
                 step_hash,
                 claim_id,
             )?;
@@ -176,7 +177,7 @@ pub(super) fn log_terminal_step(
                     .apply(wtxn)?;
                 let run_ref = format!(
                     "dreamer-step:{}",
-                    bytes_to_hex_lower(ctx.attempt_id.as_bytes())
+                    bytes_to_hex_lower(binding.attempt_id.as_bytes())
                 );
                 let appended = ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
@@ -195,7 +196,7 @@ pub(super) fn log_terminal_step(
             };
 
             let value = encode_step_claim_value(&EncodedStepClaim {
-                attempt_id: ctx.attempt_id,
+                attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 progression: StepProgression::Finished,
                 model_id: request.model.as_str().to_owned(),
@@ -230,7 +231,7 @@ pub(super) fn log_terminal_step(
                 register_step_response_pin_in_txn(&ctx.vault.store, wtxn, &claim_id, pin)?;
             }
             let claimed = StepClaimed {
-                attempt_id: ctx.attempt_id,
+                attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 claim: claim_id,
                 used_units: response
