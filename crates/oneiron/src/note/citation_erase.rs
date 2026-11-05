@@ -151,6 +151,7 @@ fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> 
         };
         let doc = super::document::NoteDocument::load((key.0).0, &raw)?;
         if remove_erased_pins(vault, txn, &doc)? {
+            super::proposals::preserve_recovery_basis(vault, txn, (key.0).0, (key.1).0, &doc.doc)?;
             doc.doc.commit();
             // A normal snapshot would keep the removed quote in its oplog.
             let clean = super::storage::state_copy(&doc.doc)?;
