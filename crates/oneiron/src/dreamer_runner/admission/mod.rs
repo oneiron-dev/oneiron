@@ -263,8 +263,8 @@ impl DreamerRunnerStore<'_> {
     /// Atomically admits the next queued Coach heal attempt for a host Coach.
     ///
     /// Per-device, like SKILL-OPT: the attempt's only output is a proposal.
-    /// The wake driver never calls this; the Coach's model turn is the host's,
-    /// as an `agent.dispatch` healer's is.
+    /// A separate Coach consumer or an explicitly opted-in wake executor
+    /// runs the host's model turn, as an `agent.dispatch` healer's is.
     ///
     /// The admission's grouped write skips the write door's scope-summary
     /// rederive (FIX 11664 item 2a), the way a cold open's recovery writes do

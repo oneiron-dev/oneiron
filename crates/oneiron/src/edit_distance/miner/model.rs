@@ -286,8 +286,10 @@ pub(super) struct AmendmentSource {
 pub(super) enum SourceEnds {
     /// A recorded window: one artifact holds both ends and every change (the shared opened row).
     Recorded(Arc<RetainedProposal>),
-    /// Two endpoint texts, each read through its own row.
-    Endpoints(String, String),
+    /// Two endpoint texts, each read through its own row, beside the final
+    /// end's artifact (the settlement's own row) for endpoint-position ranges
+    /// (FIX 12715).
+    Endpoints(EntityId, String, String),
 }
 
 /// Every persisted proposal row (finalized windows and endpoint-only
@@ -328,10 +330,12 @@ impl ArtifactIndex {
                 }
                 self.opened(&artifact.entity_id()).map(SourceEnds::Recorded)
             }
-            DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
-                self.end_text(&delta.proposed_ref)?,
-                self.end_text(&delta.final_ref)?,
-            )),
+            DeltaSource::Reconstructed => {
+                let before = self.end_text(&delta.proposed_ref)?;
+                let after = self.end_text(&delta.final_ref)?;
+                let artifact = delta.final_ref.proposal_artifact()?.entity_id();
+                Some(SourceEnds::Endpoints(artifact, before, after))
+            }
             DeltaSource::FieldDiff => None,
         }
     }
