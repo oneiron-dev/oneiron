@@ -10,6 +10,9 @@
 //! own) is known by it. A job's repeat answers the first's ticket and is
 //! never sent again, and its polls answer from that ticket. A call's
 //! repeat answers the answer kept for the first, unpaid, until it expires.
+//! Concurrent keyed runs share the first run's result before any second
+//! admission, even when its answer could not be kept. A dropped first run
+//! wakes its waiting repeats with a cut, without sending them again.
 //! A call in a banked voice is never replayed: a voice its owner withdrew
 //! since speaks no more. With no key, every call goes out as before.
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -181,10 +184,45 @@ impl MediaRuntime {
         if let Some(answer) = self.replay_answer(key) {
             return answer;
         }
-        let kept = request.clone();
-        let response = self.run_in(request, None, payer.clone(), sources).await?;
-        self.keep_replay_answer(key, &kept, &response, actor, payer);
-        Ok(response)
+        let leader = match self.replay_runs.claim(key) {
+            super::run_replay::Claim::Leader(leader) => leader,
+            super::run_replay::Claim::Follower(follower) => {
+                drop(request);
+                return self.follow_replay(key, follower).await;
+            }
+        };
+        let answer = async {
+            // A prior leader may have kept its answer after our first read.
+            if let Some(answer) = self.replay_answer(key) {
+                return answer;
+            }
+            let kept = request.clone();
+            let response = self.run_in(request, None, payer.clone(), sources).await?;
+            self.keep_replay_answer(key, &kept, &response, actor, payer);
+            Ok(response)
+        }
+        .await;
+        leader.finish(answer)
+    }
+
+    /// A waiting repeat reads the current erase marker before copying the
+    /// shared answer, just as a durable replay refuses erased content.
+    pub(super) async fn follow_replay(
+        &self,
+        key: &MediaReplayKey,
+        follower: super::run_replay::Follower,
+    ) -> LlmResult<MediaResponse> {
+        let answer = follower.answer().await;
+        let id = format!("{REPLAY_TICKET}{}", key.memo_id());
+        if self
+            .store
+            .as_ref()
+            .and_then(|store| store.read(&id, false))
+            .is_some_and(|kept| kept.erased())
+        {
+            return Err(FatalLlmError::ResponseErased.into());
+        }
+        answer?.as_ref().clone()
     }
 
     /// The answer the call `key` knows keeps for its repeats, when one
