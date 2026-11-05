@@ -4,6 +4,7 @@
 //! settlement carry them; any other call sends on its route as it is, its
 //! sources unknown. Capture only: no call is refused, held or narrowed here.
 use crate::entity_id::EntityId;
+use crate::llm::run_admission::RunAdmission;
 use oneiron_model::llm::LlmBackend;
 
 /// A host route that can send one call under the rows its input was read
@@ -13,6 +14,12 @@ pub trait SourcedBackend: Send + Sync {
     /// This route for one call whose input fixed code assembled from exactly
     /// `rows`, sorted and deduplicated.
     fn sourced(&self, rows: Vec<EntityId>) -> Box<dyn LlmBackend + '_>;
+
+    /// The actual host run this route spends on, when the host lends it for
+    /// provider reads beyond the caller's generated first read.
+    fn run(&self) -> Option<&RunAdmission> {
+        None
+    }
 }
 
 /// One call's backend: the route's own, or, when the host lends a sourced
