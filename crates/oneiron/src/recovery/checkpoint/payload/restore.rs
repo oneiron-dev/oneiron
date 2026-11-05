@@ -199,7 +199,7 @@ impl SelectedPayload {
     }
 }
 
-/// [`open_image_payload`] for a legal read of the `selected` owners only:
+/// [`open_image_payload`] for a legal read of the owners `selected` admits:
 /// every compartment the payload names is required through `plan` and
 /// opens or stays shut exactly as there, and the image's rows that hold an
 /// id link to an owner that did not open are taken out the same way. Only
@@ -214,7 +214,7 @@ pub(in crate::recovery::checkpoint) fn open_selected_payload(
     sealed: Option<SealedPayload<'_>>,
     plan: &mut CustodyPlan,
     image: &mut CheckpointImage,
-    selected: &BTreeSet<OwnerRef>,
+    selected: impl Fn(&OwnerRef) -> bool,
 ) -> std::result::Result<Option<SelectedPayload>, Rejected> {
     let Some(mut sealed) = sealed else {
         return Ok(None);
@@ -247,7 +247,7 @@ pub(in crate::recovery::checkpoint) fn open_selected_payload(
         let wanted = match role {
             BundleRole::Actors => true,
             BundleRole::Content(_) | BundleRole::Carrier(_) => {
-                owner(compartment).is_some_and(|owner| selected.contains(&owner))
+                owner(compartment).is_some_and(|owner| selected(&owner))
             }
             BundleRole::Window => false,
         };

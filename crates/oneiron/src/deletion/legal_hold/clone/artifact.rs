@@ -22,13 +22,16 @@ use oneiron_vault_contract::host_legal::{
 };
 
 use super::collector::{Collector, SummaryCounts};
-use super::messages::result_attachment;
+use super::messages::{RESULT_BODY_FAMILY, holds_output, result_attachment};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::recovery::checkpoint::{
-    ArtifactComponent, ArtifactMessage, ArtifactRefusal, LegalReadError, VerifiedArtifact,
-    inspect_backup, read_artifact_messages,
+    ArtifactComponent, ArtifactMessage, ArtifactRead, ArtifactRefusal, LegalReadError,
+    VerifiedArtifact, inspect_backup, open_artifact_read,
 };
+use crate::store::owned_body::BODY;
+use crate::store::result_body_rows::RAW_OUTPUTS;
 use crate::store::{PadObjectsCapture, UncapturedPadObjects};
 
 /// `recvmsg` flags: the descriptor arrives close-on-exec where the kernel
@@ -82,8 +85,8 @@ pub(super) fn capture(
         checkpoint_id: artifact.checkpoint_id,
         commitment_digest: artifact.commitment_digest,
     };
-    let messages = match read_artifact_messages(file, &key, &expected, &live, &selection.ids) {
-        Ok(messages) => messages,
+    let mut read = match open_artifact_read(file, &key, &expected, &live, &selection.ids) {
+        Ok(read) => read,
         Err(LegalReadError::Refused(ArtifactRefusal::IdentityMismatch)) => {
             return Err(refused("legal capture artifact identity"));
         }
@@ -94,9 +97,9 @@ pub(super) fn capture(
     let mut captured = 0_u64;
     let mut missed_messages = Vec::new();
     let mut absent_result_bodies = Vec::new();
-    for (id, message) in &messages {
+    for id in &selection.ids {
         check()?;
-        let rows = match message {
+        let rows = match read.message(id)? {
             ArtifactMessage::Missed => {
                 missed_messages.push(*id);
                 continue;
@@ -106,7 +109,7 @@ pub(super) fn capture(
         // Every component of one message carries the revision of its row,
         // as the artifact holds it.
         let revision = *blake3::hash(&rows[0].value).as_bytes();
-        for row in rows {
+        for row in &rows {
             collector.component(
                 source_component(row.component),
                 CaptureSource::Message(*id),
@@ -120,9 +123,14 @@ pub(super) fn capture(
             )?;
         }
         captured += 1;
-        // Not streamed by this extent: a named body is uncaptured here,
-        // which says nothing about whether the vault still holds it.
-        if result_attachment(&rows[0].value).is_some() {
+        if !result_body(
+            &mut read,
+            &mut collector,
+            id,
+            &rows[0].value,
+            revision,
+            &check,
+        )? {
             absent_result_bodies.push(*id);
         }
     }
@@ -141,6 +149,51 @@ pub(super) fn capture(
     )?;
     // The custody guard ends after the exact durable HOST acknowledgement.
     Ok(())
+}
+
+/// Streams the result body the artifact's row `row` of message `id` names,
+/// when that message's attachment occurrence (its own compartment, opened)
+/// holds exactly that output and the artifact carries it under an instance
+/// current custody still opens: component 11, as the live capture streams
+/// it. `true` when there was no attachment or its body streamed; `false`
+/// when the body stays uncaptured.
+fn result_body(
+    read: &mut ArtifactRead<'_>,
+    collector: &mut Collector<'_>,
+    id: &[u8; 16],
+    row: &[u8],
+    revision: [u8; 32],
+    check: &impl Fn() -> Result<()>,
+) -> Result<bool> {
+    let Some(attachment) = result_attachment(row) else {
+        return Ok(true);
+    };
+    let message = EntityId::from_bytes(*id)?;
+    let output = attachment.output()?;
+    let occurrence = attachment.message_occurrence(message)?;
+    let hold = read
+        .result_descriptor(&message, &occurrence)?
+        .map(|bytes| BODY.decode_value(&bytes))
+        .transpose()?;
+    if !holds_output(hold, &output, &attachment) {
+        return Ok(false);
+    }
+    let key = RAW_OUTPUTS.key_bytes(&output.handle);
+    let Some(mut input) = read.result_body(&key, output.raw_blake3, output.raw_len)? else {
+        return Ok(false);
+    };
+    collector.component(
+        SourceComponent::MessageResultBody,
+        CaptureSource::Message(*id),
+        RESULT_BODY_FAMILY,
+        &key,
+        revision,
+        output.raw_len,
+        output.raw_blake3,
+        &mut *input,
+        check,
+    )?;
+    Ok(true)
 }
 
 fn source_component(component: ArtifactComponent) -> SourceComponent {
