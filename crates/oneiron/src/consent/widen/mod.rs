@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 mod contact_verdict_index;
+mod offers;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =

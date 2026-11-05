@@ -23,8 +23,8 @@ use crate::settings::ReadDestination;
 /// stay committed. On this device the state is the same. Off it, a proposal
 /// filed from a record a world withheld from that destination keeps is left
 /// out of the proposals shown and of every proposal count, as if it were
-/// never filed. A proposal whose source is not a record (a side row or a
-/// carrier) is unknown and stays. Run, receipt and retry counts omit only
+/// never filed. A typed-body document carrier also names its source in its
+/// row key. Other side rows and carriers stay unknown. Run, receipt and retry counts omit only
 /// contributors whose actual source entity is known and withheld. Unknown
 /// sources never withhold.
 ///
@@ -51,14 +51,19 @@ pub fn secret_lift_as_owner_toward(
     status_where(vault, Some(destination))
 }
 
-/// The record a proposal was filed from (`record:<id>`); `None` for a side
-/// row or a carrier, whose row the proposal does not name.
-fn proposal_record(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
-    proposal
-        .proposal
-        .path
-        .strip_prefix("record:")
-        .and_then(|hex| EntityId::from_hex(hex).ok())
+/// The source entity a path actually names. A typed-body document's row key
+/// is that document's entity id, including earlier-frontier proposals filed
+/// by `frontier::keys_of`. Other carrier and side-row keys remain unknown.
+fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
+    let path = &proposal.proposal.path;
+    if let Some(hex) = path.strip_prefix("record:") {
+        return EntityId::from_hex(hex).ok();
+    }
+    let (table, hex) = path.strip_prefix("carrier:")?.split_once(':')?;
+    if table != crate::side_table::TYPED_BODY_DOC.name {
+        return None;
+    }
+    EntityId::from_hex(hex).ok()
 }
 
 /// The records some proposal was filed from that a world withheld from
@@ -71,7 +76,7 @@ fn withheld_sources(
     let mut records = BTreeSet::new();
     for row in PROPOSALS.iter_from(&vault.store, txn, &[])? {
         let (_, proposal) = row?;
-        records.extend(proposal_record(&proposal));
+        records.extend(proposal_source(&proposal));
     }
     if let Some(run) = RUN.get_lenient(&vault.store, txn, &())? {
         records.extend(accounting::sources(&vault.store, txn, run.run_id)?);
@@ -147,7 +152,7 @@ pub(super) fn status_where(
     let mut proposals = Vec::new();
     for row in PROPOSALS.iter_from(&vault.store, &txn, &[])? {
         let (key, mut proposal) = row?;
-        if proposal_record(&proposal).is_some_and(|source| !keep_source(source)) {
+        if proposal_source(&proposal).is_some_and(|source| !keep_source(source)) {
             continue;
         }
         if !proposal.is_open() {
