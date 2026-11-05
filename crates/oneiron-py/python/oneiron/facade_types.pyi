@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1229 facade rows, 4478 declarations.
-Inputs: 1160 of 1229 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1064 of 1229 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1233 facade rows, 4486 declarations.
+Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -134,6 +134,21 @@ class CommitmentFulfillRequest(TypedDict):
 class CommitmentCloseRequest(TypedDict):
     commitment_ref: str
     evidence_turn_refs: list[str]
+class EmptyRequest(TypedDict):
+    ...
+class CommitmentReminderVoice(TypedDict):
+    persona_ref: NotRequired[str | None]
+class CommitmentReminderRoute(TypedDict):
+    channel: str
+    verb: str
+    target: str
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
+    voice: NotRequired[CommitmentReminderVoice | None]
+class CommitmentReminderRouteReply(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
+class CommitmentReminderRouteSetRequest(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]
@@ -367,8 +382,6 @@ class StandingBlockView(TypedDict):
     world_ref: EntityId
     name: str
     token_floor: int
-class EmptyRequest(TypedDict):
-    ...
 class StandingBlockEditRequest(TypedDict):
     world_ref: EntityId
     field: str
@@ -3527,6 +3540,7 @@ class RetrievalRunRecord(TypedDict):
     policy_trace: NotRequired[RetrievalPolicyTrace | None]
     replay_inputs: NotRequired[RetrievalReplayInputs | None]
     turn: NotRequired[RetrievalTurn | None]
+    query_expander_id: NotRequired[str | None]
     signals: list[RetrievalSignal]
     result_ids: list[list[int]]
     score_breakdown: list[RetrievalScoreBreakdown]
@@ -5555,6 +5569,8 @@ class SkillCodeAutoInstallRequest(TypedDict):
 SkillFitChoice = Literal["rule_fit", "owner_asked"]
 class SkillFitSetRequest(TypedDict):
     setting: SkillFitChoice
+class SkillAdvisoryAskRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -7370,6 +7386,15 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
+class SyncHeldEditEvidence(TypedDict):
+    window_key: str
+    container: QuarantineContainer
+    crdt_key_hash: str
+    crdt_key_len: int
+    reason_code: str
+    payload_hash: str
+    quarantined_at: int
 RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
 class RetainedWorkWaitSetRequest(TypedDict):
     queue: RetainedWorkQueue
@@ -15023,6 +15048,10 @@ class DeckEmissionRequest(TypedDict):
     name: str
     run_ref: str
     trigger: NotRequired[MadeByTrigger | None]
+class CreatedInput(TypedDict):
+    source: ArtifactVersionRef
+    content_hash: list[int]
+    provenance_kind: str
 class CreatedSlide(TypedDict):
     part: str
     sld_id: int
@@ -15037,6 +15066,8 @@ class DeckCreationRecord(TypedDict):
     outline_hash: list[int]
     template: ArtifactVersionRef
     template_hash: list[int]
+    asset_inputs: dict[str, CreatedInput]
+    font_inputs: list[CreatedInput]
     run_ref: str
     made_by: NotRequired[EntityId | None]
     slides: list[CreatedSlide]
@@ -15435,6 +15466,7 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
+    read_rows: NotRequired[list[str]]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -16615,6 +16647,7 @@ class UnsupportedCapability(TypedDict):
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
+    code: NotRequired[str | None]
 class FatalLlmErrorInvalidRequestDetail(TypedDict):
     InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
@@ -16861,7 +16894,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind

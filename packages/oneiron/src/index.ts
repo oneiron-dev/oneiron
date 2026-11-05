@@ -469,6 +469,12 @@ export class Oneiron {
       release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
       /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
       supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+      reminder_route: {
+        /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteGet(input) as Facade.CommitmentReminderRouteReply),
+        /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+        set: (input: Facade.CommitmentReminderRouteSetRequest): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteSet(input) as Facade.CommitmentReminderRouteReply),
+      },
     },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
@@ -1070,6 +1076,10 @@ export class Oneiron {
         /** The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert. */
         set: (input: Facade.SkillFitSetRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsFitSet(input) as Facade.HubConsentReceipt),
       },
+      advisory_ask: {
+        /** The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way. */
+        set: (input: Facade.SkillAdvisoryAskRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsAdvisoryAskSet(input) as Facade.HubConsentReceipt),
+      },
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
@@ -1523,6 +1533,10 @@ export class Oneiron {
       },
     },
     sync: {
+      quarantine: {
+        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+        held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
+      },
       retained_work: {
         wait: {
           /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
