@@ -56,7 +56,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: body `blocks` (id, kind, role, text, runs, cells, lock) and scoped `stories` | none | `read_docx_body` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
-| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs for header/footer/footnote/endnote stories with an explicit scope; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, notes take plain text only), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
+| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs for header/footer/footnote/endnote stories with an explicit scope; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, note runs land paragraph-scoped the same way), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
 | `xlsx.project` | `source` | `changes` (cell, set_name, delete_name, conditional_formats: a range, a cell-value or formula rule, and the differential look written to `dxfs`), `limits`, optional `location` (directory, file_name: an external link naming it is the workbook's own and follows a sheet rename or deletion) | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
@@ -76,7 +76,8 @@ story-local ids. The same text/run/cell/lock projection is used for both.
 
 `docx.project` writes story text statelessly through the same native tracked
 transaction: `set_story_text` covers authored headers/footers plus footnote/endnote
-bodies, `set_story_runs` covers authored headers/footers only. Each change names its
+bodies, `set_story_runs` covers authored headers/footers plus one paragraph
+within a footnote/endnote story. Each change names its
 explicit story scope and its story-local block id; a header's `p_1` never addresses
 the body's `p_1`. Header/footer runs land as one whole-paragraph tracked
 redline with exactly the requested six text marks, including empty mark sets and
@@ -84,12 +85,13 @@ same-text edits. Absent marks are explicitly off on new runs, including the
 complex-script bold/italic slots; script selectors, source deletion history and
 unrelated run properties remain intact. Ordinary `set_story_text`
 keeps native formatting inheritance. This is not the body's granular formatting
-pass. Notes take plain text at
-native granularity (surviving marks on unchanged words only); marked runs on a note
-refuse instead of silently dropping marks. Comment stories stay read-only: comment
+pass. Note runs are paragraph-scoped: the addressed note paragraph lands as one
+whole-paragraph tracked redline with exactly the requested six marks, later
+note paragraphs included, while the old note plain mode (`set_story_text`
+first-paragraph body) is unchanged. Comment stories stay read-only: comment
 text has no native write verb. Story move/insert/delete/table ops do not exist.
-The vault's existing `read_docx_blocks` remains body-only, and shared-Loro story
-import/edit/export remains open under FIX 594 (whole 594 stays PART). Filling an
+Comment editing, story structure ops, and shared-Loro story import/edit/export
+remain unbuilt engineering scope. Filling an
 empty header/footer paragraph supplies its actual semantic guard with an empty
 `expect`. Native expectations are substring matches; a blank expectation without
 a guard retains its prior refusal.

@@ -128,3 +128,17 @@ The exact-run parser registration correction (2026-11-05, FIX 14300) adds
 `deserialize_ops` checks that allowlist before deserializing the typed operation,
 so the setting must be registered there as well as on the enum. Other fields,
 tags, unknown-field checks and schema validation stay unchanged.
+
+The marked note-runs change (2026-11-05, FIX 594) adds the native
+`edit_note_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/footnotes.rs`) and opens the wrapper
+`SetStoryRuns` footnote/endnote arms (`docx_body/projection.rs`). The new op
+edits one paragraph within the actual footnote/endnote `w:id` story as a
+whole-paragraph tracked redline with the exact six marks, paragraph-scoped
+across multi-paragraph notes. It reuses the shared segment builder, the exact
+post-pass (moved whole from `headers_footers.rs` to a parent-private helper
+with no visibility change), the header/footer guard/expect/opaque law, and the
+shared structural-marker offset law for bookmarks, comment ranges, and foreign
+markers; the auto-number glyph stays a leading Normal run. Existing `EditNote`
+plaintext behavior is byte-unchanged. No contract schema bump, no new error,
+format, default, cap, or Loro change.
