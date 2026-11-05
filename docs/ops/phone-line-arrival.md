@@ -111,6 +111,14 @@ with the native lifecycle, approval and enabled predicate before its instruction
 actual model list leave the read lane. There is no default-agent or empty-list substitute.
 This getter does not activate an answering session.
 
+The call-local media entry points attach the actual receiving agent to the same
+admitted run and filter its ladder through the frozen native model list, including
+owner-selected fallback rungs. Voice routing filters eligible backend bindings before
+selecting the route, rather than stopping at an unlisted primary when a listed route
+can serve it. Existing media callers pass no agent context and keep their prior routing
+and billing. These ports do not yet activate a phone media door or prove provider-send
+release checks.
+
 A phone-bound host refuses speaker matching and roster departures before accessing
 any roster. Ordinary voice hosts keep their existing matching and departure behavior.
 This guard does not create an anonymous session or activate an enrollment path; the
