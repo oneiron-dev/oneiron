@@ -332,7 +332,8 @@ pub(super) fn said_blocked_sourced(
     }
     // Re-read one report at a time in the same snapshot as its header.
     for id in recent {
-        let Some(raw) = vault.get_raw_in(&rtxn, &id)? else {
+        let Some(raw) = vault.get_raw_sealed_in_txn(&rtxn, &id)? else {
+            source_rows = None;
             continue;
         };
         let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
