@@ -20,9 +20,11 @@
 pub(in crate::sync) mod checkpoint;
 mod erased;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
-use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
@@ -32,7 +34,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
     Carrier, CarrierKey, carrier, encode_binding, encode_policy, named, parse_key, policy_key,
-    policy_prefix, record_key,
+    record_key,
 };
 use crate::source_audience::{self, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy};
 
@@ -78,27 +80,58 @@ fn carriers(map: &LoroMap) -> Vec<(String, Carrier)> {
         .collect()
 }
 
-/// The highest revision of `policy` `map` carries; `Err` when a copy of it
-/// does not decode.
-fn carried_head(map: &LoroMap, policy: &EntityId) -> Result<Option<SourceAudiencePolicy>> {
-    let prefix = policy_prefix(policy);
-    let mut head: Option<SourceAudiencePolicy> = None;
+/// The highest carried revision of each policy a map holds; `None` for a
+/// policy one of whose copies does not decode.
+type Heads = BTreeMap<EntityId, Option<SourceAudiencePolicy>>;
+
+/// [`Heads`] of `map`, folded in one scan.
+fn carried_heads(map: &LoroMap) -> Heads {
+    let mut heads = Heads::new();
     for (map_key, bytes) in entries(map) {
-        if !map_key.starts_with(&prefix) {
+        let Some(CarrierKey::Policy(id, _)) = parse_key(&map_key) else {
             continue;
-        }
-        let bytes = bytes.ok_or_else(|| refused("a policy that is not bytes"))?;
-        let Carrier::Policy { policy, .. } = carrier(&map_key, &bytes)? else {
-            return Err(refused("a policy key holding a binding"));
         };
-        if head
-            .as_ref()
-            .is_none_or(|held| policy.revision > held.revision)
-        {
-            head = Some(policy);
+        let decoded = bytes.and_then(|bytes| match carrier(&map_key, &bytes) {
+            Ok(Carrier::Policy { policy, .. }) => Some(policy),
+            _ => None,
+        });
+        match (heads.get(&id), decoded) {
+            (Some(None), _) => {}
+            (_, None) => {
+                heads.insert(id, None);
+            }
+            (Some(Some(held)), Some(policy)) if held.revision >= policy.revision => {}
+            (_, Some(policy)) => {
+                heads.insert(id, Some(policy));
+            }
         }
     }
-    Ok(head)
+    heads
+}
+
+thread_local! {
+    /// The heads of the window the row savepoints of one pass read, by
+    /// window and version: the map is folded once a pass, not once a row.
+    static PASS_HEADS: RefCell<Option<(String, VersionVector, Rc<Heads>)>> =
+        const { RefCell::new(None) };
+}
+
+/// [`carried_heads`] of `doc`'s map, the window `window`, folded once for
+/// each version of it a pass reads.
+fn pass_heads(doc: &LoroDoc, window: &str) -> Rc<Heads> {
+    let version = doc.oplog_vv();
+    PASS_HEADS.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if let Some((held_window, held_version, heads)) = cell.as_ref()
+            && held_window == window
+            && *held_version == version
+        {
+            return Rc::clone(heads);
+        }
+        let heads = Rc::new(carried_heads(&doc.get_map(SOURCE_AUDIENCES_MAP)));
+        *cell = Some((window.to_owned(), version, Rc::clone(&heads)));
+        heads
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -269,8 +302,40 @@ fn write_immutable(map: &LoroMap, map_key: &str, value: &[u8]) -> Result<bool> {
 /// policy's closure.
 type Published = (EntityId, EntityId, Vec<(EntityId, SourceAudiencePolicy)>);
 
+/// Writes this vault's current revision of each policy `map` carries a
+/// revision of, unless it names an erased actor or its key already holds
+/// other bytes (a contradiction admission refused stays as it is).
+fn write_current_heads(vault: &Vault, map: &LoroMap) -> Result<bool> {
+    let families: Vec<EntityId> = carried_heads(map).into_keys().collect();
+    if families.is_empty() {
+        return Ok(false);
+    }
+    let heads = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut heads = Vec::new();
+        for id in families {
+            if let Some(head) = source_audience::policy_in(vault, &rtxn, &id)?
+                && !source_audience::names_erased_actor_in(vault, &rtxn, &head)?
+            {
+                heads.push((id, head));
+            }
+        }
+        heads
+    };
+    let mut wrote = false;
+    for (id, head) in heads {
+        let map_key = policy_key(&id, head.revision);
+        if map_get_bytes(map, &map_key).is_none() {
+            map_insert_bytes(map, &map_key, &encode_policy(&head)?)?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
+}
+
 /// The binding and the published closure of each bound row of `rows`,
-/// read in one snapshot: a row whose closure does not resolve is left out.
+/// read in one snapshot. A bound row whose closure does not publish refuses:
+/// the caller fails rather than ship the row without it.
 fn published_of(vault: &Vault, rows: &BTreeSet<EntityId>) -> Result<Vec<Published>> {
     let rtxn = vault.store.env.read_txn()?;
     if !source_audience::any_policy_in(vault, &rtxn)? {
@@ -281,14 +346,17 @@ fn published_of(vault: &Vault, rows: &BTreeSet<EntityId>) -> Result<Vec<Publishe
         let Some(policy) = source_audience::binding_in(vault, &rtxn, row)? else {
             continue;
         };
-        // A row whose closure does not publish keeps what the window holds;
-        // its packing door keeps a new one home.
-        if !source_audience::publishable_in(vault, &rtxn, &policy)? {
-            continue;
-        }
-        if let Some(closure) = source_audience::policy_closure_in(vault, &rtxn, &policy)? {
-            published.push((*row, policy, closure));
-        }
+        // The packing door releases a bound row only when its closure
+        // publishes: one carried that does not is never exported bare.
+        let closure = match source_audience::policy_closure_in(vault, &rtxn, &policy)? {
+            Some(closure) if source_audience::publishable_in(vault, &rtxn, &policy)? => closure,
+            _ => {
+                return Err(refused(
+                    "a carried bound row whose policy closure does not publish",
+                ));
+            }
+        };
+        published.push((*row, policy, closure));
     }
     Ok(published)
 }
@@ -370,9 +438,10 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
     keys
 }
 
-/// Removes the binding of the row `id` from `doc`, and every policy no
-/// binding left reaches; the canonical binding stands. Whether the map
-/// changed. The caller pins history and commits.
+/// Removes the binding of the row `id` from `doc`; the canonical binding
+/// stands. Each policy no binding reaches any longer goes at the window's
+/// next export or persist ([`refresh_and_scrub`]), once for a whole batch.
+/// Whether the map changed. The caller pins history and commits.
 ///
 /// # Errors
 ///
@@ -384,9 +453,6 @@ pub(crate) fn remove_record(doc: &LoroDoc, id: &EntityId) -> Result<bool> {
         return Ok(false);
     }
     map_delete(&map, &key)?;
-    for map_key in unreferenced_policies(&map) {
-        map_delete(&map, &map_key)?;
-    }
     Ok(true)
 }
 
@@ -420,6 +486,10 @@ pub(crate) fn refresh_and_scrub(
     doc: &LoroDoc,
     pin: Option<&WindowKey>,
 ) -> Result<bool> {
+    // The carried higher revisions settle first, in a writer of their own,
+    // so the head published is never below one the window carries and a
+    // redaction rides before the revision it replaces goes.
+    apply_map(vault, doc)?;
     let rows = carried_rows(doc);
     let published = published_of(vault, &rows)?;
     if published.is_empty() && !holds_map(doc) {
@@ -442,6 +512,7 @@ pub(crate) fn refresh_and_scrub(
         }
     }
     let mut changed = write_published(&map, &published)?;
+    changed |= write_current_heads(vault, &map)?;
     if !gone.is_empty() {
         pin_history_free(vault, pin)?;
         for map_key in &gone {
@@ -477,27 +548,28 @@ fn pin_history_free(vault: &Vault, pin: Option<&WindowKey>) -> Result<()> {
 // Ingest: the highest policy revision, an immutable binding, one savepoint.
 // ---------------------------------------------------------------------------
 
-/// Merges the highest revision of `policy` `map` carries, in `txn`.
-fn merge_carried_in_txn(
+/// Merges the highest revision of `policy` `heads` holds, in `txn`.
+fn merge_head_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    map: &LoroMap,
+    heads: &Heads,
     policy: &EntityId,
 ) -> Result<ReplicaMerge> {
-    match carried_head(map, policy) {
-        Ok(Some(head)) => source_audience::merge_policy_in_txn(vault, txn, policy, &head),
-        Ok(None) => Ok(ReplicaMerge::Held),
-        Err(_) => Ok(ReplicaMerge::Conflict),
+    match heads.get(policy) {
+        Some(Some(head)) => source_audience::merge_policy_in_txn(vault, txn, policy, head),
+        Some(None) => Ok(ReplicaMerge::Conflict),
+        None => Ok(ReplicaMerge::Held),
     }
 }
 
 /// Lands the carried binding of the row `id` and its policy closure from
-/// `doc`, in `txn`, the savepoint that admitted the row: the bound policy's
-/// highest carried revision and, for a thread policy, its source's, merged;
-/// then the binding, once the closure resolves. A closure that has not
-/// arrived leaves the binding carried and the row unbound (its read
-/// conjunct refuses it meanwhile). `Conflict` refuses the row with every
-/// write the savepoint staged.
+/// `doc`, the window `window`, in `txn`, the savepoint that admitted the
+/// row: the bound policy's highest carried revision and, for a thread
+/// policy, its source's, merged; then the binding, once the closure
+/// resolves. A closure that has not arrived leaves the binding carried and
+/// the row unbound (its read conjunct refuses it meanwhile). `Conflict`
+/// refuses the row with every write the savepoint staged. The map is folded
+/// once a pass ([`pass_heads`]).
 ///
 /// # Errors
 ///
@@ -506,20 +578,22 @@ pub(crate) fn apply_record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &LoroDoc,
+    window: &str,
     id: &EntityId,
 ) -> Result<ReplicaMerge> {
-    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
-    let Some(bytes) = map_get_bytes(&map, &record_key(id)) else {
+    let key = record_key(id);
+    let Some(bytes) = map_get_bytes(&doc.get_map(SOURCE_AUDIENCES_MAP), &key) else {
         return Ok(ReplicaMerge::Held);
     };
-    let Ok(Carrier::Record { policy, .. }) = carrier(&record_key(id), &bytes) else {
+    let Ok(Carrier::Record { policy, .. }) = carrier(&key, &bytes) else {
         return Ok(ReplicaMerge::Conflict);
     };
-    if merge_carried_in_txn(vault, txn, &map, &policy)? == ReplicaMerge::Conflict {
+    let heads = pass_heads(doc, window);
+    if merge_head_in_txn(vault, txn, &heads, &policy)? == ReplicaMerge::Conflict {
         return Ok(ReplicaMerge::Conflict);
     }
     if let Some(source) = source_audience::thread_source_in(vault, txn, &policy)?
-        && merge_carried_in_txn(vault, txn, &map, &source)? == ReplicaMerge::Conflict
+        && merge_head_in_txn(vault, txn, &heads, &source)? == ReplicaMerge::Conflict
     {
         return Ok(ReplicaMerge::Conflict);
     }
@@ -533,12 +607,14 @@ pub(crate) fn conflict_error() -> Error {
 }
 
 /// Merges every policy revision `doc`'s map carries into this vault's, the
-/// highest of each policy, and lands each carried binding of a row already
-/// admitted here, in one writer: a policy-only change, a source policy that
-/// came after its thread's, and a binding that came after its row. A row not
-/// admitted here keeps its binding carried for its own savepoint; a carrier
-/// that went unbinds nothing. A conflict is logged and left: the held word
-/// stands. The rows newly bound.
+/// highest of each policy, and lands each carried binding of a row the doc
+/// carries and this vault already admitted, in one writer: a policy-only
+/// change, a source policy that came after its thread's, and a binding that
+/// came after its row. A row not admitted here keeps its binding carried for
+/// its own savepoint; a carrier that went unbinds nothing. A policy whose
+/// carried revision conflicts is logged and left, the held word standing,
+/// and no binding lands under it or under a thread of it. The rows bound
+/// now, or whose policy or its source changed.
 ///
 /// # Errors
 ///
@@ -547,43 +623,60 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
     if !holds_map(doc) {
         return Ok(Vec::new());
     }
-    let mut heads: BTreeMap<EntityId, SourceAudiencePolicy> = BTreeMap::new();
-    let mut records = Vec::new();
-    for (_, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
-        match carried {
-            Carrier::Record { row, policy } => records.push((row, policy)),
-            Carrier::Policy { id, policy } => {
-                if heads
-                    .get(&id)
-                    .is_none_or(|held| policy.revision > held.revision)
-                {
-                    heads.insert(id, policy);
-                }
-            }
-        }
-    }
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    let heads = carried_heads(&map);
+    let records: Vec<(EntityId, EntityId)> = carriers(&map)
+        .into_iter()
+        .filter_map(|(_, carried)| match carried {
+            Carrier::Record { row, policy } => Some((row, policy)),
+            Carrier::Policy { .. } => None,
+        })
+        .collect();
     if heads.is_empty() && records.is_empty() {
         return Ok(Vec::new());
     }
+    let rows = carried_rows(doc);
     vault.with_write_txn_grouped(|txn| {
+        let mut refused_policies = BTreeSet::new();
+        let mut changed = BTreeSet::new();
         for (id, head) in &heads {
-            if source_audience::merge_policy_in_txn(vault, txn, id, head)? == ReplicaMerge::Conflict
-            {
-                tracing::warn!(
-                    reason = "source_audience_policy_conflict",
-                    policy = %id.to_hex(),
-                    revision = head.revision,
-                    "a carried source audience policy contradicts the one held; the held one stands"
-                );
+            let merge = match head {
+                Some(head) => source_audience::merge_policy_in_txn(vault, txn, id, head)?,
+                None => ReplicaMerge::Conflict,
+            };
+            match merge {
+                ReplicaMerge::Conflict => {
+                    tracing::warn!(
+                        reason = "source_audience_policy_conflict",
+                        policy = %id.to_hex(),
+                        "a carried source audience policy contradicts the one held; the held one stands"
+                    );
+                    refused_policies.insert(*id);
+                }
+                ReplicaMerge::Written => {
+                    changed.insert(*id);
+                }
+                ReplicaMerge::Held | ReplicaMerge::Pending => {}
             }
         }
-        let mut bound = Vec::new();
+        let mut affected = Vec::new();
         for (row, policy) in &records {
+            if !rows.contains(row) {
+                continue;
+            }
+            let source = source_audience::thread_source_in(vault, txn, policy)?;
+            let reaches = |set: &BTreeSet<EntityId>| {
+                set.contains(policy) || source.is_some_and(|source| set.contains(&source))
+            };
+            if reaches(&refused_policies) {
+                continue;
+            }
             if !crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
                 continue;
             }
             match source_audience::bind_replicated_in_txn(vault, txn, row, policy)? {
-                ReplicaMerge::Written => bound.push(*row),
+                ReplicaMerge::Written => affected.push(*row),
+                ReplicaMerge::Held if reaches(&changed) => affected.push(*row),
                 ReplicaMerge::Conflict => tracing::warn!(
                     reason = "source_audience_binding_conflict",
                     row = %row.to_hex(),
@@ -592,7 +685,7 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 ReplicaMerge::Held | ReplicaMerge::Pending => {}
             }
         }
-        Ok(bound)
+        Ok(affected)
     })
 }
 
