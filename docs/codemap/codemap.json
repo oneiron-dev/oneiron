@@ -14741,7 +14741,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -25416,7 +25416,7 @@
      "path": "src/deletion/erase/corrupt.rs",
      "purpose": "The audited escape for a corrupt CLAIM's hard erase (FIX 7800, ARCH-0038)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -26795,7 +26795,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_window.rs",
-     "purpose": "One window of plain Micro partitions (FIX 12487): slots pinned and opened in admission order, extraction…",
+     "purpose": "One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order…",
      "surface": {
       "crate-vis": 1
      }
@@ -27720,7 +27720,7 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 5
@@ -31438,7 +31438,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/driver/window.rs",
-     "purpose": "One wake pass's partition window (FIX 12487): plain Micro partitions admitted back to back, up to the…",
+     "purpose": "One wake pass's partition window (FIX 12487): plain Micro or Meso partitions admitted back to back, up to…",
      "surface": {
       "crate-vis": 7
      }
@@ -47398,7 +47398,7 @@
      "path": "src/memory/credential_key.rs",
      "purpose": "The read key a verified credential reads under",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -51365,7 +51365,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "re-export": 19
      }
     },
@@ -51582,7 +51582,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9
      }
     },
@@ -52054,6 +52054,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/note/saved.rs",
+     "purpose": "Native preparation and landing of a selected, already-admitted room NOTE",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/note/scan.rs",
      "purpose": "A NOTE document's sizes, measured where a store-aware entrance loads or a room projects one (rule 5; FIX 4280)",
      "surface": {
@@ -52243,7 +52253,7 @@
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -52325,14 +52335,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/room.rs",
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 12,
-      "fn": 12,
+      "fn": 15,
       "type": 1
      }
     },
@@ -52395,6 +52405,17 @@
      "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/scratch.rs",
+     "purpose": "Explicit selected scratch saves",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2
      }
     },
     {
@@ -52521,7 +52542,7 @@
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
       "const": 3,
-      "crate-vis": 21,
+      "crate-vis": 23,
       "fn": 2,
       "struct": 2
      }
@@ -52553,7 +52574,7 @@
      "path": "src/off_record/promote/result_holds.rs",
      "purpose": "A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -58195,6 +58216,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ports/claim_order.rs",
+     "purpose": "CLAIM origin-write ordering",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ports/claim_read_status.rs",
      "purpose": "Status modes carried by an actor-keyed read lane",
      "surface": {
@@ -58515,7 +58546,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 9
      }
     },
@@ -60539,6 +60570,16 @@
      "purpose": "The parts a checkpoint carries of a replay row and of a step start (FIX 9180, coord-b slice d; L04 option…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/claim_order.rs",
+     "purpose": "The CLAIM origin-write floor carried through an image's raw restore",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -70962,7 +71003,7 @@
      "path": "src/store/birth_record/mod.rs",
      "purpose": "Immutable row birth records and their trigger index",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -70972,6 +71013,16 @@
      "notable": [],
      "path": "src/store/birth_record/prompted.rs",
      "purpose": "A row a model wrote from a prompt that carried other rows (FIX 8192): its birth names each of them as a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/birth_record/saved_room.rs",
+     "purpose": "Exact provenance of a selected, admitted room row at an explicit save",
      "surface": {
       "crate-vis": 3
      }
@@ -85887,7 +85938,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1264
+      "fn": 1265
      }
     },
     {
@@ -86377,6 +86428,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OffRecordArtifactSaveRequest",
+      "OffRecordArtifactSaved",
       "OffRecordClaimRequest",
       "OffRecordClosed",
       "OffRecordEnterMode",
@@ -86395,7 +86448,7 @@
      "surface": {
       "enum": 2,
       "fn": 1,
-      "struct": 10
+      "struct": 12
      }
     },
     {
@@ -92521,14 +92574,14 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92619,7 +92672,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92689,7 +92742,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92941,7 +92994,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 496,
+     "files": 497,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93179,9 +93232,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 148,
+   "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6521,
+   "source_files": 6526,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99880,7 +99933,7 @@
      "path": "src/record_layout.rs",
      "purpose": "Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred…",
      "surface": {
-      "const": 6,
+      "const": 7,
       "fn": 1,
       "struct": 1
      }
@@ -107600,7 +107653,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1232
+      "fn": 1233
      }
     },
     {
@@ -109378,7 +109431,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1233
+      "fn": 1234
      }
     },
     {
@@ -114964,7 +115017,7 @@
      "path": "src/api/facade/off_record_doors.rs",
      "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -131116,7 +131169,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
-      "mod": 7,
+      "mod": 8,
       "re-export": 2
      }
     },
@@ -131146,6 +131199,16 @@
      "notable": [],
      "path": "src/session_overlay/overlay/retire.rs",
      "purpose": "Promoted-closure retirement reusing the store's index-key builders",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retire_selected.rs",
+     "purpose": "Selected-artifact retirement for a natively saved subset (FIX 13687)",
      "surface": {
       "fn": 1
      }
@@ -132638,7 +132701,7 @@
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
     },
     "session_overlay": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -132710,7 +132773,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 159,
+   "source_files": 160,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -135338,6 +135401,8 @@
       "Of360RateMetric",
       "Of360Speaker",
       "OfPieType",
+      "OffRecordArtifactSaveRequest",
+      "OffRecordArtifactSaved",
       "OffRecordBackendClass",
       "OffRecordClaimRequest",
       "OffRecordClosed",
@@ -137362,7 +137427,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1110,
-      "struct": 3378
+      "struct": 3380
      }
     },
     {
