@@ -36,7 +36,9 @@ Neither path changes the verb's typed result shape.
 
 Generated HTTP host/server doors with an explicit pre/post hook chain carry a
 content-free notice in `x-oneiron-hook-notice` when a take-away hook changed
-arguments or had a proposed change ignored. The header contains no verb,
+arguments or had a proposed change ignored. Ordinary core-invoke doors carry
+the same notice from the hook chain that actually ran inside the engine,
+without invoking hooks a second time. The header contains no verb,
 target, argument, caller or invocation detail. MCP's detailed notices are
 unchanged. The HTTP JSON body keeps its original shape, including arrays and
 primitive results.
@@ -58,8 +60,14 @@ rows, destination release, program feedback and erasure owners are unchanged;
 a notice cannot make an otherwise valid result disappear. Session-only calls
 may carry the notice without adding a durable receipt or notice record.
 
-This HTTP slice does not cover ordinary core-invoke rows that run their hooks
-inside the engine, action-wrapper routes, custody-spool routes, non-facade
-calls, or HTTP errors and post-hook stops. It adds no notice to those paths.
-The wider caller-notice row remains partial. Deploy matching engine/server and
-native SDK binaries; no guest artifact change is needed.
+A core call that only reads a drained call's saved completion does not retain
+this notice metadata. It returns the existing result without claiming whether
+its arguments changed. Core room-turn calls also keep their existing behavior
+without adding notice metadata. These are separate from a saved HTTP reply,
+which already keeps the notice flag described above.
+
+This HTTP slice does not cover those core saved-completion and room-turn paths,
+action-wrapper routes, custody-spool routes, non-facade calls, or HTTP errors
+and post-hook stops. It adds no notice to those paths. The wider caller-notice
+row remains partial. Deploy matching engine/server and native SDK binaries;
+no guest artifact change is needed.
