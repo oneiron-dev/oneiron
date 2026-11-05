@@ -122,3 +122,9 @@ italic values, with explicit OFF for absence. Word uses these complex-script
 slots instead of `b` / `i` when `cs` or `rtl` is enabled. Those script selectors,
 fonts and deleted source history remain unchanged; the shared materializer and
 all ordinary edits remain unchanged.
+
+The exact-run parser registration correction (2026-11-05, FIX 14300) adds
+`exact_marks` to both header/footer entries in `src/edit_v4.rs::OP_FIELDS`.
+`deserialize_ops` checks that allowlist before deserializing the typed operation,
+so the setting must be registered there as well as on the enum. Other fields,
+tags, unknown-field checks and schema validation stay unchanged.
