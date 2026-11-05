@@ -131,6 +131,12 @@ impl AgentDispatcher<'_> {
             return self.advance_workflow(root, now);
         }
         let active = queue.retry_tip_in_txn(&txn, record.active)?;
+        if super::workflow::tool_wait::settle_erased_in_txn(self.vault, &mut txn, &active, now)? {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+            self.vault.store.notify_notification_updates();
+            return self.advance_workflow(root, now);
+        }
         match active.state {
             AttemptState::Queued | AttemptState::Scheduled => {}
             AttemptState::Leased | AttemptState::Landing | AttemptState::Paused => {

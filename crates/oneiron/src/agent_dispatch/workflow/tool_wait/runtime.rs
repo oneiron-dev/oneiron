@@ -176,7 +176,7 @@ impl AgentDispatcher<'_> {
     pub fn resume_workflow_tool(&self, root: AttemptId, now: u64) -> Result<bool> {
         let queue = AttemptQueue::new(self.vault);
         let retained = {
-            let txn = self.vault.store.env.read_txn()?;
+            let mut txn = self.vault.store.env.write_txn()?;
             let wrapper = queue
                 .get_in_txn(&txn, root)?
                 .ok_or_else(|| invalid("workflow wrapper is missing"))?;
@@ -185,6 +185,12 @@ impl AgentDispatcher<'_> {
                 return Ok(false);
             }
             let active = queue.retry_tip_in_txn(&txn, workflow.active)?;
+            if super::settle_erased_in_txn(self.vault, &mut txn, &active, now)? {
+                txn.commit()?;
+                self.vault.store.notify_attempt_observers();
+                self.vault.store.notify_notification_updates();
+                return Ok(false);
+            }
             let Some(row) = TABLE.get(&self.vault.store, &txn, &key(active.id)?)? else {
                 return Ok(false);
             };
@@ -302,15 +308,24 @@ pub(crate) fn requeue_failure_in_txn(
         return Ok(None);
     };
     let actual = leased_row(vault, txn, source)?;
-    let content = checked_content(vault, txn, &actual, &row)?;
+    if row.attempt != actual.id || row.generation != actual.attempt_count {
+        return Err(invalid("workflow checkpoint retry has foreign generation"));
+    }
     if input.id != actual.id
         || input.attempt_count != actual.attempt_count
         || actual.lease_owner.as_deref() != Some(input.lease_owner.as_str())
-        || content.progress.wait.is_some()
     {
-        return Err(invalid(
-            "workflow checkpoint retry has foreign lease or wait",
-        ));
+        return Err(invalid("workflow checkpoint retry has foreign lease"));
+    }
+    // Erasure can race a paid provider failure. Requeue the fenced leaf,
+    // never its body; the next pump cancels its erased form before claim.
+    if row.content.is_some()
+        && checked_content(vault, txn, &actual, &row)?
+            .progress
+            .wait
+            .is_some()
+    {
+        return Err(invalid("workflow checkpoint retry has pending wait"));
     }
     let reason = input
         .last_error
@@ -379,6 +394,11 @@ pub(crate) fn advance_saved_retry_in_txn(
     let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
         return Ok(false);
     };
+    // The workflow pump settles erased rows; one such row must not abort
+    // the provider's recovery pass for unrelated retained retries.
+    if row.content.is_none() {
+        return Ok(false);
+    }
     let content = checked_content(vault, txn, actual, &row)?;
     if content.progress.wait.is_some() {
         return Ok(false);

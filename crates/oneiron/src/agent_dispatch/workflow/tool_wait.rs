@@ -18,9 +18,11 @@ use crate::{ContentPart, EdgeActorClass, EntityId, Error, LlmRequest, LlmRespons
 use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 
 pub(crate) mod checkpoint;
+mod erased;
 mod lifetime;
 mod runtime;
-pub(crate) use lifetime::{erase_actor_in_txn, erase_source_in_txn};
+pub(crate) use erased::settle_erased_in_txn;
+pub(crate) use lifetime::{erase_actor_in_txn, erase_source_in_txn, settle_payloads_in_txn};
 pub use runtime::WorkflowToolContinuation;
 pub(crate) use runtime::{
     adopt_claim_in_txn, advance_saved_retry_in_txn, clear_in_txn, requeue_failure_in_txn,

@@ -103,6 +103,7 @@ pub(crate) use workflow::tool_wait::{
     erase_actor_in_txn as erase_workflow_tool_actor_in_txn,
     erase_source_in_txn as erase_workflow_tool_source_in_txn,
     requeue_failure_in_txn as requeue_workflow_tool_failure_in_txn,
+    settle_payloads_in_txn as settle_workflow_tool_payloads_in_txn,
 };
 
 pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult};

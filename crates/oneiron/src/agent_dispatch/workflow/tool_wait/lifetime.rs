@@ -2,9 +2,11 @@
 
 use heed::RwTxn;
 
-use super::{CheckpointContent, CheckpointRow, TABLE, release_in_txn};
+use super::{CheckpointContent, CheckpointRow, TABLE, body_owner, invalid, key, release_in_txn};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
+use crate::store::checkpoint_payload::Subtype;
+use crate::store::checkpoint_payload::retirement::{PayloadDisposition, settle_owner_in_txn};
 use crate::{EntityId, Result, Vault};
 
 fn erase_matching_in_txn(
@@ -43,11 +45,56 @@ pub(crate) fn erase_source_in_txn(
     txn: &mut RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
-    erase_matching_in_txn(store, txn, |content| {
-        content.actor == *source
-            || content.room == Some(*source)
-            || content.progress.known_sources.contains(source)
-    })
+    erase_matching_in_txn(store, txn, |content| depends_on(content, source))
+}
+
+fn depends_on(content: &CheckpointContent, source: &EntityId) -> bool {
+    content.actor == *source
+        || content.room == Some(*source)
+        || content.progress.known_sources.contains(source)
+}
+
+/// The native delete reason is still available here, before either the
+/// actor scrub or derived-row tear clears the positive source binding.
+/// A dedicated checkpoint owner holds only this attempt's transcript:
+/// settle all its occurrences, not just the last saved revision, while
+/// another owner's identical bytes keep their independent compartment.
+pub(crate) fn settle_payloads_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    disposition: PayloadDisposition,
+) -> Result<()> {
+    let mut owners = Vec::new();
+    for found in TABLE.iter_raw_from(store, txn, &[])? {
+        let (raw_key, bytes) = found?;
+        let Some(row_key) = <EntityId as SideKey>::decode_key(&raw_key) else {
+            continue;
+        };
+        let Ok(row) = TABLE.decode_value(&bytes) else {
+            continue;
+        };
+        let Some(content) = &row.content else {
+            continue;
+        };
+        if !depends_on(content, source) {
+            continue;
+        }
+        if row_key != key(row.attempt)? || content.body_owner != body_owner(row.attempt)? {
+            return Err(invalid("workflow checkpoint payload has foreign owner"));
+        }
+        owners.push(content.body_owner);
+    }
+    for owner in owners {
+        settle_owner_in_txn(
+            store,
+            txn,
+            Subtype::AttachmentOccurrence,
+            owner.as_bytes(),
+            disposition,
+        )?;
+    }
+    Ok(())
 }
 
 /// The independently registered hard-actor erase/restore scrub.

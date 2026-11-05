@@ -74,6 +74,7 @@ pub(crate) fn settle_checkpoint_payloads_for_reason_in_txn(
     reason: Option<TombstoneReason>,
 ) -> Result<()> {
     let disposition = disposition(reason);
+    crate::agent_dispatch::settle_workflow_tool_payloads_in_txn(store, wtxn, id, disposition)?;
     for subtype in ENTITY_OWNED {
         settle_owner_in_txn(store, wtxn, subtype, id.as_bytes(), disposition)?;
     }
