@@ -172,6 +172,12 @@ impl RunHostDoor {
         }
     }
 
+    /// The operator's own Git door base the run's checkouts point at (FIX
+    /// 7181); `None` keeps the run's own base.
+    pub(crate) fn git_door_base(&self) -> Option<String> {
+        self.server.config.git_door_base.clone()
+    }
+
     /// Binds the meter the run's next entry makes its model calls on, and
     /// the payer they bill, so its `ai.speech` spends there too, as its other
     /// model calls do (FIX 3194). `None` clears it once the entry ends.

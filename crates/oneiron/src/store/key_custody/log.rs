@@ -688,6 +688,42 @@ impl Journal {
         read_whole(&self.dir.join(frame_name(seq)))
     }
 
+    /// Whether the policy in force at `after` is still the one in force at
+    /// `through` (FIX 11783): every `PublicationPolicy` frame between them
+    /// records `digest`. Another lineage or writer epoch, a position past
+    /// `through`, or a frame not here proves nothing.
+    ///
+    /// # Errors
+    ///
+    /// A frame that does not open.
+    pub(super) fn policy_unchanged(
+        &self,
+        digest: &[u8; 32],
+        after: &CustodyPosition,
+        through: &CustodyPosition,
+    ) -> Result<bool> {
+        if !after.same_lineage(through) || after.epoch != through.epoch || after.seq > through.seq {
+            return Ok(false);
+        }
+        if after.seq == through.seq {
+            return Ok(after.tip == through.tip);
+        }
+        let Some(control) = self.control()? else {
+            return Ok(false);
+        };
+        for seq in after.seq + 1..=through.seq {
+            let Some(frame) = self.frame(seq)? else {
+                return Ok(false);
+            };
+            if let (_, LogEntry::PublicationPolicy(recorded)) = open_frame(&control, &frame)?
+                && recorded != *digest
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Where the local log stands, walking on from the cached tip past any
     /// frame a crash linked before its cache was rewritten, each checked to
     /// extend the one before it. No control state is an empty log at epoch 0.

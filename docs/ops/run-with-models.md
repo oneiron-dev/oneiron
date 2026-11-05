@@ -673,8 +673,11 @@ standard cached-read count only; the records ride the receipt.
 On the house EXL3 server a chat conversation keeps a native session: the
 canonical history stays computed between turns. Once a reply's successor is
 published, the session also prepares the part of the next turn already known,
-the state-only board rendered for that turn's reader, as background work beside
-it (I1 = C). When the next turn arrives, the worker compares its own tokens with
+as background work beside it (I1 = C): the answering agent's craft, when
+`prompt_layout` is `stable_history_then_turn_context`, then the state-only
+board, both rendered for that turn's reader. A queued Continue or Retry that
+publishes a successor prepares its requester's next turn the same way. When
+the next turn arrives, the worker compares its own tokens with
 the prepared ones and reuses only their identical beginning; everything after
 the first token that differs, the fresh recall included, is computed as
 before, and a preparation still running stops. `[models.sessions]` holds the

@@ -172,11 +172,12 @@ pub(crate) fn remove_claim_projection_index_in_rows(
     Ok(())
 }
 pub(crate) fn maintain_claim_projection_index(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
+    let store = write.store;
     remove_claim_projection_index(store, txn, id)?;
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
@@ -186,7 +187,7 @@ pub(crate) fn maintain_claim_projection_index(
         .unwrap_or_else(crate::write_envelope::claim_body::base_world_id);
     reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
     WORLD_INDEX.put(store, txn, &(world, id), &())?;
-    crate::blob_artifact::record_version_claim(store, txn, body)?;
+    crate::blob_artifact::record_version_claim(write, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)
