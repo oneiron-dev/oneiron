@@ -42,6 +42,8 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
+pub use self::media_step::{MediaStepOutcome, call_media_as_step};
+
 pub(crate) use self::execute::ExecutedModelWitness;
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
