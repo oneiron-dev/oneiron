@@ -115,7 +115,7 @@ use crate::store::attempt_id::AttemptId;
 mod attempt_delete_authority;
 mod attempt_delete_receipts;
 mod attempt_delete_wire;
-mod cleanup_types;
+use oneiron_store::vault_cleanup::cleanup_types;
 mod codec_receipts;
 mod erase;
 mod marks;

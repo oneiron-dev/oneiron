@@ -334,6 +334,13 @@ side_tables! {
     /// One usage row per web connector call: provider, tool, key source, latency, cost and the
     /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
     WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
+    /// A workflow leaf's custodied tool transcript pointer and exact settled state. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT: VaultMeta b"workflow:tool_checkpoint:v1:" Named Authored
+        [refs: &[&[Field("content")], &[Field("retained")]]]
+        [accepts: crate::agent_dispatch::workflow_tool_checkpoint_accepts_masked]
+        => crate::agent_dispatch::erase_workflow_tool_actor_in_txn;
+    /// Content-free saved-tool fence, retained even when its payload cannot open. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT_FENCE: VaultMeta b"workflow:tool_checkpoint_fence:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
