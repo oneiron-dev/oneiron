@@ -238,7 +238,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             if fresh {
                 *calls = calls.saturating_add(1);
             }
-            for (hash, usage) in &spent {
+            for (hash, usage, ..) in &spent {
                 if let Err(error) =
                     charges.record_terminal(ctx.vault, step.attempt_id, *hash, usage)
                 {
