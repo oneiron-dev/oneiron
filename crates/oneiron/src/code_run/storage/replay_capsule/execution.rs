@@ -1,17 +1,19 @@
-//! A contribution fork's executed program, kept (FIX 3607): each body its
-//! program left (its observation, its files, the results it stored and its
-//! two traces) goes through the side-row wall's body admission as a fork's
-//! answer does, under the capsule's key, and is published as a body the
-//! original run owns. The fork's row takes the execution that names them in
-//! the SAME writer, which reads the capsule and the fork's row again first,
-//! so an erase always discovers a published body. Nothing is published for
-//! a capsule erased or gone, a subject of the pair gone, or a fork row that
-//! is no longer the fork that ran; an execution another writer committed
-//! first is kept, never replaced. The capsule's erase releases these bodies
-//! with the fork's answer ([`super::erase`]).
+//! What came of a contribution fork's program, kept (FIX 3607): its
+//! execution, or the shadow runner's reason it did not run. Each body an
+//! executed program left (its observation, its files, the results it stored
+//! and its two traces) goes through the side-row wall's body admission as a
+//! fork's answer does, under the capsule's key, and is published as a body
+//! the original run owns. The fork's row takes the outcome that names them
+//! in the SAME writer, which reads the capsule and the fork's row again
+//! first, so an erase always discovers a published body. Nothing is
+//! published for a capsule erased or gone, a subject of the pair gone, or a
+//! fork row that is no longer the fork that ran. A settled outcome another
+//! writer committed first is kept, never replaced; only a retry replaces an
+//! outcome that waits for it. The capsule's erase releases these bodies with
+//! the fork's answer ([`super::erase`]).
 
 use super::super::super::contribution::{
-    ContributionForkExecution, ContributionForkReceipt, ExecutedOutput,
+    ContributionForkExecution, ContributionForkReceipt, ExecutedOutput, ForkExecutionOutcome,
 };
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::admit::{Unwritten, spilling, with_spill};
@@ -24,13 +26,14 @@ use crate::{EntityId, Error, Result, Vault};
 /// executed bodies, beside the capsule's key.
 const EXECUTION_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:fork_execution";
 
-/// Keeps `fork`'s execution: each of `bodies` (its stored path and its
-/// bytes, in order) admitted and published as a body the capsule's run owns,
-/// and the fork's row put with the execution `record` makes of their refs,
-/// in that order, all in one writer. `None`, with nothing written, once the
-/// capsule is erased or gone, a subject of the pair is gone, or the fork's
-/// row is no longer `fork`. A fork whose execution another writer committed
-/// first keeps that one, and it is returned.
+/// Keeps what came of `fork`'s program: each of `bodies` (its stored path
+/// and its bytes, in order; none when it did not run) admitted and
+/// published as a body the capsule's run owns, and the fork's row put with
+/// the outcome `record` makes of their refs, in that order, all in one
+/// writer. `None`, with nothing written, once the capsule is erased or gone,
+/// a subject of the pair is gone, or the fork's row is no longer `fork`. A
+/// fork whose outcome another writer settled or moved on first keeps that
+/// one, and it is returned.
 ///
 /// # Errors
 ///
@@ -42,7 +45,7 @@ pub(crate) fn store_fork_execution(
     pair: &[u8; 32],
     fork: &ContributionForkReceipt,
     bodies: &[(&str, &[u8])],
-    record: impl Fn(&[OutputRef]) -> Option<ContributionForkExecution>,
+    record: impl Fn(&[OutputRef]) -> Option<ForkExecutionOutcome>,
 ) -> Result<Option<ContributionForkReceipt>> {
     let key = capsule_key(capsule);
     let fork_key = (*pair, fork_row_name(fork.treatment).to_owned());
@@ -62,12 +65,16 @@ pub(crate) fn store_fork_execution(
             return Ok(None);
         };
         let mut expected = fork.clone();
-        expected.passed = kept.passed;
+        expected.score = kept.score;
         expected.execution.clone_from(&kept.execution);
         if *kept != expected || !row.provenance.live_in_txn(vault, wtxn) {
             return Ok(None);
         }
-        if kept.execution.is_some() {
+        let settled = kept
+            .execution
+            .as_ref()
+            .is_some_and(ForkExecutionOutcome::settled);
+        if settled || kept.execution != fork.execution {
             return Ok(Some(kept.clone()));
         }
         let key_bytes = CAPSULES.key_bytes(&key);
@@ -89,13 +96,13 @@ pub(crate) fn store_fork_execution(
         for ((path, _), bytes) in bodies.iter().zip(&admitted) {
             refs.push(spill.publish_in_txn(vault, wtxn, held.run, path, bytes)?);
         }
-        let Some(execution) = record(&refs) else {
+        let Some(outcome) = record(&refs) else {
             return Err(Unwritten::Failed(Error::InvariantViolation(
                 "a fork execution names other bodies than it kept",
             )));
         };
         let mut receipt = kept.clone();
-        receipt.execution = Some(execution);
+        receipt.execution = Some(outcome);
         row.value = ForkValue::Fork(receipt.clone());
         FORKS.put(vault, wtxn, &fork_key, &row)?;
         Ok(Some(receipt))

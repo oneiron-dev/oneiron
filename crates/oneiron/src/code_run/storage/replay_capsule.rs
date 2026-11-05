@@ -345,11 +345,11 @@ pub(crate) fn put_fork(
             return Ok(None);
         };
         let mut expected = receipt.clone();
-        expected.passed = kept.passed;
+        expected.score = kept.score;
         if *kept != expected || !row.provenance.live_in_txn(vault, txn) {
             return Ok(None);
         }
-        if kept.passed.is_some() {
+        if kept.score.is_some() {
             return Ok(Some(kept.clone()));
         }
         row.value = ForkValue::Fork(receipt.clone());

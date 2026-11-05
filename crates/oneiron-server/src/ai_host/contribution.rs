@@ -8,8 +8,11 @@
 //! scratch store of its own (FIX 3607, [`program`]). The scorer is the
 //! registered replay judge on the pass's clock: it resolves the run's anchor
 //! to the skill's goal axis as the project's goal states it, and judges each
-//! fork by that axis, blind to which fork it reads: an engine step's fork by
-//! what its program did, a workflow step's by its answer's text.
+//! fork by that axis, blind to which fork it reads. It reads each fork's
+//! answer's text, as before FIX 3607. In the `Executed` mode, where both
+//! forks' programs ran, it reads what each program did after that text
+//! (L08-A's 07:42 answer: no frozen rubric is qualified on executed output
+//! alone).
 
 mod program;
 
@@ -35,7 +38,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
-use self::program::{LentProgram, ProgramLending, executed_text};
+use self::program::{LentProgram, ProgramLending, executed_evidence};
 use super::CHAT_ROLE;
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
@@ -223,8 +226,8 @@ impl ContributionForkScorer for JudgeScorer {
     /// The judge's live-axis question on the fork's answer, on the pass's
     /// clock. Both forks are asked on the same state but for the answer, with
     /// no instructions in it, so the judge cannot tell which had the skill.
-    /// An engine step's fork's answer is what its program did when run (FIX
-    /// 3607), never the answer's text. An abstained or failed judgment
+    /// In the `Executed` mode the answer is read with what its program did
+    /// when run (FIX 3607, `fork_answer`). An abstained or failed judgment
     /// decides nothing.
     fn passes(
         &self,
@@ -243,10 +246,7 @@ impl ContributionForkScorer for JudgeScorer {
             clock,
             receipt: fork.receipt,
             task: task_text(vault, fork.task),
-            response: match fork.executed {
-                Some(executed) => executed_text(vault, executed),
-                None => answer_text(vault, fork.response),
-            },
+            response: fork_answer(vault, fork),
         };
         let notes: &dyn HeldOutReplayNotes = &notes;
         match notes.live_axis_met(candidate.skill, &blind, fork.receipt, &anchor.rubric) {
@@ -347,11 +347,25 @@ fn task_text(vault: &Vault, task: &LlmRequest) -> String {
     text
 }
 
-/// A fork's answer as text, whole. Past the
+/// A fork's answer as the judge reads it, whole: its text, and in the
+/// `Executed` mode what its program did after it ([`executed_evidence`],
+/// FIX 3607). Every input the rubric read before FIX 3607 is still there;
+/// the execution is added, never put in the text's place. Past the
 /// `[limits] contribution_judge_answer_bytes` row it asks, and the judge
 /// reads it all.
-fn answer_text(vault: &Vault, response: &LlmResponse) -> String {
-    let text: String = response
+fn fork_answer(vault: &Vault, fork: &ScoredFork<'_>) -> String {
+    let mut text = answer_text(fork.response);
+    if let Some(executed) = fork.executed {
+        text.push_str("\n\n");
+        text.push_str(&executed_evidence(executed));
+    }
+    measure(vault, EngineLimit::ContributionJudgeAnswerBytes, &text);
+    text
+}
+
+/// A fork's answer's text, whole.
+fn answer_text(response: &LlmResponse) -> String {
+    response
         .message
         .content
         .iter()
@@ -359,9 +373,7 @@ fn answer_text(vault: &Vault, response: &LlmResponse) -> String {
             ContentPart::Text { text } => Some(text.as_str()),
             _ => None,
         })
-        .collect();
-    measure(vault, EngineLimit::ContributionJudgeAnswerBytes, &text);
-    text
+        .collect()
 }
 
 /// Measures `text`'s bytes against `row`, which asks past its bound and

@@ -7,8 +7,10 @@
 //! actor and masks each write under the source vault's custody, as a shadow
 //! arm's store does (FIX 5718). Nothing here dispatches, writes, sends or
 //! resolves a credential: the program reaches the captured step's recorded
-//! calls alone. The judge then reads what the program did
-//! ([`executed_text`]) in place of the answer's text.
+//! calls alone. In the `Executed` mode the judge reads what the program did
+//! ([`executed_evidence`]) after the answer's text, never in its place. A
+//! server with no runtime of the component says so, a reason a retry may
+//! clear: its pairs wait for one retry, then fall back to the `Text` mode.
 
 use std::sync::{Arc, OnceLock};
 
@@ -19,7 +21,6 @@ use oneiron::code_run::{
     ContributionForkProgram, ExecutedFork, ExecutedForkView, execute_contribution_fork,
 };
 use oneiron::engine_executor::{JsCodeModeRuntime, StepCancellation};
-use oneiron::limit_ask::EngineLimit;
 use oneiron::{Error, LlmResponse, Vault};
 use serde_json::json;
 
@@ -100,13 +101,12 @@ fn no_runtime() -> ShadowUnavailable {
     ShadowUnavailable::new(resource, "runtime")
 }
 
-/// What a fork's program did, as the judge reads it in place of the
-/// answer's text: how its step ended, that it ran against the captured
-/// step's recorded calls, how many of those it matched, and each
-/// observation, file and stored result, whole, by its path. Past the
-/// `[limits] contribution_judge_answer_bytes` row it asks, and the judge
-/// reads it all.
-pub(super) fn executed_text(vault: &Vault, executed: &ExecutedForkView) -> String {
+/// What a fork's program did, as the judge reads it after the answer's text
+/// in the `Executed` mode (FIX 3607): how its step ended, its provenance
+/// (it ran against the captured step's recorded calls, and how many of them
+/// it matched), and each observation, file and stored result, whole, by its
+/// path. Never the program's source or its own claim of success.
+pub(super) fn executed_evidence(executed: &ExecutedForkView) -> String {
     let pin = &executed.pin;
     let outputs: Vec<_> = executed
         .outputs
@@ -119,16 +119,16 @@ pub(super) fn executed_text(vault: &Vault, executed: &ExecutedForkView) -> Strin
             })
         })
         .collect();
-    let text = json!({
-        "evidence": "executed_program",
-        "status": executed.status,
-        "recorded_calls": {
-            "in_step": pin.bridge_end.saturating_sub(pin.bridge_start),
-            "matched": executed.consumed.saturating_sub(pin.bridge_start),
+    json!({
+        "executed_program": {
+            "status": executed.status,
+            "provenance": {
+                "ran_against": "captured_step_recorded_calls",
+                "recorded_calls_in_step": pin.bridge_end.saturating_sub(pin.bridge_start),
+                "recorded_calls_matched": executed.consumed.saturating_sub(pin.bridge_start),
+            },
+            "outputs": outputs,
         },
-        "outputs": outputs,
     })
-    .to_string();
-    super::measure(vault, EngineLimit::ContributionJudgeAnswerBytes, &text);
-    text
+    .to_string()
 }
