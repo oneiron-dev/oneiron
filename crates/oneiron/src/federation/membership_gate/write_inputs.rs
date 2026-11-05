@@ -19,7 +19,49 @@ pub(crate) struct SharedVaultWriteInputs<'a> {
     expiry_checked_at: Option<u64>,
 }
 
+/// Owned original inputs retained only by the actual batch frame. This is
+/// ephemeral provenance data; it cannot be serialized as admission evidence.
+pub(crate) struct OwnedSharedVaultWriteInputs {
+    vault_id: u64,
+    writer: WriteActor,
+    principal: WriteActor,
+    fold: AuthorityFold,
+    grant_id: EntityId,
+    grant_raw: Vec<u8>,
+    requested: SharedVaultWrite,
+    expiry_checked_at: Option<u64>,
+}
+
+impl OwnedSharedVaultWriteInputs {
+    pub(crate) fn as_borrowed(&self) -> SharedVaultWriteInputs<'_> {
+        SharedVaultWriteInputs {
+            vault_id: self.vault_id,
+            writer: self.writer,
+            principal: self.principal,
+            fold: &self.fold,
+            grant_id: self.grant_id,
+            grant_raw: &self.grant_raw,
+            requested: &self.requested,
+            expiry_checked_at: self.expiry_checked_at,
+        }
+    }
+}
+
 impl SharedVaultWriteInputs<'_> {
+    /// Copies only the inputs supplied by this original success callback.
+    pub(crate) fn into_owned(self) -> OwnedSharedVaultWriteInputs {
+        OwnedSharedVaultWriteInputs {
+            vault_id: self.vault_id,
+            writer: self.writer,
+            principal: self.principal,
+            fold: self.fold.clone(),
+            grant_id: self.grant_id,
+            grant_raw: self.grant_raw.to_vec(),
+            requested: self.requested.clone(),
+            expiry_checked_at: self.expiry_checked_at,
+        }
+    }
+
     pub(crate) fn vault_id(&self) -> u64 {
         self.vault_id
     }

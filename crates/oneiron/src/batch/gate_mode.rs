@@ -27,6 +27,7 @@ impl PendingAutoProbe {
 pub(super) struct NativePublicationContext<'vault> {
     pub(super) vault: &'vault crate::Vault,
     pub(super) actor: Option<crate::WriteActor>,
+    pub(super) content_writes: Option<&'vault super::actor_content::ContentWriteSet>,
 }
 
 #[derive(Debug)]

@@ -15,6 +15,7 @@ pub(crate) struct NativeSkillPostGate<'a> {
     record: SkillRecord,
     final_body: Vec<u8>,
     actor: Option<WriteActor>,
+    content_inputs: Option<crate::batch::ContentWriteInputs<'a>>,
     recorded_at: u64,
 }
 
@@ -46,6 +47,9 @@ impl<'a> NativeSkillPostGate<'a> {
             record,
             final_body: final_body.to_vec(),
             actor: context.actor,
+            content_inputs: context
+                .content_writes
+                .and_then(|writes| writes.native_inputs(fixed.id)),
             recorded_at: fixed.mutation_recorded_at,
         }))
     }
@@ -79,6 +83,12 @@ impl<'a> NativeSkillPostGate<'a> {
 
     pub(crate) fn actor(&self) -> Option<WriteActor> {
         self.actor
+    }
+
+    /// Only observations already available at this provisional point. The
+    /// original after gates have not run yet and are not attested here.
+    pub(crate) fn content_inputs(&self) -> Option<&crate::batch::ContentWriteInputs<'a>> {
+        self.content_inputs.as_ref()
     }
 
     pub(crate) fn recorded_at(&self) -> u64 {
