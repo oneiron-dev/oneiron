@@ -391,6 +391,18 @@ impl Gate {
         self.changed.notify_all();
     }
 
+    /// Applies a guest lifecycle request only while its companion is not stopping.
+    fn set_unless_draining(&self, to: Mode) -> bool {
+        let mut mode = self.lock();
+        if *mode == Mode::Draining {
+            return false;
+        }
+        *mode = to;
+        drop(mode);
+        self.changed.notify_all();
+        true
+    }
+
     /// Parks the end before a snapshot: an in-flight commit finishes first,
     /// and nothing new is published until [`Self::resume`].
     pub(super) fn park(&self) {

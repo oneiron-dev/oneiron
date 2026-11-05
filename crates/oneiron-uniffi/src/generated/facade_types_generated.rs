@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4488 generated types.
+// UniFFI census: 1232 facade rows, 4489 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -64662,6 +64662,23 @@ pub struct ConsolidationEvidenceLocator {
     pub messages: Vec<ConsolidationMessageEvidence>,
 }
 
+/// `oneiron::memory::consolidation::ConsolidationDeliveryOrigin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationDeliveryOrigin {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "delivering_pact")]
+    pub delivering_pact: String,
+    #[serde(rename = "consent_epoch")]
+    pub consent_epoch: u64,
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "source_vault")]
+    pub source_vault: String,
+    #[serde(rename = "delivered_row_hash")]
+    pub delivered_row_hash: String,
+}
+
 /// `oneiron::memory::consolidation::ConsolidationEvidenceSource`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConsolidationEvidenceSource {
@@ -64717,6 +64734,12 @@ pub struct ConsolidationEvidenceSource {
     pub chain: Vec<ConsolidationEvidenceHop>,
     #[serde(rename = "locators")]
     pub locators: Vec<ConsolidationEvidenceLocator>,
+    #[serde(
+        rename = "delivery_history",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delivery_history: Option<Vec<ConsolidationDeliveryOrigin>>,
 }
 
 /// `oneiron::memory::consolidation::ConsolidationPromotion`.

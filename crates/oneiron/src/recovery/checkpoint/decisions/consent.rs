@@ -427,7 +427,12 @@ impl Decision for CalendarInviteConsent {
         let mut pages = false;
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            parties.extend(crate::comm::comm_party_keys_in_txn(&vault.store, &txn)?);
+            parties.extend(
+                vault
+                    .store
+                    .record_hooks
+                    .comm_party_keys_in_txn(&vault.store, &txn)?,
+            );
             for grant in standing_outbound_grants_in_txn(&vault.store, &txn)? {
                 match grant.scope {
                     StandingOutboundGrantScope::Contact { contact_ref } => {

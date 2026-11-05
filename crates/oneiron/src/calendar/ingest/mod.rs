@@ -60,10 +60,12 @@ pub(in crate::calendar) mod property_claims;
 // those paths byte-identical now that `super` is `ingest`.
 pub(crate) use super::{ics, passport, safeguard};
 
-pub(in crate::calendar) use self::admission::admit_calendar_import_claim;
 pub use self::admission::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload, ics_import_actor_id,
     run_ics_property_continuation,
+};
+pub(in crate::calendar) use self::admission::{
+    admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
 };
 pub use self::fetch::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse,

@@ -16,6 +16,7 @@ use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
 use crate::calendar::ingest::{
     ConnectorAdmissionSource, ConnectorScreen, admit_calendar_import_claim,
+    admit_calendar_import_claim_in_txn,
 };
 use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
@@ -339,6 +340,31 @@ pub(super) fn admit_screened(
 ) -> Result<EntityId, CalendarConnectorError> {
     let screened = screen_then_claim(false, None, body, |_request| {
         admit_calendar_import_claim(vault, &event_ref, predicate, value, source_record_id, now)
+    })
+    .map_err(CalendarError::from)?;
+    Ok(screened.value)
+}
+
+pub(super) fn admit_screened_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: EntityId,
+    body: &CalendarInboundBody,
+    source_record_id: &str,
+    predicate: &str,
+    value: rmpv::Value,
+    now: u64,
+) -> Result<EntityId, CalendarConnectorError> {
+    let screened = screen_then_claim(false, None, body, |_request| {
+        admit_calendar_import_claim_in_txn(
+            vault,
+            txn,
+            &event_ref,
+            predicate,
+            value,
+            source_record_id,
+            now,
+        )
     })
     .map_err(CalendarError::from)?;
     Ok(screened.value)

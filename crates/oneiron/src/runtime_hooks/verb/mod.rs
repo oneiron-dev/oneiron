@@ -9,6 +9,7 @@
 //! one [`InvocationId`] crosses transport wrappers and internal dispatch.
 
 mod ask;
+mod call_scope;
 mod chain;
 mod credential;
 mod golden;
@@ -36,6 +37,7 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 use super::block::HookTurnTarget;
 pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
+pub use call_scope::VerbCallScope;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
@@ -69,7 +71,7 @@ pub struct VerbCall {
     pub class: HookActorClass,
     /// The world, facet, room or project the call runs in, when the host
     /// knows one; a hook's own scope only narrows.
-    pub scope: Option<String>,
+    pub scope: Option<VerbCallScope>,
     pub board_epoch: Option<u64>,
     /// The host turn a block added by this call targets, when it has one.
     pub turn: Option<HookTurnTarget>,

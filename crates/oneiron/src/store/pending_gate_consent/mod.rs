@@ -12,9 +12,10 @@ mod run_groups;
 mod sequence_sweep;
 mod tray;
 
+pub(crate) use self::keys::hashed_string_index_matches;
 pub(in crate::store) use self::keys::{
-    PENDING_GATE_CONSENT_KEY_PREFIX, index_key_with_id, pending_gate_consent_claim_id_from_key,
-    pending_gate_consent_upper_bound, string_index_prefix,
+    PENDING_GATE_CONSENT_KEY_PREFIX, hashed_string_index_prefix, index_key_with_id,
+    pending_gate_consent_claim_id_from_key, pending_gate_consent_upper_bound, string_index_prefix,
 };
 pub(crate) use self::obligation::{owner_answer_item_hash, owner_answer_obligation_in};
 pub(crate) use self::records::PENDING_GATE_CONSENT_VERSION;
