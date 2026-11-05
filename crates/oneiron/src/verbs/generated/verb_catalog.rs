@@ -14722,7 +14722,7 @@ impl AgentVerb {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
             }
             Self::VaultMailPackInstall => {
-                "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."
+                "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."
             }
             Self::VaultMailSourcesConnect => {
                 "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."

@@ -3221,7 +3221,7 @@ export class Oneiron {
     },
     mail: {
       pack: {
-        /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+        /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
         install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
       },
       sources: {
