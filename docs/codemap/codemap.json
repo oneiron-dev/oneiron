@@ -102295,7 +102295,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
