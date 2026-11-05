@@ -110,6 +110,18 @@ fn proposal_source_in_txn(
         };
         return vault.lfs_object_source_in_txn(txn, oid);
     }
+    if let Some((table, key)) = proposal
+        .proposal
+        .path
+        .strip_prefix("carrier:")
+        .and_then(|path| path.split_once(':'))
+        && table == crate::side_table::MESSAGE_STREAM_ACTIVE.name
+    {
+        let Ok(message) = EntityId::from_hex(key) else {
+            return Ok(None);
+        };
+        return vault.message_stream_continuation_source_in_txn(txn, &message);
+    }
     Ok(proposal_source(proposal))
 }
 
