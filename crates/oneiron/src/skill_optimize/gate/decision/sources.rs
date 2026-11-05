@@ -11,7 +11,7 @@ pub(super) fn accepted_in_cycle_sourced_in_txn(
     spending: &EntityId,
 ) -> Result<(u32, Option<Vec<EntityId>>)> {
     let mut accepted: BTreeSet<EntityId> = BTreeSet::new();
-    let (verdicts, source_rows) = super::ledger::verdict_rows_sourced_in_txn(vault, rtxn)?;
+    let (verdicts, source_rows) = super::super::ledger::verdict_rows_sourced_in_txn(vault, rtxn)?;
     for verdict in verdicts {
         if verdict.disposition.admits()
             && verdict.cycle == cycle.as_str()
@@ -38,7 +38,7 @@ pub(super) fn judge_revision_due_sourced_in_txn(
     world_outcomes: usize,
 ) -> Result<(bool, Option<Vec<EntityId>>)> {
     let mut since = 0_u64;
-    let (verdicts, verdict_rows) = super::ledger::verdict_rows_sourced_in_txn(vault, rtxn)?;
+    let (verdicts, verdict_rows) = super::super::ledger::verdict_rows_sourced_in_txn(vault, rtxn)?;
     for verdict in verdicts {
         if !verdict.disposition.admits()
             || verdict.displaced_by_revision.is_some()
