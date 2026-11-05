@@ -28,6 +28,9 @@ The connected producer families are:
   once inside the classifier shared by its three vault entrypoints.
 - Scoped consolidation decisions: the actual generated-read pack, its existing
   step vault and the same band policy.
+- Vault-bound amendment attribution: the proposal-wrong model path, after
+  unsettled and settled causes have returned. Rules-only judgments do not ask a
+  decision pack. An amendment with no hunks is one region.
 - Critic review: each lens's actual three or four questions, after any cached
   review has returned. A review with no lenses asks no packs.
 - Vault-bound campaign taste: the score and usefulness questions, after the
@@ -37,9 +40,8 @@ The vault-free ladder and raw generated provider remain vault-free. They do not
 invent a vault, principal, owner stamp or callback. Pure amendment classification
 and campaign report construction also retain their vault-free entrypoints. Only
 callers with an actual vault use its installed advisory port. Other unbound
-producer paths, including vault-bound amendment attribution, still need their own
-observation wiring; this is not a claim that all decision calls report
-question-pack crossings.
+producer paths still need their own observation wiring; this is not a claim that
+all decision calls report question-pack crossings.
 
 Only the prepared primary-question count is measured. Provider chunks, retries,
 paired/person questions and token counts do not become extra logical packs. Model
