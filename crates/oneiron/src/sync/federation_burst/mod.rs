@@ -15,6 +15,7 @@ pub(crate) use erase::{erase_retained_copies_in_txn, retained_copies_in, scrub_r
 pub(crate) use import_guard::check_active_in_txn;
 pub(in crate::sync) use import_guard::with_import_guard;
 mod review_doors;
+mod review_encoding;
 mod types;
 pub use types::*;
 mod payload;

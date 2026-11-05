@@ -64,8 +64,8 @@ pub(super) fn retain_in_txn(
                     streak_ratio: work.streak_ratio,
                 }),
         );
-        let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
-        vault.store.sync_queue.put(txn, &key, &bytes)?;
+        let bytes = super::review_encoding::encode(&bundle)?;
+        vault.store.sync_queue.put(txn, &key, bytes.as_slice())?;
     }
     Ok(())
 }
@@ -90,8 +90,8 @@ pub(super) fn scrub_in_txn(
         .updates
         .retain(|update| update.request_ref != request_ref);
     if bundle.updates.len() != held {
-        let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
-        store.sync_queue.put(txn, &key, &bytes)?;
+        let bytes = super::review_encoding::encode(&bundle)?;
+        store.sync_queue.put(txn, &key, bytes.as_slice())?;
     }
     Ok(())
 }
