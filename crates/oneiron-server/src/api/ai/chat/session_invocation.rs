@@ -81,7 +81,7 @@ pub(super) fn replay(
     vault: &Vault,
     auth: &CoreAuth,
     binding: Option<&SessionWitnessBinding>,
-    outcome: oneiron::runtime_hooks::InvocationOutcome,
+    outcome: oneiron::runtime_hooks::verb::InvocationOutcome,
 ) -> Response {
     let response = facade::door_replay_for(vault, auth, "chat", outcome);
     if let Some(binding) = binding
