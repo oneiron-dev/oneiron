@@ -411,7 +411,21 @@ fn require_entity_type(
     expected_type: u8,
     resource: &'static str,
 ) -> Result<(), ApiError> {
-    match server.vault.get_entity_type(id) {
+    require_entity_type_lookup(
+        server.vault.get_entity_type(id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+fn require_entity_type_lookup(
+    lookup: oneiron::Result<Option<u8>>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    match lookup {
         Ok(Some(actual)) if actual == expected_type => Ok(()),
         Ok(Some(_)) => Err(ApiError::bad_request(
             format!("{resource} id does not reference a {resource} entity"),
