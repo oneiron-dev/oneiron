@@ -146,12 +146,13 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, secret, writer, deadline)
+            .stream_to(call, checked, body, whole, secret, writer, deadline)
             .await;
     }
 
@@ -160,10 +161,17 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) -> io::Result<()> {
+        if call.shape == crate::Shape::OpenAiResponses {
+            return crate::responses::responses_to(
+                call, checked, body, whole, secret, writer, deadline,
+            )
+            .await;
+        }
         let reached = match checked {
             Ok(url) => self.reach(call, url, body, secret, deadline).await,
             Err(reason) => Err(Outcome::Refused { reason }),
@@ -432,7 +440,7 @@ const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
 /// The shape's key header value for `secret`, marked sensitive.
-fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
+pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
     if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
@@ -519,7 +527,10 @@ pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
 
 /// The reply's headers, each value stripped. A header whose name holds the
 /// key is dropped whole, and so is any past the bounds.
-fn reply_headers(headers: &reqwest::header::HeaderMap, secret: &[u8]) -> Vec<(String, String)> {
+pub(crate) fn reply_headers(
+    headers: &reqwest::header::HeaderMap,
+    secret: &[u8],
+) -> Vec<(String, String)> {
     let mut kept = Vec::new();
     let mut size = 0;
     for (name, value) in headers {
