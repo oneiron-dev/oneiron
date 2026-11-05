@@ -452,6 +452,11 @@ side_tables! {
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
     /// An entity document's state vector (document family). Key: hex32.
     DOCUMENT_STATE_VECTOR: SyncState b"sv:e:" Raw;
+    /// The home's version vector of a world window, as this device last
+    /// exchanged it (FIX 14534): what a world eviction waits to see cover the
+    /// window. Local only, never imaged; the next exchange writes it again.
+    /// Key: window key.
+    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw;
     /// ARCH-0023b document family: the root document's state vector, paired with d:root. Key: ().
     SYNC_SV_ROOT: SyncState b"sv:root" Raw;
     /// A sync window's state vector (document family). Key: yyyy-mm.
