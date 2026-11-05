@@ -299,6 +299,30 @@ impl ShadowBodyStore {
         self.dir()?.import(&body.hash, body.byte_len, &mut source)
     }
 
+    /// Copies an already-frozen body without applying the current write wall.
+    /// Its owned spool is checked against the frozen digest and length before
+    /// the arm store publishes anything.
+    pub(crate) fn import_spool(&self, body: OutputRef, spool: &BodySpool) -> Result<()> {
+        let dir = self.dir()?;
+        if dir.open_body(&body.hash, body.byte_len)?.is_some() {
+            return Ok(());
+        }
+        if spool.len() != body.byte_len {
+            return Err(Error::CorruptedIndex("shadow arm body length"));
+        }
+        let mut sink = BodySink::new(dir, 0, None);
+        SpoolAdmission::AsIs(spool).feed(&mut sink)?;
+        if sink.digest()? != body.hash {
+            return Err(Error::CorruptedIndex("shadow arm body digest"));
+        }
+        let (facts, sunk) = sink.finish(0)?;
+        if let SunkBody::Inline(bytes) = sunk {
+            self.dir()?
+                .import(&facts.digest, facts.len, &mut bytes.as_slice())?;
+        }
+        Ok(())
+    }
+
     /// The whole body `body` names, checked against its digest; `None` when
     /// the store does not hold it.
     ///

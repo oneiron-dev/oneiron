@@ -207,9 +207,7 @@ fn start_arm_check(
 /// The arm's store, holding each body frozen clean for the step.
 fn seed_store(prepared: &PreparedShadowStep, store: &ShadowBodyStore) -> Result<()> {
     for frozen in &prepared.frozen {
-        if let Some(bytes) = &frozen.bytes {
-            store.import(frozen.output.output_ref(), bytes)?;
-        }
+        frozen.seed(store)?;
     }
     Ok(())
 }
