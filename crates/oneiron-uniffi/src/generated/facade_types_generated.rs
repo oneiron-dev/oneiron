@@ -59417,6 +59417,12 @@ pub enum VerbHookStop {
             skip_serializing_if = "Option::is_none"
         )]
         receipt_ref: Option<String>,
+        #[serde(
+            rename = "hook_notice",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        hook_notice: Option<bool>,
     },
 }
 

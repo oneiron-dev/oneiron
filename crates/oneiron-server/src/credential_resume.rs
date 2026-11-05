@@ -53,7 +53,7 @@ impl ServerVerbAskCredentialCheck {
         &self,
         call: VerbAskSavedCall,
         drain: VerbAskDrainPermit,
-    ) -> Result<MemoryResult<(Value, Option<bool>)>, VerbAskRefusal> {
+    ) -> Result<(MemoryResult<Value>, Option<bool>), VerbAskRefusal> {
         let server = self
             .server
             .upgrade()
@@ -74,9 +74,13 @@ impl ServerVerbAskCredentialCheck {
                     &call.verb,
                     Ok(call.args),
                 ));
-                Ok(ran
-                    .map(|output| (output.value, output.hook_notice.then_some(true)))
-                    .map_err(FacadeApiError::into_memory_error))
+                Ok(match ran {
+                    Ok(output) => (Ok(output.value), output.hook_notice.then_some(true)),
+                    Err(error) => {
+                        let (error, hook_notice) = error.into_memory_error_with_notice();
+                        (Err(error), hook_notice)
+                    }
+                })
             }
             VerbAskDoor::Mcp {
                 connection,

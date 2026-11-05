@@ -21,6 +21,8 @@ pub(in crate::runtime_hooks::verb) enum SavedOutcome {
     Err {
         code: String,
         message: String,
+        /// From the actual completed chain; absent when its source supplied none.
+        hook_notice: Option<bool>,
         /// The refusal receipt a credential call that ended refused left.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt: Option<String>,
@@ -44,10 +46,15 @@ impl SavedOutcome {
 
     /// What a drained call that failed with `code` saves: its message cut to
     /// [`MAX_SAVED_VERB_ERROR_BYTES`].
-    pub(in crate::runtime_hooks::verb) fn error(code: String, message: &str) -> Self {
+    pub(in crate::runtime_hooks::verb) fn error(
+        code: String,
+        message: &str,
+        hook_notice: Option<bool>,
+    ) -> Self {
         Self::Err {
             code,
             message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
+            hook_notice,
             receipt: None,
         }
     }
@@ -68,12 +75,14 @@ pub(super) fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Res
         SavedOutcome::Err {
             code,
             message,
+            hook_notice,
             receipt,
         } => VerbHookStop::CompletedWithError {
             invocation: invocation.to_hex(),
             code: code.clone(),
             message: message.clone(),
             receipt_ref: receipt.clone(),
+            hook_notice: *hook_notice,
         },
     })
 }

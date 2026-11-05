@@ -97,7 +97,8 @@ fn row_with_saved(
             Ok(pre) => pre,
             Err(stop) => {
                 notice = match &stop {
-                    VerbHookStop::Completed { hook_notice, .. } => *hook_notice,
+                    VerbHookStop::Completed { hook_notice, .. }
+                    | VerbHookStop::CompletedWithError { hook_notice, .. } => *hook_notice,
                     _ => None,
                 };
                 return completed(verb, stop, session.as_ref());
