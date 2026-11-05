@@ -54,6 +54,9 @@ pub(in crate::dreamer_consolidation) struct RootPayload {
     pub bucket_hash: [u8; 32],
     /// Canonical child_ref-ordered; each evidence sorted/deduped.
     pub children: Vec<ConsolidationChildFrontier>,
+    /// Every original selector/source/ancestor/MESSAGE this payload depends on.
+    /// Captured by the producer, so source erasure needs no surviving root.
+    pub dependencies: Vec<String>,
 }
 
 impl RootPayload {
@@ -114,6 +117,9 @@ impl RootPayload {
         if let Some(rel) = key.rel.as_ref() {
             ids.extend(rel.iter().copied());
         }
+        for dependency in &payload.dependencies {
+            ids.insert(EntityId::from_hex(dependency).ok()?);
+        }
         for child in &payload.children {
             for entry in &child.evidence {
                 ids.insert(EntityId::from_hex(&entry.source_id).ok()?);
@@ -160,6 +166,7 @@ fn child_supported(
 /// supported children. Runs inside `frontier_frozen`'s SAME writer txn, after
 pub(super) fn enqueue_new_bridges_in_txn(
     vault: &Vault,
+    read: &ScopedRead<'_>,
     txn: &mut heed::RwTxn<'_>,
     root_id: EntityId,
     root: &Root,
@@ -222,6 +229,40 @@ pub(super) fn enqueue_new_bridges_in_txn(
             continue;
         }
         children.sort_by(|left, right| left.child_ref.cmp(&right.child_ref));
+        let used: BTreeSet<_> = children.iter().flat_map(|child| &child.evidence).collect();
+        let selected_pins: Vec<_> = used
+            .into_iter()
+            .map(|entry| {
+                pinned
+                    .get(entry)
+                    .map(|pin| (*pin).clone())
+                    .ok_or_else(|| invalid_consolidation("root bridge citation is not pinned"))
+            })
+            .collect::<Result<_>>()?;
+        // A frontier's snapshot may predate an erase. Never publish copied
+        // judgement text after its current source authority or pins withdrew.
+        // The already-accepted accounting receipt still stands on its own.
+        match fresh_pins_match_after_closes(
+            vault,
+            read,
+            read,
+            txn,
+            &bucket_key(&bucket.bucket)?,
+            &selected_pins,
+            &BTreeMap::new(),
+        ) {
+            Ok(()) => {}
+            Err(
+                crate::Error::EntityNotFound
+                | crate::Error::InvalidClaimBody(_)
+                | crate::Error::Record(_),
+            ) => continue,
+            Err(error) => return Err(error),
+        }
+        let dependencies = binding_source_ids(&bucket_key(&bucket.bucket)?, &selected_pins)?
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
         let payload = RootPayload {
             root_ref: root_id.to_hex(),
             owner: root.owner.to_hex(),
@@ -229,6 +270,7 @@ pub(super) fn enqueue_new_bridges_in_txn(
             bucket: bucket.bucket.clone(),
             bucket_hash: bucket.bucket_hash,
             children,
+            dependencies,
         };
         let attempt = DreamerAttemptPayload {
             attempt_type: ATTEMPT.to_owned(),
@@ -281,6 +323,35 @@ pub(super) fn erase_owner_bridges_in_txn(
                 return false;
             }
             RootPayload::decode(&payload.input).is_ok_and(|bridge| bridge.owner == owner_hex)
+        },
+    )
+}
+
+/// A hard-erased source takes every bridge copy of its judgement with it,
+/// including archived attempt rows and run snapshots handled by the native
+/// kind-payload eraser. The captured ids survive removal of the root row.
+pub(crate) fn erase_source_bridges_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    crate::attempt_queue::erase_kind_payloads_in_txn(
+        &vault.store,
+        txn,
+        DreamerConsolidationScope::Micro.attempt_kind(),
+        |raw| {
+            let Ok(payload) = decode_dreamer_attempt_payload(raw) else {
+                return false;
+            };
+            if payload.attempt_type != ATTEMPT {
+                return false;
+            }
+            RootPayload::decode(&payload.input).is_ok_and(|bridge| {
+                bridge
+                    .dependencies
+                    .iter()
+                    .any(|id| EntityId::from_hex(id).ok().as_ref() == Some(source))
+            })
         },
     )
 }
@@ -517,6 +588,13 @@ impl RootBinding {
                 ));
             }
             pins.push(pin.clone());
+        }
+        let dependencies: Vec<_> = binding_source_ids(&key, &pins)?
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
+        if payload.dependencies != dependencies {
+            return Err(invalid_consolidation("root bridge dependencies changed"));
         }
         let subset: Vec<(String, [u8; 32])> = accepted
             .iter()

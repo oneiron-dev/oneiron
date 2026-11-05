@@ -68,7 +68,7 @@ pub(crate) fn frontier_frozen<E: From<Error>>(
         let (id, mut root) = owned_root(vault, txn, actor, &input.root_ref)?;
         let fresh = apply_receipts(&mut root, receipts)?;
         ROOTS.put(&vault.store, txn, &id, &root)?;
-        super::bridge::enqueue_new_bridges_in_txn(vault, txn, id, &root, &fresh, input)?;
+        super::bridge::enqueue_new_bridges_in_txn(vault, read, txn, id, &root, &fresh, input)?;
         Ok(root.accounting)
     })
 }

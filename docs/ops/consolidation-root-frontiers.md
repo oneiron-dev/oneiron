@@ -22,8 +22,14 @@ The output writer rechecks the live root, its accepted child subset and the
 original source pins after model/checker work. Erasure of the root during that
 work cannot produce a later write. The root owner's erase also empties this
 bridge's queued proposal payloads in the same transaction, without touching
-other Micro jobs. Consolidation claims retain the normal evidence and erasure
-rules; this slice does not establish full RUNS-07 or NOTE promotion support.
+other Micro jobs. A hard erase of any captured selector, cited source, pinned
+ancestor or MESSAGE also empties each affected bridge payload through the
+native queue eraser, including its archived-row and run-snapshot copies. The
+producer captures these dependency ids in the same transaction as the accepted
+frontier and queue row, so removing the root first does not hide a dependency.
+Ordinary soft-delete history is unchanged. Consolidation claims retain the
+normal evidence and erasure rules; this slice does not establish full RUNS-07
+or NOTE promotion support.
 
 When this attempt's own native grant closes a pinned CLAIM, the same grant
 transaction records the original retained revision and the exact closed-row

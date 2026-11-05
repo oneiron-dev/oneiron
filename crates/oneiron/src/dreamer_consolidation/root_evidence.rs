@@ -22,6 +22,7 @@ const ROOTS: SideTable<EntityId, Root, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_ROOT);
 
 pub(super) mod bridge;
+pub(crate) use bridge::erase_source_bridges_in_txn;
 mod work;
 pub(crate) use work::{frontier_frozen, pin_frozen};
 
