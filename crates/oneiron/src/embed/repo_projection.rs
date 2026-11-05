@@ -43,7 +43,7 @@ use crate::origin::secret_projection::index::{
     RepoIndexMarks, masked_repo_index_input_in_txn, opaque_index_text,
 };
 use crate::ports::{EntityStoreRead, RetrievalIndexInventory};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
 use crate::store::ManifestDbs;
 
 /// The payload an ASSET record embeds as: its text item's copy, read under
@@ -271,13 +271,24 @@ pub(crate) fn repo_envelope_copies_in_txn(
     for row in vault.store.port_entity_records(txn)? {
         let (id, row) = row?;
         let bytes = match row.entity_type {
-            ENTITY_TYPE_ASSET => repo_media_bytes(&row.body, |blob| {
-                Ok(vault
-                    .store
-                    .port_entity_record(txn, blob)?
-                    .map(|blob| blob.body))
-            })?,
-            ENTITY_TYPE_ASSET_TEXT => {
+            ENTITY_TYPE_ASSET => {
+                let logical;
+                let body = match crate::store::asset_file_in_txn(&vault.store, txn, &id, &row.body)?
+                {
+                    Some(manifest) => {
+                        logical = vault.asset_file_body(txn, &manifest)?;
+                        logical.as_slice()
+                    }
+                    None => row.body.as_slice(),
+                };
+                repo_media_bytes(body, |blob| {
+                    Ok(vault
+                        .store
+                        .port_entity_record(txn, blob)?
+                        .map(|blob| blob.body))
+                })?
+            }
+            ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY => {
                 derived::derived_text_words(&row.body).map(String::into_bytes)
             }
             _ => continue,
