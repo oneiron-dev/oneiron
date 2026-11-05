@@ -119288,7 +119288,7 @@
      "path": "src/config/models/broker.rs",
      "purpose": "`[models.broker]` as the file writes it, and its check into the [`BrokerConfig`] this server runs its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
