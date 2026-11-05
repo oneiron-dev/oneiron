@@ -134,12 +134,17 @@ impl Memory<'_> {
         for asked in &record.asks {
             if asked.artifact == *artifact
                 && asked.forks == forks
-                && self.owns_task_ask_intent(
+                && (self.owns_task_ask_intent(
                     crate::task_verb::TaskAskHandle {
                         group_ref: asked.ask,
                     },
                     &intent_key,
-                )?
+                )? || self.owns_held_task_ask_intent(
+                    crate::task_verb::TaskAskHandle {
+                        group_ref: asked.ask,
+                    },
+                    &intent_key,
+                )?)
             {
                 return Ok(vault.record_office_proposal_ask(proposal, asked.clone())?);
             }
