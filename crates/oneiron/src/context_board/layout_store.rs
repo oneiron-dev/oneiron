@@ -104,6 +104,20 @@ fn is_empty_layout(layout: &BoardLayout) -> bool {
     layout.sections.is_empty()
 }
 
+/// Every actor's own live board layout in `txn`, by actor id, for readers
+/// that learn from layouts (the Coach's layout suggestions, FIX 12572).
+/// Pending batches and the owner's layers are not included.
+pub(crate) fn board_layouts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, BoardLayout)>> {
+    Ok(BOARD_LAYOUT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(actor, row)| (actor, row.live))
+        .collect())
+}
+
 /// An actor's erase removes its board layout row (FIX 3520).
 pub(crate) fn erase_board_layout_actor_in_txn(
     vault: &Vault,
