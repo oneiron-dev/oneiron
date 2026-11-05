@@ -17,7 +17,7 @@ use oneiron::engine_executor::{
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
-use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
+use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
@@ -1139,10 +1139,15 @@ pub(crate) fn task_run_seat(
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
+        let mut task = task(facet);
+        task.learning = learning;
+        task
+    })
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -1239,11 +1244,18 @@ pub(crate) fn task_engine_run_seat(
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        engine_seat_task(config, facet, warm_scope, model, listed)
-    })
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| engine_seat_task(config, facet, warm_scope, model, listed),
+    )
 }
 
 /// The task an engine-native run's seat is born for, from `config` as it
@@ -1273,6 +1285,7 @@ fn engine_seat_task(
         worlds: Vec::new(),
         // Stamped by `seat_for` from the host's served set (FIX 2745).
         served: None,
+        learning: None,
     }
 }
 
