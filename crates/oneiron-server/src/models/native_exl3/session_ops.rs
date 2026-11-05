@@ -214,7 +214,29 @@ pub(in crate::models) async fn import(
     Ok(answer)
 }
 
-/// Imports a kept snapshot under the restoring turn's live dispatch conditions.
+/// Why the stored snapshot cannot be written under its original authority.
+pub(in crate::models) enum SnapshotSourceMiss {
+    /// The admission lapsed; the kept snapshot remains valid.
+    Cold,
+    /// The snapshot's own authority no longer holds; retire it.
+    Retire,
+}
+
+pub(in crate::models) type SnapshotSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SnapshotSourceMiss>> + Send + 'a>,
+>;
+pub(in crate::models) type SnapshotSourceCheck<'a> =
+    dyn Fn() -> SnapshotSourceFuture<'a> + Sync + 'a;
+
+/// A snapshot cache miss is not a worker fault or a live call's release.
+pub(in crate::models) enum SnapshotImportFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SnapshotSourceMiss),
+}
+
+/// Imports a kept snapshot under the turn's live conditions and its own
+/// stored-source authority, checked again at each descriptor write.
 pub(in crate::models) async fn import_released(
     socket: &Path,
     epoch: &str,
@@ -222,43 +244,48 @@ pub(in crate::models) async fn import_released(
     snapshot: &SnapshotRegion,
     worker: &InferenceWorker,
     lease: &oneiron::BudgetLease,
-) -> Result<SessionImported, ReleasedOpFault> {
+    source: &SnapshotSourceCheck<'_>,
+) -> Result<SessionImported, SnapshotImportFault> {
     if !lease.has_dispatch_release() {
         return import(socket, epoch, body, snapshot, worker)
             .await
-            .map_err(ReleasedOpFault::Op);
+            .map_err(SnapshotImportFault::Op);
     }
     let op = SessionOp::Import;
     if snapshot.len() != body.snapshot_bytes {
-        return Err(ReleasedOpFault::Op(cut(
+        return Err(SnapshotImportFault::Op(cut(
             op,
             &"the region is not the snapshot the body names",
         )));
     }
-    let request = serde_json::to_value(body).map_err(|e| ReleasedOpFault::Op(cut(op, &e)))?;
+    let request = serde_json::to_value(body).map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
     let mut channel = Channel::connect(socket)
         .await
-        .map_err(|e| ReleasedOpFault::Op(cut(op, &e)))?;
+        .map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
     let frame = channel
-        .exchange_released(
+        .exchange_snapshot_released(
             op.wire_name(),
             Some(epoch),
             request,
             snapshot.outbound(),
             lease,
+            source,
         )
         .await
         .map_err(|error| match error {
-            super::transport::ReleasedExchangeError::Transport(error) => {
-                ReleasedOpFault::Op(cut(op, &error))
+            super::transport::SnapshotExchangeError::Transport(error) => {
+                SnapshotImportFault::Op(cut(op, &error))
             }
-            super::transport::ReleasedExchangeError::Release(error) => {
-                ReleasedOpFault::Release(error)
+            super::transport::SnapshotExchangeError::Release(error) => {
+                SnapshotImportFault::Release(error)
+            }
+            super::transport::SnapshotExchangeError::Source(miss) => {
+                SnapshotImportFault::Source(miss)
             }
         })?;
-    let answer: SessionImported = answer_of(op, epoch, &frame).map_err(ReleasedOpFault::Op)?;
+    let answer: SessionImported = answer_of(op, epoch, &frame).map_err(SnapshotImportFault::Op)?;
     if answer.staged != body.checkpoint {
-        return Err(ReleasedOpFault::Op(cut(
+        return Err(SnapshotImportFault::Op(cut(
             op,
             &"the answer staged another checkpoint",
         )));
@@ -266,7 +293,10 @@ pub(in crate::models) async fn import_released(
     if answer.imported_bytes != body.snapshot_bytes
         || answer.snapshot_sha256 != body.snapshot_sha256
     {
-        return Err(ReleasedOpFault::Op(cut(op, &"the answer read other bytes")));
+        return Err(SnapshotImportFault::Op(cut(
+            op,
+            &"the answer read other bytes",
+        )));
     }
     report(worker, &frame.body);
     Ok(answer)
