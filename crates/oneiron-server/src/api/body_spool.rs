@@ -185,6 +185,7 @@ pub(super) async fn spool_then<R: Send + 'static>(
     let (sender, receiver) = mpsc::channel(2);
     let stopped = Arc::new(AtomicBool::new(false));
     let _stop = memory::StopOnDrop(Arc::clone(&stopped));
+    let feed_stopped = Arc::clone(&stopped);
     let mut worker = transfer::spawn_worker(move || -> Result<R, Unspooled> {
         let account = floor.as_ref().zip(room.as_deref());
         let file = spool_to_end(
@@ -202,12 +203,7 @@ pub(super) async fn spool_then<R: Send + 'static>(
     });
     // The worker can end at the floor before the client sends its next
     // frame, so its answer is taken without waiting for the body to end.
-    let feed = async move {
-        match idle {
-            Some(idle) => transfer::feed_body(body, sender, idle, SPOOL_PIECE).await,
-            None => transfer::feed_body_untimed(body, sender, SPOOL_PIECE).await,
-        }
-    };
+    let feed = transfer::feed_body_stoppable(body, sender, idle, SPOOL_PIECE, feed_stopped);
     let early = tokio::select! {
         biased;
         joined = &mut worker => Some(joined),
