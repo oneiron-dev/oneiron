@@ -16,7 +16,7 @@ use super::evidence_time::{
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_report_build::{classify_signature, signature_report};
 use super::verify_revisions;
-use super::verify_sig_pipeline::{Checks, SigEntry, collect_signatures, evaluate_envelope};
+use super::verify_sig_pipeline::{Checks, collect_signatures, evaluate_envelope};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
@@ -34,7 +34,7 @@ pub(super) fn malformed_input() -> SealError {
 
 /// Memory a verification's decode was refused: the verification's error,
 /// never a verdict on the PDF.
-fn memory_refused(refusal: SealMemoryRefusal) -> SealError {
+pub(super) fn memory_refused(refusal: SealMemoryRefusal) -> SealError {
     refusal.seal_error(SealStage::Verification)
 }
 
@@ -291,18 +291,7 @@ pub(crate) fn verify_document(
     // Stage 1: bind every envelope to the already-proven xref chain and
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
-    let sigs = collect_signatures(&doc)?;
-    // Each signature's copied `/Contents` (the CMS the stages below parse)
-    // and field name, charged as soon as they are built (FIX 12260).
-    let sigs_bytes = sigs.iter().fold(
-        sigs.capacity()
-            .saturating_mul(std::mem::size_of::<SigEntry>()),
-        |sum, sig| {
-            sum.saturating_add(sig.contents.capacity())
-                .saturating_add(sig.field_name.capacity())
-        },
-    );
-    let _sigs_held = memory.hold(sigs_bytes).map_err(memory_refused)?;
+    let sigs = collect_signatures(&doc, limits)?;
     let envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
@@ -319,7 +308,7 @@ pub(crate) fn verify_document(
         })
         .collect::<Result<_, _>>()
         .map_err(memory_refused)?;
-    let dss_end = dss_revision_end(&doc, bytes);
+    let dss_end = dss_revision_end(&doc, bytes, limits).map_err(memory_refused)?;
     let mut covered = Vec::new();
     for envelope in &envelopes {
         EmbeddedCert::extend_admitted(
