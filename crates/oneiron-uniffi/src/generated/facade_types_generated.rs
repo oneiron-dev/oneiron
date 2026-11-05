@@ -33679,6 +33679,12 @@ pub struct SourceTrustRow {
     pub max_auto_sensitivity: Option<SensitivityBand>,
     #[serde(rename = "auto", default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(
+        rename = "auto_checker",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub auto_checker: Option<String>,
     #[serde(rename = "receipted", default, skip_serializing_if = "Option::is_none")]
     pub receipted: Option<bool>,
     #[serde(rename = "warned", default, skip_serializing_if = "Option::is_none")]
