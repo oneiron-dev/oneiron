@@ -156,21 +156,25 @@ impl BatchBuilder<'_> {
         } else {
             crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
         };
+        let mut born_touches = crate::comm::DeferredBornTouches::default();
         let routed = match taken {
-            Some(routed) => match actor {
-                Some(actor) => {
-                    original_bodies.extend_from_slice(routed.inputs());
-                    super::comm_input::admit_routed_inputs(
-                        vault,
-                        wtxn,
-                        routed.inputs(),
-                        &mut gate_mode,
-                    )?;
-                    let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
-                    routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+            Some(mut routed) => {
+                born_touches = routed.take_born_touches();
+                match actor {
+                    Some(actor) => {
+                        original_bodies.extend_from_slice(routed.inputs());
+                        super::comm_input::admit_routed_inputs(
+                            vault,
+                            wtxn,
+                            routed.inputs(),
+                            &mut gate_mode,
+                        )?;
+                        let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
+                        routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+                    }
+                    None => routed.record_in_txn(vault, wtxn)?,
                 }
-                None => routed.record_in_txn(vault, wtxn)?,
-            },
+            }
             None => std::collections::BTreeSet::new(),
         };
         let text_index_trusted = if contains_text_op(&self.ops) {
@@ -234,6 +238,16 @@ impl BatchBuilder<'_> {
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
+        let mut admission = actor.map(super::comm_projection::CommHeadWrites::actor);
+        let born_rows = born_touches.record_with_admission_in_txn(
+            vault,
+            wtxn,
+            admission.as_mut().map(|admission| {
+                admission as &mut dyn crate::comm::ProjectedHeadAdmission
+            }),
+        )?;
+        let changes_claims = changes_claims || !born_rows.is_empty();
+        rows.extend(born_rows);
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
         // Queue only after admitted apply. The owner checks the final body and
