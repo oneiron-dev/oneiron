@@ -226,21 +226,35 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
     };
     let mut step = ingest_entity_in_txn(ctx, &mut savepoint, key, value)?;
     // Engine A (6 Nov 03:46): the row's carried binding and its policy
-    // closure land in the savepoint that admitted the row; one that
-    // contradicts the held word refuses the row with all it staged.
+    // closure land in the savepoint that admitted the row. One that
+    // contradicts the held word refuses the row with all it staged; one
+    // whose closure has not arrived holds the row back with it, pending, as
+    // a pad reference waits for its pad: the row never lands unbound.
     if !matches!(step, EntityStep::Quarantine(_) | EntityStep::Pending)
         && let Some(doc) = ctx.carrier_doc()
         && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
         && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
-        && crate::sync::source_audiences::apply_record_in_txn(
+    {
+        match crate::sync::source_audiences::apply_record_in_txn(
             ctx.vault,
             &mut savepoint,
             doc,
             ctx.window_key,
             &id,
-        )? == crate::source_audience::ReplicaMerge::Conflict
-    {
-        step = refuse(Some(id), crate::sync::source_audiences::conflict_error());
+        )? {
+            crate::source_audience::ReplicaMerge::Conflict => {
+                step = refuse(Some(id), crate::sync::source_audiences::conflict_error());
+            }
+            crate::source_audience::ReplicaMerge::Pending => {
+                step = EntityStep::Quarantine(EntityRefusal {
+                    id: Some(id),
+                    err: crate::sync::source_audiences::pending_error(),
+                    retry: RefusalRetry::DependencyPending,
+                });
+            }
+            crate::source_audience::ReplicaMerge::Held
+            | crate::source_audience::ReplicaMerge::Written => {}
+        }
     }
     if let EntityStep::Quarantine(refusal) = &step {
         drop(savepoint);
