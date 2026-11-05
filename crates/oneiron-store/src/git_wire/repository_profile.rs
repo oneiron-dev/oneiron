@@ -43,7 +43,7 @@ enum WorktreeSetting {
 }
 
 impl WorktreeSetting {
-    pub fn key(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
             Self::Filemode(_) => "filemode",
             Self::Symlinks(_) => "symlinks",
@@ -58,7 +58,7 @@ impl WorktreeSetting {
         }
     }
 
-    pub fn value(self) -> String {
+    fn value(self) -> String {
         match self {
             Self::Filemode(value)
             | Self::Symlinks(value)

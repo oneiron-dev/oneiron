@@ -348,13 +348,13 @@ pub fn content_version(files: &[HubFile]) -> Result<String> {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CallFields {
-    pub reference: String,
-    pub arguments: serde_json::Value,
-    pub returns: serde_json::Value,
+    reference: String,
+    arguments: serde_json::Value,
+    returns: serde_json::Value,
 }
 
 impl CallFields {
-    pub fn into_contract(self) -> SkillCallContract {
+    fn into_contract(self) -> SkillCallContract {
         SkillCallContract {
             reference: self.reference,
             arguments: self.arguments,

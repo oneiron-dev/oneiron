@@ -48,6 +48,16 @@ pub(super) fn logical_uuid_v7_successor(id: GateDecisionId) -> Result<GateDecisi
     ))
 }
 
+/// The full raw key of one ledger row, for tests that plant rows directly;
+/// production reads and writes go through the typed ledger table.
+#[cfg(test)]
+pub(crate) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
+    key.extend_from_slice(&decision_id.as_bytes());
+    key
+}
+
 pub(in crate::store) fn gate_decision_grant_ref_index_key(
     grant_ref: &str,
     decision_id: GateDecisionId,

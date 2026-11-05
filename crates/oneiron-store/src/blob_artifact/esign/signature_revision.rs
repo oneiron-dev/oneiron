@@ -79,9 +79,9 @@ pub struct BaseAdmission {
 }
 
 struct BaseAdmissionState {
-    pub hold: Hold,
+    hold: Hold,
     /// Stays 0: this base's trait has no `release` to credit it (§4).
-    pub spare: u64,
+    spare: u64,
 }
 
 impl BaseAdmission {

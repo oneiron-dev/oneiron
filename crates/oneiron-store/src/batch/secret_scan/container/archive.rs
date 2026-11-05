@@ -45,11 +45,11 @@ pub const OUTSIDE: MemberStep = MemberStep::Zip { entry: u32::MAX };
 
 /// One entry as the central directory declares it.
 struct Entry {
-    pub name: String,
-    pub method: CompressionMethod,
-    pub modified: DateTime,
-    pub mode: Option<u32>,
-    pub directory: bool,
+    name: String,
+    method: CompressionMethod,
+    modified: DateTime,
+    mode: Option<u32>,
+    directory: bool,
 }
 
 /// The entry count the archive's end records declare, found as the reader

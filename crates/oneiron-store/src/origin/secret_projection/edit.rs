@@ -88,15 +88,15 @@ pub fn visible_diff(
 /// The original, its in-place masked copy and the copy's protected spans,
 /// sorted.
 struct MaskedFile<'b> {
-    pub original: &'b [u8],
-    pub copy: &'b [u8],
-    pub spans: Vec<(usize, usize)>,
+    original: &'b [u8],
+    copy: &'b [u8],
+    spans: Vec<(usize, usize)>,
 }
 
 impl MaskedFile<'_> {
     /// `submitted` mapped onto the original, when both extreme line
     /// alignments map it onto the same bytes.
-    pub fn apply(&self, submitted: &[u8]) -> Option<Vec<u8>> {
+    fn apply(&self, submitted: &[u8]) -> Option<Vec<u8>> {
         let copy_lines = line_ranges(self.copy);
         let edit_lines = line_ranges(submitted);
         let copy_tokens: Vec<&[u8]> = copy_lines.iter().map(|&(a, b)| &self.copy[a..b]).collect();
@@ -112,7 +112,7 @@ impl MaskedFile<'_> {
 
     /// The original with the line alignment `pairs` applied: each matched
     /// line as stored, each changed run through [`Self::run`].
-    pub fn render(
+    fn render(
         &self,
         copy_lines: &[(usize, usize)],
         submitted: &[u8],
@@ -141,7 +141,7 @@ impl MaskedFile<'_> {
     /// With no protected span in it, the edit as authored; otherwise each
     /// span kept whole (its original bytes back in place), replaced whole
     /// (as authored), or edited in part (no unique mapping).
-    pub fn run(&self, (start, end): (usize, usize), edit: &[u8]) -> Option<Vec<u8>> {
+    fn run(&self, (start, end): (usize, usize), edit: &[u8]) -> Option<Vec<u8>> {
         let spans: Vec<(usize, usize)> = self
             .spans
             .iter()
@@ -171,7 +171,7 @@ impl MaskedFile<'_> {
 
     /// `edit` with each span the byte alignment `pairs` keeps whole given
     /// back its original bytes; `None` for a span edited in part.
-    pub fn render_bytes(
+    fn render_bytes(
         &self,
         start: usize,
         spans: &[(usize, usize)],
