@@ -124,6 +124,7 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+pub(crate) mod read_capture;
 mod read_lane;
 mod read_selection;
 mod reads;
