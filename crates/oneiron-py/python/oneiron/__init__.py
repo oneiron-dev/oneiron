@@ -342,6 +342,16 @@ class Oneiron:
         """
         return self._client.last_receipt_ref()
 
+    def native_limit_questions(self) -> list[dict[str, Any]] | None:
+        """The engine ``[limits]`` rows this client's own vault crossed, latest per row.
+
+        Each entry is ``{"row", "bound", "measured"}`` with exact integers.
+        ``None`` on a remote, attached, or rebound view; an empty list where
+        no row crossed yet.
+        """
+        raw = _translate(lambda: self._client.native_limit_questions())
+        return json.loads(raw) if raw is not None else None
+
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends the call a ``PENDING_ASK`` refusal answered, under its invocation.
 
@@ -1955,6 +1965,9 @@ class Oneiron:
         def fit(self) -> "Oneiron._VaultSkillsFitVerbs":
             return Oneiron._VaultSkillsFitVerbs(self._client)
         @property
+        def advisory_ask(self) -> "Oneiron._VaultSkillsAdvisoryAskVerbs":
+            return Oneiron._VaultSkillsAdvisoryAskVerbs(self._client)
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
         @property
@@ -1993,6 +2006,12 @@ class Oneiron:
         def set(self, spec):
             """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
             return json.loads(_translate(lambda: self._client.vault_skills_fit_set(json.dumps(spec))))
+    class _VaultSkillsAdvisoryAskVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."""
+            return json.loads(_translate(lambda: self._client.vault_skills_advisory_ask_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2792,8 +2811,17 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs":
+            return Oneiron._VaultSyncQuarantineVerbs(self._client)
+        @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
             return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+    class _VaultSyncQuarantineVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def held_edits(self, spec):
+            """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
+            return json.loads(_translate(lambda: self._client.vault_sync_quarantine_held_edits(json.dumps(spec))))
     class _VaultSyncRetainedWorkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
