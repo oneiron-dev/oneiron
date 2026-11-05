@@ -35,6 +35,24 @@ const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
 /// unavailable.
 pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
 
+/// The home's digest-bound answer to an opened-item queue send.
+pub(crate) enum ResidenceReceipt {
+    Durable([u8; 32]),
+    Held([u8; 32]),
+}
+
+impl ResidenceReceipt {
+    pub(crate) fn digest(&self) -> &[u8; 32] {
+        match self {
+            Self::Durable(digest) | Self::Held(digest) => digest,
+        }
+    }
+
+    pub(crate) fn is_durable(&self) -> bool {
+        matches!(self, Self::Durable(_))
+    }
+}
+
 /// Client-side sync engine.
 pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
@@ -60,10 +78,10 @@ pub struct SyncClient {
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
     pub(crate) root_bootstrapped: bool,
-    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
-    /// the BLAKE3 of each acknowledged row's own bytes, set once its window
-    /// pad receipt bound what was sent for it.
-    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
+    /// This connection's home replies to opened-item queue sends, keyed by
+    /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
+    /// Held answers the exchange while its row remains queued.
+    pub(crate) residence_acks: HashMap<u64, ResidenceReceipt>,
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
