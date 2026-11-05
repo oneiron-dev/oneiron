@@ -231,3 +231,11 @@ pub(super) fn frozen_approval_send_ref(request: &OutboundDispatchRequest) -> Opt
     (ApprovalTarget::freezes_send_ref_of(&connector) || ordinary_target)
         .then(|| approval_send_ref(request, &connector))
 }
+
+/// The stable reference the native Linear target already pins. Only ordinary
+/// Linear requests freeze this supplier; a mirror request needs all its own
+/// operation facts and stays on its existing approval path.
+pub(super) fn frozen_linear_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
+    (normalize_key(&request.intent.channel) == LINEAR_CONNECTOR && request.linear_mirror.is_none())
+        .then(|| stable_send_ref(request))
+}
