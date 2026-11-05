@@ -298,8 +298,6 @@ side_tables! {
     TASK_WAVE_PLAN_INDEX: VaultMeta b"wave.task.v1/" Raw;
     /// Weave digest of one reader. Key: reader kind byte + id16 + u64be.
     WEAVE_DIGEST: VaultMeta b"weave:digest:v1:" Raw;
-    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
-    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// An owner's own behaviour with one period of his digest, for the Coach's digest settings
     /// rule (FIX 5495): when its due notice reached him and when he first opened it, no digest
     /// text. Key: id16 (owner) + u64be (scheduled_for).
@@ -309,6 +307,8 @@ side_tables! {
     /// the send is on, to the reader's primary route. Key: id16 (reader).
     WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
         => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
+    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
+    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).
@@ -318,10 +318,10 @@ side_tables! {
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
-    /// Weave digest schedule of one reader. Key: reader kind byte + id16.
-    WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// The newest live lens of one reader. Key: reader kind byte + id16.
     WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
+    /// Weave digest schedule of one reader. Key: reader kind byte + id16.
+    WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// One immutable wrong-item label (a claim, project or budget row) filed from a live weave
     /// report. Key: id16 (item id) + id16 (label receipt id).
     WEAVE_WRONG_ITEM_LABEL: VaultMeta b"weave:wrong-item:v1:" Named;
