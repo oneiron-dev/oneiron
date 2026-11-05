@@ -354,6 +354,7 @@ fn masked_image(
         .split(';')
         .next()
         .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("image/svg+xml"))
+        || svg_document(&image.bytes)
     {
         std::str::from_utf8(&image.bytes)
             .map_err(|_| masked_copy_withheld("gate.secret_scan.svg_text"))?;
@@ -361,11 +362,29 @@ fn masked_image(
             &image.bytes,
             mark.keys.iter().map(|key| (key.start, key.end)),
         )?;
+        image.media_type = "image/svg+xml".to_owned();
         return Ok(image);
     }
     match super::image_mask::raster(&image) {
         super::image_mask::Projection::Sanitized(image) => Ok(image),
         super::image_mask::Projection::Unsupported if PASS_UNSUPPORTED_MASKED_IMAGES => Ok(image),
         _ => Err(masked_copy_withheld("gate.secret_scan.image_metadata").into()),
+    }
+}
+
+/// Recognize SVG by its actual root, including XML declarations and comments.
+fn svg_document(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut reader = quick_xml::Reader::from_str(text);
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(root) | quick_xml::events::Event::Empty(root)) => {
+                return root.local_name().as_ref() == b"svg";
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
     }
 }
