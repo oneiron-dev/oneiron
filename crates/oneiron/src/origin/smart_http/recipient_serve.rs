@@ -161,12 +161,22 @@ pub fn serve_bounded_for_recipient(
     authority: Option<&OriginAuthorityLease>,
     caller: Option<&GitPushCaller>,
     read: &RepoGitReadContext,
+    push_selection: Option<(RepoPortableId, EntityId)>,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     if !read.reads_masked() {
         return serve_bounded_as(
-            vault, repo_name, request, seam, bounds, authority, caller, body, sink,
+            vault,
+            repo_name,
+            request,
+            seam,
+            bounds,
+            authority,
+            caller,
+            push_selection,
+            body,
+            sink,
         );
     }
     let terms = ServeTerms {
@@ -179,6 +189,7 @@ pub fn serve_bounded_for_recipient(
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::Host(caller),
         read: Some(read),
+        push_selection,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }

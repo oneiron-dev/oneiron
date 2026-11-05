@@ -39,6 +39,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{FederationGrantScope, GitPushRepo, RepoTarget};
+use crate::origin::RepoPortableId;
 use crate::policy_model::owners_in_txn;
 
 use super::GitPushGrantStanding;
@@ -84,6 +85,21 @@ impl Vault {
         served: &ServedPushRepo,
         ticket: Option<&str>,
     ) -> Result<GitPushAdmission> {
+        self.admit_git_receive_pack_with_portable_in_txn(txn, caller, served, ticket, None)
+    }
+
+    /// The same admission with a requested portable repo/project pair.
+    /// Owner and in-process precedence stay unchanged. A known selection
+    /// filters both Grant arms; it grants nothing and cannot fall through
+    /// to another repo or project.
+    pub(crate) fn admit_git_receive_pack_with_portable_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: &GitPushCaller,
+        served: &ServedPushRepo,
+        ticket: Option<&str>,
+        portable: Option<(&RepoPortableId, EntityId)>,
+    ) -> Result<GitPushAdmission> {
         if self.git_push_owner_in_txn(txn, caller.principal)? {
             return Ok(GitPushAdmission::sealed(GitPushStamp::new(
                 GitPushArm::Owner,
@@ -94,9 +110,15 @@ impl Vault {
         if !caller.host {
             return Err(refused(&served.name, IN_PROCESS_OWNER_ONLY));
         }
+        let selection = match portable {
+            Some((portable, project)) => self
+                .resolve_repo_anchor_by_portable_in_txn(txn, portable)?
+                .map(|repo| GitPushRepo { repo, project }),
+            None => None,
+        };
         // A Grant read that fails refuses only a push no other arm admits:
         // it is logged, and a checkout's own fence and Grant still decide.
-        let no_grant = match self.git_push_grant_admits_in_txn(txn, caller, served) {
+        let no_grant = match self.git_push_grant_admits_in_txn(txn, caller, served, selection) {
             Ok(Ok(stamp)) => return Ok(GitPushAdmission::sealed(stamp)),
             Ok(Err(reason)) => reason,
             Err(error) => {
@@ -110,7 +132,7 @@ impl Vault {
         let Some(ticket) = ticket else {
             return Err(refused(&served.name, no_grant));
         };
-        match self.git_push_checkout_admits_in_txn(txn, caller, served, ticket)? {
+        match self.git_push_checkout_admits_in_txn(txn, caller, served, ticket, selection)? {
             Ok(stamp) => Ok(GitPushAdmission::sealed(stamp)),
             // A Grant passed over on its lapsed pact names that lapse here
             // too (FIX 7548); any other miss keeps the Checkout's reason.
@@ -131,6 +153,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         caller: &GitPushCaller,
         served: &ServedPushRepo,
+        selection: Option<GitPushRepo>,
     ) -> Result<std::result::Result<GitPushStamp, &'static str>> {
         if !self.git_push_grants_stand_here_in_txn(txn)?
             || !self.git_push_grantee_stands_in_txn(txn, caller.principal)?
@@ -148,6 +171,9 @@ impl Vault {
                 continue;
             }
             for repo in &standing.bounds.repos {
+                if selection.is_some_and(|selected| *repo != selected) {
+                    continue;
+                }
                 let Some(anchor) = self.git_push_anchor_in_txn(txn, repo)? else {
                     continue;
                 };
@@ -241,6 +267,7 @@ impl Vault {
         caller: &GitPushCaller,
         served: &ServedPushRepo,
         ticket: &str,
+        selection: Option<GitPushRepo>,
     ) -> Result<std::result::Result<GitPushStamp, &'static str>> {
         if !self.git_push_checkout_stands_in_txn(txn, caller.principal, served, ticket)? {
             return Ok(Err(STALE_CHECKOUT));
@@ -259,15 +286,26 @@ impl Vault {
                 repo: bounds.repo,
                 project: bounds.project,
             };
+            if selection.is_some_and(|selected| repo != selected) {
+                continue;
+            }
             let Some(anchor) = self.git_push_anchor_in_txn(txn, &repo)? else {
                 continue;
             };
             if !served.is_store(self.git_push_store_identity(&anchor).as_deref()) {
                 continue;
             }
-            if let Ok(membership) =
-                self.admit_repo_member_in_txn(txn, caller.principal, class, bounds.repo)?
-            {
+            let membership = match selection {
+                Some(selected) => self.admit_repo_member_in_project_in_txn(
+                    txn,
+                    caller.principal,
+                    class,
+                    selected.repo,
+                    selected.project,
+                )?,
+                None => self.admit_repo_member_in_txn(txn, caller.principal, class, bounds.repo)?,
+            };
+            if let Ok(membership) = membership {
                 let mut stamp = GitPushStamp::new(GitPushArm::Checkout, caller, served).naming(
                     membership.grant,
                     repo,

@@ -62,11 +62,12 @@ pub(super) fn git_read_context_of(auth: &CoreAuth) -> RepoGitReadContext {
 /// `headers` when it sent one ([`REPO_GIT_REVEAL_WHY_HEADER`]): it opts a
 /// masked read with a proven recipient into the files a live grant
 /// covers. A portable repo/project header pair supplies only selection data;
-/// malformed or incomplete pairs are bad requests.
+/// malformed or incomplete pairs are bad requests. It also answers the same
+/// pair as the push selection beside the read context.
 pub(super) fn git_read_context_for(
     auth: &CoreAuth,
     headers: &HeaderMap,
-) -> Result<RepoGitReadContext, Response> {
+) -> Result<(RepoGitReadContext, Option<(RepoPortableId, EntityId)>), Response> {
     let why = headers
         .get(REPO_GIT_REVEAL_WHY_HEADER)
         .and_then(|value| value.to_str().ok());
@@ -75,7 +76,7 @@ pub(super) fn git_read_context_for(
         headers.get(REPO_GIT_PORTABLE_HEADER),
         headers.get(REPO_GIT_PROJECT_HEADER),
     ) {
-        (None, None) => Ok(read),
+        (None, None) => Ok((read, None)),
         (Some(portable), Some(project)) => {
             let parsed = portable
                 .to_str()
@@ -88,7 +89,10 @@ pub(super) fn git_read_context_for(
                         .and_then(|id| EntityId::from_hex(id).ok()),
                 );
             match parsed {
-                Some((portable, project)) => Ok(read.with_portable_repo(portable, project)),
+                Some((portable, project)) => Ok((
+                    read.with_portable_repo(portable, project),
+                    Some((portable, project)),
+                )),
                 None => Err(invalid_portable_selection()),
             }
         }
