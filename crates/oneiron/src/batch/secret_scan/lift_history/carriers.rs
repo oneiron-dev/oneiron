@@ -140,15 +140,15 @@ pub(super) fn path(key: &[u8]) -> String {
     }
 }
 
-/// The typed-body producer keys its document by the actual source entity.
-/// No source is inferred for other carrier formats.
+/// Typed-body documents and codebase snapshots are keyed by their actual
+/// source entity. No source is inferred for other carrier formats.
 pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
     let (decl, row_key) = carrier_of(key)?;
     source_of(decl, row_key)
 }
 
 fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
-    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) {
+    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT) {
         return None;
     }
     super::records::record_id(row_key.strip_prefix(decl.prefix)?)
