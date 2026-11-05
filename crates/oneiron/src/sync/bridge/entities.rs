@@ -246,6 +246,17 @@ pub(super) fn materialize_entities_with_changes(
         if floor_written {
             vault.apply_pending_rebinds_after_commit();
         }
+        // The savepoint has no postcommit owner: an authority row this batch
+        // landed, an owner's origin cut among them, reaches the live mirror
+        // here, so a repo manifest waiting in any loaded window for a proven
+        // writer is judged again against the new fold (FIX 15740).
+        vault.note_committed_rows(
+            applied_ops
+                .iter()
+                .filter(|(_, blob)| is_authority_row(blob))
+                .map(|(id, _)| *id)
+                .collect(),
+        );
     }
     // An earlier ChildOf or SpawnedBy can have arrived before this body's
     // endpoint and been deferred by the edge observer. Re-present only the
