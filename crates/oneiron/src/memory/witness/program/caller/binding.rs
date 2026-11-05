@@ -126,6 +126,42 @@ impl SessionWitnessBinding {
         self.context(vault)?.project_stream_text(text, false)
     }
 
+    /// Admits session-only replay rows in the caller's current composed view.
+    /// Base rows remain for the transport's original source and release checks.
+    pub fn base_replay_rows(
+        &self,
+        vault: &crate::Vault,
+        rows: &[EntityId],
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<Option<Vec<EntityId>>> {
+        let context = self.context(vault)?;
+        context.revalidate()?;
+        if context.route.target() != RouteTarget::Overlay {
+            return Ok(Some(rows.to_vec()));
+        }
+        let key = context
+            .caller
+            .clone()
+            .for_destination(destination)
+            .read_key()?;
+        let view = context.session.read_view()?;
+        let lane = vault
+            .scoped_read_in_session(key, &view)
+            .with_claim_status(ClaimReadStatus::Recorded);
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        context.admit_in_txn(&txn)?;
+        let mut base_rows = Vec::new();
+        for row in rows {
+            if vault.store.entities.get(&txn, row.as_bytes())?.is_some() {
+                base_rows.push(*row);
+            } else if !lane.is_entity_readable_in(&txn, row)? {
+                return Ok(None);
+            }
+        }
+        context.route.revalidate()?;
+        Ok(Some(base_rows))
+    }
+
     /// Projects host-held completed text for this original caller now. This
     /// grants no record read and never turns a cached reply into authority.
     pub fn project_completed_text(&self, vault: &crate::Vault, text: &str) -> MemoryResult<String> {

@@ -71,6 +71,19 @@ pub(super) fn replay(
     mut outcome: oneiron::runtime_hooks::InvocationOutcome,
 ) -> Response {
     if let Some(binding) = binding {
+        if let Some(release) = &mut outcome.release
+            && let Some(rows) = release.rows.as_deref()
+        {
+            release.rows = match binding.base_replay_rows(vault, rows, &auth.destination()) {
+                Ok(Some(rows)) => Some(rows),
+                Ok(None) => {
+                    let status = StatusCode::from_u16(outcome.status)
+                        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                    return (status, Json(facade::details_on_device())).into_response();
+                }
+                Err(error) => return *native_refusal(error),
+            };
+        }
         for value in std::iter::once(&mut outcome.body)
             .chain(outcome.release.iter_mut().map(|release| &mut release.value))
         {
