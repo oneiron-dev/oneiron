@@ -130,7 +130,7 @@ pub(crate) use worker_host::{
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
-use offer::provider_offer;
+use offer::{native_local_offer, provider_offer};
 use output_cap::OutputCap;
 
 /// One filled seat: its ladder, the single model id the engine pins for it,
@@ -419,6 +419,129 @@ fn rung(
             binding,
             backend: Arc::clone(backend),
         },
+        media: None,
+    })
+}
+
+/// A provider's on-device alternative (I2-LOCAL): one chat backend over the
+/// native channels of the managed EXL3 workers bound to it and nothing else,
+/// and the id of the worker that serves each wire model.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct NativeLocal {
+    backend: Arc<dyn SingleRouteBackend>,
+    workers: BTreeMap<String, String>,
+}
+
+/// `provider`'s on-device alternative (I2-LOCAL), when managed EXL3 workers
+/// this process launches serve some of its chat models over a native channel
+/// whose peer is checked against the supervised child, and its calls are free
+/// work (`Payer::Local`, no key). Its backend is the provider's chat adapter
+/// over [`native_exl3::NativeLocalTransport`], for those models alone, so the
+/// request mapping, output cap and response format are the provider's own.
+/// `None` otherwise: the provider's own backend serves every call, at its own
+/// locality, as it always has. A provider holding a Responses socket keeps
+/// its socket and HTTP path, as its own transport does.
+#[cfg(unix)]
+fn build_native_local(
+    name: &str,
+    provider: &ProviderConfig,
+    config: &ModelsConfig,
+) -> Option<NativeLocal> {
+    let chat = matches!(
+        provider.kind,
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+    );
+    // Paid work has no on-device offer, so no locality turns it free.
+    let free = provider.payer == oneiron::llm::run_admission::Payer::Local
+        && provider.key_secret.is_none()
+        && provider.key_env.is_none();
+    if !chat || !free || provider.responses_socket.is_some() {
+        return None;
+    }
+    let routes = worker_host::native_local_routes(name, provider, &config.workers);
+    let catalog: Vec<LlmCatalogEntry> = referenced_models(config, name)
+        .iter()
+        .filter(|model| routes.contains_key(&model.model))
+        .filter_map(|model| catalog_entry(model, provider).ok())
+        .map(|entry| LlmCatalogEntry {
+            locality: ModelLocality::OnDevice,
+            ..entry
+        })
+        .collect();
+    if catalog.is_empty() {
+        return None;
+    }
+    let engine_models: BTreeMap<String, ModelId> = catalog
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .metadata
+                .get("wire_model")?
+                .as_str()
+                .map(|wire| (wire.to_owned(), entry.model.clone()))
+        })
+        .collect();
+    let workers = routes
+        .iter()
+        .map(|(wire, route)| (wire.clone(), route.worker.spec().worker_id.clone()))
+        .collect();
+    // Every route is a managed EXL3 worker's, so the solo marker goes as it
+    // does on the provider's own transport (INF 1).
+    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
+    let shaping = native_exl3::NativeShaping::new(
+        output_cap(provider),
+        provider.response_format,
+        engine_models,
+    );
+    let transport = native_exl3::NativeLocalTransport::new(routes, shaping);
+    let adapter = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
+    Some(NativeLocal {
+        backend: Arc::new(OpenAiCompatBackend::new(adapter, transport)),
+        workers,
+    })
+}
+
+/// No native channel exists off Unix, so no provider has an on-device
+/// alternative.
+#[cfg(not(unix))]
+fn build_native_local(
+    _name: &str,
+    _provider: &ProviderConfig,
+    _config: &ModelsConfig,
+) -> Option<NativeLocal> {
+    None
+}
+
+/// `model` on `provider` over `native` alone, as a rung at `position`: the
+/// on-device alternative of the rung [`rung`] builds for it (I2-LOCAL), with
+/// the same model id, wire model and prompt. `None` when no supervised native
+/// worker serves its wire model.
+fn native_rung(
+    name: &str,
+    provider: &ProviderConfig,
+    native: &NativeLocal,
+    model: &ModelRef,
+    position: usize,
+    prompt: Option<String>,
+) -> Option<LadderRung> {
+    if !native.workers.contains_key(&model.model) {
+        return None;
+    }
+    let id = engine_model_id(model, provider).ok()?;
+    let offer = match native_local_offer(provider, id.clone(), &model.model, native) {
+        Ok(offer) => offer,
+        Err(error) => {
+            tracing::warn!(provider = %name, %error, "model has no on-device offer");
+            return None;
+        }
+    };
+    Some(LadderRung {
+        provider: name.to_owned(),
+        position,
+        model: id,
+        wire_model: model.model.clone(),
+        prompt,
+        offer,
         media: None,
     })
 }
