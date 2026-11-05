@@ -115,6 +115,15 @@ pub(super) fn configure(
     // tracing runs, so one that fails is logged (FIX 6876).
     super::container_dirs::bind_container_cli_env(managed);
     let settled = settle(settings, &mut config)?;
+    // Settings may replace the whole models section. Apply the supervisor's
+    // already-validated broker binding last, including when no file exists.
+    if let Some(broker) = &managed.broker {
+        let models = match &mut config.models {
+            Some(models) => models,
+            slot @ None => slot.insert(crate::config::ModelsConfig::from_toml("", None)?),
+        };
+        models.broker = broker.clone();
+    }
     Ok((config, settled))
 }
 
