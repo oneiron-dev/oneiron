@@ -1332,6 +1332,26 @@ impl OfferLadder {
             .map(|(response, _)| response)
     }
 
+    /// The same admitted source walk, retaining the actual answering binding.
+    pub(crate) async fn generate_admitted_recorded(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        sources: &dyn SourceAdmission,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_from(
+            run,
+            request,
+            selector,
+            &|| true,
+            self.host_wait(),
+            true,
+            Some(sources),
+        )
+        .await
+    }
+
     /// [`Self::generate_within`]; once every rung has parked, a call whose
     /// parked offer has the owner's fallback goes there, when
     /// `may_fall_back` (a fallback's own call falls back no further). Boxed,
@@ -1518,6 +1538,9 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&rung, &bound);
+            if let Some(sources) = sources {
+                sources.capture_request(&bound);
+            }
             let sent = gate.generate(bound, permit.lease());
             let Some(answered) = call
                 .deadline
