@@ -24,6 +24,7 @@ mod repl;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
+mod step_evidence;
 mod store;
 mod turn_hooks;
 mod type_feedback;
@@ -47,6 +48,8 @@ pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+// FIX 4414: the owner's per-run step evidence.
+pub(crate) use self::step_evidence::step_evidence_page;
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
     holds_reply_content, is_result_output_path, parse_result_read_path, result_handle_json,

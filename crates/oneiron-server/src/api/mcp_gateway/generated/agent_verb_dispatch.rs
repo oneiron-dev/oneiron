@@ -818,7 +818,9 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
         "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.session_model_heal_count" => a.spec.clone().ok_or_else(invalid),
         "vault.code.corrections" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.step_evidence" => a.spec.clone().ok_or_else(invalid),
         "vault.code.type_diagnostics" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
@@ -3563,7 +3565,13 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.code.model_heal_count" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.session_model_heal_count" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.code.corrections" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.step_evidence" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.type_diagnostics" => {
@@ -17134,6 +17142,26 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.code.session_model_heal_count" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.session_model_heal_count", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_run_doors::CodeRunSessionModelHealCountRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_session_model_heal_count(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.code.corrections" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.code.corrections", &input)
@@ -17142,6 +17170,24 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_corrections(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.step_evidence" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.step_evidence", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_run_doors::CodeRunStepEvidenceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_step_evidence(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

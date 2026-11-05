@@ -2272,8 +2272,12 @@ export class Oneiron {
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
+      /** Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused. */
+      session_model_heal_count: (input: Facade.CodeRunSessionModelHealCountRequest): Facade.CodeRunSessionModelHealCountView => this.#call(() => this.#client.vaultCodeSessionModelHealCount(input) as Facade.CodeRunSessionModelHealCountView),
       /** Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only. */
       corrections: (input: Facade.CodeRunCorrectionsRequest): Facade.CodeRunCorrectionsView => this.#call(() => this.#client.vaultCodeCorrections(input) as Facade.CodeRunCorrectionsView),
+      /** Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records. */
+      step_evidence: (input: Facade.CodeRunStepEvidenceRequest): Facade.CodeRunStepEvidenceView | null => this.#call(() => this.#client.vaultCodeStepEvidence(input) as Facade.CodeRunStepEvidenceView | null),
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {

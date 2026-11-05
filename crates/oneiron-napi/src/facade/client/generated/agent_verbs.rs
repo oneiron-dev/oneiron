@@ -5848,12 +5848,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_session_model_heal_count(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.session_model_heal_count", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_corrections(
         &self,
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.corrections", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_step_evidence(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.step_evidence", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

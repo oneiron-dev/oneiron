@@ -3351,10 +3351,20 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.code.session_model_heal_count" => fn vault_code_session_model_heal_count(&self, input: CodeRunSessionModelHealCountRequest) -> CodeRunSessionModelHealCountView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunSessionModelHealCountRequest = crate::codec::lower_record("vault.code.session_model_heal_count", input)?;
+    let output = client.vault_code_session_model_heal_count(&input)?;
+    crate::codec::lift_record("vault.code.session_model_heal_count", &output)
+};
 "vault.code.corrections" => fn vault_code_corrections(&self, input: CodeRunCorrectionsRequest) -> CodeRunCorrectionsView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunCorrectionsRequest = crate::codec::lower_record("vault.code.corrections", input)?;
     let output = client.vault_code_corrections(&input)?;
     crate::codec::lift_record("vault.code.corrections", &output)
+};
+"vault.code.step_evidence" => fn vault_code_step_evidence(&self, input: CodeRunStepEvidenceRequest) -> Option<CodeRunStepEvidenceView> = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunStepEvidenceRequest = crate::codec::lower_record("vault.code.step_evidence", input)?;
+    let output = client.vault_code_step_evidence(&input)?;
+    crate::codec::lift_record("vault.code.step_evidence", &output)
 };
 "vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedbackRelease> = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;

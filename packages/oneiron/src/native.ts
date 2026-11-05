@@ -705,7 +705,9 @@ vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
+vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
