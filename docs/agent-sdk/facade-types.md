@@ -6644,7 +6644,7 @@ export type ContextReceiptFields = { persona_compile_stamp: string; activated_me
 /** `oneiron::receipt::context_emit::ContextEmitReceipt` */
 export type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields }
 /** `oneiron::store::attempt_manifest::ManifestKind` */
-export type ManifestKind = "skill_index" | "skill" | "actor_claim"
+export type ManifestKind = "skill_index" | "skill" | "actor_claim" | "workflow_context_row"
 /** `oneiron::store::revision_ref::RevisionRef` */
 export type RevisionRef = number[]
 /** `oneiron::store::attempt_manifest::ManifestEntry` */
