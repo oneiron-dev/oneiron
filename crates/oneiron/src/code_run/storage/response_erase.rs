@@ -180,6 +180,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(reply_occurrences(record.run_id, &record.outputs));
+            release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
@@ -259,6 +260,7 @@ fn release_reply_outputs_in_txn(
     owner: EntityId,
     outputs: &[CodeRunRawOutput],
 ) -> Result<()> {
+    release_unpublished_outputs_in_txn(store, wtxn, owner)?;
     for (owner, path, handle) in reply_occurrences(owner, outputs) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }

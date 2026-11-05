@@ -1,6 +1,6 @@
 # Interrupted code-run file outputs
 
-A canonical executor file stream records its unfinished body occurrence before
+A canonical normal-REPL file stream records its unfinished body occurrence before
 its first frame. The occurrence is the existing ID derived from the run and the
 final runtime output path. It has `Incomplete { retained: None }`: no body bytes,
 content handle, preview, result binding or completed effect is invented.
@@ -22,9 +22,15 @@ occurrences in the same writer as the run's reply erasure. The existing owner
 release path also removes them. No body key, digest or byte retirement is needed
 for an unfinished occurrence with nothing retained.
 
-This slice covers canonical `JsCodeModeStream::File` outputs only. Console,
-finish, stored-value and session streams keep their existing behavior; their
-pre-publication progress remains open. Shadow replay writes no live progress.
+This slice covers the normal REPL's canonical `JsCodeModeStream::File` outputs.
+The same step number and first-frame file order name both the unfinished
+occurrence and its completed publication. The run and its actual response owner
+are committed before its first guest frame, including after a continuation fork.
+Console, finish, stored-value and session streams keep their existing behavior;
+their pre-publication progress remains open. Pinned-program and direct skill
+entries keep their existing behavior too: they do not drain streamed files and
+this slice does not add their missing file publication. Shadow replay writes no
+live progress.
 The descriptor uses the existing BODY metadata codec and adds no table, SDK
 door, archive format, limit, deadline or retention policy. Result archives of
 released output manifests do not gain unpublished occurrences in this slice.
