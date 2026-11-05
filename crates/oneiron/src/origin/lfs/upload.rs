@@ -288,6 +288,13 @@ impl Vault {
                                 marked,
                             )?;
                         }
+                    } else if marked {
+                        // The chunk's bytes were scanned above with the
+                        // object's: a detection is its mark, which the
+                        // batch door does not read again (FIX 9034).
+                        self.batch_in()
+                            .put_marked_carrier(&id, occurred, learned_at, &bytes)
+                            .apply(txn)?;
                     } else {
                         self.batch_in()
                             .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
