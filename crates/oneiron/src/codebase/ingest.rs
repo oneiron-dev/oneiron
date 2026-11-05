@@ -46,7 +46,11 @@ impl RepoIngestConfig {
 pub struct RepoIngestResult {
     pub code_artifact_id: EntityId,
     pub snapshot: CodebaseSnapshot,
+    /// The retained receipt of an authenticated owner's committed capture.
+    pub capture_receipt_ref: Option<String>,
 }
+
+pub(crate) const CODE_SNAPSHOT_CAPTURE_CONTENT_KIND: &str = "code_snapshot_capture";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
