@@ -395,6 +395,53 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)
     }
 
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_thread_event_in_txn(
+            vault,
+            txn,
+            thread_ref,
+            party,
+            joined,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_reply_in_txn(
+            vault,
+            wtxn,
+            party,
+            channel_class,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_stop_in_txn(vault, wtxn, party, channel_class, occurred_at)
+    }
+
     fn forget_claim_reassignments_in_txn(
         &self,
         store: &Store,
