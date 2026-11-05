@@ -970,6 +970,8 @@ pub struct WakeEnvelope {
 pub struct BoardWakeReply {
     #[serde(rename = "wakes")]
     pub wakes: Vec<WakeEnvelope>,
+    #[serde(rename = "opener", default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 /// `oneiron::verbs::scratchpad::ScratchpadRecallRequest`.

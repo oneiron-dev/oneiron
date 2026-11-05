@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use tokio::io::AsyncWriteExt as _;
 
-use oneiron::context_board::WakeEnvelope;
+use oneiron::context_board::{WakeEnvelope, wake_batch_opener};
 
 use super::board_stream::BoardDelivery;
-use super::{AdapterCommand, Instance, WakeBatch};
+use super::{AdapterCommand, Instance, WakeBatch, wall_clock_ms};
 
 /// A stalled helper must let the next configured adapter try.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,6 +23,7 @@ const PANE_NUDGE_PREFIX: &str = "oneiron wake pending";
 
 impl Instance {
     pub(crate) async fn deliver(&self, mut delivery: BoardDelivery, credential_env: &[String]) {
+        let offered = delivery.wakes.len();
         delivery.wakes.retain(|wake| match self.inbox.enqueue(wake) {
             Ok(false) => false,
             Ok(true) => !self.config.inbox,
@@ -35,10 +36,16 @@ impl Instance {
         if delivery.wakes.is_empty() {
             return;
         }
+        // The poll rendered the opener for the wakes it handed over; a batch
+        // the inbox narrowed is rendered again for the wakes it carries.
+        if delivery.wakes.len() != offered {
+            delivery.opener = wake_batch_opener(&delivery.wakes, wall_clock_ms());
+        }
         let batch = WakeBatch {
             instance_key: &self.key,
             wakes: &delivery.wakes,
             frames: &delivery.frames,
+            opener: delivery.opener.as_deref(),
         };
         let body = match serde_json::to_vec(&batch) {
             Ok(body) => body,

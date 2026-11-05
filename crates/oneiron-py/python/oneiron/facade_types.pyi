@@ -302,6 +302,7 @@ class WakeEnvelope(TypedDict):
     review_ref: NotRequired[str | None]
 class BoardWakeReply(TypedDict):
     wakes: list[WakeEnvelope]
+    opener: NotRequired[str | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
