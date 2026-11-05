@@ -237,6 +237,10 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The adopted checkpoint image, verified once per stored rows, with its
+    /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
+    /// exact stored rows, never by generation; dies with the handle.
+    pub(crate) adopted_image_cache: Mutex<Option<crate::authority::AdoptedImageCacheEntry>>,
     /// The causal standing of the topology decision seals one committed
     /// authority generation judged (FIX 4649). Never persisted.
     pub(crate) act_causal_points: Mutex<Option<std::sync::Arc<crate::authority::CausalPoints>>>,
