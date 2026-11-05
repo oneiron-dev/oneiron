@@ -27,8 +27,16 @@ pub(super) async fn execute(
     media_memory.materialized(
         0,
         media.as_ref().map_or(0, |seeds| {
-            (seeds.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<EmbeddedMediaSeed>() as u64)
+            seeds.iter().fold(
+                (seeds.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<EmbeddedMediaSeed>() as u64),
+                |bytes, seed| {
+                    bytes.saturating_add(seed.space.capacity() as u64).saturating_add(
+                        (seed.kinds.capacity() as u64)
+                            .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64),
+                    )
+                },
+            )
         }),
     );
     let mut produced = execute_read(server, args, actor, media.as_deref())?;
