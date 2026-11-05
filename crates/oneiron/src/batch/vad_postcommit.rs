@@ -79,6 +79,11 @@ impl VadPostcommitScope {
     pub(crate) fn finish(self) -> PostcommitWork {
         PENDING_VAD.with(|pending| pending.borrow_mut().remove(&self.key).unwrap_or_default())
     }
+
+    /// After the child commits, transfer its pending effects to the parent writer.
+    pub(crate) fn merge_into(self, vault: &Vault, parent: &RwTxn<'_>) {
+        merge_postcommit_work(vault, parent, self.finish());
+    }
 }
 
 impl Drop for VadPostcommitScope {
