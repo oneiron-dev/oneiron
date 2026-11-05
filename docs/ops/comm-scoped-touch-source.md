@@ -60,8 +60,11 @@ keep their existing matching and admission. Canonical born sources meet the
 same original-CLAIM disclosure and audience requirements as world-bearing
 ones; a COMM_RECORD-only selector cannot expose their CLAIM data.
 
-Within one deferred batch, an earlier touch excludes the later unprocessed
-original heads from its winner and supersession set. Those later Puts remain
-untouched until their own source is recorded and projected in original batch
-order. The later assertion wins a time tie. Normal source and housekeeping
-passes carry no such exclusion. No runtime or full privacy claim is made.
+Within one deferred batch, born and ordinary routed touch assertions share
+one original-order schedule after native apply. Each earlier assertion excludes
+later unprocessed born heads from its winner and supersession set. Those later
+Puts remain untouched until their own source is recorded and projected. The
+later assertion wins a time tie, including mixed born/routed batches. Other
+event kinds keep their pre-apply phase; without born touches all routed events
+keep that phase. Normal source and housekeeping passes carry no exclusion.
+No runtime or full privacy claim is made.
