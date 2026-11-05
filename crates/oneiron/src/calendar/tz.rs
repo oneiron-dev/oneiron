@@ -114,6 +114,10 @@ pub fn wall_to_utc(w: &WallTime, tz: &str) -> Result<u64, CalendarError> {
 /// Unknown zones and instants outside CAL-01's supported range are refused.
 pub fn utc_to_wall(utc: u64, tz: &str) -> Result<WallTime, CalendarError> {
     let zone = resolve_zone(tz)?;
+    utc_to_wall_in_zone(utc, &zone)
+}
+
+fn utc_to_wall_in_zone(utc: u64, zone: &TimeZone) -> Result<WallTime, CalendarError> {
     if utc > MAX_SUPPORTED_UTC {
         return Err(CalendarError::TimestampOutOfRange { utc });
     }
@@ -140,6 +144,31 @@ pub fn utc_to_wall(utc: u64, tz: &str) -> Result<WallTime, CalendarError> {
         mi: local.minute(),
         s: local.second(),
     })
+}
+
+/// A resolved zone stays inside the native calendar border; callers can
+/// reuse its exact offset conversion without reparsing the embedded TZif.
+pub(crate) struct ResolvedTimeZone(TimeZone);
+
+impl ResolvedTimeZone {
+    pub(crate) fn new(name: &str) -> Result<Self, CalendarError> {
+        resolve_zone(name).map(Self)
+    }
+
+    pub(crate) fn offset_minutes_at(&self, at: u64) -> Option<i16> {
+        let wall = utc_to_wall_in_zone(at, &self.0).ok()?;
+        let local = NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
+            .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?
+            .and_utc()
+            .timestamp();
+        let seconds = local.checked_sub(i64::try_from(at).ok()?)?;
+        i16::try_from(seconds / 60).ok()
+    }
+}
+
+/// Wall-clock minute under the selected whole-minute UTC offset.
+pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -> u16 {
+    (((epoch_secs / 60) as i64 + i64::from(utc_offset_minutes)).rem_euclid(1440)) as u16
 }
 
 #[cfg(test)]
