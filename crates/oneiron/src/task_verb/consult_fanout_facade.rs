@@ -1,3 +1,6 @@
+//! Consult fan-out door: settling due consults and fanning out to assignees.
+//! Entry [`Vault::settle_due_consults`]; called from the `task_verb` dispatch surface.
+//! Owned by `task_verb`; expiry and recovery shapes come from `consult_result`.
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
