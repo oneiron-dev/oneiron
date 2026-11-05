@@ -530,7 +530,23 @@ impl Memory<'_> {
         )?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let body = row.body.as_deref().and_then(decode_body_json);
+            let mut body = row.body.as_deref().and_then(decode_body_json);
+            if let Some(value) = &mut body {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                    let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                        &self.vault.store,
+                        &txn,
+                        value,
+                    )?;
+                    keys.mask_json(value);
+                }
+            }
             let snippet = body.as_ref().and_then(|body| {
                 body.get("content")
                     .and_then(serde_json::Value::as_str)

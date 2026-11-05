@@ -150,6 +150,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_CHANGE, CONTENT),
     (&t::PORTS_CHANGE_BY_ACTOR, CONTENT),
     (&t::PORTS_CHANGE_BY_ENTITY, CONTENT),
+    (&t::PORTS_CLAIM_ROW_FLOOR, LIVE),
     (&t::PORTS_CLOCK_FLOOR, LIVE),
     (&t::PORTS_DEPENDENCY, CONTENT),
     (&t::PORTS_DEPENDENCY_REVERSE, CONTENT),
@@ -211,6 +212,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // state, so a restore keeping current authority keeps the current vault's.
     (&t::PROVENANCE_BODY_RESPONSE, CONTENT),
     (&t::PROVENANCE_BODY_RESPONSE_OWNER, LIVE),
+    // Historical source facts are custody state: the current vault's is kept.
+    (&t::PROVENANCE_BODY_SOURCE, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
     (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
     // Acts that already left the vault: a restore never revives a withdrawn submission or replays
