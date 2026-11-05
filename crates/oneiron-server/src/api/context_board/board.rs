@@ -450,6 +450,13 @@ pub(super) fn board_parts(
     if let Some(summary) = tasks_summary {
         tasks_section = tasks_section.with_fold_summary(summary);
     }
+    // A task a hook block pins stays shown through any fold or share.
+    tasks_section = tasks_section.with_hook_pinned_ids(
+        hook_pins
+            .iter()
+            .flat_map(|pin| pin.refs.iter().copied())
+            .collect(),
+    );
 
     // SKILLS, with the learning view on each found skill row and the agent
     // definitions the capability channel found.
