@@ -1,6 +1,7 @@
-//! Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base.
+//! Core half of `store::skill_resident`: its store-layer items live in `oneiron_store::skill_resident` and are
+//! re-exported here; the items below stay in the engine.
 
-use rmpv::Value;
+pub(crate) use oneiron_store::skill_resident::*;
 
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
@@ -8,13 +9,12 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::Store;
-
 use crate::write_envelope::skill_record::SkillRecord;
-
 use crate::write_envelope::skill_record::resident::invalid_owner;
 pub(crate) use crate::write_envelope::skill_record::resident::{
     RESIDENT_PROVENANCE_KEY, resident_of,
 };
+use rmpv::Value;
 
 /// Resolve a resident in the same snapshot as a skill birth or a pack stamp.
 /// A replicated Candidate may wait for an out-of-order actor row, but an
@@ -65,30 +65,6 @@ fn require_executor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityI
 /// entity does not free its identity for a different resident on recreation.
 const OWNER_MARKER: SideTable<EntityId, OwnerMarker, Raw> =
     SideTable::new(&side_table::SKILL_RESIDENT_OWNER);
-
-/// [`OWNER_MARKER`]'s row: a version byte (1), a has-owner byte, then the owner id when there
-/// is one.
-#[derive(PartialEq, Eq)]
-struct OwnerMarker(Option<EntityId>);
-
-impl RawValue for OwnerMarker {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut encoded = vec![1_u8, u8::from(self.0.is_some())];
-        if let Some(owner) = self.0 {
-            encoded.extend_from_slice(owner.as_bytes());
-        }
-        Ok(encoded)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let owner = match bytes {
-            [1, 0] => None,
-            [1, 1, owner @ ..] => Some(EntityId::decode_key(owner).ok_or_else(invalid_owner)?),
-            _ => return Err(invalid_owner().into()),
-        };
-        Ok(Self(owner))
-    }
-}
 
 pub(crate) fn check_owner_marker_in_txn(
     store: &Store,
@@ -147,22 +123,6 @@ pub(crate) fn validate_owner_put_in_txn(
 const RECEIPT_OWNER: SideTable<String, ReceiptOwner, Raw> =
     SideTable::new(&side_table::SKILL_RESIDENT_RECEIPT);
 
-/// [`RECEIPT_OWNER`]'s row: the bound actor's 16-byte id.
-struct ReceiptOwner(EntityId);
-
-impl RawValue for ReceiptOwner {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.0.as_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let raw: [u8; 16] = bytes
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("resident receipt owner"))?;
-        Ok(Self(EntityId::from_bytes(raw)?))
-    }
-}
-
 pub(crate) fn bind_receipt_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -201,43 +161,6 @@ pub(crate) fn receipt_resident_in_txn(
 /// The skills one attempt receipt's pack loaded, marked with the single byte 1.
 pub(crate) const LOADED_SKILL: SideTable<LoadedSkillKey, [u8; 1], Raw> =
     SideTable::new(&side_table::SKILL_RESIDENT_LOADED_SKILL);
-
-/// The marker [`LOADED_SKILL`] rows carry.
-const LOADED: [u8; 1] = [1];
-
-/// [`LOADED_SKILL`]'s key: the receipt id framed by its big-endian `u64` byte length, then the
-/// skill id.
-pub(crate) struct LoadedSkillKey {
-    receipt: String,
-    pub(crate) skill: EntityId,
-}
-
-impl LoadedSkillKey {
-    fn new(receipt: &str, skill: &EntityId) -> Self {
-        Self {
-            receipt: receipt.to_owned(),
-            skill: *skill,
-        }
-    }
-}
-
-impl SideKey for LoadedSkillKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        (self.receipt.len() as u64).encode_into(out);
-        out.extend_from_slice(self.receipt.as_bytes());
-        self.skill.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (length, rest) = bytes.split_at_checked(8)?;
-        let length = usize::try_from(u64::decode_key(length)?).ok()?;
-        let (receipt, skill) = rest.split_at_checked(length)?;
-        Some(Self {
-            receipt: std::str::from_utf8(receipt).ok()?.to_owned(),
-            skill: EntityId::decode_key(skill)?,
-        })
-    }
-}
 
 pub(crate) fn bind_skill_in_txn(
     vault: &crate::Vault,

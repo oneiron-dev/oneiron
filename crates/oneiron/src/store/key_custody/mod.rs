@@ -28,7 +28,7 @@ use oneiron_store::key_custody::identity;
 mod kept_images;
 mod log;
 mod outbox;
-mod platform;
+use oneiron_store::key_custody::platform;
 pub mod protocol;
 mod publication_policy;
 mod publish;

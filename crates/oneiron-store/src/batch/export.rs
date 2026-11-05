@@ -8,4 +8,5 @@ pub mod export_authority;
 pub mod export_manifest;
 pub mod foreign_stage;
 pub mod home_room_project;
+pub mod receipt_sources;
 pub mod secret_supplement_record;

@@ -1,4 +1,7 @@
-//! Resolve stored short ids and report durable hard-delete markers.
+//! Core half of `vault::entity_refs`: its store-layer items live in `oneiron_store::vault::entity_refs` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::vault::entity_refs::*;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -29,24 +32,4 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> MemoryResult<Entity
         format!("entity ref {reference:?} is neither a 32-hex id nor a short ref"),
         &["Pass a 32-character hex entity id or a short ref like \"ms1:a3\"."],
     ))
-}
-
-/// Typed refusal for creation at an id carrying the durable `dt:`
-/// hard-delete marker (hard-once-seen — the same presence-only marker the
-/// sync replay path consults). Without this refusal a delete-authorized
-/// caller could two-step retype an entity (hard delete, then recreate
-/// under a different type), and a migration re-run could resurrect data
-/// the user erased.
-pub(crate) fn hard_deleted_refusal(id: &EntityId) -> MemoryError {
-    MemoryError::new(
-        MEMORY_CODE_FORBIDDEN,
-        format!(
-            "id {} was hard-deleted and cannot be recreated through the facade",
-            id.to_hex()
-        ),
-        &[
-            "Hard-deleted ids are permanent (hard-once-seen); use a fresh id.",
-            "Recreation at a purged id would resurrect erased data or retype an actor.",
-        ],
-    )
 }

@@ -2,6 +2,8 @@
 
 pub mod driver_types;
 pub mod file_metadata;
+pub mod plan;
+pub mod review_policy;
 pub mod source_types;
 pub mod tested_types;
 pub mod types;

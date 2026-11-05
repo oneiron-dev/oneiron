@@ -1,20 +1,7 @@
-//! The full-ancestry review of one exact publish (FIX 6866; CALLS "FIX 6866
-//! review scope"): what the push would expose, recorded in pages on the
-//! request and bound to its tuple by one digest, before anything goes out.
-//!
-//! The review is `Reach(commit) - Reach(remote tip)`: every commit with all
-//! its merge parents, and each path, mode and object each of them introduces
-//! against each parent, so a file added and later deleted or reverted is
-//! still named. The remote tip is subtracted only when this store holds it;
-//! otherwise, and when the branch is absent, the review covers the commit's
-//! whole history. Nothing is skipped for its size, and no read bound ends
-//! the walk (Rule 5): a commit page or tree level too large for one captured
-//! read is read whole through a retained spool. Git-LFS bytes are stated as
-//! not sent. This module is the one place a later history policy
-//! (the pending secrets-in-history rule) plugs into:
-//! [`admit_review_policy`] sees every review before a request records it.
+//! Core half of `origin::publish::review`: its store-layer items live in `oneiron_store::origin::publish::review` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeSet;
+pub use oneiron_store::origin::publish::review::*;
 
 use super::types::{
     OriginPublishLfsBytes, OriginPublishReview, OriginPublishReviewItem, OriginPublishReviewPage,
@@ -22,12 +9,7 @@ use super::types::{
 use crate::Vault;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitReviewItem, GitWire, GitWireRepo};
-
-/// Items one stored review page holds (CALLS "FIX 6866 review page").
-pub const ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS: usize = 512;
-
-/// The digest's BLAKE3 derive-key context.
-const ORIGIN_PUBLISH_REVIEW_DIGEST_CONTEXT: &str = "oneiron:origin-publish-review:v1";
+use std::collections::BTreeSet;
 
 /// A review as one walk built it.
 pub(super) struct BuiltReview {
@@ -169,42 +151,4 @@ impl Vault {
 /// 10969), and the send-time gate refuses.
 pub(super) fn admit_review_policy(_review: &BuiltReview) -> Result<()> {
     Ok(())
-}
-
-/// One item into the digest, each field length-prefixed.
-pub(super) fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
-    match item {
-        GitReviewItem::Commit { commit, parents } => {
-            hasher.update(b"c");
-            field(hasher, commit.as_str().as_bytes());
-            hasher.update(
-                &u64::try_from(parents.len())
-                    .unwrap_or(u64::MAX)
-                    .to_le_bytes(),
-            );
-            for parent in parents {
-                field(hasher, parent.as_str().as_bytes());
-            }
-        }
-        GitReviewItem::Path {
-            status,
-            mode,
-            object,
-            path,
-        } => {
-            hasher.update(b"p");
-            field(hasher, status.to_string().as_bytes());
-            field(hasher, mode.as_bytes());
-            field(
-                hasher,
-                object.as_ref().map_or("", GitOid::as_str).as_bytes(),
-            );
-            field(hasher, path);
-        }
-    }
-}
-
-pub(super) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hasher.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
-    hasher.update(bytes);
 }

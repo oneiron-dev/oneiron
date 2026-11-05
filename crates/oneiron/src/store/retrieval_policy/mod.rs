@@ -1,12 +1,15 @@
-//! Stored retrieval policy actions, trajectories and learned evidence.
+//! Core half of `store::retrieval_policy`: its store-layer items live in `oneiron_store::retrieval_policy` and are
+//! re-exported here; the items below stay in the engine.
 
-mod posterior;
-pub use posterior::RetrievalPolicyPosterior;
+pub use oneiron_store::retrieval_policy::*;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::RetrievalState;
+pub use posterior::RetrievalPolicyPosterior;
 use serde::{Deserialize, Serialize};
+
+mod posterior;
 
 /// These are policy verbs, not the invocation categories in `RetrievalAction`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -33,28 +36,12 @@ impl RetrievalPolicyAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RetrievalPolicyIdentity {
-    pub user: EntityId,
-    pub persona: Option<EntityId>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyEnvelope {
     /// Additional retrieval attempts after the initial Search.
     pub max_steps: u8,
     pub max_hops: u8,
     /// Initial temporal round included. Never exceeds ADAPTIVE_ROUNDS.
     pub temporal_rounds: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalPolicyTier {
-    User,
-    Persona,
-    /// Only this account's evidence. No cross-vault or cross-account lookup.
-    Global,
-    Seed,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

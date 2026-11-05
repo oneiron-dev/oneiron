@@ -1,0 +1,131 @@
+//! The full ancestry one exact publish would expose (FIX 6866): every
+//! commit the pushed commit reaches that the mirror's tip does not, with all
+//! its merge parents, and each path whose entry that commit holds otherwise
+//! than one of its parents (a root commit against the empty tree), with the
+//! mode and object it holds there. A file added and later deleted or
+//! reverted is still named by the commit that added it, so the review is
+//! never the tip's diff alone.
+//!
+//! The walk reads histories of any size in bounded calls, as the LFS census
+//! does: commits come in topological pages, each resumed from the frontier
+//! the pages before it left, and each slice of a page is diffed in one call.
+//! A slice whose diff passes its output or runtime bound splits in half,
+//! down to one commit, whose trees are then compared one level at a time.
+//! No bound ends the walk, and no blob is skipped for its size: unlike the
+//! LFS census's listing, nothing here filters what it names.
+
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+use crate::git_wire::failure::GitWireFailure;
+use crate::git_wire::failure::GitWireFailureClass;
+use crate::git_wire::failure::invalid;
+use crate::git_wire::ids::GitOid;
+use crate::git_wire::operation::GitWireOperation;
+use crate::git_wire::repo::GitWireRepo;
+use oneiron_base::error::Result;
+
+/// Commits one topological page lists with their parents. A page whose
+/// listing overflows is asked again at half.
+pub const COMMIT_PAGE: usize = 65_536;
+
+/// Commits one diff call covers. A call that overflows or runs out of time
+/// splits in half.
+pub const DIFF_SLICE_COMMITS: usize = 512;
+
+/// One thing a reviewed push exposes, in the order the walk meets it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitReviewItem {
+    /// A commit the mirror's tip does not reach, with every parent.
+    Commit {
+        commit: GitOid,
+        parents: Vec<GitOid>,
+    },
+    /// One path whose entry the commit before it holds otherwise than one of
+    /// its parents: `A`dded, `M`odified, `T`ype-changed or `D`eleted.
+    Path {
+        status: char,
+        /// The entry's mode in octal: the new one, or the deleted one's.
+        mode: String,
+        /// The object the commit holds there; `None` for a deletion.
+        object: Option<GitOid>,
+        /// The repo-relative path, as git stores its bytes.
+        path: Vec<u8>,
+    },
+}
+
+/// One commit of a topological page and its parents.
+pub type PagedCommit = (GitOid, Vec<GitOid>);
+
+/// Whether a failed call passed its output or runtime bound, so a smaller
+/// call may finish.
+pub fn past_bound(failure: &GitWireFailure) -> bool {
+    matches!(
+        failure.class(),
+        GitWireFailureClass::OutputOverflow | GitWireFailureClass::Timeout
+    )
+}
+
+/// A `rev-list --parents` page: each commit with its parents.
+pub fn parse_commit_page(stdout: &[u8]) -> Result<Vec<PagedCommit>> {
+    let text = std::str::from_utf8(stdout).map_err(|_| invalid("git commit page must be UTF-8"))?;
+    let mut page = Vec::new();
+    for line in text.lines() {
+        let mut oids = line.split(' ').filter(|field| !field.is_empty());
+        let Some(commit) = oids.next() else {
+            continue;
+        };
+        let parents = oids.map(GitOid::parse_hex).collect::<Result<Vec<_>>>()?;
+        page.push((GitOid::parse_hex(commit)?, parents));
+    }
+    Ok(page)
+}
+
+/// A `diff-tree --stdin -z --raw` answer: per commit, in the order git
+/// printed them, the paths its diffs against each parent named. A commit
+/// line is its id alone; an entry is `:<old mode> <new mode> <old> <new>
+/// <status>` and then its path, each NUL-terminated.
+pub fn parse_diffs(stdout: &[u8]) -> Result<HashMap<GitOid, Vec<GitReviewItem>>> {
+    let mut diffs: HashMap<GitOid, Vec<GitReviewItem>> = HashMap::new();
+    let mut current: Option<GitOid> = None;
+    let mut fields = stdout.split(|byte| *byte == 0);
+    while let Some(field) = fields.next() {
+        if field.is_empty() {
+            continue;
+        }
+        let Some(meta) = field.strip_prefix(b":") else {
+            let text = std::str::from_utf8(field)
+                .map_err(|_| invalid("git review diff commit line must be UTF-8"))?;
+            current = Some(GitOid::parse_hex(text.trim())?);
+            continue;
+        };
+        let commit = current
+            .clone()
+            .ok_or_else(|| invalid("git review diff entry precedes its commit"))?;
+        let path = fields
+            .next()
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| invalid("git review diff entry has no path"))?;
+        let meta = std::str::from_utf8(meta)
+            .map_err(|_| invalid("git review diff entry must be UTF-8"))?;
+        let parts: Vec<&str> = meta.split(' ').collect();
+        let [old_mode, new_mode, _old, new, status] = parts.as_slice() else {
+            return Err(invalid("git review diff entry is malformed"));
+        };
+        let status = status
+            .chars()
+            .next()
+            .ok_or_else(|| invalid("git review diff entry has no status"))?;
+        let deletion = status == 'D';
+        diffs.entry(commit).or_default().push(GitReviewItem::Path {
+            status,
+            mode: (if deletion { *old_mode } else { *new_mode }).to_owned(),
+            object: if deletion {
+                None
+            } else {
+                Some(GitOid::parse_hex(*new)?)
+            },
+            path: path.to_vec(),
+        });
+    }
+    Ok(diffs)
+}

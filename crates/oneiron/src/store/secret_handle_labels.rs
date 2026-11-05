@@ -1,27 +1,18 @@
-//! The owner-set labels on custody handles: one stored label per custody
-//! record, with the Gate receipt of the set that wrote it. Custody's label
-//! door (`secret_custody::handle_labels`) sets and reads them; an erase
-//! drops a record's label with its row.
+//! Core half of `store::secret_handle_labels`: its store-layer items live in `oneiron_store::secret_handle_labels` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::RwTxn;
-use serde::{Deserialize, Serialize};
+pub use oneiron_store::secret_handle_labels::*;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use heed::RwTxn;
+use serde::{Deserialize, Serialize};
 
 /// One handle's owner-set label. Key: id16 (the custody record id).
 pub(crate) const LABEL: SideTable<EntityId, SecretHandleLabel, Named> =
     SideTable::new(&side_table::SECRET_HANDLE_LABEL);
-
-/// The stored owner-set label on one custody handle: the label text and the
-/// Gate receipt of the set that wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandleLabel {
-    pub label: String,
-    pub receipt: String,
-}
 
 /// Drops the label on the custody record `custody`, whose row is being
 /// erased: the label must not survive it.

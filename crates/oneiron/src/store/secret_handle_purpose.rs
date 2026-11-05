@@ -1,22 +1,17 @@
-//! Owner-authored purpose text on a custody handle. The authored side-row
-//! wall masks values before storage; the receipt is a native Gate id.
+//! Core half of `store::secret_handle_purpose`: its store-layer items live in `oneiron_store::secret_handle_purpose` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::RwTxn;
-use serde::{Deserialize, Serialize};
+pub(crate) use oneiron_store::secret_handle_purpose::*;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+use heed::RwTxn;
+use serde::{Deserialize, Serialize};
 
 pub(crate) const PURPOSE: SideTable<EntityId, SecretHandlePurpose, Named> =
     SideTable::new(&side_table::SECRET_HANDLE_PURPOSE);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SecretHandlePurpose {
-    pub purpose: String,
-    pub receipt: [u8; 16],
-}
 
 pub(crate) fn accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<SecretHandlePurpose, Named>(bytes)

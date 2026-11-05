@@ -4,3 +4,4 @@ pub mod coreutils_text;
 pub mod model;
 pub mod paging;
 pub mod snapshot;
+pub mod walk;

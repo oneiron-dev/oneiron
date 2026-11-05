@@ -1,20 +1,12 @@
-//! The checkpoint getter of typed bodies (KS7-2): each entity's body head,
-//! head snapshot, forks, fork snapshots and commit receipts
-//! ([`super::receipts::checkpoint`]), under its own entity tree. A body's
-//! commit messages name no one (its receipts do), so its snapshots stay
-//! exact. A fork's opener and settler are actor parts; an open fork whose
-//! opener did not open goes on restore, as the erase deletes it, and its
-//! snapshot holds only while its opener's tree opens. Office bodies keep
-//! their documents here, not in a second snapshot. Nothing calls this until
-//! KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
+//! Core half of `typed_body::checkpoint`: its store-layer items live in `oneiron_store::typed_body::checkpoint` and are
+//! re-exported here; the items below stay in the engine.
+
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use std::collections::BTreeMap;
-
-use heed::{RoTxn, RwTxn};
+pub(crate) use oneiron_store::typed_body::checkpoint::*;
 
 use super::receipts::checkpoint as receipts;
 use super::{BodyActor, DOCS, FORK_DOCS, FORKS, HEADS, TypedBodyFork, TypedForkState};
@@ -24,12 +16,8 @@ use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
 };
-
-/// The field a fork's opener fills.
-const OPENER: &str = "opener";
-
-/// The field the actor who merged or discarded a fork fills.
-const SETTLER: &str = "settler";
+use heed::{RoTxn, RwTxn};
+use std::collections::BTreeMap;
 
 fn take_actors(fork: &mut TypedBodyFork) -> Vec<(String, EntityId)> {
     let mut actors = Vec::new();

@@ -191,9 +191,9 @@ pub(crate) mod gate_hooks;
 pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
+pub use oneiron_store::document_frame_tags;
 #[cfg(feature = "sync")]
 pub(crate) use sync_hooks::StoreSyncHooks;
-pub mod document_frame_tags;
 pub mod framing;
 pub use oneiron_store::housekeeping_report;
 pub use oneiron_store::housekeeping_schedule;
@@ -272,7 +272,7 @@ pub(crate) use claim_vad_owed::{
     settle_claim_vad_in_txn,
 };
 pub mod birth_record;
-pub mod body_descriptor;
+pub use oneiron_store::body_descriptor;
 pub(crate) mod claim_lineage;
 pub(crate) mod claim_projection;
 mod commitment_due;

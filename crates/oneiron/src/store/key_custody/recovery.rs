@@ -23,7 +23,7 @@
 //! is kept.
 
 mod admission;
-mod credentials;
+use oneiron_store::key_custody::recovery::credentials;
 mod pads;
 mod source;
 mod takeover;

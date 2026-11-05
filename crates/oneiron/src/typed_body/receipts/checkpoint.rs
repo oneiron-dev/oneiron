@@ -1,27 +1,19 @@
-//! The typed-body commit receipts (KS7-2), under their body's entity tree. A
-//! live receipt names its actor and, in its MadeBy, the process's actor: the
-//! compartment keeps the receipt with both set to its own entity, and each
-//! actor is an actor part. A restore writes the live receipt back only when
-//! both open; otherwise it writes the erased form, the commit time alone, as
-//! the erase does. The typed-body getter reads them.
+//! Core half of `typed_body::receipts::checkpoint`: its store-layer items live in `oneiron_store::typed_body::receipts::checkpoint` and are
+//! re-exported here; the items below stay in the engine.
+
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::RoTxn;
+pub(crate) use oneiron_store::typed_body::receipts::checkpoint::*;
 
+use heed::RoTxn;
 use super::{RECEIPTS, StoredReceipt};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{self, ActorPart, Captured, OwnerRef, RowLocator};
-
-/// The field the receipt's actor fills.
-const ACTOR: &str = "actor";
-
-/// The field the MadeBy process's actor fills.
-const PROCESS: &str = "made_by.process.actor";
 
 /// Moves both actors out of a live receipt, leaving `entity` in their place.
 fn take_actors(receipt: &mut StoredReceipt, entity: EntityId) -> Vec<(String, EntityId)> {

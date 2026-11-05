@@ -5,16 +5,17 @@
 
 use std::collections::BTreeMap;
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
-use super::super::erase_evidence::FenceFact;
-use super::super::identity::{CustodyId, CustodyKind};
+use crate::key_custody::erase_evidence::FenceFact;
+use crate::key_custody::identity::CustodyId;
+use crate::key_custody::identity::CustodyKind;
 
 /// Whether the head key `id` is one of a credential `evidence` fences: its
 /// value's, a transition's or a request input's, by the credential's id as
 /// the item's first 16 bytes. Every fact is an erase's: none comes of a
 /// soft delete, a rotation or a revoke.
-pub(super) fn fenced(evidence: &BTreeMap<EntityId, FenceFact>, id: &CustodyId) -> bool {
+pub fn fenced(evidence: &BTreeMap<EntityId, FenceFact>, id: &CustodyId) -> bool {
     matches!(
         id.kind(),
         CustodyKind::CredentialValue
