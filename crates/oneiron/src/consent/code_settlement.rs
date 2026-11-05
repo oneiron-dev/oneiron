@@ -259,7 +259,7 @@ impl Vault {
         let mut reason_codes = vec![reason.to_owned()];
         for source in &attribution.policy.sources {
             reason_codes.push(format!(
-                "policy_manifest:{}:{}@{}",
+                "gate.policy_manifest:{}:{}@{}",
                 source.manifest_ref,
                 crate::gate::code_consent_settlement::KEY,
                 source.version,
