@@ -165,8 +165,11 @@ impl Vault {
             }
             crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
             // Canonical blob reference must release while current body descriptor is still present.
-            crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
-            crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
+            let write = crate::secret_custody::CustodyWrite::of(self);
+            crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id, &|txn, id| {
+                crate::batch::deindex_entity(&write, txn, id)
+            })?;
+            crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
             // Saved tags read the turn's messages through their PartOf edges, so
             // they go before the graph is torn down.
             let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -205,7 +208,7 @@ impl Vault {
                     id,
                 )?;
             let had_merge_receipt =
-                crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+                crate::skill_hub::erase_refinement_custody_in_txn(&write, wtxn, id)?;
             crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
             // A ChannelIdentity's or contact's own claim heads close while their
             // claim_of edges still stand (OF-272).
@@ -222,7 +225,7 @@ impl Vault {
             )?;
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                crate::batch::deindex_entity_with_machine_history(&self.store, wtxn, id)?;
+                crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
             crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
             crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
             let note_removed = crate::note::erase::purge(self, wtxn, id)?;
@@ -333,7 +336,8 @@ impl Vault {
         let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.
-        crate::dreamer_wake::erase_in_txn(&self.store, wtxn, id)?;
+        let write = crate::secret_custody::CustodyWrite::of(self);
+        crate::dreamer_wake::erase_in_txn(&write, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         self.store
@@ -346,8 +350,10 @@ impl Vault {
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // Canonical blob reference must release while current body descriptor is still present.
-        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
-        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id, &|txn, id| {
+            crate::batch::deindex_entity(&write, txn, id)
+        })?;
+        crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,
@@ -358,7 +364,9 @@ impl Vault {
         let (room_had_vector, room_had_graph, room_neighbors) = self
             .store
             .delete_guards
-            .deindex_project_room(&self.store, wtxn, id)?;
+            .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
+                crate::batch::deindex_entity(&write, txn, id)
+            })?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
@@ -370,7 +378,7 @@ impl Vault {
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::invalidate_source_in_txn(
-            &self.store,
+            &write,
             wtxn,
             id,
             crate::ports::DependentWalkDoor::SoftErase,
@@ -381,7 +389,7 @@ impl Vault {
         // authority with it, and moves its group on (CUA E8a).
         crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
-            deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
+            deindex_lexical_query_hints_for_target(&write, wtxn, id)?;
         if hint_had_graph_mutation {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
@@ -393,8 +401,12 @@ impl Vault {
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
-        let blob_cleanup =
-            crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
+        let blob_cleanup = crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+        )?;
         if blob_cleanup.had_graph_mutation {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
@@ -403,26 +415,26 @@ impl Vault {
         let mut had_vector =
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
-        crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::remove_hub_package_in_txn(&write, wtxn, id)?;
         let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
             &self.store,
             wtxn,
             id,
         )?;
         let had_merge_receipt =
-            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::erase_refinement_custody_in_txn(&write, wtxn, id)?;
         crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(
             &self.store,
             wtxn,
             id,
         )?;
-        crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
-        crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::retire_refinement_holder_in_txn(&write, wtxn, id)?;
+        crate::agent_def::remove_birth_custody_in_txn(&write, wtxn, id)?;
         crate::store::pending_comm_stop::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
         let Some(entity_record) =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {
-            let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
+            let cleanup = delete_vad_annotation_metadata_in_txn(&write, wtxn, id)?;
             had_vector |= cleanup.had_vector;
             if cleanup.had_graph_mutation {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
@@ -459,7 +471,7 @@ impl Vault {
             id,
             header.entity_type,
         )?;
-        crate::deletion::tear_derived_rows_in_txn(&self.store, wtxn, id, false)?;
+        crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -476,7 +488,7 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(
-            &self.store,
+            &write,
             wtxn,
             id,
             header.entity_type,
