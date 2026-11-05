@@ -31,10 +31,22 @@ pub(crate) struct FacadeReleased {
 
 /// The HTTP/chat claim's private reply, never the wire result. The notice is
 /// content-free, so it has no dependency rows of its own.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 struct SavedFacadeReply {
     value: serde_json::Value,
     hook_notice: bool,
+}
+
+impl SavedFacadeReply {
+    fn into_value(self) -> serde_json::Value {
+        serde_json::Value::Object(serde_json::Map::from_iter([
+            ("value".to_owned(), self.value),
+            (
+                "hook_notice".to_owned(),
+                serde_json::Value::Bool(self.hook_notice),
+            ),
+        ]))
+    }
 }
 
 impl FacadeReleased {
@@ -52,10 +64,11 @@ impl FacadeReleased {
     pub(crate) fn kept(self, sent: &serde_json::Value) -> InvocationRelease {
         InvocationRelease {
             peer: self.peer,
-            value: serde_json::json!(SavedFacadeReply {
+            value: SavedFacadeReply {
                 value: self.withheld.unwrap_or_else(|| sent.clone()),
                 hook_notice: self.hook_notice,
-            }),
+            }
+            .into_value(),
             rows: self.rows,
         }
     }
