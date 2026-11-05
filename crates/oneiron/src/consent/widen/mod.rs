@@ -489,6 +489,23 @@ impl Vault {
         Ok(())
     }
 
+    fn widen_answer_principal_in_txn<'owner>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &'owner AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+    ) -> Result<&'owner str> {
+        let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+        if let Some(credential) = credential
+            && !self.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential is no longer live",
+            )));
+        }
+        Ok(principal_ref)
+    }
+
     /// The stored proposal `reference` names, opened for an answer in the
     /// answering txn: `credential`, when the route passed one, is still
     /// live, and the proposal is this owner's.
@@ -499,14 +516,7 @@ impl Vault {
         credential: Option<&VerifiedSlip>,
         reference: &str,
     ) -> Result<StoredProposal> {
-        let principal_ref = owner.principal_ref_in_txn(self, txn)?;
-        if let Some(credential) = credential
-            && !self.capability_slip_is_live_in_txn(txn, credential)?
-        {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "holder credential is no longer live",
-            )));
-        }
+        let principal_ref = self.widen_answer_principal_in_txn(txn, owner, credential)?;
         let row = WIDEN_PROPOSALS
             .get(&self.store, txn, &reference.to_owned())?
             .ok_or_else(invalid_row)?;

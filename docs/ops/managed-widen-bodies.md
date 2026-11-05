@@ -150,9 +150,35 @@ existing 64-byte lowercase hex shape. It reads that reference into a fixed 64-by
 buffer and checks EOF, never a request-sized string. Invalid references retain
 their existing refusal and do not bypass the holder check.
 
-For an accept, file comparison runs on a blocking worker, outside every LMDB
-transaction. It
-compares exact bytes to the proposal's stored canonical delta, not just a digest.
+For a large accept, native work runs on a dedicated transfer worker, not the
+runtime's shared blocking pool. It carries the same restriction-clock, run-write
+and idempotency context as the old blocking helper. Both decoded files and their
+disk room stay owned by that worker through their last use, even if HTTP leaves.
+A separate live stop flag lets a queued native memory wait end when HTTP leaves;
+it does not reuse the completed spool's flag or revoke the native operation.
+A thread that cannot start or ends without an answer keeps the existing
+"widen approval failed" internal-server-error response.
+
+Before decoding the first stored canonical byte vector, a short authorized read
+measures the stored row's byte length and closes. The process memory line then
+reserves a conservative allowance for that vector's payload and growth. The
+allowance derives from the pinned JSON Vec decoder and Rust allocator geometry,
+not a request-size cap or the observed canonical length. A fresh read rechecks
+owner and credential and the required allowance before decoding. A row that grew
+replans only after closing the transaction and returning the entire old allowance,
+before reading the expected file. No memory wait holds a read or write transaction
+or another memory lease.
+
+The actual canonical vector capacity is recorded on the same lease. The vector
+stays charged through comparison and the acting writer, and drops before its lease.
+A physical floor keeps the existing internal-server-error shape and says the
+canonical byte allowance could not be reserved, not that an allocation was observed
+to fail. A stopped wait keeps body-not-whole; native refusals keep their old mapping.
+This covers only the first vector's payload and growth, not row metadata, validation
+trees, typed values, re-encoding or the acting writer's second decode.
+
+For an accept, file comparison runs outside every LMDB transaction. It compares
+exact bytes to the proposal's stored canonical delta, not just a digest.
 The acting writer then checks the current owner, holder credential, unresolved
 state, expiry and the same canonical bytes before minting the grant and recording
 the acceptance. No file read or await runs inside that writer.
@@ -170,7 +196,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, queued feed/frame-buffer admission and stored proposal allocations
-remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, queued feed/frame-buffer admission and the remaining stored proposal
+allocations stay separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
