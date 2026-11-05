@@ -47,7 +47,7 @@ pub(super) fn apply_provider_delete(
                 vault.delete_entity_with_reason(message, DeleteReason::UserDelete)?;
             }
             // One provider message is one TURN; its CONVERSATION stays while
-            // the thread holds other messages.
+            // the thread holds other messages, and goes with the last.
             vault.delete_entity_with_reason(&occurrence.turn, DeleteReason::UserDelete)?;
             ProviderDeleteOutcome::Forgotten
         }
@@ -71,7 +71,32 @@ pub(super) fn apply_provider_delete(
         sync.deleted_at_provider += 1;
         SYNC.put(&vault.store, txn, &source, &sync)
     })?;
+    // The thread's CONVERSATION goes with its last message, so "forget too"
+    // leaves no thread behind.
+    if outcome == ProviderDeleteOutcome::Forgotten
+        && !conversation_holds_messages(vault, source, &occurrence.conversation)?
+    {
+        vault.delete_entity_with_reason(&occurrence.conversation, DeleteReason::UserDelete)?;
+    }
     Ok(outcome)
+}
+
+/// Whether any message of `source` in `conversation` is not forgotten.
+fn conversation_holds_messages(
+    vault: &Vault,
+    source: EntityId,
+    conversation: &EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    for row in OCCURRENCES.iter_from(&vault.store, &txn, source.as_bytes())? {
+        let (_, occurrence) = row?;
+        if occurrence.conversation == *conversation
+            && !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Records a message's new provider labels, when it is still present.
