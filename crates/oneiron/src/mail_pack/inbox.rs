@@ -202,9 +202,7 @@ impl Memory<'_> {
                 }
             }
         }
-        items.sort_by(|a, b| {
-            (b.received_at, &b.turn_ref).cmp(&(a.received_at, &a.turn_ref))
-        });
+        items.sort_by(|a, b| (b.received_at, &b.turn_ref).cmp(&(a.received_at, &a.turn_ref)));
         let next_cursor = if items.len() > limit {
             Some(cursor_text(place_of(&items[limit - 1])?))
         } else {

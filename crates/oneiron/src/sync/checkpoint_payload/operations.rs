@@ -21,10 +21,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::checkpoint::{Capture, Classify, Field, OwnerId, Parts, Payload, Unsupported};
+use loro::checkpoint::{Capture, Classify, Field, OwnerId, Parts, Payload, SlotKind, Unsupported};
 use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, LoroValue};
 
-use super::owners::{WINDOW_ROOTS, key_refusal, root_entry, root_fill};
+use super::owners::{
+    WINDOW_ROOTS, WithheldKey, key_fill, key_refusal, root_entry, root_fill, withheld_key,
+    withheld_part_key,
+};
 use super::parts::PartHolders;
 use super::{
     AtomHome, AtomRef, CapturedSyncRow, Holder, LoroCarrier, LoroRow, LoroSlice, LoroSlot,
@@ -208,11 +211,13 @@ impl Home {
     }
 }
 
-/// One value the capture met, in the order it made its atoms: its root map
-/// and key, what each of its copies holds, and its actors.
+/// One value or withheld key the capture met, in the order it made its
+/// atoms: its root map and key, its kind, what each of its copies holds,
+/// and its actors.
 struct Plan {
     root: String,
     key: String,
+    kind: SlotKind,
     value: Vec<u8>,
     split: Option<ValueSplit>,
 }
@@ -256,6 +261,40 @@ impl<'o> Classifier<'o> {
         None
     }
 
+    /// A part's withheld digest key (FIX 10278): one copy under each holder
+    /// a manifest names the part for, the same holders its value goes to,
+    /// whole. Met before the manifests were noted, the capture runs again
+    /// once they are.
+    fn part_key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
+        let placed = match &self.parts {
+            Some(parts) => parts.place(root, key),
+            None => {
+                self.needs_parts = true;
+                return None;
+            }
+        };
+        let holders = match placed {
+            Placement::Owned(holders) => holders,
+            Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
+            _ => return self.refuse(None, SyncUnclassified::OrphanPart),
+        };
+        if holders.is_empty() {
+            return self.refuse(None, SyncUnclassified::NoOwner);
+        }
+        let handles: Vec<OwnerId> = holders
+            .into_iter()
+            .map(|holder| self.handle(Home::Holder(holder)))
+            .collect();
+        self.plans.push(Plan {
+            root: root.to_owned(),
+            key: key.to_owned(),
+            kind: SlotKind::Key,
+            value: key.as_bytes().to_vec(),
+            split: None,
+        });
+        Some(handles)
+    }
+
     /// The capture-local handle of `home`: equal homes share one, and two
     /// holders of one owner with other dependencies do not.
     fn handle(&mut self, home: Home) -> OwnerId {
@@ -277,11 +316,44 @@ impl Classify for Classifier<'_> {
         }
         match key_refusal(root, key) {
             None => true,
+            // A key its family withholds is asked for its holders next.
+            Some(_) if withheld_key(root, key).is_some() || withheld_part_key(root, key) => false,
             Some(reason) => {
                 self.refuse(None, reason);
                 false
             }
         }
+    }
+
+    /// A key withheld in an atom of its own (FIX 10279): its holders' copies
+    /// hold it, the actor it names split out, made before any value under it.
+    fn key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
+        if withheld_part_key(root, key) {
+            return self.part_key_holders(root, key);
+        }
+        let Some(WithheldKey { holders, split }) = withheld_key(root, key) else {
+            let reason = key_refusal(root, key).unwrap_or(SyncUnclassified::NoOwner);
+            return self.refuse(None, reason);
+        };
+        if holders.is_empty() {
+            return self.refuse(None, SyncUnclassified::NoOwner);
+        }
+        let handles: Vec<OwnerId> = holders
+            .into_iter()
+            .map(|holder| self.handle(Home::Holder(holder)))
+            .collect();
+        let value = match &split {
+            Some(split) => split.no_one.clone(),
+            None => key.as_bytes().to_vec(),
+        };
+        self.plans.push(Plan {
+            root: root.to_owned(),
+            key: key.to_owned(),
+            kind: SlotKind::Key,
+            value,
+            split,
+        });
+        Some(handles)
     }
 
     fn holders(&mut self, field: Field<'_>) -> Option<Vec<OwnerId>> {
@@ -343,6 +415,7 @@ impl Classify for Classifier<'_> {
         self.plans.push(Plan {
             root: root.to_owned(),
             key: key.to_owned(),
+            kind: SlotKind::Value,
             value,
             split,
         });
@@ -401,7 +474,10 @@ fn prepare(
     {
         let entries: Vec<(&str, &[u8])> = plans
             .iter()
-            .filter(|plan| plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP)
+            .filter(|plan| {
+                plan.kind == SlotKind::Value
+                    && plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP
+            })
             .map(|plan| (plan.key.as_str(), plan.value.as_slice()))
             .collect();
         if let Some((owner, reason)) =
@@ -479,10 +555,16 @@ fn prove(
     plans: &[Plan],
 ) -> std::result::Result<(), Refusal> {
     for (atom, plan) in parts.atoms.iter().zip(plans) {
-        let Payload::Value(LoroValue::Binary(stored)) = &atom.payload else {
-            return Err(not_proved());
+        let stored: &[u8] = match (&atom.payload, plan.kind) {
+            (Payload::Value(LoroValue::Binary(stored)), SlotKind::Value) => stored.as_slice(),
+            (Payload::Key(key), SlotKind::Key) if *key == plan.key => key.as_bytes(),
+            _ => return Err(not_proved()),
         };
         let Some(split) = &plan.split else {
+            // A key held whole is emitted as it is.
+            if plan.kind == SlotKind::Key && plan.value != stored {
+                return Err(not_proved());
+            }
             continue;
         };
         let mut fields = BTreeSet::new();
@@ -495,8 +577,13 @@ fn prove(
             .iter()
             .map(|(field, actor)| (field.as_str(), *actor))
             .collect();
-        let filled = root_fill(&plan.root, &plan.key, &split.no_one, &opened);
-        if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored.as_slice()) {
+        let filled = match plan.kind {
+            SlotKind::Key => {
+                key_fill(&plan.root, &split.no_one, &opened).map(|key| key.map(String::into_bytes))
+            }
+            _ => root_fill(&plan.root, &plan.key, &split.no_one, &opened),
+        };
+        if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored) {
             return Err(not_proved());
         }
     }
