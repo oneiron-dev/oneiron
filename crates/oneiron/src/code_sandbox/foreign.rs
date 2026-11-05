@@ -3,6 +3,7 @@ use std::io;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
+use oneiron_container::HostNetFloor;
 use sha2::{Digest, Sha256};
 
 use super::microvm::{
@@ -31,18 +32,21 @@ pub struct ForeignCodeOutcome {
 
 /// The adapter owns the only write exit: every file delta remains a proposal.
 /// The workspace is a caller-scoped snapshot supplied by the admitting door.
-/// No host credential or network authority is lent to a foreign program.
-/// Its proposed files spool on `spool`, the host's measured disk floor
-/// (FIX 7650). A TypeScript program runs as the JavaScript Oxc printed for
-/// it; JavaScript runs as written (FIX 8276). `prepared` is the admitting
-/// door's one preparation of it, whose original that door keeps and checks
-/// (FIX 10389): nothing here prepares or checks it again.
+/// No host credential or network authority is lent to a foreign program,
+/// but its guest's socket entries still hold host descriptors: they charge
+/// `floor`, the vault's host floor (FIX 6300). Its proposed files spool on
+/// `spool`, the host's measured disk floor (FIX 7650). A TypeScript program
+/// runs as the JavaScript Oxc printed for it; JavaScript runs as written
+/// (FIX 8276). `prepared` is the admitting door's one preparation of it,
+/// whose original that door keeps and checks (FIX 10389): nothing here
+/// prepares or checks it again.
 pub fn execute_foreign_code(
     prepared: &PreparedSource<'_>,
     mounts: SandboxMountTable,
     artifact: ForeignCodeArtifact<'_>,
     budget: ExecutionBudget,
     spool: Arc<dyn ProposalSpoolFloor>,
+    floor: Arc<dyn HostNetFloor>,
 ) -> Result<ForeignCodeOutcome> {
     if !artifact.component.starts_with(b"\0asm\x0d\0\x01\0")
         || <[u8; 32]>::from(Sha256::digest(artifact.component)) != artifact.sha256
@@ -59,7 +63,7 @@ pub fn execute_foreign_code(
         mounts,
         artifact.component,
         backend,
-        Arc::new(NoEgress),
+        Arc::new(NoEgress { floor }),
         Some(spool),
         budget,
         &StepCancellation::never(),
@@ -142,8 +146,12 @@ impl CredentialResolver for NoCredentials {
 }
 
 /// A scoped snapshot is not an outbound grant. Network calls fail at the
-/// existing backend relay, before any socket or delivery is opened.
-struct NoEgress;
+/// existing backend relay, before any socket or delivery is opened. The
+/// guest's socket entries and writers are host descriptors and threads all
+/// the same, and charge `floor` until they are reclaimed (FIX 6300).
+struct NoEgress {
+    floor: Arc<dyn HostNetFloor>,
+}
 fn network_refused() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
@@ -173,9 +181,8 @@ impl oneiron_container::EgressRelay for NoEgress {
         Ok(())
     }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
-    /// Every relay is refused at once; no host floor is lent here.
-    fn host_net_floor(&self) -> &dyn oneiron_container::HostNetFloor {
-        &oneiron_container::UnmeteredFloor
+    fn host_net_floor(&self) -> &dyn HostNetFloor {
+        &*self.floor
     }
 }
 fn invalid(message: &str) -> Error {
