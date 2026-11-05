@@ -433,7 +433,7 @@ declare namespace Sdk {
   type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null };
   type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled";
   type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none";
-  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality";
+  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality" | "erased_payload";
   type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number };
   type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null };
   type BudgetHoldState = "warned" | "held" | "resumed";
