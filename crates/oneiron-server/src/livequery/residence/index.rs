@@ -293,7 +293,7 @@ pub(super) fn touch(
     let target = touch_target(server, auth, peer, &input)?;
     // Read before the item, so the stage never names a basis newer than its bytes.
     let basis = touch_basis(server, &target)?;
-    let (blob, document) = read_touch(server, &target, None)?;
+    let (blob, document, cache_worlds) = read_touch(server, &target, None)?;
     let rows = touch_rows(server, target.id)?;
     let mut room = RESIDENCE_PAGE_REPLY_BYTES;
     let mut named = Vec::new();
@@ -314,6 +314,7 @@ pub(super) fn touch(
         "entityId": target.id.to_hex(),
         "blob": blob,
         "document": document,
+        "cacheWorlds": cache_worlds,
     });
     if let Some(basis) = basis
         && !named.is_empty()
@@ -370,7 +371,7 @@ pub(super) fn touch_part(
     let bytes = match staged {
         Some(bytes) => std::borrow::Cow::Borrowed(bytes),
         None => {
-            let (blob, document) = read_touch(server, &target, Some(input.item))?;
+            let (blob, document, _) = read_touch(server, &target, Some(input.item))?;
             let bytes = match input.item {
                 TouchItem::Blob => blob,
                 TouchItem::Document => document,
@@ -502,7 +503,14 @@ fn read_touch(
     server: &SyncServer,
     target: &TouchTarget<'_>,
     only: Option<TouchItem>,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), AppError> {
+) -> Result<
+    (
+        Option<Vec<u8>>,
+        Option<Vec<u8>>,
+        Option<oneiron::sync::residence::CachedItemWorlds>,
+    ),
+    AppError,
+> {
     let TouchTarget {
         window,
         selector,
@@ -523,30 +531,49 @@ fn read_touch(
     .ok_or_else(|| AppError::not_found("item", None))?;
     // The export opens the document: past the live-document row it waits its
     // turn off the runtime worker (rule 5).
-    let document = if only == Some(TouchItem::Blob) {
-        None
+    let (document, cache_worlds) = if only == Some(TouchItem::Blob) {
+        (None, None)
     } else {
         let exported = crate::server::blocking(|| {
-            server.reassert_manager.export_document_in_window_with(
-                *id,
-                window,
-                crate::handler::selector_scope::selector_grant_scope(),
-                selector,
-                admission.withhold(),
-                &loro::VersionVector::new().encode(),
-            )
+            if only.is_none() {
+                server
+                    .reassert_manager
+                    .export_read_cache_document_in_window_with(
+                        *id,
+                        window,
+                        crate::handler::selector_scope::selector_grant_scope(),
+                        selector,
+                        admission.withhold(),
+                        &loro::VersionVector::new().encode(),
+                        &blob,
+                    )
+            } else {
+                server
+                    .reassert_manager
+                    .export_document_in_window_with(
+                        *id,
+                        window,
+                        crate::handler::selector_scope::selector_grant_scope(),
+                        selector,
+                        admission.withhold(),
+                        &loro::VersionVector::new().encode(),
+                    )
+                    .map(|document| (document, None))
+            }
         });
-        Some(exported.map_err(|error| {
+        let (document, cache_worlds) = exported.map_err(|error| {
             if error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut {
                 AppError::waited_out()
             } else {
                 AppError::internal_server_error("item document unavailable")
             }
-        })?)
+        })?;
+        (Some(document), cache_worlds)
     };
     Ok((
         (only != Some(TouchItem::Document)).then_some(blob),
         document,
+        cache_worlds,
     ))
 }
 

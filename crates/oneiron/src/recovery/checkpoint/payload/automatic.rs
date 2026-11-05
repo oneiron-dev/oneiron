@@ -63,11 +63,61 @@ impl Selection {
                     entity,
                     &raw,
                 )? {
-                    out.rows
-                        .entry(RowDb::SyncState)
-                        .or_default()
-                        .extend(keys.into_iter().map(String::into_bytes));
+                    out.rows.entry(RowDb::SyncState).or_default().extend(
+                        keys.into_iter()
+                            .chain([format!("ri:s:{}", entity.to_hex())])
+                            .map(String::into_bytes),
+                    );
                 }
+            }
+        }
+        #[cfg(feature = "sync")]
+        for row in vault.store.sync_state.prefix_iter(txn, "ri:s:")? {
+            let (key, value) = row?;
+            let Some(item) = key.strip_prefix("ri:s:").and_then(|hex| {
+                EntityId::from_hex(hex)
+                    .ok()
+                    .filter(|item| item.to_hex() == hex)
+            }) else {
+                continue;
+            };
+            let Some(worlds) = crate::sync::residence::CachedItemWorlds::decode(value) else {
+                continue;
+            };
+            if worlds.worlds().is_empty()
+                || !worlds
+                    .worlds()
+                    .iter()
+                    .all(|world| fold.world_privacy(*world).sealed == SealedCopies::Off)
+            {
+                continue;
+            }
+            let Some(blob) = vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:b:{}", item.to_hex()))?
+            else {
+                continue;
+            };
+            let Some(document) = vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:d:{}", item.to_hex()))?
+            else {
+                continue;
+            };
+            if !worlds.matches(item, blob, document) {
+                continue;
+            }
+            if let Some(keys) =
+                crate::sync::residence::checkpoint_read_cache_keys(&vault.store, txn, item, blob)?
+            {
+                out.worlds.extend(worlds.worlds().iter().copied());
+                out.rows.entry(RowDb::SyncState).or_default().extend(
+                    keys.into_iter()
+                        .chain([key.to_owned()])
+                        .map(String::into_bytes),
+                );
             }
         }
         if !out.owners.is_empty() {

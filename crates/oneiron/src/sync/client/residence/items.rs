@@ -24,6 +24,7 @@ struct TouchReply {
     entity_id: String,
     blob: TouchItemReply,
     document: TouchItemReply,
+    cache_worlds: Option<serde_json::Value>,
 }
 
 /// One of a touch's two items (FIX 12116): `inline` in base64, or named by
@@ -195,6 +196,15 @@ impl SyncClient {
             transport::MAX_DECODED_PAYLOAD_BYTES as u64,
         )
         .await?;
+        // Provenance is optional and never changes whether the working read
+        // is admitted. A part re-read must still match both original hashes.
+        let cache_worlds = reply
+            .cache_worlds
+            .and_then(|value| {
+                serde_json::from_value::<crate::sync::residence::CachedItemWorlds>(value).ok()
+            })
+            .filter(|worlds| worlds.matches(item, &blob, &document))
+            .and_then(|worlds| rmp_serde::to_vec_named(&worlds).ok());
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
         if window
             .start_timestamp()
@@ -255,6 +265,12 @@ impl SyncClient {
                     &format!("ro:e:{}", item.to_hex()),
                     window.as_str().as_bytes(),
                 )?;
+                let source_key = format!("ri:s:{}", item.to_hex());
+                if let Some(worlds) = &cache_worlds {
+                    self.vault.store.sync_state.put(txn, &source_key, worlds)?;
+                } else {
+                    self.vault.store.sync_state.delete(txn, &source_key)?;
+                }
                 crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
                 // FIX 4385: a machine history the cached row needs is owed.
                 crate::sync::machine_history::owe_touched_in_txn(

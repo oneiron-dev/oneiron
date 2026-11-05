@@ -26,6 +26,16 @@ impl CachedItemWorlds {
             && self.document_digest == *blake3::hash(document).as_bytes()
     }
 
+    /// Whether this provenance belongs to the item named by its cache key.
+    pub(crate) fn names(&self, item: EntityId) -> bool {
+        self.source == item
+    }
+
+    /// Decode optional cache provenance. Malformed evidence proves nothing.
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        rmp_serde::from_slice(bytes).ok()
+    }
+
     /// The complete known world set at the exporting transaction.
     pub fn worlds(&self) -> &BTreeSet<EntityId> {
         &self.worlds

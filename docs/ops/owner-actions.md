@@ -91,9 +91,16 @@ Authority-log rows and non-payload links stay intact.
 
 An unpromoted residence read cache also leaves the automatic image when its blob exactly
 matches a core row already proved all-Off and its native opened window, document frame and
-touch row are valid. Its two payload rows, opened marker and touch row leave together, so a
-later open can refetch rather than fail on a marker with no bytes. A cache with no core row,
-stale or malformed bytes, mixed or unknown placement, or a promoted window stays unchanged.
+touch row are valid. A cache can also qualify without a core row when the home's original
+document export recorded its complete source-world set, that nonempty set is now all sealed
+Off, and the recorded hashes match both cached payloads. Projected copies and unknown source
+worlds provide no such evidence. This provenance is not read authority; absent, malformed or
+mismatched evidence never refuses a working read.
+
+The two payload rows, source provenance, opened marker and touch row leave together, so a
+later open can refetch rather than fail on a marker with no bytes. Unknown or mixed placement,
+stale or malformed cache bytes, and promoted windows stay unchanged. Fetch writes provenance
+with the cache in one transaction; prune, erase and promotion remove it with those bytes.
 The thin index, live cache, pending journals and promotion markers are not pruned by a backup.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
