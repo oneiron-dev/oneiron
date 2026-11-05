@@ -21,6 +21,7 @@ pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
 mod source_rows;
+mod split;
 mod standing;
 mod turn_actions;
 
@@ -107,6 +108,11 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(example = 1200)]
     board_budget_tok: Option<usize>,
+    /// A live chat turn's own board also renders in two parts (I1 = C):
+    /// [`chat_turn_board`] sets it; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_split: bool,
 }
 
 /// The assembled context for one turn.
@@ -203,6 +209,11 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     rows_complete: bool,
+    /// The same frame as a chat turn's two parts (I1 = C), when it asked
+    /// for them; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_split: Option<split::ChatSplit>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -539,9 +550,47 @@ pub(crate) async fn context_board_hydrate(
     )
     .map_err(board::board_frame_error)?;
     let board_budget = ContextBoardRenderBudget::of(&board_render);
-    // What a chat turn's context records keep of this render (FIX 6921).
-    let chat_context =
-        chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);
+    // A live chat turn's board as its two parts, read from the same rows
+    // under the same budget (I1 = C); the public frame above is unchanged.
+    let chat_split = if req.chat_split {
+        Some(split::split_board(
+            &split::SplitFrame {
+                header: &oneiron::context_board::BoardBlockHeader {
+                    epoch: cursor.revision,
+                    scope: parts.scope.clone(),
+                },
+                sections: &parts.sections,
+                you: parts.you.as_deref(),
+                changes: &changed_line,
+                budget: oneiron::context_board::BoardBudgetRequest {
+                    harness_default_tok: standing
+                        .as_ref()
+                        .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                            prefix.other_context_tokens
+                        }),
+                    caller_limit_tok: req.board_budget_tok,
+                    explicit_override_tok: None,
+                },
+            },
+            &split::SplitInputs {
+                memories: memories.as_ref(),
+                hits,
+                reads: &observed_reads,
+            },
+        )?)
+    } else {
+        None
+    };
+    // What a chat turn's context records keep of this render (FIX 6921):
+    // for a split turn, of the two parts its call carries.
+    let chat_context = chat_emit::capture_chat_context(
+        &auth,
+        memories.as_ref(),
+        &parts.authority,
+        chat_split
+            .as_ref()
+            .map_or(&board_render, |split| &split.render.render),
+    );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.
     let chat_sources =
@@ -614,6 +663,7 @@ pub(crate) async fn context_board_hydrate(
         chat_context,
         chat_sources,
         rows_complete: parts.named_complete,
+        chat_split,
     };
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
@@ -859,6 +909,18 @@ pub(crate) struct ChatBoard {
     pub(crate) context: Option<ChatContextCapture>,
     /// What each section of `block` was read from (DESIGN-V2 R2).
     pub(crate) sections: Vec<BoardSectionSource>,
+    /// The board's query part (I1 = C): what the turn's own message read,
+    /// which rides right after it while `block`, the state part, rides
+    /// right before it. `None` for a board read whole, or a turn whose
+    /// message read no row.
+    pub(crate) query: Option<BoardQueryPart>,
+}
+
+/// The query part of a chat turn's board (I1 = C): its text, fenced and
+/// attributed by its renderer, and what each of its sections was read from.
+pub(crate) struct BoardQueryPart {
+    pub(crate) block: String,
+    pub(crate) sections: Vec<BoardSectionSource>,
 }
 
 /// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
@@ -875,7 +937,32 @@ pub(crate) async fn chat_board(
     reader: oneiron::EntityId,
     query: &str,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
-    let request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
+    read_chat_board(server, auth, conversation, reader, query, false).await
+}
+
+/// [`chat_board`] for a live chat turn, in two parts (I1 = C, ARCH-0067
+/// turn order): `block` is its state part, which rides right before the
+/// turn's message, and `query` what that message read, which rides right
+/// after it. One hydration under one budget, as the one frame's.
+pub(crate) async fn chat_turn_board(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    read_chat_board(server, auth, conversation, reader, query, true).await
+}
+
+async fn read_chat_board(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+    split: bool,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    let mut request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
             "conversation_id": conversation.map(|id| id.to_hex()),
             "query": query,
@@ -884,15 +971,30 @@ pub(crate) async fn chat_board(
         },
     }))
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    request.chat_split = split;
     let (served, Json(context)) =
         context_board_hydrate(auth, State(Arc::clone(server)), Ok(Json(request)))
             .await
             .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
-    Ok(ChatBoard {
-        block: context.board,
-        rows: served.0.rows,
-        rows_complete: context.rows_complete,
-        context: context.chat_context,
-        sections: context.chat_sources,
+    Ok(match context.chat_split {
+        Some(split) => ChatBoard {
+            block: split.render.state,
+            rows: served.0.rows,
+            rows_complete: context.rows_complete,
+            context: context.chat_context,
+            sections: split.state_sources,
+            query: split.render.query.map(|block| BoardQueryPart {
+                block,
+                sections: split.query_sources,
+            }),
+        },
+        None => ChatBoard {
+            block: context.board,
+            rows: served.0.rows,
+            rows_complete: context.rows_complete,
+            context: context.chat_context,
+            sections: context.chat_sources,
+            query: None,
+        },
     })
 }
