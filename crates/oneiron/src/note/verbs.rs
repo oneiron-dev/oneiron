@@ -665,6 +665,16 @@ pub(super) fn note_core_in(
     if vault.archive_tombstone_in_txn(txn, &note)?.is_some() {
         return Err(invalid("NOTE is archived"));
     }
+    stored_note_core_in(store, txn, note)
+}
+
+/// The stored NOTE core, without adding lifecycle admission to a caller
+/// that already admitted its NOTE or saved receipt.
+pub(super) fn stored_note_core_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &note)?
         .ok_or(invalid("NOTE does not exist"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(invalid("NOTE header"))?;

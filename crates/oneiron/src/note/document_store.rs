@@ -690,7 +690,13 @@ pub(crate) fn deck_outline_document_in_txn(
     if body.kind != NoteKind::Plugin("brief".to_owned()) {
         return Err(invalid("a deck outline is a brief NOTE"));
     }
-    load(vault, txn, note)?.view()
+    let mut view = load(vault, txn, note)?.view()?;
+    for record in &mut view.authorship {
+        if record.operation == note && record.actor == super::NoteActor::Erased {
+            record.actor = body.author_ref.erased_here(vault, txn)?;
+        }
+    }
+    Ok(view)
 }
 
 pub(crate) fn resolve_deck_pin_in_txn(
