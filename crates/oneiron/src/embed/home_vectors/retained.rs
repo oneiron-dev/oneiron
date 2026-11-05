@@ -31,6 +31,31 @@ pub(crate) struct RetainedHomeClaimResponse {
     pub(crate) vector: HomeClaimVector,
 }
 
+/// In-memory receive data and its real native key lease. This is not a
+/// serialized receipt or permission. Keep it outside the canonical writer
+/// until commit, including while a world update waits in the staged queue.
+pub(crate) struct PreparedHomeClaimResponse {
+    received: ReceivedHomeClaimVector,
+    instance: Option<BodyInstance>,
+}
+
+impl PreparedHomeClaimResponse {
+    pub(crate) fn entity_id(&self) -> EntityId {
+        self.received.vector.entity_id
+    }
+
+    /// Called only from the writer that materialized the canonical source.
+    /// Borrow the outer holder here; do not drop it before that writer commits.
+    pub(crate) fn retain_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<RetainedHomeClaimResponseState> {
+        self.received
+            .retain_response_in_txn(vault, txn, self.instance.as_ref())
+    }
+}
+
 /// A source-only storage result. Every non-stored case keeps the native job;
 /// none refuses or drops the canonical source import.
 pub(crate) enum RetainedHomeClaimResponseState {
@@ -62,10 +87,19 @@ fn step_claim_carriage(store: &Store, id: &EntityId, source: &[u8]) -> Option<Re
 }
 
 impl ReceivedHomeClaimVector {
-    /// Mints outside the canonical writer. Keep the returned native instance
-    /// alive until that writer commits; an unused mint is ordinary debris.
+    /// Prepares a copy's native lease outside the canonical writer, before
+    /// any in-memory world deferral. Failure affects this derived copy only;
+    /// it must never be propagated as a refusal of the canonical import.
+    pub(crate) fn prepare_response_copy(self, vault: &Vault) -> Result<PreparedHomeClaimResponse> {
+        let instance = self.prepare_response_instance(vault)?;
+        Ok(PreparedHomeClaimResponse {
+            received: self,
+            instance,
+        })
+    }
+
     /// This does not establish that the received source is the current winner.
-    pub(crate) fn prepare_response_instance(&self, vault: &Vault) -> Result<Option<BodyInstance>> {
+    fn prepare_response_instance(&self, vault: &Vault) -> Result<Option<BodyInstance>> {
         if step_claim_carriage(&vault.store, &self.vector.entity_id, &self.vector.source).is_none()
             || !super::own_peer(vault, self.peer)?
         {
@@ -78,7 +112,7 @@ impl ReceivedHomeClaimVector {
     /// writer, only while this exact full source is its canonical winner.
     /// `prepared` was minted before this writer and stays leased through commit.
     /// Without one, an unbound source keeps its native pending work unchanged.
-    pub(crate) fn retain_response_in_txn(
+    fn retain_response_in_txn(
         &self,
         vault: &Vault,
         txn: &mut RwTxn<'_>,
