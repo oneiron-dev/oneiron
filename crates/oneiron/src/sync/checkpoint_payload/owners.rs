@@ -230,10 +230,12 @@ pub(super) struct WithheldKey {
 }
 
 /// How the skeleton withholds `key` of the window root map `root`, a key
-/// that may not stand plaintext (FIX 10279): an authored_by edge's key is
-/// its source's, the actor it names split out, so the key, and the edge
-/// with it, goes with that actor. `None` for every other key, which keeps
-/// its window whole as [`key_refusal`] names.
+/// that may not stand plaintext (FIX 10279, FIX 10278): an authored_by
+/// edge's key is its source's, the actor it names split out, so the key, and
+/// the edge with it, goes with that actor; a whole document pin's key, the
+/// digest of the pin naming no one, is its citer's, held while the message
+/// it quotes is, as the pin is. `None` for every other key (a part's digest
+/// among them), which keeps its window whole as [`key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
         "edges" => {
@@ -250,6 +252,16 @@ pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
                     no_one: stem.as_bytes().to_vec(),
                     actors: vec![(KEY_ACTOR.to_owned(), actor)],
                 }),
+            })
+        }
+        DOCUMENT_PINS_MAP if !is_part_key(key) => {
+            let (message, citation) = crate::room_codec::document_pins::key_ids(key)?;
+            Some(WithheldKey {
+                holders: vec![super::Holder::new(
+                    OwnerRef::entity(&citation),
+                    vec![OwnerRef::entity(&message)],
+                )],
+                split: None,
             })
         }
         _ => None,
