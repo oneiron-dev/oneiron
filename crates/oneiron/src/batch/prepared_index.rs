@@ -11,8 +11,9 @@ use std::collections::{HashMap, VecDeque};
 use super::BatchOp;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::hnsw::InsertPlan;
+use crate::hnsw::InsertPlanSearch;
 use crate::store::text_index::AnalyzedText;
+use crate::store::vector_insert_plan::InsertPlan;
 
 #[derive(Default)]
 pub(super) struct PreparedIndexWork {

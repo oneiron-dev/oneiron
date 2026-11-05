@@ -266,7 +266,7 @@ impl Store {
             self.side_vault_meta().put(wtxn, key, value)?;
         }
         for digest in &prune.files {
-            crate::provenance::body::queue_pruned_file_in_txn(self, wtxn, digest)?;
+            crate::store::owned_body::queue_pruned_file_in_txn(self, wtxn, digest)?;
         }
         if !prune.assets.is_empty() {
             let at = crate::ports::recorded_at_in_txn(self, wtxn)?;
@@ -290,7 +290,8 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            let Some((carriage, _)) = family.scan(key, &value).carriage() else {
+            let Some((carriage, _)) = family.scan(self.attempt_operations, key, &value).carriage()
+            else {
                 continue;
             };
             let caller = (family == ResponseFamily::Http)

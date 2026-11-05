@@ -486,7 +486,7 @@ fn birth_field(kind: u8) -> Option<TextField> {
 /// A canonical MESSAGE body's content, and the body with it replaced by the
 /// document pointer, as the MESSAGE birth writes it.
 fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
-    crate::gate::validate_canonical_witness_message_body(body).ok()?;
+    crate::store::witness_message_body::validate_canonical_witness_message_body(body).ok()?;
     let rmpv::Value::Map(mut fields) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(body)).ok()?
     else {

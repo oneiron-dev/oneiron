@@ -187,7 +187,7 @@ side_tables! {
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
-        => crate::self_heal::erase_centroid_source_in_txn;
+        => crate::store::centroid_evidence::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -450,7 +450,7 @@ side_tables! {
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
     /// keyed by sequence; its skill and its actor are each nil once erased. Key: u64be.
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
-        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
+        => crate::store::skill_attribution_evidence::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
