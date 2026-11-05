@@ -23462,7 +23462,7 @@
      "path": "src/context_board/turn_opener.rs",
      "purpose": "The now-time turn opener (ARCH-0067 §2: the log closes with a now-time turn opener the model completes; I1 =…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -112372,7 +112372,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -112412,7 +112412,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -112466,13 +112466,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/recall.rs",
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -121034,7 +121034,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BrokerConfig",
@@ -129729,7 +129729,7 @@
     "config": {
      "files": 66,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
@@ -130154,7 +130154,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 46,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1573,
    "test_files": 182
