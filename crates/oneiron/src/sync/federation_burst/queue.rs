@@ -1,5 +1,7 @@
 //! Actual deferred payloads and their identity-bound, idempotent completion.
 
+use std::borrow::Cow;
+
 use super::schedule::{self, RetainedWorkQueue, Waiting};
 use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
 use crate::store::Store;
@@ -50,21 +52,21 @@ pub(in crate::sync) struct DeferredWork {
 }
 
 #[derive(Serialize, Deserialize)]
-struct StoredWork {
+struct StoredWork<'a> {
     id: [u8; 32],
     authority_digest: [u8; 32],
     peer: [u8; 32],
-    selector: Vec<u8>,
-    window: String,
+    selector: Cow<'a, [u8]>,
+    window: Cow<'a, str>,
     kind: WorkKind,
-    payload: Vec<u8>,
+    payload: Cow<'a, [u8]>,
     rate_ratio: f32,
     streak: u32,
     streak_ratio: f32,
-    isolated_update: Option<IsolatedParts>,
+    isolated_update: Option<Cow<'a, [(String, Vec<u8>)]>>,
     arrival: [u8; 16],
     deadline: u64,
-    carried: Vec<EntityId>,
+    carried: Cow<'a, [EntityId]>,
 }
 
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
@@ -88,20 +90,9 @@ impl DeferredWork {
                 "federation payload exceeds transport bound".into(),
             ));
         }
-        let selector = encode_sync_selector(&peer.selector)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron/federation-work/v1");
-        hash.update(&peer.digest());
-        hash.update(blake3::hash(&selector).as_bytes());
-        hash.update(key.as_str().as_bytes());
-        hash.update(&[match kind {
-            WorkKind::Selector => 0,
-            WorkKind::MemberUpdate => 1,
-            WorkKind::GuestUpdate => 2,
-        }]);
-        hash.update(payload);
+        let (id, selector) = Self::identity(peer, key, kind, payload)?;
         Ok(Self {
-            id: *hash.finalize().as_bytes(),
+            id,
             authority_digest: [0; 32],
             peer: peer.digest(),
             selector,
@@ -135,6 +126,28 @@ impl DeferredWork {
         }
         Ok((self.deadline != 0 && self.deadline <= now)
             .then_some(FederationBurstWorkState::Expired))
+    }
+
+    /// The retained request's identity and selector, without retaining its bytes.
+    pub(in crate::sync) fn identity(
+        peer: &FederationPeer,
+        key: &WindowKey,
+        kind: WorkKind,
+        payload: &[u8],
+    ) -> Result<([u8; 32], Vec<u8>)> {
+        let selector = encode_sync_selector(&peer.selector)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron/federation-work/v1");
+        hash.update(&peer.digest());
+        hash.update(blake3::hash(&selector).as_bytes());
+        hash.update(key.as_str().as_bytes());
+        hash.update(&[match kind {
+            WorkKind::Selector => 0,
+            WorkKind::MemberUpdate => 1,
+            WorkKind::GuestUpdate => 2,
+        }]);
+        hash.update(payload);
+        Ok((*hash.finalize().as_bytes(), selector))
     }
 
     /// Starts this batch's wait in the admitting writer: its arrival, and its
@@ -208,17 +221,17 @@ impl DeferredWork {
             id: self.id,
             authority_digest: self.authority_digest,
             peer: self.peer,
-            selector: self.selector.clone(),
-            window: self.window.clone(),
+            selector: Cow::Borrowed(&self.selector),
+            window: Cow::Borrowed(&self.window),
             kind: self.kind,
-            payload: self.payload.clone(),
+            payload: Cow::Borrowed(&self.payload),
             rate_ratio: self.inputs.rate_ratio,
             streak: self.inputs.streak,
             streak_ratio: self.streak_ratio,
-            isolated_update: self.isolated_update.clone(),
+            isolated_update: self.isolated_update.as_deref().map(Cow::Borrowed),
             arrival: self.arrival,
             deadline: self.deadline,
-            carried: self.carried.clone(),
+            carried: Cow::Borrowed(&self.carried),
         })
         .map_err(|_| corrupt())?;
         // Storage capacity is distinct from the peer-relative burst verdict.
@@ -265,7 +278,7 @@ impl DeferredWork {
     }
 
     pub(super) fn decode(value: &[u8]) -> Result<Self> {
-        let row: StoredWork = postcard::from_bytes(value).map_err(|_| corrupt())?;
+        let row: StoredWork<'_> = postcard::from_bytes(value).map_err(|_| corrupt())?;
         if WindowKey::try_new(&row.window).is_none()
             || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
             || !row.rate_ratio.is_finite()
@@ -286,11 +299,11 @@ impl DeferredWork {
             id: row.id,
             authority_digest: row.authority_digest,
             peer: row.peer,
-            selector: row.selector,
-            window: row.window,
+            selector: row.selector.into_owned(),
+            window: row.window.into_owned(),
             kind: row.kind,
-            payload: row.payload,
-            isolated_update: row.isolated_update,
+            payload: row.payload.into_owned(),
+            isolated_update: row.isolated_update.map(Cow::into_owned),
             streak_ratio: row.streak_ratio,
             inputs: NormalizedBurstInputs {
                 rate_ratio: row.rate_ratio,
@@ -298,7 +311,7 @@ impl DeferredWork {
             },
             arrival: row.arrival,
             deadline: row.deadline,
-            carried: row.carried,
+            carried: row.carried.into_owned(),
         })
     }
 
@@ -430,10 +443,11 @@ impl DeferredWork {
                     return Err(corrupt());
                 }
                 let window = WindowKey::try_new(&work.window).ok_or_else(corrupt)?;
-                let expected = Self::new(peer, &window, work.kind, &work.payload)?;
-                if work.id != expected.id
-                    || work.selector != expected.selector
-                    || work.peer != expected.peer
+                let (expected_id, expected_selector) =
+                    Self::identity(peer, &window, work.kind, &work.payload)?;
+                if work.id != expected_id
+                    || work.selector != expected_selector
+                    || work.peer != peer.digest()
                 {
                     return Err(corrupt());
                 }
