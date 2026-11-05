@@ -371,9 +371,9 @@ pub(super) fn put_case_in_txn(
 }
 
 impl Vault {
-    /// Known receipt-content dependencies of a parentless eval case. The
-    /// receipt keeps its original complete read set even when erasure shrinks
-    /// the case's source list. Labels are not source authority, and unknown
+    /// Known content dependencies of an eval case's direct receipts. Each
+    /// receipt keeps its original read set when erasure shrinks the case's
+    /// source list. Parent lineage and labels remain untraced; unknown
     /// dependencies do not cancel receipt dependencies that are proven.
     pub(crate) fn eval_case_receipt_sources_in_txn(
         &self,
@@ -389,7 +389,7 @@ impl Vault {
         else {
             return Ok(Vec::new());
         };
-        if row.id != *case || !row.parents.is_empty() {
+        if row.id != *case {
             return Ok(Vec::new());
         }
         let mut proven = BTreeSet::new();
