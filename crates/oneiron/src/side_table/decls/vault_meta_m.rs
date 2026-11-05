@@ -30,6 +30,10 @@ side_tables! {
     /// One provider message of one mail source: its rows, revisions, stage and presence at the
     /// provider (FIX 12559). Key: id16(source) + blake3 (32) of the provider id.
     MAIL_PACK_OCCURRENCE: VaultMeta b"mail_pack:occurrence:v1:" Named;
+    /// The rows each imported mail message landed as (FIX 12559), so an erase of any of them
+    /// scrubs that message's occurrence. Key: id16(row) + id16(source) + blake3 (32) of the
+    /// provider id.
+    MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named

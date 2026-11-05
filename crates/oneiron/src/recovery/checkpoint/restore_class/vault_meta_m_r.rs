@@ -20,6 +20,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
+    (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
     // A source's owner, custody name and settings are live configuration.
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),

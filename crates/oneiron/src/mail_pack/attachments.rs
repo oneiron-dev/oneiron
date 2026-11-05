@@ -175,6 +175,46 @@ impl Memory<'_> {
     }
 }
 
+/// The artifacts the opened attachments of one message were stored in.
+pub(super) fn message_artifacts(
+    vault: &Vault,
+    source: EntityId,
+    provider_id: &str,
+) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut artifacts = Vec::new();
+    for row in ATTACHMENTS.iter_from(&vault.store, &txn, source.as_bytes())? {
+        let (_, row) = row?;
+        if row.provider_id == provider_id
+            && let Some(artifact) = row.artifact
+        {
+            artifacts.push(artifact);
+        }
+    }
+    Ok(artifacts)
+}
+
+/// Removes the opened-attachment rows of one forgotten or erased message,
+/// with the file names they kept.
+pub(super) fn forget_message_attachments_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: EntityId,
+    provider_id: &str,
+) -> Result<()> {
+    let mut keys = Vec::new();
+    for row in ATTACHMENTS.iter_from(store, txn, source.as_bytes())? {
+        let (key, row) = row?;
+        if row.provider_id == provider_id {
+            keys.push(key);
+        }
+    }
+    for key in keys {
+        ATTACHMENTS.delete(store, txn, &key)?;
+    }
+    Ok(())
+}
+
 /// Fetches up to `limit` of `source`'s waiting attachments through `wire`,
 /// each into its artifact bound to its thread's audience at birth, written
 /// as `actor`. Answers how many were stored.
