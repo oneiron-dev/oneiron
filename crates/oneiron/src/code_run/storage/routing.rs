@@ -207,7 +207,13 @@ impl SessionBinding<'_> {
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
+                            let record = super::overlay_erase::fence_overlay_replay_in_txn(
+                                &write,
+                                wtxn,
+                                Cow::Borrowed(record),
+                                Some((run, actor)),
+                            )?;
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, &record)
                         }
                     }
                 })
@@ -291,7 +297,13 @@ impl SessionBinding<'_> {
             self.session.read_composed(|view, txn| {
                 if let Some(owner) = owner {
                     let owned = super::response_owners::response_owner_in_txn(view, txn, &owner)?;
-                    if owned.is_some_and(|o| o.erased()) {
+                    // FIX 7366: a room's owner row the vault's erase did not
+                    // reach (a sealed overlay takes no sweep) reads erased
+                    // once the actor it names is gone in the vault.
+                    let gone = owned.and_then(|o| o.actor()).is_some_and(|actor| {
+                        super::replay_capsule::actor_gone_in_store(view.read().base(), txn, &actor)
+                    });
+                    if owned.is_some_and(|o| o.erased()) || gone {
                         return Ok((
                             ArtifactTaintState::TaintedLive,
                             Some(super::replay_bodies::RESPONSE_ERASED.to_owned()),

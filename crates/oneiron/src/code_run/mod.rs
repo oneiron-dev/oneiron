@@ -135,7 +135,7 @@ pub(crate) use self::storage::retire_replay_bodies_in_rows;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
-    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, erase_gone_actors_in_live_overlays,
     erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
     response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };

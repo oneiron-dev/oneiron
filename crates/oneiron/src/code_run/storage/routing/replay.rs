@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 
+use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
 };
@@ -53,6 +54,9 @@ impl SessionBinding<'_> {
                     also(txn, write)
                 });
         }
+        // An overlay record of a run whose actor is gone lands erased, in
+        // the same writer (FIX 7366).
+        let run_id = record.run_id;
         match healed_model {
             Some(model) => self
                 .session
@@ -65,7 +69,16 @@ impl SessionBinding<'_> {
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
-                    also,
+                    |txn, write| {
+                        // The helper put `record`; its erased form, when it
+                        // is one, replaces it in the same segment.
+                        let fenced =
+                            fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                        if let Cow::Owned(erased) = fenced {
+                            REPLAY_RECORDS.put(&write, txn, &run_id, &erased)?;
+                        }
+                        also(txn, write)
+                    },
                 )
                 .map(drop),
             None => self
@@ -73,7 +86,9 @@ impl SessionBinding<'_> {
                 .routed_side_txn(&self.route, |txn, read, write| {
                     let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
                     replay_generation_matches(current.as_ref(), expected)?;
-                    REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
+                    let record =
+                        fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                    REPLAY_RECORDS.put(&write, txn, &run_id, &record)?;
                     also(txn, write)
                 }),
         }
