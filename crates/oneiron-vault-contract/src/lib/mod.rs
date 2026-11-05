@@ -101,8 +101,8 @@ pub use self::ctl::{
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
-    LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
-    LedgerReportHead,
+    ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport,
+    LedgerReportAssembly, LedgerReportHead,
 };
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_PAGE_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,

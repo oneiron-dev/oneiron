@@ -177,6 +177,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSkillsRulesSet
         | Row::VaultSkillsCodeAutoInstallSet
         | Row::VaultSkillsFitSet
+        | Row::VaultSkillsAdvisoryAskSet
         | Row::VaultSkillsPermissionsApprove
         | Row::VaultSkillsOptimizeStart
         | Row::VaultSkillsOptimizeResult

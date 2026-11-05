@@ -75,10 +75,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_record.rs` | src | s | 3 struct · 1 trait · 7 fn · 1 const · 1 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
-| `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 9 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | — |
+| `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | — |
 | `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 12 crate-vis | OverlayKeyspace | — |
 | `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
-| `src/session_overlay/overlay/held.rs` | src | s | 7 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
+| `src/session_overlay/overlay/held.rs` | src | s | 8 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 7 mod · 2 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/repo_projection.rs` | src | s | 1 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
@@ -154,9 +154,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/provenance/text_commit.rs` | src | s | 2 struct · 1 fn | RowProvenance, TextCommitReceipt | Durable per-commit text provenance |
 | `src/write_envelope/skill_record/admission.rs` | src | s | 1 fn | — | Pure runtime admission invariant over one stored skill record |
 | `src/write_envelope/skill_record/codec.rs` | src | m | 5 fn | — | MessagePack encode and decode for SKILL bodies and dependencies |
+| `src/write_envelope/skill_record/fork_pin.rs` | src | s | 2 fn | — | Retained parent document/frontier provenance for a skill fork's birth |
 | `src/write_envelope/skill_record/identity.rs` | src | s | 1 struct · 6 fn · 3 const | SkillContentHash | Canonical skill identity: content hash, tree hash, and hub cross-check |
 | `src/write_envelope/skill_record/lifecycle.rs` | src | s | 2 enum · 7 fn | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
-| `src/write_envelope/skill_record/mod.rs` | src | s | 7 mod · 9 re-export · 1 crate-vis | — | Stored skill records, canonical identity, call contracts and pure validation |
+| `src/write_envelope/skill_record/mod.rs` | src | s | 7 mod · 10 re-export · 1 crate-vis | — | Stored skill records, canonical identity, call contracts and pure validation |
 | `src/write_envelope/skill_record/record.rs` | src | s | 2 struct · 7 fn · 23 const | SkillDependency, SkillRecord | SKILL record types with pinned wire keys and size bounds |
 | `src/write_envelope/skill_record/resident.rs` | src | s | 2 fn · 1 const | — | Immutable resident ownership encoded in a skill record |
 | `src/write_envelope/skill_record/role.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SkillCallContract, SkillRole | Skill roles and the executable call contract |
