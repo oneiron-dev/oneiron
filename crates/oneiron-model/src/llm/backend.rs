@@ -122,6 +122,50 @@ pub trait SingleRouteBackend: LlmBackend {
         Ok(None)
     }
 
+    /// Preflights one dispatch against the immutable digest admitted for its
+    /// lease. Stateful adapters use it to keep a later availability change
+    /// from selecting different bytes. The returned digest is still checked
+    /// by the guard before the lease starts.
+    fn dispatch_digest(
+        &self,
+        request: &LlmRequest,
+        stream: bool,
+        _admitted_digest: Option<&str>,
+    ) -> LlmResult<Option<String>> {
+        self.preflight(request, stream)?;
+        self.request_digest(request, stream)
+    }
+
+    /// Sends the bytes checked by `dispatch_digest`, not a newly selected
+    /// route. Adapters with no stateful route selection keep their raw call.
+    fn generate_bound<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate(request, lease)
+    }
+
+    /// Streaming counterpart of `generate_bound`.
+    fn stream_bound<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+    ) -> LlmStreamResult<'a> {
+        self.stream(request, lease)
+    }
+
+    /// An alternate wire for the same offer after a proved pre-body failure.
+    /// It is never sent under the failed lease: the caller must settle that
+    /// attempt and admit the returned backend's exact bytes on a fresh permit.
+    /// A NotSent transport fault proves the first attempt can settle unsent;
+    /// a provider-answered refusal keeps its started-failure settlement.
+    fn fallback(&self, _error: &LlmError) -> Option<Arc<dyn SingleRouteBackend>> {
+        None
+    }
+
     /// How the credential broker that sends this backend's calls is kept
     /// apart from the daemon, for the dispatch receipt. `None`, the default,
     /// for a backend whose key, if any, no broker holds.

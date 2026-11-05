@@ -82,7 +82,7 @@ pub(crate) async fn git_info_refs(
         Ok(service) => service,
         Err(refusal) => return refusal.response(),
     };
-    let auth = match authenticate_request(&parts, &server, service) {
+    let auth = match authenticate_request(&parts, &server, service).await {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
@@ -167,7 +167,7 @@ async fn serve_rpc(
     service: GitService,
     lease: Option<String>,
 ) -> Response {
-    let auth = match authenticate_request(&parts, &server, service) {
+    let auth = match authenticate_request(&parts, &server, service).await {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
@@ -207,7 +207,7 @@ async fn lease_info_refs(
         Ok(service) => service,
         Err(refusal) => return refusal.response(),
     };
-    let auth = match authenticate_request(&parts, &server, service) {
+    let auth = match authenticate_request(&parts, &server, service).await {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
