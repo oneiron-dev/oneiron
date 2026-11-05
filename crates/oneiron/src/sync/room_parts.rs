@@ -50,8 +50,23 @@ pub(crate) fn manifest(value: &[u8]) -> Option<Parts> {
     if offer_parts::is_manifest(value) {
         return Some(OfferManifest::parse(value)?.parts());
     }
+    generic_manifest(value)
+}
+
+/// The generic manifest `value` holds, in its one spelling, as [`write_row`]
+/// writes a row past its bound that is no offer: never an offer's typed one.
+/// A checkpoint re-parts a turn row it carries joined against it (FIX 12153).
+pub(crate) fn generic_manifest(value: &[u8]) -> Option<Parts> {
+    if offer_parts::is_manifest(value) {
+        return None;
+    }
     let parts: Parts = rmp_serde::from_slice(value.strip_prefix(MANIFEST)?).ok()?;
     (parts.well_formed() && encode_manifest(&parts).ok()? == value).then_some(parts)
+}
+
+/// The generic manifest value of `parts`, as [`write_row`] writes it.
+pub(crate) fn generic_manifest_bytes(parts: &Parts) -> Result<Vec<u8>> {
+    encode_manifest(parts)
 }
 
 /// The row `value`, a row key's value in `map`, carries: itself, or the join
