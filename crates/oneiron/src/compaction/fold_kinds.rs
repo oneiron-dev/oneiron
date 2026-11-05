@@ -7,7 +7,13 @@
 //! shows one stub that keeps the output's result handles, so the agent
 //! re-reads any of it by handle.
 //!
-//! The engine writes each stub from the step's own typed output, with no
+//! A `program` fold folds the other half: each folded step's program text
+//! shows one stub, as comment lines inside its exec frame, that keeps every
+//! speech call the step made (`self.speak`, `self.think`, `self.express`)
+//! with its text and the ids the program names; its console stays.
+//! `self.unfold` brings the programs back.
+//!
+//! The engine writes each stub from the step's own typed record, with no
 //! model call, so a fold by kind keeps no summary and no record's words
 //! reach it. Its marks wait and land in one batch with every other mark of
 //! that batch, and unfolding appends the raw content at the end of the log,
@@ -30,6 +36,9 @@ pub enum FoldKind {
     /// A step's REPL cell output: the console its sandbox returned. The
     /// program text and its say() messages stay.
     ReplOutput,
+    /// A step's program text. Its speech calls stay in the stub, with
+    /// their text; its console stays.
+    Program,
 }
 
 impl FoldKind {
@@ -38,6 +47,7 @@ impl FoldKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReplOutput => "repl_output",
+            Self::Program => "program",
         }
     }
 }
@@ -51,6 +61,18 @@ pub struct FoldedOutput {
     pub handles: Vec<String>,
     /// Every id the folded content names.
     pub ids: Vec<String>,
+    /// For a folded program, each speech call the step made, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub said: Vec<FoldedSpeech>,
+}
+
+/// One speech call a folded program made: its verb and its text, as the
+/// call dispatched it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FoldedSpeech {
+    /// `self.speak`, `self.think` or `self.express`.
+    pub verb: String,
+    pub text: String,
 }
 
 /// The bound of a fold by kind that names none: past every step, and the
@@ -216,6 +238,9 @@ impl FoldRecord {
     pub fn output_stub(&self, seq: u64, with_note: bool) -> Option<String> {
         let kind = self.kind?;
         let output = self.outputs.iter().find(|output| output.step == seq)?;
+        if kind == FoldKind::Program {
+            return Some(self.program_stub(output, with_note));
+        }
         let mut stub = format!("⟨{} · {} folded⟩", fold_handle(self.fold), kind.as_str());
         if with_note && let Some(note) = &self.note {
             stub.push_str("\nnote: ");
@@ -237,5 +262,33 @@ impl FoldRecord {
             }
         }
         Some(stub)
+    }
+
+    /// A folded program's stub: comment lines, so the exec frame it stands
+    /// in still holds a program. Every text is JSON-quoted on its own line.
+    fn program_stub(&self, output: &FoldedOutput, with_note: bool) -> String {
+        let quote = |text: &str| serde_json::to_string(text).unwrap_or_default();
+        let mut lines = vec![format!(
+            "⟨{} · program folded⟩ self.unfold({{fold: \"{}\"}}) brings it back",
+            fold_handle(self.fold),
+            fold_handle(self.fold)
+        )];
+        if with_note && let Some(note) = &self.note {
+            lines.push(format!("note: {}", quote(note)));
+        }
+        for speech in &output.said {
+            lines.push(format!("{}: {}", speech.verb, quote(&speech.text)));
+        }
+        if !output.ids.is_empty() {
+            lines.push(format!(
+                "ids: {}",
+                output.ids[..output.ids.len().min(STUB_IDS)].join(", ")
+            ));
+        }
+        lines
+            .iter()
+            .map(|line| format!("// {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

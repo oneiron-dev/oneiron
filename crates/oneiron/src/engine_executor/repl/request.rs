@@ -213,15 +213,23 @@ impl EngineNativeExecutor<'_> {
                     }))?,
                 },
             };
-            let turn = CodeRunHistoryTurn {
-                code: load_script_context(
+            // A program fold keeps the console and its stub stands in the
+            // exec frame, as comment lines that keep what the step said.
+            let code = match epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::Program, seq as u64)
+            {
+                Some(fold) => fold
+                    .output_stub(seq as u64, noted.insert(fold.fold))
+                    .unwrap_or_default(),
+                None => load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq as u64),
                     None,
                 )?,
-                console,
             };
+            let turn = CodeRunHistoryTurn { code, console };
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {

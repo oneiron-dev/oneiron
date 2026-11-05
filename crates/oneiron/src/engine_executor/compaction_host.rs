@@ -304,6 +304,20 @@ impl EngineNativeExecutor<'_> {
                             step: seq,
                             handles,
                             ids: ids.into_iter().collect(),
+                            said: Vec::new(),
+                        });
+                    }
+                    FoldKind::Program => {
+                        let path = script_output_path(seq);
+                        if !record.outputs.iter().any(|output| output.path == path) {
+                            continue;
+                        }
+                        let program = load_script_context(&self.storage, record, &path, None)?;
+                        outputs.push(FoldedOutput {
+                            step: seq,
+                            handles: Vec::new(),
+                            ids: super::compaction::text_ids(&program),
+                            said: step_speech(record, seq),
                         });
                     }
                 }
@@ -644,6 +658,19 @@ impl EngineNativeExecutor<'_> {
                     );
                     for output in &fold.outputs {
                         match kind {
+                            FoldKind::Program => {
+                                let turn = CodeRunHistoryTurn {
+                                    code: load_script_context(
+                                        &self.storage,
+                                        record,
+                                        &script_output_path(output.step),
+                                        None,
+                                    )?,
+                                    console: String::new(),
+                                };
+                                unfolded.push_str(&format!("\nt{}:\n", output.step));
+                                unfolded.push_str(&turn.assistant_exec());
+                            }
                             FoldKind::ReplOutput => {
                                 let turn = CodeRunHistoryTurn {
                                     code: String::new(),
@@ -720,6 +747,43 @@ impl EngineNativeExecutor<'_> {
             compaction: self.compaction_report(),
         }
     }
+}
+
+/// Each speech call step `seq` made, in order, with the text it dispatched
+/// (a hook's rewrite where one rewrote it): read from the step's own bridge
+/// calls, as its checkpoint records them. A step whose checkpoint keeps no
+/// range, or a call that did not emit, gives none.
+fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction::FoldedSpeech> {
+    let Some(range) = record
+        .step_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.seq == seq)
+        .and_then(crate::code_run::CodeRunStepCheckpoint::bridge_range)
+    else {
+        return Vec::new();
+    };
+    record
+        .bridge_calls
+        .get(range)
+        .unwrap_or_default()
+        .iter()
+        .filter(|call| call.emitted_speech())
+        .filter_map(|call| {
+            let rmpv::Value::Map(entries) =
+                call.rewritten_request.as_ref().unwrap_or(&call.request)
+            else {
+                return None;
+            };
+            let text = entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("text"))
+                .and_then(|(_, value)| value.as_str())?;
+            Some(crate::compaction::FoldedSpeech {
+                verb: call.effect.as_str().to_owned(),
+                text: text.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// What a fold's summary is derived from: every record its request was
