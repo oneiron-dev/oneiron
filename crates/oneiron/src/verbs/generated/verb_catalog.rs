@@ -239,6 +239,7 @@ pub enum AgentVerb {
     VaultPacksGet,
     VaultSkillsImport,
     VaultSkillsSync,
+    VaultSkillsProposalSettle,
     VaultSkillsReceipts,
     VaultSkillsConvert,
     VaultSkillsGet,
@@ -1494,6 +1495,7 @@ impl AgentVerb {
         Self::VaultPacksGet,
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
+        Self::VaultSkillsProposalSettle,
         Self::VaultSkillsReceipts,
         Self::VaultSkillsConvert,
         Self::VaultSkillsGet,
@@ -2752,6 +2754,7 @@ impl AgentVerb {
             Self::VaultPacksGet => "vault.packs.get",
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsProposalSettle => "vault.skills.proposal.settle",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
             Self::VaultSkillsConvert => "vault.skills.convert",
             Self::VaultSkillsGet => "vault.skills.get",
@@ -4043,6 +4046,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -5327,6 +5331,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -6756,6 +6761,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -7826,6 +7832,7 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsArchive
                 | Self::VaultSkillsRestore
@@ -8721,6 +8728,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -9977,6 +9985,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -11695,6 +11704,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsSync => {
                 "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsProposalSettle => {
+                "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."
             }
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."

@@ -28,6 +28,7 @@
 //! - `vault.weave.link.wrong`
 //! - `vault.weave.item.wrong`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1281 code-mode rows (1241 host rows, 40 run rows), 4534 declarations.
-// Replies: 1095 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1282 code-mode rows (1242 host rows, 40 run rows), 4536 declarations.
+// Replies: 1096 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -1085,6 +1085,8 @@ declare namespace Sdk {
   type HubSkillRequest = { entity: EntityId };
   type HubSkillSyncOutcome = "applied" | "proposed" | "refused_by_policy";
   type HubSkillSyncReceipt = { outcome: HubSkillSyncOutcome; proposal?: EntityId | null; approval?: ClaimApprovalStatus | null };
+  type HubSkillProposalSettleRequest = { entity: EntityId; proposal: EntityId; accept: boolean };
+  type HubSkillProposalSettled = { entity: EntityId; proposal: EntityId; approval: ClaimApprovalStatus };
   type SkillConvertRequest = { message_refs: EntityId[]; hint?: string | null };
   type SkillConvertReceipt = { outcome: "created"; entity: EntityId } | { outcome: "dup_pointer"; entity: EntityId } | { outcome: "merge_proposed"; existing: EntityId; proposal: EntityId };
   type SkillLibraryListRequest = { after?: EntityId | null; limit: number };
@@ -7512,6 +7514,10 @@ declare const vault: Sdk.VaultHost & {
     permissions: {
       /** The owner answers one imported skill permission ask at its exact hub source. */
       approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    proposal: {
+      /** The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill. */
+      settle(input: Sdk.HubSkillProposalSettleRequest): Promise<Sdk.HubSkillProposalSettled | StoredResult>;
     };
     /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;

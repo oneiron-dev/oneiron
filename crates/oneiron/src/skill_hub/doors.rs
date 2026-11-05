@@ -2,6 +2,8 @@
 //! Entry: `Vault::sync_skill_from_hub`.
 //! Defines its own items.
 
+mod update_settlement;
+
 use rmpv::Value;
 
 use crate::Vault;
