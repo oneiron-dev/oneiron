@@ -34075,7 +34075,7 @@
      "path": "src/engine_executor/host/receipts.rs",
      "purpose": "Fold receipts computed from the reader jobs and result ranges of a run",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -58383,7 +58383,7 @@
      "path": "src/provenance/body/checkpoint.rs",
      "purpose": "The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {

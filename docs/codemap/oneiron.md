@@ -2761,7 +2761,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/host/dispatch.rs` | src | m | 7 crate-vis | — | Recording dispatch and callable-skill answers for one JS host |
 | `src/engine_executor/host/prompt.rs` | src | s | 2 crate-vis | — | The resolved system and per-turn prompt sites of the executor |
 | `src/engine_executor/host/readers.rs` | src | s | 4 crate-vis | — | Reader sources, findings and summaries bound by the recording host |
-| `src/engine_executor/host/receipts.rs` | src | s | 4 crate-vis | — | Fold receipts computed from the reader jobs and result ranges of a run |
+| `src/engine_executor/host/receipts.rs` | src | s | 3 crate-vis | — | Fold receipts computed from the reader jobs and result ranges of a run |
 | `src/engine_executor/host/results.rs` | src | m | 23 crate-vis | — | Stored result binding, admission and reads for one JS host |
 | `src/engine_executor/host/type_feedback.rs` | src | s | 6 crate-vis | — | The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's… |
 | `src/engine_executor/mod.rs` | src | s | 3 mod · 8 re-export · 6 crate-vis | — | Engine-native JS code-mode executor |
@@ -4725,7 +4725,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/provenance/birth/prompted.rs` | src | s | 1 crate-vis | — | Prompt-input reads are defined beside the stored birth record |
 | `src/provenance/birth/room.rs` | src | s | 2 crate-vis | — | A room write's birth (FIX 4281; Engine 10-22): the `made_by` envelope a NOTE or claim staged in an… |
 | `src/provenance/body.rs` | src | s | 1 fn · 1 re-export · 6 crate-vis | — | Who owns a body and whether it is whole |
-| `src/provenance/body/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its… |
+| `src/provenance/body/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its… |
 | `src/provenance/body/retained.rs` | src | s | 1 crate-vis | — | The side rows a kept body stands on (FIX 8850) |
 | `src/provenance/codec.rs` | src | s | 1 re-export · 1 crate-vis | — | Provenance vocabulary defined below the claim layer |
 | `src/provenance/conversation_sources.rs` | src | s | 1 crate-vis | — | The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation |
