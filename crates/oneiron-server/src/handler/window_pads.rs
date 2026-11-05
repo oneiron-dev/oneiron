@@ -177,7 +177,7 @@ pub(super) fn send_released<'t>(
     let frames = release(server, conn_state, frame);
     async move {
         for frame in frames {
-            if !transport.send_binary(frame).await {
+            if !super::root_updates::send_root_frame(transport, frame).await {
                 return false;
             }
         }

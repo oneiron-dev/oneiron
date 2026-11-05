@@ -75,40 +75,19 @@ impl SyncClient {
                         max: MAX_DECODED_PAYLOAD_BYTES,
                     });
                 }
-                // Import, then persist so the imported state survives
-                // restart (d:root).
-                let frontiers_before = self.root_doc.state_frontiers();
-                self.root_doc
-                    .import(payload)
-                    .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
-                // A federation peer's root names its windows for this lane to
-                // follow; it is not this vault's root, so none of it reaches
-                // the owner's d:root or lease mirror (OF-149).
-                let persisted = if self.config.federation_peer.is_some() {
-                    Ok(())
-                } else {
-                    self.persist_root_state()
+                self.reset_root_parts();
+                responses.extend(self.import_root_update(payload)?);
+            }
+            transport::TAG_ROOT_PART => {
+                let complete = self
+                    .root_parts
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .accept(payload)?;
+                let Some(complete) = complete else {
+                    return Ok(responses);
                 };
-                if let Err(err) = persisted {
-                    if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
-                        return Err(TransportError::Storage(format!(
-                            "persist root doc: {err}; root revert after import persist failure: {revert_err}"
-                        )));
-                    }
-                    let restored = load_root_doc(&self.vault).map_err(|reload_err| {
-                        TransportError::Storage(format!(
-                            "persist root doc: {err}; reload root doc after persist failure: {reload_err}"
-                        ))
-                    })?;
-                    restored.set_peer_id(self.client_id).map_err(|peer_err| {
-                        TransportError::Storage(format!(
-                            "persist root doc: {err}; restore root peer id after persist failure: {peer_err}"
-                        ))
-                    })?;
-                    self.root_doc = restored;
-                    return Err(TransportError::Storage(format!("persist root doc: {err}")));
-                }
-                responses.extend(self.newly_followed_window_requests()?);
+                responses.extend(self.import_root_update(&complete.bytes)?);
             }
             TAG_EPHEMERAL => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
@@ -197,6 +176,48 @@ impl SyncClient {
         } else {
             responses.extend(self.owner_note_requests()?);
         }
+        Ok(responses)
+    }
+
+    fn import_root_update(
+        &mut self,
+        payload: &[u8],
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let mut responses = Vec::new();
+        // Import, then persist so the imported state survives
+        // restart (d:root).
+        let frontiers_before = self.root_doc.state_frontiers();
+        self.root_doc
+            .import(payload)
+            .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
+        // A federation peer's root names its windows for this lane to
+        // follow; it is not this vault's root, so none of it reaches
+        // the owner's d:root or lease mirror (OF-149).
+        let persisted = if self.config.federation_peer.is_some() {
+            Ok(())
+        } else {
+            self.persist_root_state()
+        };
+        if let Err(err) = persisted {
+            if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
+                return Err(TransportError::Storage(format!(
+                    "persist root doc: {err}; root revert after import persist failure: {revert_err}"
+                )));
+            }
+            let restored = load_root_doc(&self.vault).map_err(|reload_err| {
+                TransportError::Storage(format!(
+                    "persist root doc: {err}; reload root doc after persist failure: {reload_err}"
+                ))
+            })?;
+            restored.set_peer_id(self.client_id).map_err(|peer_err| {
+                TransportError::Storage(format!(
+                    "persist root doc: {err}; restore root peer id after persist failure: {peer_err}"
+                ))
+            })?;
+            self.root_doc = restored;
+            return Err(TransportError::Storage(format!("persist root doc: {err}")));
+        }
+        responses.extend(self.newly_followed_window_requests()?);
         Ok(responses)
     }
 
