@@ -102,6 +102,49 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
     ) -> Result<SettleSelectOutcome> {
+        loop {
+            let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
+            if let Some(outcome) = self.settle_select_prepared(
+                artifact_id,
+                proposal,
+                made_by,
+                consent,
+                actor,
+                occurred,
+                learned_at,
+                carry,
+                sheet.as_ref(),
+            )? {
+                return Ok(outcome);
+            }
+            // A source moved during split or preflight. The attempt wrote no
+            // rows; rebuild only the carried copy outside the write transaction.
+        }
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn settle_select_prepared(
+        &self,
+        artifact_id: &EntityId,
+        held: &EditProposal,
+        made_by: Option<&MadeBy>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        carry: Option<Option<&super::carry::UnitWithdrawal>>,
+        sheet: Option<&super::carry::SheetKeep>,
+    ) -> Result<Option<SettleSelectOutcome>> {
+        let split = sheet.and_then(|sheet| sheet.split.as_ref());
+        let proposal = split
+            .and_then(|split| split.carried.as_ref())
+            .unwrap_or(held);
+        let carry = match split {
+            Some(split) => {
+                Some((!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal))
+            }
+            None => carry,
+        };
         self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
         // A deck proposal answering a thread settles under that thread's brief
@@ -132,11 +175,24 @@ impl Vault {
         // serialized by the LMDB write lock, sees the committed ledger row here
         // and rolls back with nothing appended; a crash rolls the whole settle
         // back so a retry re-appends cleanly rather than skipping the re-anchor.
-        let (version, reanchor, record, stranded_proposal) =
+        let Some((version, reanchor, record, stranded_proposal)) =
             self.with_write_txn_grouped(|wtxn| {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
                 let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                if let Some(sheet) = sheet
+                    && !sheet.is_current_in_txn(self, wtxn)?
+                {
+                    return Ok(None);
+                }
+                if let Some(split) = split
+                    && split.carried.is_none()
+                {
+                    let (head, record) = self.settle_all_withdrawn_in_txn(
+                        wtxn, artifact_id, held, &split.withdrawal, consent, actor, learned_at,
+                    )?;
+                    return Ok(Some((head, ReanchorSummary::default(), record, None)));
+                }
                 if let Some(bundle) = &proposal.sheet_answers {
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
                     let cap = policy
@@ -295,7 +351,7 @@ impl Vault {
                         deck: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
-                    return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
+                    return Ok(Some((base, ReanchorSummary::default(), record, Some(stranded))));
                 }
                 // Replay every PPTX comment operation against the pinned in-transaction
                 // base. A public proposal/report cannot authorize XML changes on its own.
@@ -452,19 +508,22 @@ impl Vault {
                 if let Some(Some(withdrawal)) = carry {
                     self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
                 }
-                Ok((version, reanchor, record, None))
-            })?;
+                Ok(Some((version, reanchor, record, None)))
+            })?
+        else {
+            return Ok(None);
+        };
 
         let receipt = settlement_receipt_record(*artifact_id, &record)?;
         let receipt = self.with_withdrawn_units(*artifact_id, &record, receipt)?;
-        Ok(SettleSelectOutcome {
+        Ok(Some(SettleSelectOutcome {
             stranded_proposal,
             version,
             reanchor,
             receipt,
             reconciliation: None,
             review: SettledReview::of(record),
-        })
+        }))
     }
 
     /// Settle-discards a retained [`EditProposal`]: drops it and records the
@@ -759,24 +818,6 @@ impl Vault {
                 )));
             }
             verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
-            // A folder column answers for files read at a version: one that
-            // has moved since is not the file the answer read.
-            for pin in bundle
-                .answers
-                .iter()
-                .filter(|answer| answer.value.is_some())
-                .filter_map(|answer| answer.source.as_ref())
-            {
-                let current = match self.blob_artifact_head(&pin.id)? {
-                    Some(head) => self.read_blob_artifact_version(&pin.id, head.version)?,
-                    None => None,
-                };
-                if current.is_none_or(|bytes| blake3::hash(&bytes).as_bytes() != &pin.body_hash) {
-                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                        "a file the typed answers read has changed since; ask again",
-                    )));
-                }
-            }
         }
         // The spreadsheet door cannot settle a disguised PowerPoint manifest.
         if proposal.format == OfficeFormat::Xlsx
