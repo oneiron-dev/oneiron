@@ -560,11 +560,16 @@ impl Prepared {
                 let copy = SyncAtom {
                     at: at.clone(),
                     value: plan.value.clone(),
-                    dependencies,
+                    dependencies: dependencies.clone(),
                     actors,
                 };
                 let ordinal = emit(target, copy)?;
-                copies.push(SlotCopy { at, atom: ordinal });
+                copies.push(SlotCopy {
+                    at,
+                    atom: ordinal,
+                    home: target,
+                    dependencies,
+                });
             }
             let holes = plan
                 .split
