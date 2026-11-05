@@ -2839,8 +2839,8 @@ pub enum SchemaError {
     EmptyPageSetup { op_index: usize },
 
     /// An `edit_header` / `edit_footer` op carried an empty `header_part` /
-    /// `footer_part` or `expect`. Without the part name the story is
-    /// unaddressable; without `expect` the edit has no anchor.
+    /// `footer_part`, or a blank `expect` without a semantic hash. The part names
+    /// the story; a blank substring expectation needs the existing content guard.
     HeaderFooterEmptyField {
         op_index: usize,
         field: &'static str,
@@ -3702,6 +3702,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditHeader {
                 header_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if header_part.trim().is_empty() {
@@ -3710,7 +3711,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "header_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
@@ -3720,6 +3721,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditFooter {
                 footer_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if footer_part.trim().is_empty() {
@@ -3728,7 +3730,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "footer_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
