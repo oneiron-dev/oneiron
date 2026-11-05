@@ -124,7 +124,12 @@ pub(crate) fn erase_turn_vectors_in_txn(
     door: crate::ports::DependentWalkDoor,
 ) -> Result<()> {
     for turn in turns {
-        crate::ports::invalidate_source_in_txn(&vault.store, wtxn, &turn, door)?;
+        crate::ports::invalidate_source_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            &turn,
+            door,
+        )?;
         crate::vault::entity_revision::drop_vector_state(vault, wtxn, &turn)?;
         mark_turn_in_txn(vault, wtxn, turn)?;
     }
