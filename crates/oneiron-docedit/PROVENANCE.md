@@ -92,3 +92,12 @@ clears the copied paragraph section break and section-property revision on that
 carrier. The original predecessor and the document body's final section remain
 unchanged. This prevents a duplicate section boundary and copied revision from
 being serialized on the carrier; no Word-runtime comparison is claimed.
+
+The empty header/footer expect change (2026-11-05, FIX 594) touches
+`src/edit_v4.rs` only. The `edit_header` / `edit_footer` schema arms admit a
+blank `expect` when the existing `semantic_hash` is supplied. Native `expect`
+matching is substring-based, so an unguarded blank retains its prior refusal;
+the projection sends the actual story paragraph's current guard. All previously
+admitted nonblank expectations, required string fields, part-name checks and
+apply-time guard/expect checks stay unchanged. No wire shape, error code or
+default changes.
