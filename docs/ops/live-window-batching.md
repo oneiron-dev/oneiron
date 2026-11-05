@@ -18,9 +18,11 @@ existing window, grant, Write credential, pad, copy-admission and persistence
 checks. A partial envelope produces no import or successful receipt.
 
 Before each draw, the sender checks the current window withholding verdict
-and home grant again. Abandoning an unfinished send removes only that send's
-exact receipt binding and matching continuation identity. It never clears a
-newer send, invents an ACK or settles a durable queue row.
+and home grant again. Batch frames keep their receipt registration, but do not
+retain the standalone sender's whole-payload continuation copy: the buffered
+head already supplies each draw's check. Abandoning an unfinished send removes
+only that send's exact receipt binding and matching continuation identity. It
+never clears a newer send, invents an ACK or settles a durable queue row.
 
 The unfinished update stays buffered until all its frames have been selected.
 The existing exit path therefore retains it for reconnect recovery if the

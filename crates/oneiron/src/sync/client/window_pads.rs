@@ -128,9 +128,17 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let (frames, binding) = prepared.frames(window_key, sub_tag, queue_seq)?;
-        self.record_window_send(
-            prepared, window_key, sub_tag, queue_seq, raw, &frames, binding,
-        );
+        // An update past one frame is judged whole as its first frame leaves,
+        // from the payload kept here until then (FIX 8247).
+        if sub_tag == window_sub_tags::UPDATE
+            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
+        {
+            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
+            self.window_pad_ledger()
+                .continued
+                .insert(window_key.to_owned(), (id, payload));
+        }
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
         Ok(frames)
     }
 
@@ -143,9 +151,9 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
         let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
-        self.record_window_send(
-            prepared, window_key, sub_tag, queue_seq, raw, &frames, binding,
-        );
+        // Each batch draw checks the buffered whole update; no standalone
+        // continuation copy is needed for these frames.
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
         Ok((frames, binding))
     }
 
@@ -156,19 +164,8 @@ impl SyncClient {
         sub_tag: u8,
         queue_seq: Option<u64>,
         raw: &[u8],
-        frames: &[Vec<u8>],
         binding: WindowPadBinding,
     ) {
-        // An update past one frame is judged whole as its first frame leaves,
-        // from the payload kept here until then (FIX 8247).
-        if sub_tag == window_sub_tags::UPDATE
-            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
-        {
-            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
-            self.window_pad_ledger()
-                .continued
-                .insert(window_key.to_owned(), (id, payload));
-        }
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
