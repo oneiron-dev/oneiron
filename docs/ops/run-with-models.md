@@ -156,6 +156,10 @@ family neither judge has),
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
+A selected catalog row may carry `chat_path = "unversioned"` metadata. When the adapter still uses its default `/v1/chat/completions` path, that row sends `POST /chat/completions` instead. With `base_url = "https://api.deepseek.com/beta"`, the call goes to `/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit non-default endpoint path wins; absent or unknown metadata leaves the configured path unchanged.
+
+Prefill still needs the same row's `assistant_prefill` capability and `prefill_wire = "prefix"` metadata. The path option adds no catalog row and binds no model by default. For a `key_secret` provider using the unversioned path, update the server and credential broker together so both recognize the new closed row.
+
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in

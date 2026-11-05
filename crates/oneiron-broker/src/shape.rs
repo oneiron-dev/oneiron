@@ -22,6 +22,9 @@ pub enum Shape {
     /// OpenAI-compatible chat: `POST …/v1/chat/completions`, top-level body
     /// `model`, `Authorization: Bearer <key>`.
     OpenAiChat,
+    /// OpenAI-compatible chat without the version prefix: `POST
+    /// …/chat/completions`, JSON, top-level body `model`, Bearer.
+    OpenAiChatUnversioned,
     /// Anthropic-compatible messages: `POST …/v1/messages`, top-level body
     /// `model`, `x-api-key: <key>`.
     AnthropicMessages,
@@ -180,6 +183,14 @@ const OPENAI_CHAT: Row = openai(
     false,
 );
 
+const OPENAI_CHAT_UNVERSIONED: Row = openai(
+    "POST",
+    &["chat", "completions"],
+    Body::Json,
+    Selector::Body,
+    false,
+);
+
 const ANTHROPIC_MESSAGES: Row = Row {
     method: "POST",
     endpoint: &["v1", "messages"],
@@ -333,6 +344,7 @@ impl Shape {
     const fn row(self) -> &'static Row {
         match self {
             Self::OpenAiChat => &OPENAI_CHAT,
+            Self::OpenAiChatUnversioned => &OPENAI_CHAT_UNVERSIONED,
             Self::AnthropicMessages => &ANTHROPIC_MESSAGES,
             Self::OpenAiImages => &OPENAI_IMAGES,
             Self::OpenAiImageEdits => &OPENAI_IMAGE_EDITS,
