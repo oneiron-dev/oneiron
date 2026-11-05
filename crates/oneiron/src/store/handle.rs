@@ -439,6 +439,9 @@ pub struct StoreOwner {
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.
 pub struct Store {
+    /// This handle's live carrier leaves, asks and refusals. Kept outside the
+    /// shared core and wiped before the environment's owner drops.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases

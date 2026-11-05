@@ -266,6 +266,7 @@ impl Store {
             opened_with_writer_lease: false,
         };
         Ok(Self {
+            custody_leaves: Default::default(),
             entities: OverlayDb::canonical(core.raw.entities),
             edges_out: OverlayDb::canonical(core.raw.edges_out),
             edges_in: OverlayDb::canonical(core.raw.edges_in),
