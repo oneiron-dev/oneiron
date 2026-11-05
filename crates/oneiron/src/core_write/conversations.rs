@@ -240,10 +240,10 @@ impl Vault {
         if outside.get() {
             return Ok(None);
         }
-        if let Some(error) = parent_error {
-            return Err(error);
-        }
-        committed?;
+        committed.map_err(|error| match (error, parent_error) {
+            (crate::Error::EntityNotFound, Some(error)) => error,
+            (error, _) => error.into(),
+        })?;
         Ok(Some(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_TURN,
