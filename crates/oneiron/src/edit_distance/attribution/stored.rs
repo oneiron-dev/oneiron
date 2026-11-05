@@ -245,8 +245,9 @@ pub(super) struct StoredHunk {
     pub(super) ranges: Vec<StoredHunkRange>,
 }
 
-/// One recorded change a hunk's substitution was located at (FIX 11344):
-/// the retained artifact (hex) and the change's op span.
+/// A hunk substitution's retained position (FIX 11344, 12715): an op span
+/// or an endpoint line, in the receipt's immutable delta-source namespace.
+/// An endpoint line uses the final artifact (hex), zero peer and length one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredHunkRange {
     pub(super) artifact: String,
