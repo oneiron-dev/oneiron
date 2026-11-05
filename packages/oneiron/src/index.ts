@@ -368,6 +368,20 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle whose every read runs under the credential a
+   * delegated reader presented (FIX 647): the paired credential `pair`
+   * returned, verified once against this vault as the server's door verifies
+   * a served request's. Reads refuse when the slip's holder is not this
+   * handle's actor; rebindings keep the same proof, so every read still
+   * checks it against the bound actor. A handle without one reads as before.
+   * On a connected handle this fails with `FORBIDDEN`: it already reads
+   * under the credential it connected with.
+   */
+  withReadCredential(credential: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.withReadCredential(credential)))
+  }
+
+  /**
    * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
    * whether it answered or refused; `vault.receipts.get` resolves it for the
    * same actor or the vault's owner.
@@ -455,6 +469,12 @@ export class Oneiron {
       release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
       /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
       supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+      reminder_route: {
+        /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteGet(input) as Facade.CommitmentReminderRouteReply),
+        /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+        set: (input: Facade.CommitmentReminderRouteSetRequest): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteSet(input) as Facade.CommitmentReminderRouteReply),
+      },
     },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
@@ -1052,6 +1072,14 @@ export class Oneiron {
         /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
         set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
       },
+      fit: {
+        /** The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert. */
+        set: (input: Facade.SkillFitSetRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsFitSet(input) as Facade.HubConsentReceipt),
+      },
+      advisory_ask: {
+        /** The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way. */
+        set: (input: Facade.SkillAdvisoryAskRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsAdvisoryAskSet(input) as Facade.HubConsentReceipt),
+      },
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
@@ -1504,6 +1532,18 @@ export class Oneiron {
         },
       },
     },
+    sync: {
+      quarantine: {
+        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+        held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
+      },
+      retained_work: {
+        wait: {
+          /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
+          set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
+        },
+      },
+    },
     trusted_contacts: {
       /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
@@ -1624,6 +1664,12 @@ export class Oneiron {
       erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.ActAnswer<Facade.RecordEraseOutcome> => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.ActAnswer<Facade.RecordEraseOutcome>),
       /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
       erase_sweep: (input: Facade.RecordEraseSweepRequest): Facade.RecordEraseSweep | null => this.#call(() => this.#client.vaultRecordsEraseSweep(input) as Facade.RecordEraseSweep | null),
+    },
+    outbound_calls: {
+      request: {
+        /** The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting. */
+        erase: (input: Facade.OutboundCallRequestEraseRequest): Facade.OutboundCallRequestErased => this.#call(() => this.#client.vaultOutboundCallsRequestErase(input) as Facade.OutboundCallRequestErased),
+      },
     },
     research: {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
@@ -2175,8 +2221,8 @@ export class Oneiron {
           preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
-      /** Appends one version of bytes to a blob artifact's append-only chain. */
-      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
+      /** Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep. */
+      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionAppendOutcome => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionAppendOutcome),
       /** Reads one version of a blob artifact's bytes. */
       read: (input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null => this.#call(() => this.#client.vaultArtifactsRead(input) as Facade.BlobContent | null),
     },

@@ -1,39 +1,14 @@
 //! One entity row as a peer gets it, and one incoming copy row as the
 //! canonical store takes it.
 
-use super::{BlobCopy, ItemCopy, SyncSecretProjection};
+use super::{BlobCopy, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
-use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
-
-/// What a stored row becomes on the wire.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CopyRow {
-    /// Not a marked item: its stored bytes, as today.
-    Keep,
-    /// The copy: under `key` (the copy id for a marked snapshot ASSET, else
-    /// the row's own id), with the copy's bytes behind the stored header.
-    Copy { key: EntityId, row: Vec<u8> },
-    /// A row a marked blob whose copy is unread this pass could mark: the
-    /// sealed-file placeholder behind the stored header, under `key`. An
-    /// export carries it; a window frame carrying it is withheld and owed.
-    Sealed { key: EntityId, row: Vec<u8> },
-}
-
-impl CopyRow {
-    /// The bytes and id the row leaves under: `raw` under `id` when it is no
-    /// marked item.
-    pub(crate) fn released(self, id: EntityId, raw: Vec<u8>) -> (EntityId, Vec<u8>) {
-        match self {
-            Self::Keep => (id, raw),
-            Self::Copy { key, row } | Self::Sealed { key, row } => (key, row),
-        }
-    }
-}
+pub(crate) use crate::origin::secret_projection::selector_release::CopyRow;
 
 /// What an incoming row on a copy becomes canonically.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,30 +64,6 @@ pub(crate) struct HeldEdit {
 }
 
 impl SyncSecretProjection {
-    /// Row `raw`, stored under `id`, as a peer gets it ([`Self::item`]): a
-    /// marked snapshot ASSET moves to its copy id, a mismatched body under
-    /// that id reads as the sealed-file placeholder, a known copy id carries
-    /// its source's current copy, and any other row whose body is a marked
-    /// blob's whole bytes keeps its id. A row an unread copy could mark is
-    /// [`CopyRow::Sealed`].
-    pub(crate) fn project_row(&self, id: &EntityId, raw: &[u8]) -> CopyRow {
-        if self.is_empty() || raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return CopyRow::Keep;
-        }
-        let (header, body) = raw.split_at(ENTITY_METADATA_HEADER_LEN);
-        match self.item(id, body) {
-            ItemCopy::Unmarked => CopyRow::Keep,
-            ItemCopy::Copy { key, bytes } => CopyRow::Copy {
-                key,
-                row: [header, bytes].concat(),
-            },
-            ItemCopy::Unread { key } => CopyRow::Sealed {
-                key,
-                row: [header, REPO_OPAQUE_FILE_BYTES].concat(),
-            },
-        }
-    }
-
     /// Row `submitted`, which a peer wrote under `key`, as the canonical
     /// store takes it. The copy's own bytes are the stored bytes; a changed
     /// body goes through the shipped visible diff against the pinned
@@ -127,9 +78,8 @@ impl SyncSecretProjection {
         let (header, body) = submitted.split_at(ENTITY_METADATA_HEADER_LEN);
         let (id, hash, blob) = match self.source_of_copy(key) {
             Some(source) => match self
-                .sources
-                .get(&source)
-                .and_then(|hash| self.blobs.get(hash).map(|blob| (*hash, blob)))
+                .source_hash(&source)
+                .and_then(|hash| self.blob(hash).map(|blob| (*hash, blob)))
             {
                 Some((hash, blob)) => (source, hash, blob),
                 // Its copy is unread this pass: the edit cannot be translated,
@@ -143,18 +93,17 @@ impl SyncSecretProjection {
             // A row kept under its own id is a copy only when its body is a
             // copy this pass makes.
             None => match self
-                .copy_bodies
-                .get(blake3::hash(body).as_bytes())
-                .and_then(|hash| self.blobs.get(hash).map(|blob| (*hash, blob)))
+                .copy_body_source_hash(blake3::hash(body).as_bytes())
+                .and_then(|hash| self.blob(hash).map(|blob| (*hash, blob)))
             {
-                Some((hash, blob)) if !self.sources.contains_key(key) => (*key, hash, blob),
+                Some((hash, blob)) if !self.has_source(key) => (*key, hash, blob),
                 _ => return Ok(InboundRow::Ordinary),
             },
         };
         // The vault no longer holds the source's bytes (an erased store's
         // copies, FIX 10274): no source row to land on, so the edit stays
         // the copy's own row, as any safe row does.
-        let Some(stored) = &blob.stored else {
+        let Some(stored) = blob.stored() else {
             return Ok(InboundRow::Ordinary);
         };
         Ok(match translate_body(blob, stored, body)? {
@@ -187,12 +136,12 @@ enum Translated {
 
 /// `submitted`, a peer's body on `blob`'s copy, over its stored bytes.
 fn translate_body(blob: &BlobCopy, stored: &[u8], submitted: &[u8]) -> Result<Translated> {
-    if *submitted == *blob.copy {
+    if submitted == blob.copy() {
         return Ok(Translated::Body(stored.to_vec()));
     }
-    let copy = match &blob.places {
+    let copy = match blob.places() {
         Some(places) => RepoProjectedFileCopy::Masked {
-            copy: &blob.copy[..],
+            copy: blob.copy(),
             places,
         },
         None => RepoProjectedFileCopy::Opaque,

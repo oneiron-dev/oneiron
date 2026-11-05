@@ -1,6 +1,6 @@
 //! DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append.
 
-use crate::error::{InputInvalidCode, SealError, SealStage};
+use crate::error::{InputInvalidCode, SealError};
 use crate::memory::SharedBytes;
 
 use super::super::pdf;
@@ -10,7 +10,8 @@ use super::assembly::SealContext;
 /// is not emitted in v1 (§7.5 step 5).
 pub(crate) struct DssMaterial {
     pub certs_der: Vec<Vec<u8>>,
-    pub ocsps_der: Vec<Vec<u8>>,
+    /// OCSP responses keep the fetch's own admitted bytes until DSS serialization.
+    pub ocsps_der: Vec<SharedBytes>,
     /// Each CRL is its fetch's own admitted bytes, held with their
     /// reservation until the DSS is written, and read in place (FIX 7655).
     pub crls_der: Vec<SharedBytes>,
@@ -99,6 +100,5 @@ pub(super) fn append_dss(
         dss_obj: dss_num,
     };
     let draft = pdf::append_revision(bytes, &state, &kind, 0)?;
-    super::assembly::charge_draft(ctx.limits, &draft, SealStage::Dss)?;
     Ok(draft.bytes)
 }

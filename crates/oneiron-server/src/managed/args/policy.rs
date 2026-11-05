@@ -180,6 +180,26 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.voice_socket.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "broker-socket",
+        |args| args.broker_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-uid",
+        |args| args.broker_uid.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-program",
+        |args| args.broker_program.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-extra-roots",
+        |args| args.broker_extra_roots.is_some(),
+        ArgvUse::Read,
+    ),
     // The embedder's layered flags: managed mode reads its settings file.
     (
         "embedder-*",
@@ -338,6 +358,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "artifact-http-socket",
         |args| args.artifact_http_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "preview-socket",
+        |args| args.preview_socket.is_some(),
         ArgvUse::Read,
     ),
     (

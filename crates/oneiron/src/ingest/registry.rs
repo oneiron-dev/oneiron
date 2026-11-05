@@ -456,7 +456,7 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 23] = [
         },
         &super::exports::ExportSource {
             source_id: "hook-transcript",
-            layout: super::exports::ExportLayout::MemoryDirectory,
+            layout: super::exports::ExportLayout::HookTranscript,
         },
     ),
     IngestSourceRegistration::new(

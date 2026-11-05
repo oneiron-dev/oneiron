@@ -6,11 +6,11 @@ side_tables! {
     /// bytes32.
     /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
     CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
-    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
+    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_connector_write_accepts_masked];
     /// Owner-installed ICS feed configuration and last public completion. Key: system name.
     CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named;
     /// Per-feed poll cursor. Key: bytes32.
-    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
+    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_ics_feed_cursor_accepts_masked];
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
@@ -27,6 +27,9 @@ side_tables! {
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
     CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored [accepts: crate::dreamer_runner::call_receipt_accepts_masked]
         => crate::Vault::erase_call_receipt_actor_in_txn;
+    /// Native agent/time of one exact call receipt; its primary's sole actor scrub removes
+    /// these witnesses in the same writer. Key: receipt id16.
+    CALL_RECEIPT_AGENT_WITNESS: VaultMeta b"call_receipt_agent_witness:v1:" Named Engine;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
@@ -185,6 +188,9 @@ side_tables! {
     /// Each COACH_DIAGNOSTIC_ISSUE under its recurrence key, written with it (FIX 7343). Key:
     /// the key's 32 bytes, then id16 of the issue.
     COACH_DIAGNOSTIC_ISSUE_BY_KEY: VaultMeta b"coach:diagnostic_issue_by_key:v1:" Raw;
+    /// One accepted owner run-now joined a running feedback sweep and owes a later sweep.
+    /// Scheduling intent only, no content or actor. Key/value: ().
+    COACH_FEEDBACK_SWEEP_PENDING: VaultMeta b"coach:feedback_sweep_pending:v1" Named Engine;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
     /// hash32 of the fact.
@@ -567,6 +573,9 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// Recipient-selected storage-only restriction, independent of legal holds.
+    /// Key: id16(record) + bytes32(pact) + bytes16(request nonce).
+    COOPERATIVE_RESTRICTION: VaultMeta b"cooperative_deletion:restriction:v1:" Named;
     /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).

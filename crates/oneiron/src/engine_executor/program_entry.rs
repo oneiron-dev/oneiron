@@ -296,7 +296,10 @@ impl<'a> EngineNativeExecutor<'a> {
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<(CodeRunReplayRecord, Option<CodeRunReplayGeneration>)> {
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("a turn program's code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "a turn program's code run holds another determinism".to_owned(),
                 )
