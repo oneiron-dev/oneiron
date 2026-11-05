@@ -449,8 +449,12 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
-    (status, Json(body)).into_response()
+    match replayed_reply(vault, auth, verb, outcome) {
+        Ok((status, body, hook_notice)) => {
+            super::release::with_hook_notice((status, Json(body)).into_response(), hook_notice)
+        }
+        Err(error) => error.into_response(),
+    }
 }
 
 /// [`door_replay_for`] for a facade waiter: a refusal goes again as the
@@ -464,11 +468,15 @@ fn facade_replay(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
-    match FacadeApiError::replayed(status, &body) {
+    let (status, body, hook_notice) = match replayed_reply(vault, auth, verb, outcome) {
+        Ok(reply) => reply,
+        Err(error) => return error.into_response(),
+    };
+    let response = match FacadeApiError::replayed(status, &body) {
         Some(refusal) => refusal.into_response(),
         None => (status, Json(body)).into_response(),
-    }
+    };
+    super::release::with_hook_notice(response, hook_notice)
 }
 
 /// The first call's status and body, released again for the waiter `auth`.
@@ -477,13 +485,20 @@ fn replayed_reply(
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
-) -> (StatusCode, serde_json::Value) {
+) -> Result<(StatusCode, serde_json::Value, bool), FacadeApiError> {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let body = match outcome.release {
-        Some(release) => replayed_value(vault, auth, verb, release),
-        None => rereleased_refusal(vault, auth, outcome.body),
+    let (body, hook_notice) = match outcome.release {
+        Some(release) => replayed_value(vault, auth, verb, release).map_err(|_| {
+            FacadeApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                MEMORY_CODE_INTERNAL,
+                "saved invocation reply is malformed",
+                ["Report this saved-reply mismatch."],
+            )
+        })?,
+        None => (rereleased_refusal(vault, auth, outcome.body), false),
     };
-    (status, body)
+    Ok((status, body, hook_notice))
 }
 
 /// A refusal the first call kept with nothing beside it, released again for

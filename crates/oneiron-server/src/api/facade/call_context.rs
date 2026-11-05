@@ -413,6 +413,8 @@ pub(crate) struct FacadeCallOutput {
     /// opens handles of its own and lists none, never an empty list standing
     /// in for an unknown one.
     pub(crate) rows: Option<Vec<EntityId>>,
+    /// A content-free caller notice, separate from the result's provenance.
+    pub(crate) hook_notice: bool,
 }
 
 impl FacadeCallOutput {
@@ -421,12 +423,22 @@ impl FacadeCallOutput {
         Self {
             value,
             rows: Some(producers.take()),
+            hook_notice: false,
         }
     }
 
     /// A result whose door lists none of its rows.
     pub(super) fn unlisted(value: serde_json::Value) -> Self {
-        Self { value, rows: None }
+        Self {
+            value,
+            rows: None,
+            hook_notice: false,
+        }
+    }
+
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice = hook_notice;
+        self
     }
 }
 

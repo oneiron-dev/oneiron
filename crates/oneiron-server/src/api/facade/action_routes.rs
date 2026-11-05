@@ -145,6 +145,7 @@ pub(crate) async fn invoke_action(
                 "readReceipt": dispatch.read_receipt,
             }),
             rows,
+            hook_notice: false,
         })
     });
     (answer, stamp)

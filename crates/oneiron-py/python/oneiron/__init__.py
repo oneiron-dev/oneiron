@@ -342,6 +342,15 @@ class Oneiron:
         """
         return self._client.last_receipt_ref()
 
+    def last_hook_notice(self) -> str | None:
+        """Content-free hook notice beside the last facade call's reply.
+
+        Typed results keep their shape. The next facade call clears this
+        before sending; a cloned or vault-direct handle has none. Session-only
+        calls may carry a notice without keeping a durable receipt.
+        """
+        return self._client.last_hook_notice()
+
     def native_limit_questions(self) -> list[dict[str, Any]] | None:
         """The engine ``[limits]`` rows this client's own vault crossed, latest per row.
 
