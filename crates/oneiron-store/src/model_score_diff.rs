@@ -13,4 +13,3 @@ pub struct ModelScoreDiff {
     pub score: f64,
     pub fetched_at: u64,
 }
-
