@@ -196,6 +196,8 @@ pub(super) struct BoardParts {
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// Whether every named row reference was a valid entity id.
+    pub(super) named_complete: bool,
     /// The hook blocks whose task rows TASKS tagged.
     pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
     /// The rows each INBOX row kept rests on (FIX 8145): every identity of
@@ -218,6 +220,7 @@ pub(super) fn board_parts(
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
+    let mut named_complete = true;
 
     // WORLDS: the tiers the caller's planner reads, over the WORLD bodies
     // its read admits.
@@ -295,10 +298,10 @@ pub(super) fn board_parts(
     let room = room.map(|page| page.section);
     if let Some(room) = &room {
         named.push(room.room);
-        named.extend(
-            room.claims
-                .iter()
-                .filter_map(|claim| EntityId::from_hex(&claim.claim_ref).ok()),
+        super::source_rows::extend_source_rows(
+            &mut named,
+            &mut named_complete,
+            room.claims.iter().map(|claim| claim.claim_ref.as_str()),
         );
     }
 
@@ -344,12 +347,14 @@ pub(super) fn board_parts(
         ),
     };
     let hook_blocks = tasks.tag_hook_pins(hook_pins);
-    named.extend(
+    super::source_rows::extend_source_rows(
+        &mut named,
+        &mut named_complete,
         tasks
             .rows
             .iter()
             .filter(|row| row.is_intent)
-            .filter_map(|row| EntityId::from_hex(&row.id).ok()),
+            .map(|row| row.id.as_str()),
     );
     let project =
         match (targets.project, &room) {
@@ -480,6 +485,7 @@ pub(super) fn board_parts(
         room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
+        named_complete,
         hook_blocks,
         inbox: inbox_sources,
     })

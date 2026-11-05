@@ -332,7 +332,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let assembled = messages.clone();
     let read_board = board.as_ref().ok().and_then(Option::as_ref);
     let board_view = read_board.map(|board| (board.block.clone(), board.sections.clone()));
-    let board_rows = read_board.map(|board| board.rows.clone());
+    let board_rows = read_board
+        .filter(|board| board.rows_complete)
+        .map(|board| board.rows.clone());
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
