@@ -10,10 +10,12 @@ The source snapshot in `edit_settle/carry/sheet_keep.rs` is captured before the
 split or native byte staging. It reads each source's head version, content hash
 and live frontier in one read transaction. The settlement write transaction
 checks that snapshot again before any durable settlement row or artifact append.
-A mismatch ends the attempt without writing settlement rows. The caller then
+A mismatch returns the existing retryable `ConcurrentWrite` error before any
+settlement row is written. The pending proposal remains intact. A later Keep
 repeats the native split and staging outside the writer, using the original held
-proposal rather than a previously reduced copy. This retries existing answers;
-it does not call the decider again.
+proposal rather than a previously reduced copy. It reuses existing answers and
+does not call the decider again. Keep does not spin internally while another
+writer continues editing an unrelated workbook cell.
 
 Only sources of retained, valued answers participate in the final source check.
 A withdrawn file cannot keep invalidating the untouched answers. When no answers
@@ -28,7 +30,8 @@ ledger, receipt generation and deferred proposer wakes remain the native paths.
 `keep_pending_proposal` drops the waiting row only after settlement succeeds.
 Direct typed-sheet settlement uses the same source-bound split.
 
-This does not add a retry count, timeout, quiet interval, policy cap, schema,
+This is an optimistic transaction conflict, not a policy refusal or a timed
+hold. It does not add a retry count, timeout, quiet interval, policy cap, schema,
 provider replay or automatic acceptance. The existing policy controls the wake.
 Byte staging can still report its existing workbook-change or resource errors;
 this path does not replace those errors or claim bounded native execution time.

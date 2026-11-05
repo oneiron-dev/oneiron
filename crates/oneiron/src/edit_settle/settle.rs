@@ -102,24 +102,18 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
     ) -> Result<SettleSelectOutcome> {
-        loop {
-            let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
-            if let Some(outcome) = self.settle_select_prepared(
-                artifact_id,
-                proposal,
-                made_by,
-                consent,
-                actor,
-                occurred,
-                learned_at,
-                carry,
-                sheet.as_ref(),
-            )? {
-                return Ok(outcome);
-            }
-            // A source moved during split or preflight. The attempt wrote no
-            // rows; rebuild only the carried copy outside the write transaction.
-        }
+        let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
+        self.settle_select_prepared(
+            artifact_id,
+            proposal,
+            made_by,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+            carry,
+            sheet.as_ref(),
+        )
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -134,7 +128,7 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
         sheet: Option<&super::carry::SheetKeep>,
-    ) -> Result<Option<SettleSelectOutcome>> {
+    ) -> Result<SettleSelectOutcome> {
         let split = sheet.and_then(|sheet| sheet.split.as_ref());
         let proposal = split
             .and_then(|split| split.carried.as_ref())
@@ -175,7 +169,7 @@ impl Vault {
         // serialized by the LMDB write lock, sees the committed ledger row here
         // and rolls back with nothing appended; a crash rolls the whole settle
         // back so a retry re-appends cleanly rather than skipping the re-anchor.
-        let Some((version, reanchor, record, stranded_proposal)) =
+        let (version, reanchor, record, stranded_proposal) =
             self.with_write_txn_grouped(|wtxn| {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
@@ -183,7 +177,11 @@ impl Vault {
                 if let Some(sheet) = sheet
                     && !sheet.is_current_in_txn(self, wtxn)?
                 {
-                    return Ok(None);
+                    // Leave the held proposal intact for a fresh Keep instead
+                    // of spinning while another writer keeps moving a source.
+                    return Err(Error::ConcurrentWrite(
+                        "sheet answer source changed during Keep",
+                    ));
                 }
                 if let Some(split) = split
                     && split.carried.is_none()
@@ -191,7 +189,7 @@ impl Vault {
                     let (head, record) = self.settle_all_withdrawn_in_txn(
                         wtxn, artifact_id, held, &split.withdrawal, consent, actor, learned_at,
                     )?;
-                    return Ok(Some((head, ReanchorSummary::default(), record, None)));
+                    return Ok((head, ReanchorSummary::default(), record, None));
                 }
                 if let Some(bundle) = &proposal.sheet_answers {
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
@@ -351,7 +349,7 @@ impl Vault {
                         deck: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
-                    return Ok(Some((base, ReanchorSummary::default(), record, Some(stranded))));
+                    return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
                 }
                 // Replay every PPTX comment operation against the pinned in-transaction
                 // base. A public proposal/report cannot authorize XML changes on its own.
@@ -508,22 +506,19 @@ impl Vault {
                 if let Some(Some(withdrawal)) = carry {
                     self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
                 }
-                Ok(Some((version, reanchor, record, None)))
-            })?
-        else {
-            return Ok(None);
-        };
+                Ok((version, reanchor, record, None))
+            })?;
 
         let receipt = settlement_receipt_record(*artifact_id, &record)?;
         let receipt = self.with_withdrawn_units(*artifact_id, &record, receipt)?;
-        Ok(Some(SettleSelectOutcome {
+        Ok(SettleSelectOutcome {
             stranded_proposal,
             version,
             reanchor,
             receipt,
             reconciliation: None,
             review: SettledReview::of(record),
-        }))
+        })
     }
 
     /// Settle-discards a retained [`EditProposal`]: drops it and records the
