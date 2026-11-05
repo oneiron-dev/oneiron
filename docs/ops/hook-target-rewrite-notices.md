@@ -32,7 +32,7 @@ The detailed notices above cover direct MCP replies. Code-mode replies carry
 notices in their existing MCP metadata; see [code-run hook notices](code-run-hook-notices.md).
 Neither path changes the verb's typed result shape.
 
-## HTTP facade success
+## HTTP facade replies
 
 Generated HTTP host/server doors with an explicit pre/post hook chain carry a
 content-free notice in `x-oneiron-hook-notice` when a take-away hook changed
@@ -42,6 +42,14 @@ without invoking hooks a second time. The header contains no verb,
 target, argument, caller or invocation detail. MCP's detailed notices are
 unchanged. The HTTP JSON body keeps its original shape, including arrays and
 primitive results.
+
+When one of these calls receives a pre-hook result and then fails, the same header
+carries its content-free notice beside the original error or post-hook stop.
+The error's status, typed body, receipt and retry behavior stay unchanged. A
+live duplicate waiting on that refusal receives the notice beside the existing
+refusal recheck; the refusal does not become a successful replay release or a
+new durable failed-call record. A source that supplied no metadata remains
+unknown.
 
 The HTTP SDK returns the original `Response`; read the notice through
 `response.headers.get("x-oneiron-hook-notice")`. The CORS exposure list includes
@@ -72,7 +80,8 @@ keeps the notice flag described above. Saved metadata never grants authority
 to run a call.
 
 This HTTP slice does not cover those unsupported completion sources or room-turn
-paths, action-wrapper routes, custody-spool routes, non-facade calls, or HTTP errors
-and post-hook stops. It adds no notice to those paths. The wider caller-notice
+paths, action-wrapper routes, custody-spool routes, non-facade calls, or errors
+before a notice source was supplied. Drained calls' saved error metadata is also
+not supplied yet. It adds no notice to those paths. The wider caller-notice
 row remains partial. Deploy matching engine/server and native SDK binaries;
 no guest artifact change is needed.

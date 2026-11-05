@@ -299,7 +299,11 @@ pub(super) fn run(
             .for_room_turn(room)
             .and_then(|turn| turn.invoke(verb, args))
             .map(|value| (value, None)),
-        None => crate::task_verb::sdk::invoke_with_notice(&memory, verb, args),
+        None => {
+            let (result, hook_notice) =
+                crate::task_verb::sdk::invoke_with_notice(&memory, verb, args);
+            result.map(|value| (value, hook_notice))
+        }
     })
 }
 

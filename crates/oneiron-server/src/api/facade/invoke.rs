@@ -176,8 +176,8 @@ pub(super) fn facade_invoke_in_turn_with_notice(
             let memory = facade_rewrites_admitted(server, auth, &value, memory);
             // Settlement's run of the call enters its boundary here as the drain's.
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
-            Ok(match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value)?, None),
+            let (result, hook_notice) = match call.room_turn()? {
+                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value), None),
                 None => {
                     // The owner's own request on the owner's own full credential:
                     // owner-authored writes carry their own confirmation. Any other
@@ -203,11 +203,14 @@ pub(super) fn facade_invoke_in_turn_with_notice(
                             None => {
                                 oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
                             }
-                        })?
+                        })
                     } else {
-                        oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)?
+                        oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
                     }
                 }
+            };
+            result.map(|value| (value, hook_notice)).map_err(|error| {
+                FacadeApiError::from(error).with_hook_notice(hook_notice == Some(true))
             })
         },
     )
@@ -351,8 +354,8 @@ pub(super) fn facade_invoke_born_with_notice(
             let memory = facade_task_decisions(server, verb, memory)?;
             let memory = facade_rewrites_admitted(server, auth, &value, memory);
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
-            Ok(match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value)?, None),
+            let (result, hook_notice) = match call.room_turn()? {
+                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value), None),
                 None => {
                     let memory = match direct_authorship(auth, server, verb)? {
                         Some(owner) => memory
@@ -360,8 +363,11 @@ pub(super) fn facade_invoke_born_with_notice(
                             .with_owner_surface(call.surface()),
                         None => memory,
                     };
-                    oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)?
+                    oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
                 }
+            };
+            result.map(|value| (value, hook_notice)).map_err(|error| {
+                FacadeApiError::from(error).with_hook_notice(hook_notice == Some(true))
             })
         },
     )

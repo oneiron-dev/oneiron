@@ -13,6 +13,7 @@ impl FacadeApiError {
     ) -> Self {
         Self {
             status,
+            hook_notice: false,
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: code.to_owned(),
@@ -31,6 +32,13 @@ impl FacadeApiError {
                 narrowing: None,
             },
         }
+    }
+
+    /// Adds only a positive, content-free notice from the actual hook chain.
+    /// No positive notice does not certify that the arguments were unchanged.
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice |= hook_notice;
+        self
     }
 
     pub(super) fn forbidden(
@@ -193,6 +201,7 @@ impl From<MemoryError> for FacadeApiError {
         }
         Self {
             status,
+            hook_notice: false,
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: error.code,
@@ -315,7 +324,7 @@ impl FacadeApiError {
                 .headers_mut()
                 .insert(axum::http::header::RETRY_AFTER, HeaderValue::from(seconds));
         }
-        response
+        super::release::with_hook_notice(response, self.hook_notice)
     }
 
     /// The refusal as the engine's typed error, for a door outside the
