@@ -36,6 +36,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
 mod tests;
@@ -112,6 +113,8 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     training: training::TrainingFile,
     snapshots: Option<snapshots::SnapshotPolicyFile>,
+    #[serde(default)]
+    sessions: sessions::SessionsFile,
     #[serde(default)]
     workers: BTreeMap<String, workers::WorkerFile>,
 }
@@ -233,6 +236,9 @@ pub struct ModelsConfig {
     /// The trainer connectors (`[models.training]`); none by default.
     pub training: TrainingSettings,
     pub snapshots: snapshots::SnapshotPolicy,
+    /// Early computation of a session's next turn (`[models.sessions]`,
+    /// I1 = C).
+    pub sessions: sessions::SessionPreparePolicy,
     /// The model workers this server supervises or probes
     /// (`[models.workers]`), in id order; none by default.
     pub workers: Vec<WorkerConfig>,
@@ -599,6 +605,7 @@ impl ModelsFile {
             planner,
             training,
             snapshots: self.snapshots.unwrap_or_default().resolve()?,
+            sessions: self.sessions.resolve(),
             workers,
         };
         if let Some(file) = self.decision_read {
