@@ -22,6 +22,10 @@ pub enum Shape {
     /// OpenAI-compatible chat: `POST …/v1/chat/completions`, top-level body
     /// `model`, `Authorization: Bearer <key>`.
     OpenAiChat,
+    /// OpenAI Responses over a broker-upgraded WebSocket: `GET …/v1/responses`
+    /// with a broker-set upgrade, Bearer. The create frame is JSON with a
+    /// top-level `model`; provider events stream back as text frames.
+    OpenAiResponses,
     /// Anthropic-compatible messages: `POST …/v1/messages`, top-level body
     /// `model`, `x-api-key: <key>`.
     AnthropicMessages,
@@ -84,6 +88,9 @@ pub enum Shape {
     /// A server's liveness: `GET …/health`, no body, Bearer. A GPU pod
     /// answers its health here.
     Health,
+    /// A Gemini model listing: `GET …/v1beta/models`, no body,
+    /// `x-goog-api-key`.
+    GeminiModels,
     /// Cartesia speech: `POST …/tts/bytes`, JSON, top-level body `model_id`,
     /// `x-api-key: <key>`. The reply is audio bytes, streamed.
     CartesiaSpeech,
@@ -191,6 +198,14 @@ const OPENAI_CHAT: Row = openai(
     Body::Json,
     Selector::Body,
     false,
+);
+
+const OPENAI_RESPONSES: Row = openai(
+    "GET",
+    &["v1", "responses"],
+    Body::Json,
+    Selector::Body,
+    true,
 );
 
 const ANTHROPIC_MESSAGES: Row = Row {
@@ -336,6 +351,8 @@ const OPENAI_MODELS: Row = openai(
 
 const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
 
+const GEMINI_MODELS: Row = gemini("GET", &["v1beta", "models"], Body::Empty, Selector::Binding);
+
 const CARTESIA_SPEECH: Row = Row {
     method: "POST",
     endpoint: &["tts", "bytes"],
@@ -369,6 +386,7 @@ impl Shape {
     const fn row(self) -> &'static Row {
         match self {
             Self::OpenAiChat => &OPENAI_CHAT,
+            Self::OpenAiResponses => &OPENAI_RESPONSES,
             Self::AnthropicMessages => &ANTHROPIC_MESSAGES,
             Self::OpenAiImages => &OPENAI_IMAGES,
             Self::OpenAiImageEdits => &OPENAI_IMAGE_EDITS,
@@ -387,6 +405,7 @@ impl Shape {
             Self::SystemOne => &SYSTEM_ONE,
             Self::OpenAiModels => &OPENAI_MODELS,
             Self::Health => &HEALTH,
+            Self::GeminiModels => &GEMINI_MODELS,
             Self::CartesiaSpeech => &CARTESIA_SPEECH,
             Self::ElevenLabsSpeech => &ELEVENLABS_SPEECH,
         }
