@@ -909,6 +909,9 @@ never from a briefing or a sender's words.
   and a spawn without a TASK carry none. The task text never holds the time.
 - A Slack or LINE reply puts `wake="channel"` after the event's briefing.
   An empty answer still sends nothing.
+- A saved-workflow leaf whose attempt realizes a TASK ends its request with
+  `wake="task"`, after its confession ask, and states the protocol beside
+  its instructions. A leaf with no TASK and the planner's calls carry none.
 - A STREAM wake batch carries it as `opener`, beside `wakes` and `frames`.
   It is rendered when the batch is handed over (`oneiron/wakes`, the helper
   or boot batch, `wake inbox`, `self.focus.wakes`) and never stored with a
