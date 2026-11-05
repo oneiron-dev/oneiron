@@ -318,6 +318,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   const started = performance.now();
   const output = process.env.E2E_REPORT_DIR ?? await tempRoot("report");
   const artifacts = new Artifacts(output);
+  await mkdir(output, {recursive:true,mode:0o700});
   // This shared pin remains readable even when an area fragment blocks preflight.
   const shared = JSON.parse(await readFile(resolve(FIXTURE_ROOT,"manifest.json"),"utf8")) as {assets:{id:string;path:string;sha256:string}[]};
   const planPin = shared.assets.find(asset=>asset.id==="suite-plan");
@@ -339,7 +340,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   }
   const {build,plan} = ready;
   const pending = [...ready.files].sort((a,b) => b.estimatedSeconds-a.estimatedSeconds || a.file.localeCompare(b.file));
-  const running = new Map<string,{file:PlannedFile; process:ManagedProcess; ownerDir:string; resultFile:string; fileRoot:string; done:Promise<string>}>();
+  const running = new Map<string,{file:PlannedFile; process:ManagedProcess; ownerDir:string; resultFile:string; junitFile:string; fileRoot:string; done:Promise<string>}>();
   const results = new Map<string,IdResult>();
   const fileDiagnostics: FileDiagnostics[] = [];
   const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
@@ -362,8 +363,9 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
       if (payload.declaration.slots !== job.file.slots || payload.declaration.profile !== profile ||
           JSON.stringify([...payload.registrations].sort()) !== JSON.stringify(expected)) registrationError = "File declaration/ID registration differs from plan";
       if (new Set(rows.map(r => r.id)).size !== rows.length || rows.some(r => !expected.includes(r.id))) registrationError = "Duplicate or unknown result rows";
-      // /dev/stdout is a pipe, not a raw on-disk JUnit artifact (Bun 1.3.4 requires an outfile).
-      const junit = exit.stdout+exit.stderr;
+      const junit = await readFile(job.junitFile,"utf8");
+      await artifacts.json(`${job.file.file}.junit.json`, {format:"junit",source:basename(job.junitFile),
+        xml:redactor.text(junit).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]")});
       diagnostics.junitPresent = /<testsuites?\b/.test(junit);
       if (!diagnostics.junitPresent) registrationError = "Bun reports missing JUnit";
       const cases = [...junit.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)];
@@ -412,14 +414,15 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
         const fileRoot = await tempRoot(file.file.replace(".test.ts",""));
         const ownerDir = resolve(fileRoot,"owners");
         const resultFile = resolve(output,`${file.file}.json`);
+        const junitFile = resolve(output,`${file.file}.junit.xml`);
         const env = isolatedEnv(fileRoot,{...build.environment,E2E_PROFILE:profile,E2E_FILE_SLOTS:String(file.slots),
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
           E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:selectedIds(file).join(","),
           E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
-        const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile","/dev/stdout"],
+        const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
           {cwd:E2E_ROOT,env,label:`process-${file.file}`,artifacts});
-        running.set(file.file,{file,process:child,ownerDir,resultFile,fileRoot,done:child.done.then(() => file.file,() => file.file)});
+        running.set(file.file,{file,process:child,ownerDir,resultFile,junitFile,fileRoot,done:child.done.then(() => file.file,() => file.file)});
       }
       if (!running.size) throw new Error("No schedulable file");
       try {
