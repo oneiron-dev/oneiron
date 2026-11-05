@@ -335,7 +335,7 @@ pub(super) fn scope_sources_in_txn(
 }
 
 /// A NOTE set's sources (FIX 5757), read in the planner's writer: each a live
-/// NOTE its requester reads there, sorted and once each, so the same set
+/// NOTE its requester's declared lane reads there, sorted and once each, so the same set
 /// plans the same sources whatever order it was named in. A set has no
 /// conversation to resolve, so its NOTEs are its members.
 pub(super) fn note_sources_in_txn(
@@ -343,6 +343,8 @@ pub(super) fn note_sources_in_txn(
     txn: &RoTxn<'_>,
     requester: WriteActor,
     declared: &[EntityId],
+    lane: &crate::claim::FrozenReadLane,
+    basis: RequesterReadBasis,
 ) -> Result<ScopeSources> {
     let notes: Vec<EntityId> = declared
         .iter()
@@ -353,7 +355,12 @@ pub(super) fn note_sources_in_txn(
     if notes.is_empty() {
         return Err(invalid("summary source set is empty"));
     }
-    let read = requester_read_in(vault, txn, requester)?;
+    let read = requester_read_in(vault, txn, requester, basis)?;
+    let read = if lane.is_principal() {
+        read
+    } else {
+        vault.scoped_read(lane.narrow_in_txn(vault, txn, read.actor_key().clone())?)
+    };
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
         if !note_source_admitted(vault, txn, note, row.is_some())? {
@@ -392,7 +399,7 @@ impl Vault {
         requester: WriteActor,
         notes: &[EntityId],
     ) -> Result<Vec<EntityId>> {
-        let read = requester_read_in(self, txn, requester)?;
+        let read = requester_read_in(self, txn, requester, RequesterReadBasis::Principal)?;
         let mut admitted = Vec::with_capacity(notes.len());
         for note in notes {
             let returned = read
@@ -406,25 +413,46 @@ impl Vault {
     }
 }
 
-/// The requester's own read, built in `txn`: the vault owner's key for the
-/// owner, any other actor's under its access grants, without a room turn or
-/// a credential. The public door read each source on the caller's own lane
-/// before the declaration queued; this holds at every later plan.
+/// The live lane's native grant basis, captured beside its frozen scope.
+#[derive(Clone, Copy)]
+pub(super) enum RequesterReadBasis {
+    Principal,
+    Narrowed {
+        owner_exemption: bool,
+        relationship_grants: bool,
+    },
+}
+
+/// The requester's base read, built in `txn`. Only a principal declaration
+/// gets the owner's full key. A narrowed declaration retains its actual
+/// native grant mode; owner exemption needs both captured eligibility and
+/// the live owner binding, never the holder's identity alone.
 fn requester_read_in<'v>(
     vault: &'v Vault,
     txn: &RoTxn<'_>,
     requester: WriteActor,
+    basis: RequesterReadBasis,
 ) -> Result<ScopedRead<'v>> {
     let actor = requester.entity_ref();
     let class = requester.actor_class();
     let owner = crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)
         .map_err(|_| invalid("summary requester does not resolve"))?;
-    let key = if owner {
+    let key = if owner && matches!(basis, RequesterReadBasis::Principal) {
         ScopedReadActorKey::vault_owner(actor)
     } else {
-        ScopedReadActorKey::with_actor_class(actor.to_hex(), class.gate_actor_class())
-            .ok_or_else(|| invalid("summary requester cannot read"))?
-            .require_access_grants(Some(actor))
+        let key = ScopedReadActorKey::with_actor_class(actor.to_hex(), class.gate_actor_class())
+            .ok_or_else(|| invalid("summary requester cannot read"))?;
+        match basis {
+            RequesterReadBasis::Narrowed {
+                owner_exemption: true,
+                ..
+            } if owner => key.exempt_while_owner(actor),
+            RequesterReadBasis::Narrowed {
+                relationship_grants: true,
+                ..
+            } => key.require_relationship_grants(Some(actor)),
+            _ => key.require_access_grants(Some(actor)),
+        }
     };
     Ok(vault.scoped_read(key))
 }
