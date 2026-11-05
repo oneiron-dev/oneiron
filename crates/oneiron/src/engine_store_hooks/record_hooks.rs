@@ -87,6 +87,16 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::federation::note_authority_row()
     }
 
+    fn note_direct_derivation_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        derived: EntityId,
+        source: EntityId,
+    ) {
+        crate::skill_attribution::note_direct_derivation_in_txn(store, wtxn, derived, source)
+    }
+
     fn reject_audience_edit_unlink(
         &self,
         store: &Store,
