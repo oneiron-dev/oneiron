@@ -392,8 +392,8 @@ pub(crate) fn validate_token_for_verify(
     let _slots_held = memory.hold(slots)?;
     let trust = match parse_certs(&chain_ders) {
         Ok(chain) => {
-            let _chain_held = memory
-                .hold(held_bytes::certificates(&chain, &chain_ders).saturating_sub(slots))?;
+            let _chain_held =
+                memory.hold(held_bytes::certificates(&chain, &chain_ders).saturating_sub(slots))?;
             match pkix_chain::verify_time_stamper(
                 &chain,
                 anchors,
