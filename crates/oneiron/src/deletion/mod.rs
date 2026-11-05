@@ -14,6 +14,10 @@ mod delete;
 pub(crate) use oneiron_store::deletion::delete_bearing_update;
 mod derived_rows;
 mod erase;
+mod exhaust_erase;
+pub(crate) use exhaust_erase::{
+    erase_owned_byoa_exhausts_in_txn, erase_restored_byoa_exhausts_in_txn,
+};
 mod gate;
 mod identity_event_stamps;
 mod legal_hold;
@@ -110,7 +114,9 @@ pub use actor_fields::{
 pub(crate) use actor_fields::{ActorErasureWriter, names_no_actor};
 
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
-pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
+pub(crate) use actor_fields::{
+    hard_erased_ids_in, rerun_actor_scrubs_in_txn, restore_erased_payload_targets_in_txn,
+};
 // A due owner-confirmed erase rechecks its pending row (FIX 6337).
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
