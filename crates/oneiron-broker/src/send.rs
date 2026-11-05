@@ -416,12 +416,10 @@ impl Sender {
         {
             return None;
         }
-        let mut encoder = flate2::write::GzEncoder::new(
-            Vec::with_capacity(body.len() / 2),
-            flate2::Compression::new(1),
-        );
+        let sink = crate::body::FallibleBody::with_capacity(body.len() / 2).ok()?;
+        let mut encoder = flate2::write::GzEncoder::new(sink, flate2::Compression::new(1));
         io::Write::write_all(&mut encoder, body).ok()?;
-        let encoded = encoder.finish().ok()?;
+        let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
 }
