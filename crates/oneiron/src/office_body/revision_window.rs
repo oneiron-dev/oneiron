@@ -136,21 +136,21 @@ fn window_actors(
 /// the sequential path cannot project (FIX 595 review P1-2/P1-3): formatting
 /// over an earlier group's pending revision (the remark pass swallows the
 /// native conflict into an invalid transaction), a story runs edit over an
-/// earlier group's pending revision the same way, or a delete over earlier
-/// groups' tracked segments or a moved copy (the native delete verb
-/// refuses). The caller falls back to the single-revision projection for
-/// the whole window instead of failing the export.
+/// earlier group's tracked segments, or a delete over earlier groups' tracked
+/// segments or a moved copy (the native verbs refuse). Story and delete
+/// failures surface as document errors. The caller falls back to the
+/// single-revision projection for the whole window instead of failing the export.
 fn needs_default_author_fallback(built: &[DocxChange], error: &DoceditError) -> bool {
     match error {
-        DoceditError::InvalidTransaction(_) => built.iter().any(|change| {
+        DoceditError::InvalidTransaction(_) => built
+            .iter()
+            .any(|change| matches!(change, DocxChange::SetRuns { .. })),
+        DoceditError::Document(_) => built.iter().any(|change| {
             matches!(
                 change,
-                DocxChange::SetRuns { .. } | DocxChange::SetStoryRuns { .. }
+                DocxChange::Delete { .. } | DocxChange::SetStoryRuns { .. }
             )
         }),
-        DoceditError::Document(_) => built
-            .iter()
-            .any(|change| matches!(change, DocxChange::Delete { .. })),
     }
 }
 
