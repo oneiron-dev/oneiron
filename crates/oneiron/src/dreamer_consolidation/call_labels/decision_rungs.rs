@@ -8,8 +8,8 @@
 
 use crate::Result;
 use crate::llm::decision::{
-    CapturedDecision, DecisionCall, DecisionCallContext, DecisionLadder, DecisionPack,
-    DecisionProvider, DecisionWireLabels,
+    CapturedDecision, CapturedDecisionPack, DecisionCall, DecisionCallContext, DecisionLadder,
+    DecisionPack, DecisionProvider, DecisionWireLabels,
 };
 use crate::model_decision::HostRuleRef;
 use crate::model_decision::{
@@ -118,6 +118,24 @@ fn canonical(
     decision
 }
 
+/// Successful pack answers in the original question order and option vocabulary.
+fn canonical_pack(
+    original: &[&DecisionQuestion],
+    shown: &[&DecisionQuestion],
+    decisions: Vec<ProviderDecision>,
+) -> Vec<ProviderDecision> {
+    decisions
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, decision)| match (original.get(index), shown.get(index)) {
+                (Some(question), Some(shown)) => canonical(question, shown, decision),
+                _ => decision,
+            },
+        )
+        .collect()
+}
+
 impl DecisionProvider for Shown<'_> {
     fn pin(&self) -> ProviderPin {
         self.rung.pin()
@@ -164,6 +182,38 @@ impl DecisionProvider for Shown<'_> {
         Some(captured)
     }
 
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        let shown: Vec<Option<DecisionQuestion>> = pack
+            .questions
+            .iter()
+            .map(|question| self.shown(question))
+            .collect();
+        if shown.iter().all(Option::is_none) {
+            return self.rung.decide_pack_captured(pack, context);
+        }
+        let questions: Vec<&DecisionQuestion> = pack
+            .questions
+            .iter()
+            .zip(&shown)
+            .map(|(question, shown)| shown.as_ref().unwrap_or(*question))
+            .collect();
+        let mut captured = self.rung.decide_pack_captured(
+            &DecisionPack {
+                questions: &questions,
+                ..*pack
+            },
+            context,
+        )?;
+        captured.result = captured
+            .result
+            .map(|decisions| canonical_pack(pack.questions, &questions, decisions));
+        Some(captured)
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let Some(shown) = self.shown(call.question) else {
             return self.rung.decide(call);
@@ -194,16 +244,7 @@ impl DecisionProvider for Shown<'_> {
             questions: &questions,
             ..*pack
         })?;
-        Ok(decisions
-            .into_iter()
-            .enumerate()
-            .map(
-                |(index, decision)| match (pack.questions.get(index), questions.get(index)) {
-                    (Some(question), Some(shown)) => canonical(question, shown, decision),
-                    _ => decision,
-                },
-            )
-            .collect())
+        Ok(canonical_pack(pack.questions, &questions, decisions))
     }
 
     fn rule_row(

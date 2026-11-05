@@ -82,6 +82,23 @@ impl<'a> DecisionPack<'a> {
 pub struct DecisionCallContext<'a> {
     pub purpose: &'a CallPurpose,
     pub extraction_egress: Option<&'a dyn ExtractionEgressPredicate>,
+    /// The caller's per-invocation allowance, checked at each native generation start.
+    pub generation: Option<&'a dyn DecisionGenerationAdmission>,
+}
+
+/// Admission for one logical generation, not one returned receipt or whole pack.
+/// A native packed provider checks this once per request; a sequential provider
+/// checks it before each of its requests. A memo replay starts no generation.
+pub trait DecisionGenerationAdmission: Send + Sync {
+    fn admit(&self) -> Result<()>;
+}
+
+impl DecisionCallContext<'_> {
+    /// Checks the caller's allowance after native preflights, before a request starts.
+    pub fn admit_generation(&self) -> Result<()> {
+        self.generation
+            .map_or(Ok(()), DecisionGenerationAdmission::admit)
+    }
 }
 
 /// A provider read's original result beside copies of its native settlements.
@@ -89,6 +106,13 @@ pub struct DecisionCallContext<'a> {
 /// establishes token use or a number of logical generations.
 pub struct CapturedDecision {
     pub result: Result<ProviderDecision>,
+    pub receipts: Vec<RunReceipt>,
+}
+
+/// A native pack's original result and every settlement in its paid prefix,
+/// including when a later request fails. Usage remains optional on each receipt.
+pub struct CapturedDecisionPack {
+    pub result: Result<Vec<ProviderDecision>>,
     pub receipts: Vec<RunReceipt>,
 }
 
@@ -143,6 +167,18 @@ pub trait DecisionProvider: Send + Sync {
         _call: &DecisionCall<'_>,
         _context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecision> {
+        None
+    }
+    /// A pack with its native settlement inventory. Unsupported returns `None`
+    /// before any request. Implementations preserve their ordinary pack shape and
+    /// check `context`'s allowance before EACH native generation, retaining every
+    /// settled prefix if a later generation fails. Never probe support by sending
+    /// individual questions or replace a native packed call with a fanout.
+    fn decide_pack_captured(
+        &self,
+        _pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -252,6 +288,14 @@ pub trait DecisionModel: Send + Sync {
     ) -> Option<CapturedDecision> {
         None
     }
+    /// See [`DecisionProvider::decide_pack_captured`].
+    fn decide_pack_captured(
+        &self,
+        _pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -311,6 +355,13 @@ impl DecisionProvider for ModelDecisionProvider {
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecision> {
         self.model.decide_captured(call, context)
+    }
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        self.model.decide_pack_captured(pack, context)
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

@@ -2,10 +2,23 @@
 
 use super::{Answerer, BigModel, PURPOSE, abstained, failed, typed};
 use crate::models::CallDeadline;
-use oneiron::llm::decision::{DecisionCall, DecisionCallContext, ProviderDecision, ProviderPin};
+use oneiron::llm::decision::{
+    DecisionCall, DecisionCallContext, DecisionPack, ProviderDecision, ProviderPin,
+};
 use oneiron::{ContentPart, EntityId};
 
 impl BigModel {
+    pub(super) fn decide_pack_with_context(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: Option<&DecisionCallContext<'_>>,
+    ) -> oneiron::Result<Vec<ProviderDecision>> {
+        (0..pack.questions.len())
+            .filter_map(|index| pack.call(index))
+            .map(|call| self.decide_with_context(&call, context))
+            .collect()
+    }
+
     pub(super) fn decide_with_context(
         &self,
         call: &DecisionCall<'_>,
@@ -32,6 +45,9 @@ impl BigModel {
         let left = call.deadline.decision_time_left();
         if left.is_zero() {
             return Err(failed("admitted after the work time"));
+        }
+        if let Some(context) = context {
+            context.admit_generation()?;
         }
         // Inside a verdict, the caller's own line (FIX 1123), billing the
         // payer its run binds (FIX 3574).

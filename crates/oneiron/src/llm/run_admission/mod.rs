@@ -32,7 +32,7 @@ mod work_context;
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
 };
-pub use capture::{capture_settlements, captured_sink};
+pub use capture::{capture_settlements, capture_settlements_shared, captured_sink};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };
