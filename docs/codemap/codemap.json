@@ -26516,7 +26516,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 5,
       "re-export": 25
      }
@@ -26712,14 +26712,14 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "re-export": 1,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PartitionThing"
@@ -26727,7 +26727,7 @@
      "path": "src/dreamer_consolidation/partition/payload.rs",
      "purpose": "The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -31045,7 +31045,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
