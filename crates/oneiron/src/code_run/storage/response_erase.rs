@@ -283,3 +283,20 @@ pub(super) fn release_occurrence_in_txn(
     release_body_in_txn(store, wtxn, &owner, &occurrence.id())?;
     Ok(held)
 }
+
+/// Removes byte-free, unpublished occurrences when the run's replies are erased.
+fn release_unpublished_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+) -> Result<()> {
+    for body in crate::provenance::body::owned_bodies_in_txn(store, wtxn, &owner)? {
+        if matches!(
+            body.state,
+            crate::store::body_descriptor::BodyState::Incomplete { retained: None }
+        ) {
+            release_body_in_txn(store, wtxn, &owner, &body.occurrence)?;
+        }
+    }
+    Ok(())
+}

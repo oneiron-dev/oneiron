@@ -9,6 +9,7 @@ pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
 mod context;
 mod host_occurrence;
+mod progress;
 mod reader;
 
 impl Vault {
