@@ -317,6 +317,7 @@ pub(crate) fn repo_source_copy_stamp_in(
         None => body,
     };
     if let Some(source) = marks.source_of(id) {
+        let source = marks.carried_source(id, source, body)?;
         return Ok(marks
             .source_input_in_txn(vault, txn, &source, body.to_vec())?
             .stamp()
