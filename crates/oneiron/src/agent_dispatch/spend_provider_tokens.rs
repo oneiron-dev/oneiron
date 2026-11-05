@@ -19,6 +19,17 @@ const OBSERVATION: SideTable<String, ProviderTokenCapture, Named> =
 pub struct ProviderTokenCapture {
     pub snapshot: ProviderTokenSnapshot,
     pub leases: Vec<ProviderLeaseTokenObservation>,
+    pub run_observations: Vec<ProviderRunTokenObservation>,
+}
+
+/// Entry and model-future return observed on one actual scoped run instance.
+/// A returned model future does not seal the RunAdmission against later use,
+/// close the guard or scope, or certify complete physical-request reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRunTokenObservation {
+    pub instance: EntityId,
+    pub entry_recorded: bool,
+    pub model_future_returned: bool,
 }
 
 /// Content-free observations of one actual native permit. The instance and
@@ -115,7 +126,7 @@ impl AgentDispatcher<'_> {
         scope: &SpendScopeId,
         snapshot: &ProviderTokenSnapshot,
     ) -> Result<()> {
-        self.record_provider_token_capture(scope, snapshot, None)
+        self.record_provider_token_capture(scope, snapshot, None, None)
     }
 
     /// Keeps one native permit observation beside its actual scoped guard.
@@ -127,7 +138,19 @@ impl AgentDispatcher<'_> {
         snapshot: &ProviderTokenSnapshot,
         lease: &ProviderLeaseTokenObservation,
     ) -> Result<()> {
-        self.record_provider_token_capture(scope, snapshot, Some(lease))
+        self.record_provider_token_capture(scope, snapshot, Some(lease), None)
+    }
+
+    /// Records only the source stages the native scoped model path observed.
+    /// A return without an entry can be retained after a failed entry write;
+    /// neither stage is proof of complete source coverage or scope closure.
+    pub fn record_provider_run_tokens(
+        &self,
+        scope: &SpendScopeId,
+        snapshot: &ProviderTokenSnapshot,
+        run: &ProviderRunTokenObservation,
+    ) -> Result<()> {
+        self.record_provider_token_capture(scope, snapshot, None, Some(run))
     }
 
     fn record_provider_token_capture(
@@ -135,11 +158,13 @@ impl AgentDispatcher<'_> {
         scope: &SpendScopeId,
         snapshot: &ProviderTokenSnapshot,
         lease: Option<&ProviderLeaseTokenObservation>,
+        run: Option<&ProviderRunTokenObservation>,
     ) -> Result<()> {
         let key = snapshot_key(scope, &snapshot.generation);
         let mut txn = self.vault.store.env.write_txn()?;
         let previous = OBSERVATION.get(&self.vault.store, &txn, &key)?;
         if lease.is_none()
+            && run.is_none()
             && previous
                 .as_ref()
                 .is_some_and(|capture| capture.snapshot.observation_id >= snapshot.observation_id)
@@ -149,6 +174,7 @@ impl AgentDispatcher<'_> {
         let mut capture = previous.unwrap_or_else(|| ProviderTokenCapture {
             snapshot: snapshot.clone(),
             leases: Vec::new(),
+            run_observations: Vec::new(),
         });
         if capture.snapshot.observation_id < snapshot.observation_id {
             capture.snapshot.clone_from(snapshot);
@@ -167,6 +193,18 @@ impl AgentDispatcher<'_> {
                 }
             } else {
                 capture.leases.push(lease.clone());
+            }
+        }
+        if let Some(run) = run {
+            if let Some(previous) = capture
+                .run_observations
+                .iter_mut()
+                .find(|previous| previous.instance == run.instance)
+            {
+                previous.entry_recorded |= run.entry_recorded;
+                previous.model_future_returned |= run.model_future_returned;
+            } else {
+                capture.run_observations.push(run.clone());
             }
         }
         OBSERVATION.put(&self.vault.store, &mut txn, &key, &capture)?;

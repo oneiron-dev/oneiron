@@ -75,6 +75,7 @@ mod router;
 mod run_backend;
 mod runtime;
 mod scoped_provider_tokens;
+pub(crate) use scoped_provider_tokens::record_scoped_model_return;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;

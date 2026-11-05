@@ -580,17 +580,21 @@ impl CodeModeBackend {
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
-                let (response, binding) = call
-                    .ladder
+                call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
-                    .await?;
-                planned.answered(&run, binding.rung.model.clone());
-                Ok((response, binding))
+                    .await
+                    .map(|(response, binding)| {
+                        planned.answered(&run, binding.rung.model.clone());
+                        (response, binding)
+                    })
             } else {
                 call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
             };
+            if let Some(scope) = self.lease.as_ref().and_then(LiveLeaseState::scope) {
+                crate::models::record_scoped_model_return(&self.vault, scope, &run);
+            }
             if answered.is_ok() {
                 handoff.answered();
             }
