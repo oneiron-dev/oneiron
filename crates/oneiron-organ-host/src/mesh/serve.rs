@@ -438,10 +438,22 @@ struct Forward {
 }
 
 impl Forward {
-    async fn ask(&self, peer: &PeerAsk) -> Result<PeerAnswer, MeshError> {
+    async fn ask(&self, peer: &PeerAsk) -> Result<Carried, MeshError> {
+        let carried = self.staging.offer(&encode(peer)?).map_err(MeshError::Io)?;
+        self.service.measure_staged(&self.staging);
         let mut stream = self.conn.open_stream().await?;
-        stream.send(&encode(peer)?).await?;
+        stream.send(&encode(&carried)?).await?;
         decode(&stream.recv().await?)
+    }
+
+    fn take(&self, carried: &Carried, deadline: Instant) -> Result<Vec<u8>, String> {
+        if let Some(lease) = self.service.hold_taken(carried, deadline)? {
+            self.held
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(lease);
+        }
+        self.staging.take(carried)
     }
 }
 
@@ -466,30 +478,20 @@ impl AskHandler for Forward {
                 () = self.cancel.cancelled() => None,
             }
         };
-        let answer = match self.runtime.block_on(asked) {
-            Some(Ok(Ok(answer))) => answer,
+        let carried = match self.runtime.block_on(asked) {
+            Some(Ok(Ok(carried))) => carried,
             Some(Ok(Err(err))) => return Err(failed(format!("the asking node: {err}"))),
             Some(Err(_)) => return Err(failed("the asking node did not answer in time".into())),
             None => return Err(failed("this node is stopping".into())),
         };
+        let answer: PeerAnswer = decode(&self.take(&carried, ask.deadline).map_err(failed)?)
+            .map_err(|err| failed(format!("the asking node: {err}")))?;
         if let Some(signed) = answer.signed {
             ask.record_signing(signed);
         }
         let answered = answer.answered?;
         let data = match &answered.data {
-            Some(carried) => {
-                if let Some(lease) = self
-                    .service
-                    .hold_taken(carried, ask.deadline)
-                    .map_err(failed)?
-                {
-                    self.held
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(lease);
-                }
-                Some(self.staging.take(carried).map_err(failed)?)
-            }
+            Some(carried) => Some(self.take(carried, ask.deadline).map_err(failed)?),
             None => None,
         };
         Ok(Answered {

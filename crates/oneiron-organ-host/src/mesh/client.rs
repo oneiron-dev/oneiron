@@ -425,7 +425,14 @@ async fn answer(
     here: Here<'_>,
     lines: &mut Vec<crate::receipt::AskReceipt>,
 ) -> Result<(), MeshError> {
-    let ask: PeerAsk = decode(&stream.recv().await?)?;
+    let carried: Carried = decode(&stream.recv().await?)?;
+    let _ask_held = match &carried {
+        Carried::Staged { len, .. } => here
+            .lease(*len)
+            .map_err(|err| MeshError::Io(format!("organ mesh ask: {err}")))?,
+        Carried::Inline(_) => None,
+    };
+    let ask: PeerAsk = decode(&take(conn, carried).await?)?;
     let (answered, signed, slot) = run_handler(&ask, asks, lines);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
@@ -447,10 +454,15 @@ async fn answer(
         Err(refusal) => Err(refusal),
     };
     let encoded = encode(&PeerAnswer { answered, signed })?;
+    let carried = if encoded.len() <= INLINE {
+        Carried::Inline(ByteBuf::from(encoded))
+    } else {
+        put(conn, &encoded, sent, here).await?
+    };
     // Sending may partially succeed even on an error. Only the serving
     // host's final receipt can confirm what the organ received.
     lines[slot].unanswered = Some(crate::receipt::Unanswered::Unknown);
-    stream.send(&encoded).await
+    stream.send(&encode(&carried)?).await
 }
 
 fn run_handler(
