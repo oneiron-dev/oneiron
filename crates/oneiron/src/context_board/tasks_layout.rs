@@ -5,8 +5,9 @@
 //! writes and reject late overwrites without refusing the board; a fresh row
 //! incarnation prevents activation after erase and recreation.
 //!
-//! This does not implement fork layouts or MCP/run integration; program
-//! turns, shares, folds and owner defaults stay open.
+//! New native attenuated forks copy the source actor's live and pending
+//! TASKS state once, then diverge. Other fork families, MCP/run integration,
+//! program turns, shares, folds and owner defaults stay open.
 //! Checkpoint rows remain unclassified. See
 //! `docs/ops/context-board-tasks-layout.md` for the supported scope.
 
@@ -91,6 +92,34 @@ pub(crate) fn erase_tasks_budget_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     TASKS_BUDGET.delete(&vault.store, txn, actor)?;
+    Ok(())
+}
+
+/// Copies the actual source actor's TASKS layout when a new native fork is
+/// registered. The caller owns the accepted fork-creation transaction; retries
+/// that reuse an existing fork must not call this again.
+///
+/// Pending stays pending in both actors. The copied counters are independent,
+/// and the child gets a fresh incarnation rather than any parent candidate.
+/// An absent source becomes an explicit native default, with no parent lookup.
+pub(crate) fn inherit_tasks_layout_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    fork: &EntityId,
+) -> Result<()> {
+    let incarnation = *EntityId::now().as_bytes();
+    let mut row = TASKS_BUDGET
+        .get(&vault.store, &*txn, source)?
+        .unwrap_or(TasksBudgetRow {
+            live: None,
+            live_revision: 0,
+            total_revision: 0,
+            pending: None,
+            incarnation,
+        });
+    row.incarnation = incarnation;
+    TASKS_BUDGET.put(&vault.store, txn, fork, &row)?;
     Ok(())
 }
 
