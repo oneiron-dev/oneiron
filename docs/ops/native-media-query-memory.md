@@ -65,10 +65,11 @@ JSON are separate. The existing field order and authority values are unchanged;
 the enclosing serialization scope keeps the lease past its ID temporaries.
 
 Replay also records owned temporary strings used for a single corpus ID,
-debug-rendered input fields and metadata-hash hex values. Each string is
-counted by its actual capacity on that line. A local accounting closure moves
-the same string onward; its lease stays outside the closure until the capture
-ends. Source IDs, source hash buffers and retained JSON are separate owners.
+debug-rendered input fields, canonical repository references and metadata-hash
+hex values. Each string is counted by its actual capacity on that line. A local
+accounting closure moves the same string onward; its lease stays outside the
+closure until the capture ends. Source IDs, source hash buffers and retained
+JSON are separate owners.
 
 The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
