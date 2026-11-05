@@ -1,13 +1,17 @@
 # Scoped, explicitly born touch sources
 
 The bound batch router can project an explicitly born LastTouch with a
-noncanonical world, facet or project. The original Put, ClaimOf edge and native
+noncanonical world, facet, project or explicit numeric sensitivity band from
+0 through 3. The original Put, ClaimOf edge and native
 birth still land through their existing gates before its source is created in
 the same writer. The source freezes the actual admitted native position; it
-does not copy position into a new head or supply a grant. Other noncanonical
-relationship, opaque scope, sensitivity or session contexts and unsupported
-births keep their full native raw path. No-birth inputs still require the
-canonical position before routing.
+does not copy position into a new head or supply a grant. The remaining context
+must exactly match the canonical constructor at that numeric band. Sensitivity
+strings, missing or duplicate stamps, additional opaque keys, noncanonical
+relationship or session contexts and unsupported births keep their full native
+raw path. No-birth inputs still require the canonical position before routing.
+The public claim constructor still uses sensitivity 2; rebuilding a frozen
+source comparison body does not change the original row or its stamp.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
@@ -58,7 +62,8 @@ LastTouch winner selection compares the event's frozen context with every
 candidate's actual CLAIM context before supersession: normalized world,
 relationship, facet, project, opaque scope, native sensitivity and session tag.
 This applies to both scoped events and ordinary canonical events. An event
-cannot close a head in another world, facet or project. Its comparison body
+cannot close a head in another world, facet, project or sensitivity band. Its
+comparison body
 uses the frozen source position, not a mutable current-original position.
 The current original still supplies the conjunctive native read requirements.
 Other communication rules
