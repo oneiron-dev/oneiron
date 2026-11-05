@@ -131,7 +131,7 @@ impl<'r> Stream<'r> {
 
 /// UTF-8 checked across reads, a character split between two carried.
 #[derive(Default)]
-struct Utf8 {
+pub struct Utf8 {
     broken: bool,
     carry: [u8; 4],
     carry_len: usize,
