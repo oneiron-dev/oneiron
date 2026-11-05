@@ -9,6 +9,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.commitments.fulfill", post(facade_route))
         .route("/vault.commitments.release", post(facade_route))
         .route("/vault.commitments.supersede", post(facade_route))
+        .route("/vault.commitments.reminder_route.get", post(facade_route))
+        .route("/vault.commitments.reminder_route.set", post(facade_route))
         .route("/fetch", post(facade_route))
         .route("/crawl", post(facade_route))
         .route("/report", post(facade_route))
