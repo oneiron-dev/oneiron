@@ -15,6 +15,8 @@
 //! revoke's always lands, so both are zero
 //! ([`AGENT_GRANT_ACT_SEEN`], CALLS "FIX 5628 grant act revision").
 
+use std::collections::BTreeSet;
+
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -56,8 +58,12 @@ pub(crate) enum AgentGrantAct {
         grant_kind: FederationGrantKind,
         git_push_bounds: Option<GitPushBounds>,
     },
-    /// The owner revokes the Grant `grant`.
-    Revoke { grant: EntityId },
+    /// The owner revokes the Grant `grant`, acknowledging exactly the
+    /// topology decision tokens the writer collected (FIX 5114).
+    Revoke {
+        grant: EntityId,
+        acknowledged_topology: BTreeSet<AuthorityEntryHash>,
+    },
 }
 
 impl AgentGrantAct {
@@ -83,7 +89,15 @@ impl AgentGrantAct {
                     git_push_bounds,
                 },
             ),
-            Self::Revoke { grant } => (grant, AgentGrantChange::Revoke),
+            Self::Revoke {
+                grant,
+                acknowledged_topology,
+            } => (
+                grant,
+                AgentGrantChange::Revoke {
+                    acknowledged_topology,
+                },
+            ),
         }
     }
 }
