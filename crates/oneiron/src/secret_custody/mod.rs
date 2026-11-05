@@ -70,6 +70,7 @@ mod carrier_marks;
 mod cloud_registration;
 mod codec;
 mod control;
+pub(crate) use self::control::permits::holder_key as linked_machine_encryption_key;
 mod doors;
 mod floor;
 mod found_keys;
