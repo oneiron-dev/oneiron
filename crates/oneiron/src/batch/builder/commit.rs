@@ -443,6 +443,7 @@ impl BatchBuilder<'_> {
         };
         if changes_claims {
             vault.store.notify_proactivity_changes();
+            vault.verb_hook_bindings_changed();
         }
         vault.store.notify_task_updates(tasks);
         vault.store.notify_attempt_observers();
