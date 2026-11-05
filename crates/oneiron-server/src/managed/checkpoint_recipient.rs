@@ -56,6 +56,25 @@ pub(super) fn read(file: Option<File>) -> Option<HostHoldsRecipient> {
     }
 }
 
+/// Normalize the optional host-profile material before framing it. Invalid
+/// strings must not make an otherwise valid VM start fail its frame bound;
+/// the exact normalized object is what the guest must echo back.
+pub(super) fn normalized(
+    wire: Option<&CheckpointHostHoldsRecipient>,
+) -> Option<CheckpointHostHoldsRecipient> {
+    let wire = wire?;
+    match decode(wire) {
+        Ok(_) => Some(wire.clone()),
+        Err(reason) => {
+            tracing::warn!(
+                reason,
+                "checkpoint host-order recipient unavailable; VM start continues"
+            );
+            None
+        }
+    }
+}
+
 /// The epoch belongs to the actual ONHB frame, not a local default. The
 /// native constructor validates its complete format and public key; the
 /// delivered fingerprint must name those exact bytes.
