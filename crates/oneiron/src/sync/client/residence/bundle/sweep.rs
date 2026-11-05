@@ -101,7 +101,7 @@ async fn fetch_pads(
             return Ok(refilled);
         }
     };
-    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
     if pads.generation() != generation {
         return Err(refused());
     }
