@@ -1518,9 +1518,9 @@ def facade_dispatch(facade_rows):
                 let (output, rows) = super::export_transfer::vault_export_answer(server, call, &input, proof, action, owner)?;
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
-                let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows), hook_notice }})
+                let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }} }};
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: Some(rows), hook_notice }})
             }}\n'''
             continue
         if r.get('host_door'):
@@ -1546,7 +1546,7 @@ def facade_dispatch(facade_rows):
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
-            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }'
             # FIX 10425: a browser batch's or library run's answer counts the
             # decisions its hooks' verdicts answered among its own, as its
             # code-mode door does, so `model_free` reads them. Record only.
@@ -1563,13 +1563,13 @@ def facade_dispatch(facade_rows):
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
-                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
-                let output = match ran {{ Ok(output) => output, {failed} }};{landed}
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
-                Ok(FacadeCallOutput::unlisted({post_hooks}.await?).with_hook_notice(hook_notice))''')
+                let output = match ran {{ Ok(output) => output, {failed} }};{landed}
+                Ok(FacadeCallOutput::unlisted({post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?).with_hook_notice(hook_notice))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
                            # FIX 6867: a lane door judges its records in its engine door.
@@ -1704,9 +1704,9 @@ def facade_dispatch(facade_rows):
         {branch_turn}{producers}{output}{landed}
         Ok::<_, FacadeApiError>((output, rows))
         }}.await;
-        let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
         let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
-        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows, hook_notice }})
+        let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }} }};
+        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await.map_err(|error| error.with_hook_notice(hook_notice))?, rows, hook_notice }})
         }}\n'''
             continue
         if notice_result is not None:
@@ -1880,13 +1880,13 @@ def outputs():
     # ARCH-0080 §3: every door that runs a row by name crosses its verb hooks
     # here, once; no caller of `invoke` wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
-    core += "invoke_with_notice(memory, verb, value).map(|(value, _)| value)\n}\n"
-    core += "/// The row's value and its actual hook-chain notice bit; saved completions without metadata return None.\n"
-    core += "pub fn invoke_with_notice(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<(serde_json::Value, Option<bool>)> {\n"
-    core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))); }\n'
+    core += "invoke_with_notice(memory, verb, value).0\n}\n"
+    core += "/// The row's result and its actual hook-chain notice bit; a source without metadata returns None.\n"
+    core += "pub fn invoke_with_notice(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> (MemoryResult<serde_json::Value>, Option<bool>) {\n"
+    core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return (Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), None); }\n'
     # G10: an embedded handle has no anonymous model host. Refuse it before
     # hooks can retain even a hash or an ask containing the anonymous input.
-    core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?).map(|value| (value, None)); }\n'
+    core += 'if verb == "ai.anonymous_chat" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
     core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:

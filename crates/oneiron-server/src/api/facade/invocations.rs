@@ -427,10 +427,21 @@ pub(crate) async fn finish_door_claim(claim: DoorInvocationClaim, response: Resp
     };
     if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) {
         let release = released.map(|released| released.kept(&body));
+        let refusal_hook_notice = {
+            use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+            (release.is_none()
+                && head
+                    .headers
+                    .get(CALLER_NOTICE_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    == Some(CALLER_NOTICE_SUMMARY))
+            .then_some(true)
+        };
         claim.finish(InvocationOutcome {
             status: head.status.as_u16(),
             body,
             release,
+            refusal_hook_notice,
         });
     }
     Response::from_parts(head, Body::from(bytes))
@@ -496,7 +507,10 @@ fn replayed_reply(
                 ["Report this saved-reply mismatch."],
             )
         })?,
-        None => (rereleased_refusal(vault, auth, outcome.body), false),
+        None => (
+            rereleased_refusal(vault, auth, outcome.body),
+            outcome.refusal_hook_notice == Some(true),
+        ),
     };
     Ok((status, body, hook_notice))
 }

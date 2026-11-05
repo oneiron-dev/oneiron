@@ -23883,21 +23883,26 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    invoke_with_notice(memory, verb, value).map(|(value, _)| value)
+    invoke_with_notice(memory, verb, value).0
 }
-/// The row's value and its actual hook-chain notice bit; saved completions without metadata return None.
+/// The row's result and its actual hook-chain notice bit; a source without metadata returns None.
 pub fn invoke_with_notice(
     memory: &Memory<'_>,
     verb: &str,
     value: serde_json::Value,
-) -> MemoryResult<(serde_json::Value, Option<bool>)> {
+) -> (MemoryResult<serde_json::Value>, Option<bool>) {
     if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) {
-        return Err(
-            wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
+        return (
+            Err(wrong_root(verb)
+                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))),
+            None,
         );
     }
     if verb == "ai.anonymous_chat" {
-        return encode(ai_anonymous_chat(memory, decode(value)?)?).map(|value| (value, None));
+        return (
+            (|| encode(ai_anonymous_chat(memory, decode(value)?)?))(),
+            None,
+        );
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {
