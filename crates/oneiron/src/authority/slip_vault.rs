@@ -497,12 +497,24 @@ impl Vault {
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let now = self.instant_in_txn(&txn)?.secs();
+        self.verify_logged_capability_slip_request_in_txn(&txn, slip, timestamp, signature, nonce)
+    }
+
+    /// The same read-only verification in the caller's authority snapshot.
+    pub(super) fn verify_logged_capability_slip_request_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
         let challenge = super::slip_replay::request_challenge(
             timestamp,
             nonce,
-            super::slip_replay::request_now_in_txn(self, &txn)?,
+            super::slip_replay::request_now_in_txn(self, txn)?,
         )?;
         let key = &fold
             .slips
@@ -511,7 +523,7 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
-        let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
+        let verified = self.admitted_slip_view_in_txn(txn, verified, now)?;
         Ok(verified)
     }
 
