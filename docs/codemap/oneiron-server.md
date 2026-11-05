@@ -834,7 +834,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar_host/transcript_drain.rs` | src | s | 1 crate-vis | — | The host's drain of retained transcript uploads (FIX 9654): an upload that met its caller's open local… |
 | `src/calendar_host/xml.rs` | src | s | 8 crate-vis | — | Namespace-aware DAV multistatus decoding |
 | `src/campaign_enrollment.rs` | src | m | 2 crate-vis | — | Campaign enrollment from saved queries (ARCH-0059, decide-host 1193) |
-| `src/cli.rs` | src | L | 20 struct · 11 enum · 4 fn · 19 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DeviceCommand, DeviceEnrolArgs, DreamerCommand +23 | — |
+| `src/cli.rs` | src | L | 20 struct · 11 enum · 4 fn · 20 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DeviceCommand, DeviceEnrolArgs, DreamerCommand +23 | — |
 | `src/cli/account_args.rs` | src | s | 4 struct · 1 enum | AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs | `oneiron account`: the owner links a stopped vault to the Oneiron cloud account and manages that link (G7) |
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
 | `src/cli/files_args.rs` | src | s | 4 struct · 1 enum | FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs | `oneiron files`: the Files world on a stopped vault (FIX 6942), the folders this install keeps searchable on… |
@@ -844,6 +844,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/owner_args.rs` | src | L | 49 struct · 16 enum | BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs +57 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | m | 10 struct · 1 enum | KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs +3 | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key… |
+| `src/cli/reminder_route_args.rs` | src | s | 3 struct · 1 enum | ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs | `oneiron reminder-route`: the owner's commitment reminder route on a stopped vault… |
 | `src/cli/seat_args.rs` | src | s | 2 struct · 1 enum · 1 fn | SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs | `oneiron seat …` arguments: the official-seat sign-in surface (OF-375) |
 | `src/cli/secret_control_args.rs` | src | s | 6 struct | SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs, SecretShowSupplementArgs, SecretUnbindArgs | Flags for `oneiron secrets bind`, `unbind`, `pending`, `show-supplement` and `import-supplement` (FIX 2620… |
 | `src/cli/vault_unlock_args.rs` | src | s | 2 struct · 1 enum · 2 fn | RestoreWrapArgs, RestoreWrapKind, VaultUnlockArgs | Flags that unlock a stopped vault's data key for an owner command, and that wrap a restored key to a target… |
@@ -864,7 +865,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_consent_host.rs` | src | s | 6 crate-vis | — | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
 | `src/code_consent_host/browser.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held browser act (FIX 10423) |
 | `src/code_consent_host/desktop.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held desktop act (FIX 11499): [`browser`]'s twin for the desktop… |
-| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 25 re-export · 11 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 26 re-export · 11 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/account.rs` | src | s | 1 fn | — | `oneiron account`: the owner's cloud registration on a stopped vault (G7) |
 | `src/commands/api.rs` | src | m | 1 fn · 19 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | m | 13 crate-vis | — | A file holding a credential, readable by its owner alone |
@@ -897,7 +898,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/mcp_bridge/link/replies.rs` | src | s | 2 crate-vis | — | Reply forwarding on the bridge's shared socket driver |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
 | `src/commands/oneironer.rs` | src | m | 5 struct · 5 enum · 1 fn | DistillArgs, ExportArgs, FetchArgs, FetchPlatforms, OneironerCommand, PublishArgs, QualifyArgs, QualifyDevice +2 | `oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 "one base, two… |
-| `src/commands/owner.rs` | src | m | 2 fn · 7 re-export · 8 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
+| `src/commands/owner.rs` | src | m | 2 fn · 8 re-export · 8 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
 | `src/commands/owner/control_commands.rs` | src | m | 7 fn | — | Owner control and consent commands for a stopped vault |
 | `src/commands/owner/doctor.rs` | src | s | 1 crate-vis | — | `oneiron doctor`: where the vault lives and how it is, read on a stopped vault or beside a running `serve`… |
 | `src/commands/owner/pack_commands.rs` | src | s | 2 fn | — | Pack removal and channel subscription commands for a stopped vault |
@@ -907,6 +908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner/recovery_kit/custody.rs` | src | s | 2 crate-vis | — | The kit's side of a custody head (KS-4A1, FIX 5685) |
 | `src/commands/owner/recovery_kit/issue.rs` | src | s | 2 crate-vis | — | `oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code… |
 | `src/commands/owner/recovery_kit/live.rs` | src | s | 5 crate-vis | — | `oneiron recovery-kit pad-access \| upkeep \| roots \| pin \| anchor`: the kit and root calls of a running… |
+| `src/commands/owner/reminder_route.rs` | src | s | 1 fn | — | The owner's commitment reminder route on a stopped vault… |
 | `src/commands/owner/secret_commands.rs` | src | m | 4 fn · 3 crate-vis | — | Secret scan, custody, and value commands for a stopped vault |
 | `src/commands/owner/secret_input.rs` | src | m | 2 crate-vis | — | A secret read from stdin (FIX 1490) |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
@@ -1182,6 +1184,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/home_handoff.rs` | src | s | 3 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
 | `src/livequery/residence/index.rs` | src | m | 7 crate-vis | — | A window's residence index: its paged projection, touches, promotions and version vector |
 | `src/livequery/residence/machine_history.rs` | src | s | 2 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
+| `src/livequery/residence/media_vectors.rs` | src | s | 1 crate-vis | — | Read-only own-peer text vectors; these bytes never enter a canonical window root |
 | `src/livequery/residence/pad_custody.rs` | src | s | 2 crate-vis | — | `residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this… |
 | `src/livequery/residence/pad_objects.rs` | src | s | 1 crate-vis | — | A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the… |
 | `src/livequery/residence/pad_refill.rs` | src | s | 1 crate-vis | — | `residence.bundle.pads.refill` (FIX 9362, L03 half): the end of a machine's upload of a kept pad object… |
