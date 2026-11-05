@@ -332,9 +332,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let assembled = messages.clone();
     let read_board = board.as_ref().ok().and_then(Option::as_ref);
     let board_view = read_board.map(|board| (board.block.clone(), board.sections.clone()));
-    let board_rows = read_board
-        .filter(|board| board.rows_complete)
-        .map(|board| board.rows.clone());
+    let board_rows = read_board.map(|board| board.rows.clone());
+    let board_rows_complete = read_board.is_some_and(|board| board.rows_complete);
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
@@ -346,6 +345,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
+        if !board_rows_complete {
+            sources.add(None);
+        }
     }
     // The board's place holds the board, or the note of its omission, which
     // the call's segments name as one unnamed board section.
