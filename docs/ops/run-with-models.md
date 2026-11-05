@@ -3482,8 +3482,17 @@ What exists now:
   night never reports a successful empty retrain, and every target keeps
   serving stock.
 
+- **Morning report.** A regular proactivity digest carries a drafter line
+  (group `coach.drafter`, view `vault.drafters.status`) with every drafter
+  event no digest carried yet, read from the event history, not from the
+  bindings that stand now. A version activated and rolled back overnight is
+  still reported. Qualifications, activations, rollbacks, reverts and erases
+  are items of their own, and each one makes a digest due. Nights that
+  trained nothing are counted by outcome and reason (`held:no_trainer_recipe`,
+  `skipped:policy_off`) and ride a digest that is due anyway. The owner's own
+  policy changes are not reported back.
+
 What does not exist yet: the corpus export from the vault's conversations,
 the trainer script and its recipe for the house serving family, the held-out
 evaluator with its token-identity check, automatic activation and rollback,
-the vault-scoped serving worker that loads a version, and the drafter section
-of the morning report.
+and the vault-scoped serving worker that loads a version.
