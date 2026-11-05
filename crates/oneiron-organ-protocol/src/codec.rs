@@ -52,6 +52,30 @@ impl serde::de::Error for CodecError {
     }
 }
 
+/// Admission for the temporary heap stack used while encoding a value.
+/// The caller supplies its existing memory lease; this codec owns no floor.
+pub trait EncodeScratch {
+    /// Reserves additional stack bytes before allocation.
+    ///
+    /// # Errors
+    /// The caller's admission failed or was interrupted.
+    fn grow(&mut self, bytes: u64) -> Result<(), CodecError>;
+    /// Replaces pending bytes with the actual capacity just allocated.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+    /// Releases bytes after their stack storage has been freed.
+    fn shrink(&mut self, bytes: u64);
+}
+
+impl EncodeScratch for () {
+    fn grow(&mut self, _: u64) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn materialized(&mut self, _: u64, _: u64) {}
+
+    fn shrink(&mut self, _: u64) {}
+}
+
 /// `value`'s encoding.
 ///
 /// # Errors
@@ -78,10 +102,7 @@ pub fn encoded_len<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> 
 ///
 /// # Errors
 /// As [`to_vec`].
-pub(crate) fn write_into<T: Serialize + ?Sized>(
-    out: &mut Vec<u8>,
-    value: &T,
-) -> Result<(), CodecError> {
+pub fn write_into<T: Serialize + ?Sized>(out: &mut Vec<u8>, value: &T) -> Result<(), CodecError> {
     value.serialize(&mut ser::Serializer::new(out))
 }
 

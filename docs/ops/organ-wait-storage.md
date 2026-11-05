@@ -25,6 +25,15 @@ Owner-versus-masked input sight and submitting-principal landing remain unchange
 ## Supplied floors
 
 The router uses its existing machine memory floor for encoding and decoding.
+Encoding starts one empty lease before counting the saved call. Both the count
+and write pass admit the Value encoder's depth-first iterator stack before it
+grows. A replacement books the new stack capacity beside the old allocation;
+the old capacity is released only after replacement. The input IDs use the same
+32-character lowercase hex on the stack. The encoded output reserves before
+allocation and records its actual capacity before write-pass scratch grows.
+The same lease survives routing and the held-row write; its bytes drop first.
+This covers the known borrowed held-call shape, not arbitrary serializers.
+
 These offline admission waits have no new execution deadline: the mesh stop
 interrupts them. The saved call's deadline remains its per-execution duration.
 A router without a supplied memory floor keeps its existing behavior.
@@ -43,6 +52,6 @@ with its measured values. A measurement error remains its original I/O error.
 This disk budget covers encoded values, not LMDB keys, pages, splits, freelists
 or copy-on-write amplification. It is not a total native-disk or native-heap
 measurement. LMDB's configured map limit and actual filesystem I/O errors remain
-in force. Other overlay read copies, save-serializer scratch and native
-transaction allocations still need their own admission; this document
+in force. Other row and overlay metadata copies and native transaction
+allocations still need their own admission; this document
 does not claim complete resource coverage or runtime proof.

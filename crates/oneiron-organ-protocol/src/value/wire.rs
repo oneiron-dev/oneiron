@@ -8,63 +8,107 @@
 //! and reads it back the same way. A human-readable one (JSON) gets the
 //! value as its natural tree, which does recurse over the value's depth.
 
+use std::cell::RefCell;
 use std::fmt;
 
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeSeq, Serializer};
 use serde_bytes::{ByteBuf, Bytes};
 
-use super::Value;
 use super::ops::Builder;
-use crate::codec::{CodecError, Head, Reader, Token};
+use super::{AllocationChildren, Value};
+use crate::codec::{CodecError, EncodeScratch, Head, Reader, Token};
 
 /// The newtype name a value takes inside a serde type, which the protocol's
 /// codec reads as "the encoding of one value stands here".
 pub(crate) const VALUE_TOKEN: &str = "$oneiron_organ_protocol::Value";
 
-/// Writes `value`'s MessagePack, one piece at a time: a header, then any
-/// bytes it carries. Walks in order with a stack on the heap.
-///
-/// # Errors
-/// Whatever `put` returns.
-pub(crate) fn write<E>(
+/// Writes `value`'s MessagePack, one piece at a time. The depth-first
+/// iterator stack is admitted before growth and released after its last use.
+pub(crate) fn write<E: serde::ser::Error>(
     value: &Value,
     mut put: impl FnMut(&[u8]) -> Result<(), E>,
+    scratch: &mut impl EncodeScratch,
 ) -> Result<(), E> {
-    let mut stack = vec![value];
-    while let Some(value) = stack.pop() {
-        match value {
-            Value::Nil => put(Head::nil().as_slice())?,
-            Value::Boolean(flag) => put(Head::bool(*flag).as_slice())?,
-            Value::Integer(integer) => put(Head::integer(integer.get()).as_slice())?,
-            Value::F32(float) => put(Head::f32(*float).as_slice())?,
-            Value::F64(float) => put(Head::f64(*float).as_slice())?,
-            Value::String(text) => {
-                put(Head::str(text.len() as u64).as_slice())?;
-                put(text.as_bytes())?;
-            }
-            Value::Binary(bytes) => {
-                put(Head::bin(bytes.len() as u64).as_slice())?;
-                put(bytes)?;
-            }
-            Value::Ext(kind, bytes) => {
-                put(Head::ext(*kind, bytes.len() as u64).as_slice())?;
-                put(bytes)?;
-            }
-            Value::Array(items) => {
-                put(Head::array(items.len() as u64).as_slice())?;
-                stack.extend(items.iter().rev());
-            }
-            Value::Map(entries) => {
-                put(Head::map(entries.len() as u64).as_slice())?;
-                for (key, item) in entries.iter().rev() {
-                    stack.push(item);
-                    stack.push(key);
+    let mut stack = EncodingStack {
+        frames: Vec::new(),
+        scratch,
+    };
+    let mut next = Some(value);
+    loop {
+        if let Some(value) = next.take() {
+            match value {
+                Value::Nil => put(Head::nil().as_slice())?,
+                Value::Boolean(flag) => put(Head::bool(*flag).as_slice())?,
+                Value::Integer(integer) => put(Head::integer(integer.get()).as_slice())?,
+                Value::F32(float) => put(Head::f32(*float).as_slice())?,
+                Value::F64(float) => put(Head::f64(*float).as_slice())?,
+                Value::String(text) => {
+                    put(Head::str(text.len() as u64).as_slice())?;
+                    put(text.as_bytes())?;
+                }
+                Value::Binary(bytes) => {
+                    put(Head::bin(bytes.len() as u64).as_slice())?;
+                    put(bytes)?;
+                }
+                Value::Ext(kind, bytes) => {
+                    put(Head::ext(*kind, bytes.len() as u64).as_slice())?;
+                    put(bytes)?;
+                }
+                Value::Array(items) => {
+                    put(Head::array(items.len() as u64).as_slice())?;
+                    if !items.is_empty() {
+                        stack.push::<E>(AllocationChildren::Array(items.iter()))?;
+                    }
+                }
+                Value::Map(entries) => {
+                    put(Head::map(entries.len() as u64).as_slice())?;
+                    if !entries.is_empty() {
+                        stack.push::<E>(AllocationChildren::Map {
+                            entries: entries.iter(),
+                            value: None,
+                        })?;
+                    }
                 }
             }
         }
+        next = stack.frames.last_mut().and_then(AllocationChildren::next);
+        if next.is_none() && stack.frames.pop().is_none() {
+            return Ok(());
+        }
     }
-    Ok(())
+}
+
+struct EncodingStack<'value, 'scratch, M: EncodeScratch> {
+    frames: Vec<AllocationChildren<'value>>,
+    scratch: &'scratch mut M,
+}
+
+impl<'value, M: EncodeScratch> EncodingStack<'value, '_, M> {
+    fn push<E: serde::ser::Error>(&mut self, frame: AllocationChildren<'value>) -> Result<(), E> {
+        if self.frames.len() == self.frames.capacity() {
+            let old = self.frames.capacity();
+            let target = old.saturating_mul(2).max(1);
+            let size = std::mem::size_of::<AllocationChildren<'_>>() as u64;
+            let reserved = (target as u64).saturating_mul(size);
+            self.scratch.grow(reserved).map_err(E::custom)?;
+            self.frames.reserve_exact(target - self.frames.len());
+            let actual = (self.frames.capacity() as u64).saturating_mul(size);
+            self.scratch.materialized(reserved, actual);
+            self.scratch.shrink((old as u64).saturating_mul(size));
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+}
+
+impl<M: EncodeScratch> Drop for EncodingStack<'_, '_, M> {
+    fn drop(&mut self) {
+        let bytes = (self.frames.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<AllocationChildren<'_>>() as u64);
+        drop(std::mem::take(&mut self.frames));
+        self.scratch.shrink(bytes);
+    }
 }
 
 /// One whole value from `bytes`, which must hold nothing after it.
@@ -138,21 +182,49 @@ fn leaf(token: Token<'_>) -> Value {
 
 impl Serialize for Value {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.serialize_with_scratch(serializer, &mut ())
+    }
+}
+
+impl Value {
+    /// Serializes with admission for the binary encoding's iterator stack.
+    /// Human-readable serializers keep their ordinary natural-tree behavior.
+    ///
+    /// # Errors
+    /// The serializer or the supplied scratch admission failed.
+    pub fn serialize_with_scratch<S: Serializer>(
+        &self,
+        serializer: S,
+        scratch: &mut impl EncodeScratch,
+    ) -> Result<S::Ok, S::Error> {
         if serializer.is_human_readable() {
             return Natural(self).serialize(serializer);
         }
-        serializer.serialize_newtype_struct(VALUE_TOKEN, &Pieces(self))
+        serializer.serialize_newtype_struct(
+            VALUE_TOKEN,
+            &Pieces {
+                value: self,
+                scratch: RefCell::new(scratch),
+            },
+        )
     }
 }
 
 /// A value as the run of its encoded pieces: the protocol's codec writes
 /// each where it stands; another serializer gets a sequence of binaries.
-struct Pieces<'a>(&'a Value);
+struct Pieces<'value, 'scratch, M: EncodeScratch> {
+    value: &'value Value,
+    scratch: RefCell<&'scratch mut M>,
+}
 
-impl Serialize for Pieces<'_> {
+impl<M: EncodeScratch> Serialize for Pieces<'_, '_, M> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(None)?;
-        write(self.0, |piece| seq.serialize_element(Bytes::new(piece)))?;
+        write(
+            self.value,
+            |piece| seq.serialize_element(Bytes::new(piece)),
+            &mut **self.scratch.borrow_mut(),
+        )?;
         seq.end()
     }
 }
