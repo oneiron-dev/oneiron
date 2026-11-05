@@ -3,7 +3,8 @@
 //! of the live inbox and keeps it as a labelled source-deleted copy, still
 //! searchable by its readers. "Forget too" forgets every revision of it in
 //! the vault through the ordinary user delete, and keeps only the provider id
-//! as a fence, so a later listing never brings it back. A message moved to
+//! as a fence, so a later listing never brings it back: its sender, subject
+//! and labels go from the pack's own rows too. A message moved to
 //! trash or spam counts as deleted at the provider.
 
 use super::source::{MailProviderDeleteSetting, MailSourceRow};
@@ -53,11 +54,13 @@ pub(super) fn apply_provider_delete(
         let Some(mut current) = OCCURRENCES.get(&vault.store, txn, &key)? else {
             return Ok(());
         };
-        current.presence = match outcome {
-            ProviderDeleteOutcome::Forgotten => MailPresence::Forgotten { at },
-            _ => MailPresence::SourceDeleted { at },
-        };
-        current.updated_at = at;
+        match outcome {
+            ProviderDeleteOutcome::Forgotten => current.scrub(at),
+            _ => {
+                current.presence = MailPresence::SourceDeleted { at };
+                current.updated_at = at;
+            }
+        }
         BODY_QUEUE.delete(
             &vault.store,
             txn,
