@@ -28,6 +28,11 @@ Large reject bodies use the same closed-schema string reader and UTF-8 file sink
 for their sole required `proposal_ref` member. They have no delta member. Small
 rejects keep the existing in-memory decode and native decline call.
 
+The closed-schema reader matches each property name against a stack array sized
+by its declared schema: two members for accepts and one for rejects. Matching
+allocates no per-property name vector. These are the existing required fields,
+not a new request-size or property-name-length limit.
+
 The raw-body spool already reserves a stored-copy amount equal to its counted
 length. The decoded hex file cannot exceed half its own raw member's length;
 unescaping the reference cannot expand its raw member. Their combined decoded
@@ -79,7 +84,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, schema-sized name vectors, raw-spool/feed-buffer admission and stored
-proposal allocations remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, raw-spool/feed-buffer admission and stored proposal allocations remain
+separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
