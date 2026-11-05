@@ -4,12 +4,13 @@
 //! durable or why it is not. Each end holds only its own local locks, and
 //! only for a local commit, never across a round trip.
 
+use super::journal::{Making, SetChange};
 pub(super) use super::link::Link;
 use super::link::SourceReadError;
 use super::local::{self, Staged};
 use super::scan::{OutOp, OutSet};
 use super::source_check;
-use super::store::{Cached, Received, Version};
+use super::store::Version;
 use super::{Carrier, Mode};
 use oneiron_vault_contract::vm_outbox::{
     VM_OUTBOX_WIRE_REVISION, VmOutboxAck, VmOutboxDeferral, VmOutboxDescriptor, VmOutboxFrame,
@@ -501,7 +502,7 @@ impl Carrier {
     }
 
     /// A local failure as a deferral naming its bound.
-    fn io_outcome(&self, kind: VmOutboxKind, error: &std::io::Error) -> VmOutboxOutcome {
+    pub(super) fn io_outcome(&self, kind: VmOutboxKind, error: &std::io::Error) -> VmOutboxOutcome {
         let side = self.side_name();
         local_deferral(
             error,
@@ -529,8 +530,10 @@ impl Carrier {
     }
 
     /// Publishes a taken set whole, in its order, under this end's gate and,
-    /// for training, its outbox lock; or publishes none of it. Returns one
-    /// ack per transfer.
+    /// for training, its outbox lock; or publishes none of it. Its changes
+    /// are journaled before the first is made, so one that stops midway is
+    /// finished at the kind's next turn and answered durable only then
+    /// ([`super::journal`], FIX 7543). Returns one ack per transfer.
     fn commit(
         &mut self,
         kind: VmOutboxKind,
@@ -577,15 +580,17 @@ impl Carrier {
                 self.reoffer(kind, &item.descriptor.member);
             }
         }
-        let mut acks = Vec::with_capacity(taken.len());
+        let mut answers = Vec::with_capacity(taken.len());
+        let mut changes = Vec::new();
         for (index, item) in taken.into_iter().enumerate() {
-            let outcome = match item.plan {
-                Plan::Answer(outcome) => outcome,
+            let protected = item.member.as_ref().is_some_and(|member| member.protected);
+            let making = match item.plan {
+                Plan::Answer(outcome) => Err(outcome),
                 plan if blocked.is_some() || mismatch => {
                     if let Plan::Put(staged) = plan {
                         drop(staged);
                     }
-                    checked
+                    Err(checked
                         .get(index)
                         .cloned()
                         .flatten()
@@ -596,83 +601,44 @@ impl Carrier {
                                 "the set's local versions",
                                 "another member of the set holds a version this end does not know",
                             )
-                        })
+                        }))
                 }
-                plan => match root.as_ref() {
-                    Some(root) => self.apply(root, &item.descriptor, item.member.as_ref(), plan),
-                    None => VmOutboxOutcome::Durable,
-                },
+                _ if root.is_none() => Err(VmOutboxOutcome::Durable),
+                Plan::Put(staged) => Ok(Making::Put(staged)),
+                Plan::Remove => Ok(Making::Remove),
+                Plan::Keep(held) => Ok(Making::Keep(self.kept(&item.descriptor, held))),
             };
-            acks.push(VmOutboxAck::answering(&item.descriptor, outcome));
+            let outcome = match making {
+                Ok(making) => {
+                    changes.push(SetChange {
+                        descriptor: item.descriptor.clone(),
+                        protected,
+                        making,
+                    });
+                    None
+                }
+                Err(outcome) => Some(outcome),
+            };
+            answers.push((item.descriptor, outcome));
         }
+        // The set's changes go whole, journaled first (FIX 7543).
+        let mut made = match root.as_ref() {
+            Some(root) if !changes.is_empty() => self.publish_set(kind, root, changes),
+            _ => Vec::new(),
+        }
+        .into_iter();
+        let acks: Vec<VmOutboxAck> = answers
+            .into_iter()
+            .map(|(descriptor, outcome)| {
+                let outcome = outcome
+                    .or_else(|| made.next())
+                    .unwrap_or(VmOutboxOutcome::Durable);
+                VmOutboxAck::answering(&descriptor, outcome)
+            })
+            .collect();
         drop(lock);
         drop(held);
         acks
-    }
-
-    /// Makes one checked change and records it before it is acked. When its
-    /// record does not write, the change stays made, the transfer is
-    /// deferred on this end's carrier records and its kind waits on them
-    /// until that record is written again (FIX 7891).
-    fn apply(
-        &mut self,
-        root: &File,
-        transfer: &VmOutboxDescriptor,
-        member: Option<&VmOutboxMember>,
-        plan: Plan,
-    ) -> VmOutboxOutcome {
-        let protected = member.is_some_and(|member| member.protected);
-        let mut kept = None;
-        let published = match plan {
-            Plan::Put(staged) => (*staged).publish(self.owner, protected).map(Some),
-            Plan::Remove => local::remove(root, transfer.kind, &transfer.member).map(|()| None),
-            Plan::Keep(held) => {
-                kept = Some(self.kept(transfer, held));
-                Ok(None)
-            }
-            Plan::Answer(outcome) => return outcome,
-        };
-        let stamp = match published {
-            Ok(stamp) => stamp,
-            Err(error) => return self.io_outcome(transfer.kind, &error),
-        };
-        let mut record = self.store.get(transfer.kind, &transfer.member);
-        record.revision = record.revision.max(transfer.revision);
-        let version = (transfer.operation == VmOutboxOperation::Put).then(|| Version {
-            blake3: transfer.blake3.clone(),
-            length: transfer.length,
-        });
-        record.cached = stamp
-            .zip(version.clone())
-            .map(|(stamp, version)| Cached { stamp, version });
-        record.agreed = version;
-        record.received = Some(Received {
-            transfer_id: transfer.transfer_id,
-            revision: transfer.revision,
-            blake3: transfer.blake3.clone(),
-        });
-        if record
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.revision <= transfer.revision)
-        {
-            record.pending = None;
-        }
-        record.refused = None;
-        record.diverged = kept;
-        match self
-            .store
-            .put(transfer.kind, &transfer.member, record.clone())
-        {
-            Ok(()) => {
-                self.received_written(transfer.kind, &transfer.member);
-                self.taken_answer(transfer, &record)
-            }
-            Err(error) => {
-                self.received_failed(transfer.kind, &transfer.member, record, &error);
-                self.records_outcome(&error)
-            }
-        }
     }
 }
 
