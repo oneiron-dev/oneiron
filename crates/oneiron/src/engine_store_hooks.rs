@@ -125,8 +125,12 @@ impl StoreDeleteGuards for EngineDeleteGuards {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<(bool, bool, Vec<EntityId>)> {
-        crate::workspace_roster::deindex_project_room(store, txn, id)
+        crate::workspace_roster::deindex_project_room(store, txn, id, deindex)
     }
 }
 
@@ -599,20 +603,20 @@ pub(crate) struct EngineAttemptOperations;
 impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
     fn erase_attempt_payload_actor_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, actor)
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(write, txn, actor)
     }
 
     fn erase_attempt_payload_actors_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actors: &BTreeSet<EntityId>,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actors_in_txn(store, txn, actors)
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(write, txn, actors)
     }
 
     fn erase_model_step_failure_reasons_in_txn(

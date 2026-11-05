@@ -155,7 +155,7 @@ impl ForceCancelAuthority {
     ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let (vault, wtxn, actor) = erase.parts();
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
-            &vault.store,
+            &crate::secret_custody::CustodyWrite::of(vault),
             wtxn,
             &std::collections::BTreeSet::from([actor]),
         )?;
@@ -174,7 +174,7 @@ impl ForceCancelAuthority {
         let erased = crate::deletion::restore_erased_payload_targets_in_txn(restore)?;
         let (vault, wtxn, _) = restore.parts();
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
-            &vault.store,
+            &crate::secret_custody::CustodyWrite::of(vault),
             wtxn,
             &erased,
         )?;

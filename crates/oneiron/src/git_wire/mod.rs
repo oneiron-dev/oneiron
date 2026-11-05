@@ -29,6 +29,7 @@ mod bridge;
 pub(crate) mod bundle_tree;
 mod checkout;
 mod checkout_remote;
+pub use checkout_remote::validate_checkout_door;
 use oneiron_store::git_wire::config;
 mod env;
 mod execution_context;
