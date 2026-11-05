@@ -104,18 +104,11 @@ impl Vault {
     ) -> Result<SettleSelectOutcome> {
         self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
-        // A deck proposal answering a thread settles under that thread's brief
-        // when it rides a standing grant; the owner's own consent needs none.
-        let deck = crate::edit_roundtrip::deck_op(proposal);
-        if let (Some((_, _, context)), SettleConsent::StandingGrant { brief_ref }) = (deck, consent)
-            && context.thread.is_some_and(|thread| {
-                crate::anchored_annotation::thread_brief_ref(&thread) != *brief_ref
-            })
-        {
-            return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                "a deck proposal answering a thread settles only under that thread's brief",
-            )));
-        }
+        // The brief of the thread a deck proposal answers, which a settle a
+        // standing grant carries must name (judged in the writer below).
+        let thread_brief = crate::edit_roundtrip::deck_op(proposal)
+            .and_then(|(_, _, context)| context.thread)
+            .map(|thread| crate::anchored_annotation::thread_brief_ref(&thread));
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -137,6 +130,18 @@ impl Vault {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
                 let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                // A deck proposal answering a thread settles under that
+                // thread's brief whenever a standing grant carries the settle,
+                // whatever consent it named; only the verified owner needs
+                // none (FIX 9620).
+                if grant_ref.is_some()
+                    && let Some(thread_brief) = &thread_brief
+                    && consent.brief_ref() != Some(thread_brief.as_str())
+                {
+                    return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
+                        "a deck proposal answering a thread settles only under that thread's brief",
+                    )));
+                }
                 if let Some(bundle) = &proposal.sheet_answers {
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
                     let cap = policy
