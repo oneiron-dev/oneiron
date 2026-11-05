@@ -20,6 +20,7 @@ mod run_self;
 pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
+mod source_rows;
 mod standing;
 mod turn_actions;
 
@@ -35,6 +36,8 @@ pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
 pub(crate) use turn_actions::action_board;
+
+use self::source_rows::extend_source_rows;
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
@@ -196,6 +199,10 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_sources: Vec<BoardSectionSource>,
+    /// Whether every rendered row reference has an identity; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    rows_complete: bool,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -606,6 +613,7 @@ pub(crate) async fn context_board_hydrate(
         board_turn: None,
         chat_context,
         chat_sources,
+        rows_complete: parts.named_complete,
     };
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
@@ -643,12 +651,16 @@ pub(crate) async fn context_board_hydrate(
     drop(runs);
     // Every row the board delivered: its MEMORIES rows (pins included), its
     // capability hits, and the task intents, worlds, room and project it named.
-    let mut delivered: Vec<_> = response
-        .memories
-        .iter()
-        .flat_map(|memories| &memories.rows)
-        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())
-        .collect();
+    let mut delivered = Vec::new();
+    extend_source_rows(
+        &mut delivered,
+        &mut response.rows_complete,
+        response
+            .memories
+            .iter()
+            .flat_map(|memories| &memories.rows)
+            .map(|row| row.id.as_str()),
+    );
     delivered.extend(hits_of(response.pack.as_ref()));
     delivered.extend(parts.named.iter().copied());
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
@@ -678,12 +690,16 @@ pub(crate) async fn context_board_hydrate(
     // notification, rider row (those its overflow counts too), pack source,
     // named or stamped contact, named reader definition and discovered
     // capability, and what each INBOX row rests on (FIX 8145).
-    let mut admit: Vec<_> = response
-        .notifications
-        .iter()
-        .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok())
-        .collect();
-    admit.extend(rider_admits(&changed_line));
+    let mut admit = Vec::new();
+    extend_source_rows(
+        &mut admit,
+        &mut response.rows_complete,
+        response
+            .notifications
+            .iter()
+            .map(|notification| notification.id.as_str()),
+    );
+    admit.extend(rider_admits(&changed_line, &mut response.rows_complete));
     admit.extend(pack_sources);
     admit.extend(named_refs);
     admit.extend(parts.named);
@@ -702,11 +718,12 @@ pub(crate) async fn context_board_hydrate(
     }
     let memories = response.memories.iter().flat_map(|memories| &memories.rows);
     let standing = response.standing.iter().map(|prefix| &prefix.world_ref);
-    served.extend(
+    extend_source_rows(
+        &mut served,
+        &mut response.rows_complete,
         memories
-            .map(|row| &row.id)
-            .chain(standing)
-            .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+            .map(|row| row.id.as_str())
+            .chain(standing.map(String::as_str)),
     );
     // The standing block's text is its CLAIMs' (FIX 8148): a replay admits
     // each again under the caller's read and clamp, and an erase of one
@@ -715,7 +732,7 @@ pub(crate) async fn context_board_hydrate(
     Ok((
         axum::Extension(crate::idempotency::ServedRows {
             rows: served,
-            admit: Some(admit),
+            admit: response.rows_complete.then_some(admit),
             sources: standing_claims,
         }),
         Json(response),
@@ -737,11 +754,16 @@ fn hits_of(pack: Option<&CoreContextPackResponse>) -> impl Iterator<Item = oneir
 /// removed connector's key is one the reader was already shown.
 fn rider_admits(
     line: &oneiron::context_board::ChangedLine,
-) -> impl Iterator<Item = oneiron::EntityId> + '_ {
-    line.named_rows().filter_map(|id| {
-        let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
-        oneiron::EntityId::from_hex(hex).ok()
-    })
+    complete: &mut bool,
+) -> Vec<oneiron::EntityId> {
+    let mut rows = Vec::new();
+    extend_source_rows(
+        &mut rows,
+        complete,
+        line.named_rows()
+            .map(|id| id.rsplit_once(':').map_or(id, |(_, hex)| hex)),
+    );
+    rows
 }
 
 /// A standing session's response must fit its whole token budget.
@@ -830,6 +852,8 @@ pub(crate) struct ChatBoard {
     pub(crate) block: String,
     /// Every row the board served.
     pub(crate) rows: Vec<oneiron::EntityId>,
+    /// Whether `rows` is a complete source witness for this board.
+    pub(crate) rows_complete: bool,
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
@@ -867,6 +891,7 @@ pub(crate) async fn chat_board(
     Ok(ChatBoard {
         block: context.board,
         rows: served.0.rows,
+        rows_complete: context.rows_complete,
         context: context.chat_context,
         sections: context.chat_sources,
     })
