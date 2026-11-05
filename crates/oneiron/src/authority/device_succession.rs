@@ -6,11 +6,12 @@
 //! ([`super::owner_choice`]) under their own revision domain, one frontier
 //! per predecessor (client id, device key): a succession supersedes exactly
 //! that predecessor's live successions its parents carry, and concurrent
-//! different successions conflict. While a predecessor's successions
-//! conflict, or its newest is one this install does not count at full
-//! strength, it has no successor here: no install completes its receipts.
-//! Successions are main-log entries, so every machine the owner admits folds
-//! them.
+//! different successions conflict. The register's own rule names the
+//! successor: while successions conflict, the last unconflicted one stays in
+//! force, and one this install does not count at full strength counts as not
+//! made, so the one it replaced stays in force. Every install folds the same
+//! choice, so one machine completes a predecessor's receipts. Successions
+//! are main-log entries, so every machine the owner admits folds them.
 //!
 //! The register names who completes a predecessor's erase receipts, nothing
 //! else: each receipt is still verified under the key that signed it, and
@@ -78,18 +79,14 @@ impl FoldedDeviceSuccessions {
     }
 
     /// The successor of the predecessor whose succession target is `target`,
-    /// as this install counts its successions: the succession in force while
-    /// it is itself live and unconflicted, else none.
+    /// as this install counts its successions: the register's choice in
+    /// force ([`FoldedOwnerChoice::selected`]), none when the owner never
+    /// named one that counts.
     pub(crate) fn successor(&self, target: EntityId) -> Option<EntityId> {
-        let folded = self.predecessors.get(&target)?;
-        if !folded.conflict.is_empty() {
-            return None;
-        }
-        let head = folded.in_force.as_ref()?;
-        if !folded.live.contains_key(&head.act) {
-            return None;
-        }
-        head.choice.map(|choice| choice.successor)
+        self.predecessors
+            .get(&target)?
+            .selected()
+            .map(|choice| choice.successor)
     }
 
     /// The live successions `machine` carried, for its next profile
@@ -151,31 +148,14 @@ pub(super) fn folded_device_successions(
 impl AuthorityFold {
     /// The machine the owner named to complete the receipts of the device
     /// key `device_key` under client id `client`, as this install counts his
-    /// successions (FIX 11135). Conflicting vault roots, or any live
-    /// succession of that predecessor this install holds back, leave it with
-    /// none.
+    /// successions (FIX 11135): the succession in force under the
+    /// owner-choice register's own rule.
     pub(crate) fn device_successor(
         &self,
         client: u64,
         device_key: &[u8; 32],
     ) -> Result<Option<EntityId>> {
-        if self.vault_root_is_conflicted() {
-            return Ok(None);
-        }
         let target = device_succession_target(client, device_key)?;
-        if self
-            .device_successions
-            .predecessors
-            .get(&target)
-            .is_some_and(|folded| {
-                folded
-                    .live
-                    .keys()
-                    .any(|act| self.install.held_back.contains(act))
-            })
-        {
-            return Ok(None);
-        }
         Ok(self.device_successions.successor(target))
     }
 }
@@ -200,7 +180,9 @@ impl Vault {
     /// The successor is this install's own machine, read in the same
     /// transaction; nothing the caller names stands in for it. The
     /// succession supersedes the predecessor's live successions and lands
-    /// live and counted here before it commits.
+    /// live and counted here before it commits, and in the same commit each
+    /// of the predecessor's receipts that still owes a sweep no job covers
+    /// gets a fresh one.
     ///
     /// # Errors
     /// A refusal when the proof is no longer the live owner, when this
@@ -275,6 +257,21 @@ impl Vault {
             .is_some_and(|folded| folded.live.contains_key(&hash));
         if !live || after.install.held_back.contains(&hash) {
             return Err(invalid_authority());
+        }
+        // A sweep run before this naming read the predecessor's receipts as
+        // another device's and retired their jobs: each receipt it still
+        // owes gets a fresh one, in this commit.
+        let requeued = crate::deletion::requeue_successor_sweeps_in_txn(
+            self,
+            &mut txn,
+            (client, device_key),
+            now,
+        )?;
+        if requeued > 0 {
+            tracing::info!(
+                requeued,
+                "device succession: requeued the sweeps the predecessor's erase receipts owe"
+            );
         }
         let appended = after
             .valid_entries

@@ -10,7 +10,7 @@
 //! signature verifies under that attested key over the transcript its signer
 //! signed (OD-6).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -18,12 +18,20 @@ use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 
 use super::receipt::{
     ATT_EMPTY_MAP_BYTE, ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, RECEIPT_ATT_DOMAIN,
-    RedactionAuditReceipt, receipt_attestation_splice, receipt_envelope_header,
+    RedactionAuditReceipt, decode_redaction_audit_receipt, is_corrupt_claim_repair_event,
+    receipt_attestation_splice, receipt_envelope_header,
 };
+use super::receipt_completion::redaction_sweep_completion_in_txn;
 use super::receipt_grammar::is_lower_hex;
+use super::sweep_queue::{
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras, decode_hard_erase_sweep_job,
+    decode_hard_erase_sweep_seq,
+};
 
 /// Whether this device attested the erase receipt `receipt`, stored at
 /// `receipt_id`. An install with no cached identity attested none. A receipt
@@ -31,14 +39,6 @@ use super::receipt_grammar::is_lower_hex;
 /// another device's, unless the owner named this install's machine the
 /// successor of that client and key (FIX 11135): it is then this device's,
 /// verified under the key it names.
-///
-/// The signature is verified over the STORED bytes — the stored header and
-/// the stored body spliced at the `verification` value, exactly as the sync
-/// lease path verifies a receipt (OD-6) — never over a re-encode, so a
-/// stored body in another valid encoding still reads as this device's. Only
-/// when no row is stored, or the stored header is a later rewrite the
-/// signer never signed, does the signer's re-encoded transcript below stand
-/// in.
 ///
 /// # Errors
 ///
@@ -56,6 +56,29 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     ) else {
         return Ok(false);
     };
+    let Some((client, key)) = verified_attesting_pair_in_txn(vault, txn, receipt_id, receipt)?
+    else {
+        return Ok(false);
+    };
+    attesting_pair_is_this_device_in_txn(vault, txn, (client_id, device_pk), (client, &key))
+}
+
+/// The pair (client id, device key) that attested the erase receipt
+/// `receipt`, stored at `receipt_id`, when its signature verifies under that
+/// key; `None` when it names no well-formed pair or does not verify.
+///
+/// The signature is verified over the STORED bytes — the stored header and
+/// the stored body spliced at the `verification` value, exactly as the sync
+/// lease path verifies a receipt (OD-6) — never over a re-encode, so a
+/// stored body in another valid encoding still verifies. Only when no row is
+/// stored, or the stored header is a later rewrite the signer never signed,
+/// does the signer's re-encoded transcript below stand in.
+fn verified_attesting_pair_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_id: &EntityId,
+    receipt: &RedactionAuditReceipt,
+) -> Result<Option<(u64, [u8; 32])>> {
     // Every caller passes an initial receipt decoded from the row at
     // `receipt_id`, which the mint stored (or sync replayed byte-exactly)
     // under the point envelope stamped `hard_purge_complete_at`: the
@@ -65,18 +88,10 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
         if raw.len() >= ENTITY_METADATA_HEADER_LEN && raw[..ENTITY_METADATA_HEADER_LEN] == signed {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             let Some(parts) = receipt_attestation_splice(body) else {
-                return Ok(false);
+                return Ok(None);
             };
-            if !attesting_pair_is_this_device_in_txn(
-                vault,
-                txn,
-                (client_id, device_pk),
-                (parts.client_id, &parts.pubkey),
-            )? {
-                return Ok(false);
-            }
             let Ok(key) = VerifyingKey::from_bytes(&parts.pubkey) else {
-                return Ok(false);
+                return Ok(None);
             };
             let mut message = Vec::with_capacity(
                 RECEIPT_ATT_DOMAIN.len()
@@ -91,7 +106,10 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
             message.extend_from_slice(&body[..parts.verification_value_offset]);
             message.push(ATT_EMPTY_MAP_BYTE);
             let signature = Signature::from_bytes(&parts.signature);
-            return Ok(key.verify_strict(&message, &signature).is_ok());
+            return Ok(key
+                .verify_strict(&message, &signature)
+                .is_ok()
+                .then_some((parts.client_id, parts.pubkey)));
         }
     }
     let attested = |key: &str| receipt.verification.get(key).map(String::as_str);
@@ -99,21 +117,13 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
         attested(ATT_KEY_CLIENT).and_then(client_from_hex),
         attested(ATT_KEY_PK).and_then(key_from_hex),
     ) else {
-        return Ok(false);
+        return Ok(None);
     };
-    if !attesting_pair_is_this_device_in_txn(
-        vault,
-        txn,
-        (client_id, device_pk),
-        (attested_client, &attested_pk),
-    )? {
-        return Ok(false);
-    }
     let (Some(signature), Ok(key)) = (
         attested(ATT_KEY_SIG).and_then(signature_from_hex),
         VerifyingKey::from_bytes(&attested_pk),
     ) else {
-        return Ok(false);
+        return Ok(None);
     };
     // No stored row, or a stored header the signer never signed: fall back
     // to the signer's transcript, the body with `verification` empty, under
@@ -130,7 +140,108 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     message.extend_from_slice(receipt_id.as_bytes());
     message.extend_from_slice(&header);
     message.extend_from_slice(&body);
-    Ok(key.verify_strict(&message, &signature).is_ok())
+    Ok(key
+        .verify_strict(&message, &signature)
+        .is_ok()
+        .then_some((attested_client, attested_pk)))
+}
+
+/// Requeues the sweep each erase receipt the predecessor `predecessor`
+/// (client id, device key) attested still owes, once the owner named this
+/// install its successor (FIX 11135): an initial receipt whose sweep was
+/// queued, with no linked completion, that no pending `h:` row and no owed
+/// `hc:` compaction covers. A sweep run before the naming skipped such a
+/// receipt as another device's and retired its job; a fresh job over the
+/// receipt's own scope lets the next sweep scrub again and complete it, its
+/// deadline still counted from the erase's request. Returns how many jobs it
+/// queued.
+///
+/// # Errors
+///
+/// Storage errors, and a stored receipt row shorter than its header.
+pub(crate) fn requeue_successor_sweeps_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    predecessor: (u64, [u8; 32]),
+    now: u64,
+) -> Result<usize> {
+    let owed = {
+        let txn: &heed::RoTxn<'_> = wtxn;
+        let mut job_scopes: Vec<BTreeSet<String>> = Vec::new();
+        for row in vault
+            .store
+            .sync_queue
+            .prefix_iter(txn, HARD_ERASE_SWEEP_PREFIX)?
+        {
+            let (key, value) = row?;
+            if decode_hard_erase_sweep_seq(&key).is_none() {
+                continue;
+            }
+            // An undecodable row covers nothing, as the sweep's audit reads it.
+            if let Ok(job) = decode_hard_erase_sweep_job(&value) {
+                job_scopes.push(job.scope.entity_ids.into_iter().collect());
+            }
+        }
+        #[cfg(feature = "sync")]
+        let compacting = crate::sweep::owed::receipts_owed_compaction_in_txn(vault, txn)?;
+        let mut owed = Vec::new();
+        for id in vault
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_REDACTION_AUDIT, None)?
+        {
+            let id = id?;
+            let Some(raw) = vault.store.port_entity_raw(txn, &id)? else {
+                continue;
+            };
+            let body = raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("entity metadata"))?;
+            if is_corrupt_claim_repair_event(body) {
+                continue;
+            }
+            // An unreadable receipt is the sweep audit's to report.
+            let Ok(receipt) = decode_redaction_audit_receipt(body) else {
+                continue;
+            };
+            if receipt.sweep_queued_at.is_none() || !receipt.is_initial() {
+                continue;
+            }
+            match redaction_sweep_completion_in_txn(&vault.store, txn, &id, &receipt) {
+                Ok(Some(_)) => continue,
+                Ok(None) | Err(Error::CorruptedIndex("redaction audit receipt body")) => {}
+                Err(err) => return Err(err),
+            }
+            let needed: BTreeSet<&String> = receipt.scope.entity_ids.iter().collect();
+            if job_scopes
+                .iter()
+                .any(|scope| needed.iter().all(|entity| scope.contains(*entity)))
+            {
+                continue;
+            }
+            #[cfg(feature = "sync")]
+            if compacting.contains(&id) {
+                continue;
+            }
+            if verified_attesting_pair_in_txn(vault, txn, &id, &receipt)? == Some(predecessor) {
+                owed.push(receipt);
+            }
+        }
+        owed
+    };
+    for receipt in &owed {
+        let extras = HardEraseSweepExtras {
+            capture_failures: receipt.capture_failures.clone(),
+            ..HardEraseSweepExtras::default()
+        };
+        vault.enqueue_hard_erase_sweep_in_txn(
+            wtxn,
+            receipt.scope.clone(),
+            extras,
+            now,
+            receipt.requested_at,
+        )?;
+    }
+    Ok(owed.len())
 }
 
 /// Whether the attesting pair `attested` (client id, device key) is this
