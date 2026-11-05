@@ -19,7 +19,10 @@ use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 
 pub(crate) mod checkpoint;
 mod lifetime;
+mod runtime;
 pub(crate) use lifetime::{erase_actor_in_txn, erase_source_in_txn};
+pub use runtime::WorkflowToolContinuation;
+pub(crate) use runtime::{adopt_claim_in_txn, clear_in_txn};
 
 const TABLE: SideTable<EntityId, CheckpointRow, Named> =
     SideTable::new(&side_table::WORKFLOW_TOOL_CHECKPOINT);
@@ -171,25 +174,11 @@ pub(crate) fn put_in_txn(
     let actual = queue
         .get_in_write_txn(txn, leased.id)?
         .ok_or_else(|| invalid("workflow checkpoint leaf is missing"))?;
-    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&actual.payload)?;
-    let root = payload
-        .parent_attempt
-        .ok_or_else(|| invalid("workflow checkpoint has no wrapper"))?;
-    let wrapper = queue
-        .get_in_write_txn(txn, root)?
-        .ok_or_else(|| invalid("workflow checkpoint wrapper is missing"))?;
-    let dispatcher = AgentDispatcher::new(vault);
-    let workflow = dispatcher.read_workflow(txn, &wrapper)?;
-    if queue.retry_tip_in_txn(txn, workflow.active)?.id != actual.id
-        || actual.run_id != workflow.intent.run_id
-    {
-        return Err(invalid("workflow checkpoint has foreign lineage"));
+    if actual.state != crate::attempt_queue::AttemptState::Leased {
+        return Err(invalid("workflow checkpoint is not a running leaf"));
     }
-    let input = super::super::decode_agent_dispatch_input(&payload.input)?;
-    let actor = agent_dispatch_run_actor(&input, actual.id)?;
-    if crate::ports::owner_gone_in_txn(&vault.store, txn, &actor.entity_ref())? {
-        return Err(invalid("workflow checkpoint actor is erased"));
-    }
+    let (actor, room) = identity_in_txn(vault, txn, &actual)?;
+    check_progress_in_txn(vault, txn, &actual, actor, &progress)?;
     let k = key(actual.id)?;
     let prior = TABLE.get(&vault.store, txn, &k)?;
     if prior.as_ref().is_some_and(|row| {
@@ -197,7 +186,6 @@ pub(crate) fn put_in_txn(
     }) {
         return Err(invalid("workflow checkpoint is unavailable"));
     }
-    let room = input.room.map(|room| room.room);
     for source in progress.known_sources.iter().copied().chain(room) {
         if crate::ports::owner_gone_in_txn(&vault.store, txn, &source)? {
             return Err(invalid("workflow checkpoint source is erased"));
@@ -270,6 +258,55 @@ pub(crate) fn put_in_txn(
         ));
     }
     TABLE.put(vault, txn, &k, &row)
+}
+
+fn identity_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    actual: &AttemptRecord,
+) -> Result<(crate::WriteActor, Option<EntityId>)> {
+    let queue = AttemptQueue::new(vault);
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&actual.payload)?;
+    let root = payload
+        .parent_attempt
+        .ok_or_else(|| invalid("workflow checkpoint has no wrapper"))?;
+    let wrapper = queue
+        .get_in_txn(txn, root)?
+        .ok_or_else(|| invalid("workflow checkpoint wrapper is missing"))?;
+    let dispatcher = AgentDispatcher::new(vault);
+    let workflow = dispatcher.read_workflow(txn, &wrapper)?;
+    if wrapper.state != crate::attempt_queue::AttemptState::Paused
+        || queue.retry_tip_in_txn(txn, workflow.active)?.id != actual.id
+        || actual.run_id != workflow.intent.run_id
+    {
+        return Err(invalid("workflow checkpoint has foreign lineage"));
+    }
+    let input = super::super::decode_agent_dispatch_input(&payload.input)?;
+    let actor = agent_dispatch_run_actor(&input, actual.id)?;
+    if crate::ports::owner_gone_in_txn(&vault.store, txn, &actor.entity_ref())? {
+        return Err(invalid("workflow checkpoint actor is erased"));
+    }
+    Ok((actor, input.room.map(|room| room.room)))
+}
+
+fn check_progress_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    actual: &AttemptRecord,
+    actor: crate::WriteActor,
+    progress: &WorkflowToolProgress,
+) -> Result<()> {
+    let guard = crate::BudgetGuard::from_checkpoint(progress.budget.clone())
+        .map_err(|_| invalid("workflow checkpoint meter is invalid"))?;
+    let run = format!("workflow-step:{}", key(actual.id)?.to_hex());
+    if guard.read().attempt_id != run
+        || guard.actor() != Some(actor.entity_ref())
+        || AgentDispatcher::new(vault).scope_for_attempt_in_txn(txn, actual.id)?
+            != progress.spend_scope
+    {
+        return Err(invalid("workflow checkpoint meter has foreign identity"));
+    }
+    Ok(())
 }
 
 fn pending_call<'a>(

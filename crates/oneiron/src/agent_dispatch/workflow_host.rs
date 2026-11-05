@@ -175,6 +175,7 @@ impl AgentDispatcher<'_> {
         else {
             return Ok(WorkflowProgress::Waiting(active.id));
         };
+        super::workflow::tool_wait::adopt_claim_in_txn(self.vault, &mut txn, &active, &attempt)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         let status = AgentDispatchStatus { attempt, input };
@@ -244,6 +245,7 @@ impl AgentDispatcher<'_> {
                 tracing::warn!(kind = ?error.kind(), "workflow output entity was not prepared");
             }
         }
+        super::workflow::tool_wait::clear_in_txn(self.vault, &mut txn, &status.attempt)?;
         crate::ports::JobQueue::port_job_complete(
             self.vault,
             &mut txn,

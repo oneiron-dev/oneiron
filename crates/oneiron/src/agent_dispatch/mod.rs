@@ -95,7 +95,8 @@ mod workflow_pump;
 mod workflow_record;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
 pub use workflow::tool_wait::{
-    WorkflowToolCursor, WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
+    WorkflowToolContinuation, WorkflowToolCursor, WorkflowToolProgress, WorkflowToolTranscript,
+    WorkflowToolWait,
 };
 pub(crate) use workflow::tool_wait::{
     accepts_masked as workflow_tool_checkpoint_accepts_masked,
