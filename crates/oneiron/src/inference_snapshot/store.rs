@@ -21,7 +21,7 @@
 //! or a receipt; the copy a call holds is wiped before it returns.
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::MutexGuard;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -128,9 +128,9 @@ fn same_session(a: &SnapshotManifest, b: &SnapshotManifest) -> bool {
         && a.compatibility == b.compatibility
 }
 
-/// Writes `body` as `id`'s body file in `dir`: beside its name, synced,
+/// Writes `sealed` as `id`'s body file in `dir`: beside its name, synced,
 /// renamed in, and the directory synced.
-fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
+fn write_body(dir: &Path, id: &SnapshotId, sealed: &SealedSnapshot<'_>) -> Result<()> {
     fs::create_dir_all(dir)?;
     let staging = dir.join(format!("{}{STAGING_SUFFIX}", id.to_hex()));
     let written = (|| -> Result<()> {
@@ -138,7 +138,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
             .write(true)
             .create_new(true)
             .open(&staging)?;
-        file.write_all(body)?;
+        sealed.write_to(&mut file)?;
         file.sync_all()?;
         fs::rename(&staging, dir.join(body_name(id)))?;
         crate::store::sync_dir(dir)
@@ -149,24 +149,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
     written
 }
 
-/// Takes the row `id` out of the catalog and stages its key's retirement,
-/// both in `wtxn`: from the commit on no open finds it, and a restored
-/// earlier image cannot open its key. The body file and the custody entry
-/// go after the commit. `true` when a row was there.
-///
-/// # Errors
-/// Custody and storage faults.
-pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    // Lenient: a damaged row still retires. Its conversation index entry
-    // goes only when the row decodes; a damaged row must not abort the
-    // erase or reconcile that found it.
-    if let Some(record) = CATALOG.get_lenient(store, wtxn, id)? {
-        catalog::delete_conversation_entry(store, wtxn, &record.manifest.conversation, id)?;
-    }
-    let gone = CATALOG.delete(store, wtxn, id)?;
-    store.stage_inference_snapshot_retirement_in_txn(wtxn, &id.0)?;
-    Ok(gone)
-}
+pub(super) use crate::store::snapshot_catalog::retire_in_txn;
 
 /// The wrapped key's bytes, checked to be the custody entry's width.
 fn checked_key(wrapped: WrappedSnapshotKey) -> Result<WrappedSnapshotKey> {
@@ -211,7 +194,13 @@ impl Vault {
         let (wrapped, sealed) = seal_snapshot(&key, &aad, plaintext)?;
         drop(key);
         let wrapped = checked_key(wrapped)?;
-        let body = sealed.to_bytes();
+        let sealed_bytes = match sealed.encoded_len() {
+            Ok(len) => len,
+            Err(error) => {
+                wrapped.retire();
+                return Err(error);
+            }
+        };
         let now = now_ms();
         let record = SnapshotRecord {
             schema: SNAPSHOT_RECORD_SCHEMA,
@@ -220,7 +209,7 @@ impl Vault {
             manifest: publish.manifest,
             dependencies: publish.dependencies,
             plaintext_bytes: u64::try_from(plaintext.len()).map_err(|_| corrupt())?,
-            sealed_bytes: u64::try_from(body.len()).map_err(|_| corrupt())?,
+            sealed_bytes,
             snapshot_sha256: publish.snapshot_sha256,
             class: publish.class,
             created_ms: now,
@@ -243,7 +232,7 @@ impl Vault {
             }
         };
         let published = if ledger.charge(&mut reservation, record.sealed_bytes) {
-            self.commit_snapshot(admission, &record, &wrapped, &body)
+            self.commit_snapshot(admission, &record, &wrapped, &sealed)
         } else {
             Ok(false)
         };
@@ -267,12 +256,12 @@ impl Vault {
         admission: &SnapshotAdmission,
         record: &SnapshotRecord,
         wrapped: &WrappedSnapshotKey,
-        body: &[u8],
+        sealed: &SealedSnapshot<'_>,
     ) -> Result<bool> {
         let store = &self.store;
         let _files = store.inference_snapshots.files();
         let dir = store.inference_snapshot_dir();
-        write_body(&dir, &record.id, body)?;
+        write_body(&dir, &record.id, sealed)?;
         let committed = (|| -> Result<bool> {
             let mut wtxn = store.env.write_txn()?;
             if !self.snapshot_admission_holds(admission) {

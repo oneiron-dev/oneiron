@@ -100,6 +100,7 @@ impl SyncConnection {
                 .await
             {
                 if matches!(exit, LoopExit::Shutdown) {
+                    self.publish_leave_unqueued(debounce_buffer);
                     break exit;
                 }
                 return exit;
@@ -126,7 +127,15 @@ impl SyncConnection {
                         // host's admission (FIX 12036).
                         Some(Ok(Message::Binary(data))) => gate.hold_frame(data),
                         Some(Ok(Message::Ping(data))) => {
-                            let pong_result = write.send(Message::Pong(data)).await;
+                            let mut send_left = self.left.subscribe();
+                            let pong_result = tokio::select! {
+                                biased;
+                                () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                    self.publish_leave_unqueued(debounce_buffer);
+                                    break LoopExit::Shutdown;
+                                }
+                                result = write.send(Message::Pong(data)) => result,
+                            };
                             if let Err(e) = pong_result {
                                 return LoopExit::Disconnected(format!("Pong failed: {e}"));
                             }
@@ -168,7 +177,16 @@ impl SyncConnection {
                 partial = presence_rx.recv(), if !gate.paused() => {
                     match partial {
                         Ok(frame) => {
-                            if let Err(error) = write.send(Message::Binary(frame.into())).await {
+                            let mut send_left = self.left.subscribe();
+                            let send_result = tokio::select! {
+                                biased;
+                                () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                    self.publish_leave_unqueued(debounce_buffer);
+                                    break LoopExit::Shutdown;
+                                }
+                                result = write.send(Message::Binary(frame.into())) => result,
+                            };
+                            if let Err(error) = send_result {
                                 self.queue_on_exit(&mut gate, debounce_buffer).await;
                                 return LoopExit::Disconnected(format!("Presence send failed: {error}"));
                             }
@@ -429,6 +447,12 @@ impl SyncConnection {
                         continue;
                     };
                     client.remove_outdated_ephemeral();
+                    let retries = client.retry_document_requests();
+                    if !retries.is_empty() {
+                        document_buffer.extend(retries);
+                        debounce_deadline.get_or_insert_with(||
+                            Instant::now() + Duration::from_millis(debounce_ms));
+                    }
                     if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
                         return LoopExit::Disconnected(e);
                     }

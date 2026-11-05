@@ -25,6 +25,11 @@ pub const ICS_POLL_ATTEMPT_KIND: &str = "calendar.ics.poll";
 /// poll state, never synced truth. Key: `sha256(ics_feed_poll_dedupe_key)`.
 const CURSOR: SideTable<[u8; 32], IcsFeedCursor, LegacyJson> =
     SideTable::new(&side_table::CALENDAR_ICS_FEED_CURSOR);
+/// Whether a masked copy of a `CALENDAR_ICS_FEED_CURSOR` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn calendar_ics_feed_cursor_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<IcsFeedCursor, LegacyJson>(bytes)
+}
 
 /// Actor string stamped on pause interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
