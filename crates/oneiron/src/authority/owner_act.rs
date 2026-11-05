@@ -317,34 +317,60 @@ pub(crate) fn grant_standing_in_txn(
     act: OwnerActKind,
     at: u64,
 ) -> crate::error::Result<GrantStanding> {
+    grant_standing_with_sources_in_txn(store, txn, grant, agent, act, at, &mut None)
+}
+
+/// The same standing read, carrying only a complete inventory of its live rows.
+/// An unknown input never upgrades an already-unknown source inventory.
+pub(super) fn grant_standing_with_sources_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+    source_rows: &mut Option<std::collections::BTreeSet<EntityId>>,
+) -> crate::error::Result<GrantStanding> {
     // A Grant positively known withdrawn here stays withdrawn, whatever
     // stands at its id now: a restored or re-put row, or none (FIX-LIST
     // 5107). A marker that cannot be read leaves the reads below as before.
-    if super::withdrawn_grant::grant_known_withdrawn_in_txn(store, txn, grant) {
+    let (withdrawn, marker_read) =
+        super::withdrawn_grant::grant_known_withdrawn_with_read_status_in_txn(store, txn, grant);
+    if !marker_read || withdrawn {
+        *source_rows = None;
+    }
+    if withdrawn {
         return Ok(GrantStanding::Refused);
     }
-    Ok(
-        match crate::vault::live_entity_row_in_txn(store, txn, &grant)? {
-            crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-                body,
-            } => match crate::federation::decode_federation_grant_body(&body) {
-                Ok(decoded) if grant_names_act(&decoded, agent, act, at) => GrantStanding::Names,
-                _ => GrantStanding::Refused,
-            },
-            crate::vault::LiveEntityRow::Live { .. }
-            | crate::vault::LiveEntityRow::DeletedShell => GrantStanding::Refused,
-            crate::vault::LiveEntityRow::Absent => {
-                if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &grant)?
-                    .deleted
-                {
-                    GrantStanding::Refused
-                } else {
-                    GrantStanding::Absent
-                }
-            }
+    let row = crate::vault::live_entity_row_in_txn(store, txn, &grant).inspect_err(|_| {
+        *source_rows = None;
+    })?;
+    if matches!(&row, crate::vault::LiveEntityRow::Live { .. }) {
+        if let Some(rows) = source_rows {
+            rows.insert(grant);
+        }
+    } else {
+        *source_rows = None;
+    }
+    Ok(match row {
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } => match crate::federation::decode_federation_grant_body(&body) {
+            Ok(decoded) if grant_names_act(&decoded, agent, act, at) => GrantStanding::Names,
+            _ => GrantStanding::Refused,
         },
-    )
+        crate::vault::LiveEntityRow::Live { .. } | crate::vault::LiveEntityRow::DeletedShell => {
+            GrantStanding::Refused
+        }
+        crate::vault::LiveEntityRow::Absent => {
+            if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &grant)?.deleted {
+                GrantStanding::Refused
+            } else {
+                GrantStanding::Absent
+            }
+        }
+    })
 }
 
 /// Where an agent act's Grant takes the shared vault's pact test (CALLS

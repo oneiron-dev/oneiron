@@ -67,14 +67,24 @@ pub(super) fn grant_refused_agent_acts(
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     use_past_standing: bool,
+    source_rows: &mut Option<std::collections::BTreeSet<EntityId>>,
 ) -> Vec<AuthorityEntryHash> {
     let acts = &fold.agent_carried_acts;
     let now_refused: Vec<AuthorityEntryHash> = acts
         .iter()
         .filter(|(hash, act)| {
-            match grant_standing_in_txn(store, txn, act.grant, act.agent, act.act, act.at) {
+            match super::owner_act::grant_standing_with_sources_in_txn(
+                store,
+                txn,
+                act.grant,
+                act.agent,
+                act.act,
+                act.at,
+                source_rows,
+            ) {
                 Ok(standing) => standing == GrantStanding::Refused,
                 Err(error) => {
+                    *source_rows = None;
                     tracing::warn!(
                         %error,
                         entry = %crate::entity_id::bytes_to_hex_lower(*hash),
@@ -100,6 +110,9 @@ pub(super) fn grant_refused_agent_acts(
     if world_candidates.is_empty() {
         return now_refused;
     }
+    // Past standing also consults adopted history and causal-point caches;
+    // those inputs do not yet carry a complete same-view entity inventory.
+    *source_rows = None;
     match super::past_grant_standing::preserved_world_acts(store, txn, fold, &world_candidates) {
         Ok(preserved) if !preserved.is_empty() => now_refused
             .into_iter()
