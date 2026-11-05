@@ -50,6 +50,7 @@ impl AiHandle {
                 ChatSettings {
                     history_turns: 0,
                     turn_budget_units: 0,
+                    turn_opener: crate::config::models::TurnOpener::default(),
                 },
                 |models| models.chat,
             ),
@@ -64,6 +65,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            coach_heal_wake: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
