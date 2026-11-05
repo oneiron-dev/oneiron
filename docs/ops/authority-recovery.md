@@ -72,7 +72,10 @@ oneiron recovery-kit enroll-authority --config serve.toml \
 
 The holding machine is this install unless `--machine <32-hex-id>` names another
 live holding machine. The command uses this install's existing host predecessor
-and the owner's local act. It returns the committed entry, machine and public key
+and the existing self-host owner act. A hosted operator cannot turn a writer lease
+into the vault owner's enrollment proof; the stopped command uses the normal
+host-owner boundary, while the running HTTP door requires the owner's proof.
+It returns the committed entry, machine and public key
 as hex. It neither activates the world kit nor publishes or replaces its pieces.
 Issuing the kit and enrolling its authority key are separate operations; issuance
 alone is not successful recovery setup.
