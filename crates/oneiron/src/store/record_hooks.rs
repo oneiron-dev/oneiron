@@ -219,6 +219,47 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `federation::note_authority_row`.
     fn note_authority_row(&self);
 
+    /// The engine's `skill_attribution::note_direct_derivation_in_txn`.
+    fn note_direct_derivation_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        derived: EntityId,
+        source: EntityId,
+    );
+
+    /// The engine's `memory::erase_stream_seeds_in_txn`, an entity side-row eraser.
+    fn erase_stream_seeds_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::erase_reply_assertions_in_txn`, an entity side-row eraser.
+    fn erase_reply_assertions_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::erase_turn_wake_label_in_txn`, an entity side-row eraser.
+    fn erase_turn_wake_label_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::release_asset_blob_in_txn`, an entity side-row eraser.
+    fn release_asset_blob_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::reject_audience_edit_unlink`.
     fn reject_audience_edit_unlink(
         &self,

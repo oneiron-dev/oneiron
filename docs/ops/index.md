@@ -15,6 +15,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
+- [Sign in with ChatGPT authorize plans](siwc-authorize-plan.md) — current open-source SIWC request fields; URL-only, not a token exchange or completed login.
+- [Local Sign in with ChatGPT](siwc-local-login.md): explicit callback, verified exchange, protected per-account file, configured Responses inference, rotating refresh and explicit local clear/revoke.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
@@ -23,6 +25,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
   proposals, exact owner review and confirmation, and atomic run-tray approval.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
+- [Legal-hold clone implementation map](legal-hold-clone-map.md) — planned per-order legal custody, normal user erase, and the remaining implementation slices; MAP only, not a shipped clone.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
@@ -36,6 +39,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [The built-in web connector](web-connector.md) — `connector.web.search` and `fetch`: the
   deploy's `TAVILY_API_KEY`, the owner's provider switch, result shapes and usage rows.
+- [Clipboard storage and Mac intake](clipboard.md) — owner-bound ordinary text capture,
+  masked read pages, cleanup policy and clip/range/world erasure; one Mac watcher,
+  private-copy routing and owner IPC. Quiet purpose questions/search/sync proof remain open.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to

@@ -75,6 +75,8 @@ mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
 mod handle_labels;
+mod handle_purpose;
+pub use self::handle_purpose::{SecretHandlePurposeSet, SecretPurposeQuestion};
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -130,6 +132,7 @@ pub(crate) use self::doors::{
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored form, its value sealed under its custody key.
+pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub use self::found_keys::{
     FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
@@ -186,7 +189,7 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
-pub(crate) use self::run_bound::run_secret_effector;
+pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,

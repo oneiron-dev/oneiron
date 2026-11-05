@@ -140,6 +140,8 @@ side_tables! {
     /// Posting-list row of one claim under its world (base reality under the reserved base id),
     /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
     CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw;
+    /// Owner-selected ordinary Clipboard cleanup arms. Key: (). No clip text.
+    CLIPBOARD_RETENTION: VaultMeta b"clipboard.retention.v1" Named;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
@@ -200,6 +202,9 @@ side_tables! {
     /// One accepted owner run-now joined a running feedback sweep and owes a later sweep.
     /// Scheduling intent only, no content or actor. Key/value: ().
     COACH_FEEDBACK_SWEEP_PENDING: VaultMeta b"coach:feedback_sweep_pending:v1" Named Engine;
+    /// A hash of the fold defaults the Coach last suggested for one agent type, so an unchanged
+    /// habit is not suggested again (FIX 12572). Key: id16 of the AGENT_DEF row.
+    COACH_FOLD_SUGGESTED: VaultMeta b"coach:fold_suggested:v1:" Raw;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
     /// hash32 of the fact.
@@ -304,7 +309,8 @@ side_tables! {
     /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
     /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
     /// string(row: `with_skill`, `without_skill` or `unavailable`).
-    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
+    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
+        => crate::code_run::erase_contribution_forks_in_txn;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
@@ -358,7 +364,7 @@ side_tables! {
     /// id16(set).
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
     /// A code run's replay record, keyed by run id. Key: id16.
-    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored [accepts: crate::code_run::code_run_replay_record_accepts_masked];
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
     /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
     /// id16(attempt) + be64(lease generation) + be64(step).
@@ -373,7 +379,7 @@ side_tables! {
     CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
-    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored [accepts: crate::code_run::code_run_summary_memo_accepts_masked];
     /// One program step's type feedback (FIX 8277): its check's state, measures and diagnostics
     /// or the run's body holding them, the preparation note, the actor the run ran as and the
     /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +
@@ -457,6 +463,10 @@ side_tables! {
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
+    /// Record-only occurrence of the accepted provider-event archive version one inbound
+    /// MESSAGE landed from (FIX 10851): provenance metadata only, never read/delete
+    /// authority. Key: id16 (MESSAGE).
+    CONNECTOR_MESSAGE_ARCHIVE: VaultMeta b"connector.conversation_archive.v1:" Named;
     /// One connector credential slot's issuer binding and issuer change (FIX 988). Key: id16.
     CONNECTOR_CREDENTIAL_BINDING: VaultMeta b"connector.credential_binding.v1/" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).

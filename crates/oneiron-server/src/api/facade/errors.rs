@@ -233,6 +233,28 @@ impl From<ApiError> for FacadeApiError {
 }
 
 impl FacadeApiError {
+    /// A hook accepted the call only to ask first, not to run an asynchronous
+    /// job. Chat keeps its own wire code, but carries the same native stop.
+    pub(super) fn is_pending_ask(status: u16, body: &serde_json::Value) -> bool {
+        if status != StatusCode::ACCEPTED.as_u16() {
+            return false;
+        }
+        if body
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str)
+            == Some(MEMORY_CODE_PENDING_ASK)
+        {
+            return true;
+        }
+        body.pointer("/error/hook")
+            .and_then(|stop| {
+                serde_json::from_value::<oneiron::runtime_hooks::VerbHookStop>(stop.clone()).ok()
+            })
+            .is_some_and(|stop| {
+                matches!(stop, oneiron::runtime_hooks::VerbHookStop::Pending { .. })
+            })
+    }
+
     /// The refusal with a failed run's program type feedback beside it (FIX
     /// 10389), each item as its destination is given it: never among its
     /// words, its status, code and retry as they were.
@@ -251,7 +273,7 @@ impl FacadeApiError {
     /// facade refusal, or carries a member this envelope does not, which
     /// then goes again as it was.
     pub(super) fn replayed(status: StatusCode, body: &serde_json::Value) -> Option<Self> {
-        if (status.is_success() && status != StatusCode::ACCEPTED)
+        if (status.is_success() && !Self::is_pending_ask(status.as_u16(), body))
             || !body
                 .as_object()?
                 .keys()
