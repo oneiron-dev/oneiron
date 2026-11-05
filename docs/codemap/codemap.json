@@ -69146,6 +69146,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OfferAnswerReply",
       "OfferAnswerRequest",
       "OfferListRequest",
       "OfferPassRef",
@@ -69158,8 +69159,8 @@
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 8,
-      "struct": 8
+      "fn": 9,
+      "struct": 9
      }
     },
     {
@@ -134264,6 +134265,7 @@
       "Offer",
       "OfferAnswer",
       "OfferAnswerRecord",
+      "OfferAnswerReply",
       "OfferAnswerRequest",
       "OfferCandidate",
       "OfferCandidateQuery",
@@ -136242,7 +136244,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1110,
-      "struct": 3376
+      "struct": 3377
      }
     },
     {
