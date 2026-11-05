@@ -131,7 +131,7 @@ pub(crate) fn row_deletion_marked(
     };
     Ok(!(EntityMetadataHeader::parse(raw).is_some_and(|header| {
         crate::registry::is_delete_protected_engine_record(header.entity_type)
-    }) || crate::dreamer_runner::authority::is_base_agent_actor(id)?))
+    }) || crate::store::base_agent::is_base_agent_actor(id)?))
 }
 
 /// Whether any world window of `month` holds a pending tombstone marker.
@@ -307,7 +307,7 @@ impl Vault {
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         let mut count = {
             let txn = self.store.env.read_txn()?;
-            crate::scan_check::ScanCount::start(
+            crate::store::scan_count::ScanCount::start(
                 &self.store,
                 &txn,
                 crate::store::EngineScan::TimelineRecords,

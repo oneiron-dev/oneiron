@@ -34,6 +34,12 @@ pub(crate) fn agent_dispatch_widen_slice_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<SliceOverride, LegacyJson>(bytes)
 }
 
+/// Whether a masked copy of a `AGENT_DISPATCH_WIDEN_INTENT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn agent_dispatch_widen_intent_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<WidenRecord, LegacyJson>(bytes)
+}
+
 /// A parked dispatch. This is a proposal, never a read or dispatch grant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextWidenProposal {

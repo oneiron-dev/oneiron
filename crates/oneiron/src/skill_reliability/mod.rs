@@ -56,7 +56,7 @@ pub(crate) use self::provenance::{
     skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
 };
 pub use self::read::{
-    ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,
+    ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
     skill_reliability_posterior_for_executor, skill_selection_score,
     skill_selection_score_for_executor,

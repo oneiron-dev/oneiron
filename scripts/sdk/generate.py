@@ -1137,7 +1137,7 @@ async fn execute_agent_verb_row(
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
-        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
         crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
     }
 
@@ -2321,7 +2321,7 @@ def main():
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
-        # FIX 11534: docs/agent-sdk mirrors the generated facade types, so it follows every regeneration.
-        docs=subprocess.run([sys.executable,str(ROOT/'packages/oneiron/scripts/agent-docs.py')])
-        if docs.returncode: print(f'  agent-docs.py exited {docs.returncode}: run it by hand')
+    # The mirror follows the generated SDK files and checks its authored text too.
+    docs_args = ['--check'] if args.check else []
+    subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), *docs_args], check=True)
 if __name__=='__main__': main()
