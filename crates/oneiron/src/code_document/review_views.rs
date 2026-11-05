@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::verbs::{CodeChangeView, CodeOperationView, CodeStateView, OpRefs, state_view};
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::batch::secret_scan::LiftedKeys;
-use crate::code_symbol::{CodeAttributedChange, semantic_code_diff};
+use crate::code_symbol::{CodeAttributedChange, semantic_code_diff, whole_file_code_diff};
 use crate::codebase::{RepoRef, snapshot_asset_entity_id};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
@@ -192,15 +192,16 @@ impl Memory<'_> {
         let mut diff = String::new();
         for (index, file) in proposal.files.iter().enumerate() {
             let base_bytes = base.read_file(&file.path)?.unwrap_or(b"");
+            let candidate = file.content.as_deref().unwrap_or(b"");
             let old = masks.bytes(vault, base_bytes)?;
             // The candidate was made from the file at the base: when that
             // file is a marked blob the candidate no longer is, the
             // candidate reads as its placeholder (FIX 8967).
-            let new = masks.sourced_bytes(
-                vault,
-                file.content.as_deref().unwrap_or(b""),
-                &[*blake3::hash(base_bytes).as_bytes()],
-            )?;
+            let new =
+                masks.sourced_bytes(vault, candidate, &[*blake3::hash(base_bytes).as_bytes()])?;
+            // A side read as a projection is compared as one whole-file
+            // unit: a placeholder or a masked copy is no source to parse.
+            let projected = *old != *base_bytes || *new != *candidate;
             let (old, new) = (utf8(&old)?, utf8(&new)?);
             // An ordinary proposal lands under its own id; a bundle's file
             // under its deterministic child operation.
@@ -215,7 +216,12 @@ impl Memory<'_> {
                         sequence: receipt.sequence,
                         provenance: receipt.provenance,
                     });
-            let changes: Vec<CodeAttributedChange> = semantic_code_diff(&file.path, old, new)?
+            let diff = if projected {
+                whole_file_code_diff
+            } else {
+                semantic_code_diff
+            };
+            let changes: Vec<CodeAttributedChange> = diff(&file.path, old, new)?
                 .into_iter()
                 .map(|change| CodeAttributedChange {
                     inserted_by: landed
@@ -526,7 +532,14 @@ impl Memory<'_> {
                         .collect(),
                     _ => BTreeMap::new(),
                 };
-                semantic_code_diff(&path, &text(&old), &text(&new))?
+                // A projected side is compared as one whole-file unit: a
+                // placeholder or a masked copy is no source to parse.
+                let diff = if projected {
+                    whole_file_code_diff
+                } else {
+                    semantic_code_diff
+                };
+                diff(&path, &text(&old), &text(&new))?
                     .into_iter()
                     .map(|change| CodeAttributedChange {
                         inserted_by: change

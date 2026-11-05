@@ -14,7 +14,7 @@ use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{
     CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_code_semantic_diff,
-    semantic_code_diff,
+    semantic_code_diff, whole_file_code_diff,
 };
 use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
@@ -232,7 +232,7 @@ impl Memory<'_> {
             // A masked reader of an edited marked file compares what it
             // reads, and no unit names the operations that wrote the stored
             // text (FIX 8967).
-            Some([old, new]) => semantic_code_diff(&after.path, old, new)?
+            Some([old, new]) => whole_file_code_diff(&after.path, old, new)?
                 .into_iter()
                 .map(|change| CodeAttributedChange {
                     change,
@@ -265,7 +265,7 @@ impl Memory<'_> {
         let units = match self.projected_texts(&[&at])?.as_deref() {
             // The units a masked reader reads, with no run: no operation
             // wrote the projection (FIX 8967).
-            Some([text]) => semantic_code_diff(&at.path, "", text)?
+            Some([text]) => whole_file_code_diff(&at.path, "", text)?
                 .into_iter()
                 .filter_map(|change| {
                     let version = change.after?;
