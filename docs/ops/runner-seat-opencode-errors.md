@@ -26,9 +26,16 @@ outside that native integer range stays unknown instead of saturating to an
 invented wait. The optional actual `responseBody` remains available to the
 unchanged ISO reset-time scanner; message bar-epoch resets remain unchanged.
 
-HTTP-date retry headers, human duration text, Free-only wording that lacks the
-existing limit words and unverified Claude/Codex emission shapes are not newly
-recognized. They remain FIX705 residuals, not a claim that all OpenCode or
-other official CLI quota errors are handled. No fallback reset or wait is
-invented. No argv, thresholds, defaults, caps, public types or storage format
-change.
+When neither numeric retry header supplies a wait, a `retry-after` in HTTP
+IMF-fixdate form, such as `Sun, 06 Nov 1994 08:49:37 GMT`, contributes its
+absolute UTC reset. The weekday and calendar must agree, and the complete
+trimmed header must match that format. A malformed date, a date before the Unix
+epoch or another date form stays unknown. No local clock or fallback wait is
+used. Existing body resets keep their order before this header reset; the
+unchanged seat policy decides whether any reset is still ahead of its clock.
+
+Other HTTP-date forms, human duration text, Free-only wording that lacks the
+existing limit words and unverified Claude/Codex emission shapes remain
+FIX705 residuals, not a claim that all OpenCode or other official CLI quota
+errors are handled. No argv, thresholds, defaults, caps, public types or
+storage format change.
