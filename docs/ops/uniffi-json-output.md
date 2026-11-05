@@ -95,6 +95,15 @@ just like a missing reply. Run identity, completed steps, checkpoint order,
 wait identity, effect, output handle and next-step cursor retain their existing
 fields and widths. The native inline-size and taint checks remain unchanged.
 
+`vault.diagnostics.list`, `vault.diagnostics.get` and `vault.coach.inspect`
+use owned diagnostic and Coach-result lifts. All required diagnostic JSON
+leaves, the proposal claim's JSON and its optional repair are consumed before
+an encoding error returns. Required null values remain present; optional null
+repairs still read as absent. List order, optional lookup absence, every
+inspection field and each scoped-read receipt remain intact. Finite report,
+working-set and receipt fields keep the existing record codec. Native scoped
+reads, diagnostic filtering and fenced untrusted text are unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

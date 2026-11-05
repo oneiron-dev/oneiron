@@ -173,17 +173,17 @@ export_facade! {
 "vault.diagnostics.list" => fn vault_diagnostics_list(&self, input: DiagnosticsListRequest) -> ScopedReadResultDiagnosticEventViewList = |client| {
     let input: oneiron::memory::DiagnosticsListRequest = crate::codec::lower_record("vault.diagnostics.list", input)?;
     let output = client.vault_diagnostics_list(&input)?;
-    crate::codec::lift_record("vault.diagnostics.list", &output)
+    Lift::lift(output)
 };
 "vault.diagnostics.get" => fn vault_diagnostics_get(&self, input: DiagnosticsGetRequest) -> ScopedReadResultOptionalDiagnosticEventView = |client| {
     let input: oneiron::memory::DiagnosticsGetRequest = crate::codec::lower_record("vault.diagnostics.get", input)?;
     let output = client.vault_diagnostics_get(&input)?;
-    crate::codec::lift_record("vault.diagnostics.get", &output)
+    Lift::lift(output)
 };
 "vault.coach.inspect" => fn vault_coach_inspect(&self, input: CoachInspectRequest) -> ScopedReadResultCoachInspectionView = |client| {
     let input: oneiron::memory::CoachInspectRequest = crate::codec::lower_record("vault.coach.inspect", input)?;
     let output = client.vault_coach_inspect(&input)?;
-    crate::codec::lift_record("vault.coach.inspect", &output)
+    Lift::lift(output)
 };
 "vault.people.list" => fn vault_people_list(&self, input: PeopleListRequest) -> PeoplePage = |client| {
     let input: oneiron::memory::PeopleListRequest = crate::codec::lower_record("vault.people.list", input)?;
