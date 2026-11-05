@@ -20,7 +20,10 @@ Provider aliases share their normal normalized slot without rewriting the
 original touch's body.
 
 The source id derives from the original id, full actual stored row, and actual
-base birth. Exact retries keep that source record. Retrying an original Put
+base birth. Adoption rechecks that binding, so a pending source cannot use a
+later scope, envelope, header, or birth revision that happens to state the
+same touch value. Closed historical heads still stay closed. Exact retries
+keep that source record. Retrying an original Put
 still reconciles its current live head even if the source already projected;
 `minted = false` is not used to skip this reconciliation.
 
