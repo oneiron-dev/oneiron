@@ -163,7 +163,7 @@ pub(crate) fn export_skill_record_document_in_txn(
     let Some(raw) = store.port_entity_raw(txn, entity)? else {
         return Ok(None);
     };
-    if raw.as_ref() != selected_raw {
+    if raw.as_slice() != selected_raw {
         return Ok(None);
     }
     let Some(head) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {

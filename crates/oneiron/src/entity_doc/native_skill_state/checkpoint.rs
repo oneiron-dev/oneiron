@@ -51,15 +51,15 @@ pub(in crate::entity_doc) fn check_checkpoint_op(op: &JsonOp) -> Result<()> {
 /// not a later storage slot selected by SWITCH. Returns that document only
 /// when it contains native state or writes, so its caller can check an
 /// original fork basis without parsing the history a second time.
-pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
+pub(in crate::entity_doc) fn validate_checkpoint_history(
     entity: EntityId,
-    rows: impl IntoIterator<Item = &'a [u8]>,
+    rows: impl IntoIterator<Item: AsRef<[u8]>>,
 ) -> Result<Option<EntityDoc>> {
     let mut rows = rows.into_iter();
     let snapshot = rows.next().ok_or_else(invalid)?;
-    let doc = EntityDoc::from_snapshot(snapshot)?;
+    let doc = EntityDoc::from_snapshot(snapshot.as_ref())?;
     for update in rows {
-        let imported = doc.doc.import(update).map_err(|_| invalid())?;
+        let imported = doc.doc.import(update.as_ref()).map_err(|_| invalid())?;
         if imported.pending.is_some() {
             return Err(invalid());
         }
@@ -70,20 +70,20 @@ pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
 /// Inspect decodable raw image histories without treating an opaque NOTE or
 /// unknown row as an admitted native source. Pending or undecodable fragments
 /// still need admission when a later ingress actually joins them.
-pub(in crate::entity_doc) fn validate_image_history<'a>(
-    rows: impl IntoIterator<Item = &'a [u8]>,
+pub(in crate::entity_doc) fn validate_image_history(
+    rows: impl IntoIterator<Item: AsRef<[u8]>>,
 ) -> Result<Option<EntityDoc>> {
     let mut rows = rows.into_iter();
     let snapshot = rows.next().ok_or_else(invalid)?;
     let updates: Vec<_> = rows.collect();
-    let doc = match EntityDoc::from_snapshot(snapshot) {
+    let doc = match EntityDoc::from_snapshot(snapshot.as_ref()) {
         Ok(doc) => doc,
         Err(_) => {
             // Other document codecs share these rows. A readable native root
             // without a valid entity birth is not one of those codecs.
-            if let Ok(raw) = loro::LoroDoc::from_snapshot(snapshot) {
+            if let Ok(raw) = loro::LoroDoc::from_snapshot(snapshot.as_ref()) {
                 for update in updates {
-                    let _ = raw.import(update);
+                    let _ = raw.import(update.as_ref());
                 }
                 if has_native_root(&raw) {
                     return Err(invalid());
@@ -94,7 +94,7 @@ pub(in crate::entity_doc) fn validate_image_history<'a>(
     };
     let mut incomplete = false;
     for update in updates {
-        match doc.doc.import(update) {
+        match doc.doc.import(update.as_ref()) {
             Ok(imported) => incomplete |= imported.pending.is_some(),
             Err(_) => incomplete = true,
         }

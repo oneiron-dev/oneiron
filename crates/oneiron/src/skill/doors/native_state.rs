@@ -89,7 +89,11 @@ impl SkillSupersessionRead {
         }
         let source = Self::capture(store, txn, entity)?;
         if source.logical_body_fingerprint() != *logical_body
-            || source.document_pin().map(|(id, at)| (id.as_bytes(), at)) != document_pin
+            || source
+                .document_pin
+                .as_ref()
+                .map(|(id, at)| (id.as_bytes(), at.as_slice()))
+                != document_pin
         {
             return Ok(None);
         }
@@ -118,7 +122,9 @@ impl SkillSupersessionRead {
             self.entity,
             &self.source_fingerprint(),
             &self.logical_body_fingerprint(),
-            self.document_pin().map(|(id, at)| (id.as_bytes(), at)),
+            self.document_pin
+                .as_ref()
+                .map(|(id, at)| (id.as_bytes(), at.as_slice())),
         )?
         .is_some())
     }

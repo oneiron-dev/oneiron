@@ -13,8 +13,10 @@ use super::register::{CURRENT, ROOT, read_fact};
 mod recipient;
 mod replay;
 use crate::error::{Error, Result};
-pub(super) use recipient::{NativeMapFloorView, NativeMapMutationView, NativeMapWriteView};
-pub(super) use replay::NativeMapReplay;
+pub(in crate::entity_doc) use recipient::{
+    NativeMapFloorView, NativeMapMutationView, NativeMapWriteView,
+};
+pub(in crate::entity_doc) use replay::NativeMapReplay;
 
 /// These are observed operations, not admitted operations. A delete must also
 /// reach source validation; a later insert cannot hide it from the validator.
