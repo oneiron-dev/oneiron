@@ -15856,7 +15856,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 9
      }
     },
