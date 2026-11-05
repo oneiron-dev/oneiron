@@ -287,7 +287,28 @@ impl ClaimMaterialization {
         persist_pending: bool,
         approver: Option<crate::WriteActor>,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver)
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver, None)
+    }
+
+    /// Gate an unamended approval as its authorized caller while retaining
+    /// the stored claim's separate authorship binding.
+    pub(crate) fn apply_approval_with_caller(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        persist_pending: bool,
+        caller: WriteEnvelope,
+    ) -> Result<()> {
+        let approver = caller.actor();
+        Self::apply_approval_inner(
+            vault,
+            txn,
+            op,
+            persist_pending,
+            None,
+            Some(approver),
+            Some(caller),
+        )
     }
 
     pub(crate) fn apply_refinement_approval(
@@ -296,7 +317,7 @@ impl ClaimMaterialization {
         op: BatchOp,
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None)
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None, None)
     }
 
     fn apply_approval_inner(
@@ -306,6 +327,7 @@ impl ClaimMaterialization {
         persist_pending: bool,
         proof: Option<crate::skill_hub::RefinementAdmissionProof>,
         approver: Option<crate::WriteActor>,
+        caller: Option<WriteEnvelope>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
@@ -375,6 +397,7 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        let caller_envelopes = caller.into_iter().map(|envelope| (*id, envelope)).collect();
         let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         super::apply_ops_with_gate_mode(
             &vault.store,
@@ -393,7 +416,8 @@ impl ClaimMaterialization {
                 None => ApplyOpsGateMode::new(false, persist_pending)
                     .with_claim_materializations(bindings)
                     .with_verified_claim_transitions(vec![transition]),
-            },
+            }
+            .with_caller_envelopes(caller_envelopes),
         )
     }
 
