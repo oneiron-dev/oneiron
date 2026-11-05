@@ -68,6 +68,7 @@ pub(crate) struct AuthorityCacheKey {
 pub(crate) struct AuthorityView {
     fold: Arc<AuthorityFold>,
     generation: u64,
+    source_rows: Option<Arc<BTreeSet<crate::EntityId>>>,
 }
 
 impl AuthorityView {
@@ -75,15 +76,24 @@ impl AuthorityView {
         self.generation
     }
 
+    /// The complete stored entity-row inventory of this fold, when known.
+    /// An adopted image or additional untracked entity reads keep it unknown.
+    pub(crate) fn source_rows(&self) -> Option<&BTreeSet<crate::EntityId>> {
+        self.source_rows.as_deref()
+    }
+
     /// This view with each agent-carried setting or export act held back
     /// whose Grant `txn` holds refused (contract §4, FIX 4624, FIX 5660;
     /// [`super::carried_act`]). With none, the view as it was.
     fn with_agent_grant_standing(
-        self,
+        mut self,
         store: &Store,
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
     ) -> Self {
+        if !self.fold.agent_carried_acts.is_empty() {
+            self.source_rows = None;
+        }
         let refused =
             super::carried_act::grant_refused_agent_acts(store, txn, &self.fold, use_past_standing);
         if refused.is_empty() {
@@ -94,6 +104,7 @@ impl AuthorityView {
         Self {
             fold: Arc::new(fold),
             generation: self.generation,
+            source_rows: self.source_rows,
         }
     }
 }
@@ -555,7 +566,8 @@ fn fold_stored_tail_in_txn(
     }
     // The baseline's rows are counted, not inserted (FIX 12331).
     let mut tail = Vec::new();
-    let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail)?;
+    let mut source_rows = BTreeSet::new();
+    let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail, &mut source_rows)?;
     let mut unstored = Vec::new();
     for (hash, entry) in arriving {
         if held.insert(*hash) {
@@ -662,6 +674,8 @@ fn fold_stored_tail_in_txn(
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
+                    source_rows: (arriving.is_empty() && peer_consent_roots.is_empty())
+                        .then(|| Arc::new(source_rows)),
                 },
                 next_deadline_secs,
                 continuation: AuthorityContinuation::past(
@@ -681,9 +695,13 @@ fn fold_stored_tail_in_txn(
         }
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
+    let mut source_rows = BTreeSet::new();
     let mut entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_authority_log_entry_body(&body))
+        .map(|(id, body)| {
+            source_rows.insert(id);
+            decode_authority_log_entry_body(&body)
+        })
         .collect::<Result<Vec<_>>>()?;
     entries.extend(unstored);
     let mut rows = Vec::with_capacity(entries.len());
@@ -723,6 +741,8 @@ fn fold_stored_tail_in_txn(
         view: AuthorityView {
             fold: Arc::new(fold),
             generation: key.generation,
+            source_rows: (arriving.is_empty() && peer_consent_roots.is_empty())
+                .then(|| Arc::new(source_rows)),
         },
         next_deadline_secs,
         continuation: base.map(|base| base.with_pinned(pinned)).and_then(|base| {

@@ -32,7 +32,10 @@ use self::validation::validate_tree;
 use super::team_shape::team_shape_root_in_txn;
 use super::widen_record::invalid;
 
+mod sources;
 mod validation;
+
+pub(crate) use sources::{SourcedTeamTypeTree, load_team_type_tree_with_sources_in_txn};
 
 pub use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 
@@ -76,12 +79,8 @@ fn tree_in_force_with_root_in_txn(
     vault_skill: EntityId,
     reads: &mut Reads,
 ) -> Result<TaskTypeTree> {
-    if project.is_some() {
-        // A project's visibility folds rows this module cannot name.
-        reads.unknown();
-    }
     if let Some(project) = project
-        && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill)?
+        && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill, reads)?
         && let Some(tree) = stored_tree_in_txn(vault, txn, &fork, reads)?
     {
         return Ok(tree);
@@ -125,9 +124,8 @@ pub struct SourcedTypeTree {
     /// `None` when a row read cannot be named. The seed tree is code and
     /// adds none.
     pub source_rows: Option<Vec<EntityId>>,
-    /// Each asked project's team-shape head in force, with the rows its
-    /// selection read: `None`, since a project's visibility folds rows this
-    /// read cannot name.
+    /// Each asked project's team-shape head in force, with every entity row
+    /// behind its selection, or `None` when a source cannot be named.
     pub project_heads: BTreeMap<EntityId, (Option<EntityId>, Option<Vec<EntityId>>)>,
 }
 
@@ -142,13 +140,22 @@ pub fn load_vault_type_tree_sourced(
     projects: &BTreeSet<EntityId>,
 ) -> Result<SourcedTypeTree> {
     let txn = vault.store.env.read_txn()?;
+    load_vault_type_tree_sourced_in_txn(vault, &txn, projects)
+}
+
+/// The same source selection in the caller's existing snapshot or writer.
+pub(crate) fn load_vault_type_tree_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    projects: &BTreeSet<EntityId>,
+) -> Result<SourcedTypeTree> {
     let mut reads = Reads::Named(BTreeSet::new());
-    let tree = tree_in_force_in_txn(vault, &txn, None, &mut reads)?;
-    let head = head_in_force_in_txn(vault, &txn, None, &mut reads)?;
+    let tree = tree_in_force_in_txn(vault, txn, None, &mut reads)?;
+    let head = head_in_force_in_txn(vault, txn, None, &mut reads)?;
     let mut project_heads = BTreeMap::new();
     for project in projects {
         let mut project_reads = Reads::Named(BTreeSet::new());
-        let project_head = head_in_force_in_txn(vault, &txn, Some(*project), &mut project_reads)?;
+        let project_head = head_in_force_in_txn(vault, txn, Some(*project), &mut project_reads)?;
         project_heads.insert(*project, (project_head, project_reads.into_rows()));
     }
     Ok(SourcedTypeTree {
@@ -252,7 +259,7 @@ fn kept_revisions_in_txn(
     {
         for fork in record.skill_forks.iter().rev() {
             if let Ok(fork) = EntityId::from_hex(fork)
-                && in_lineage_in_txn(vault, txn, fork, vault_skill)?
+                && in_lineage_in_txn(vault, txn, fork, vault_skill, &mut Reads::Off)?
             {
                 revisions.push(fork);
             }
@@ -341,12 +348,8 @@ fn head_in_force_in_txn(
     reads: &mut Reads,
 ) -> Result<Option<EntityId>> {
     let vault_skill = team_shape_root_in_txn(vault, txn)?;
-    if project.is_some() {
-        // A project's visibility folds rows this module cannot name.
-        reads.unknown();
-    }
     if let Some(project) = project
-        && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill)?
+        && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill, reads)?
     {
         return Ok(Some(fork));
     }
@@ -409,7 +412,7 @@ pub fn store_team_type_tree(
             return Err(invalid("a stored type tree goes into an open fork"));
         }
         let vault_skill = team_shape_root_in_txn(vault, txn)?;
-        if !in_lineage_in_txn(vault, txn, fork, vault_skill)? {
+        if !in_lineage_in_txn(vault, txn, fork, vault_skill, &mut Reads::Off)? {
             return Err(invalid("fork is not in the team-shape skill's lineage"));
         }
         let parent_tree = match vault.get_skill_record_in_txn(txn, &parent)? {
@@ -520,7 +523,9 @@ fn fork_siblings_in_txn(
             continue;
         }
         for sibling in listed {
-            if sibling != fork && in_lineage_in_txn(vault, txn, sibling, vault_skill)? {
+            if sibling != fork
+                && in_lineage_in_txn(vault, txn, sibling, vault_skill, &mut Reads::Off)?
+            {
                 siblings.push(sibling);
             }
         }
@@ -534,18 +539,35 @@ fn project_fork_in_txn(
     txn: &heed::RoTxn<'_>,
     project: EntityId,
     vault_skill: EntityId,
+    reads: &mut Reads,
 ) -> Result<Option<EntityId>> {
-    let Some(record) = vault.visible_project_in_txn(txn, project)? else {
+    let record = if reads.naming() {
+        let (record, sources) = vault.visible_project_with_sources_in_txn(txn, project)?;
+        match sources {
+            Some(rows) => {
+                for row in rows {
+                    reads.note(row);
+                }
+            }
+            None => reads.unknown(),
+        }
+        record
+    } else {
+        vault.visible_project_in_txn(txn, project)?
+    };
+    let Some(record) = record else {
         return Ok(None);
     };
     for fork in record.skill_forks.iter().rev() {
         let Ok(fork) = EntityId::from_hex(fork) else {
             continue;
         };
-        if vault
-            .get_skill_record_in_txn(txn, &fork)?
-            .is_some_and(|skill| skill_loadable(&skill))
-            && in_lineage_in_txn(vault, txn, fork, vault_skill)?
+        let skill = vault.get_skill_record_in_txn(txn, &fork)?;
+        if skill.is_some() {
+            reads.note(fork);
+        }
+        if skill.is_some_and(|skill| skill_loadable(&skill))
+            && in_lineage_in_txn(vault, txn, fork, vault_skill, reads)?
         {
             return Ok(Some(fork));
         }
@@ -564,6 +586,7 @@ fn in_lineage_in_txn(
     txn: &heed::RoTxn<'_>,
     skill: EntityId,
     root: EntityId,
+    reads: &mut Reads,
 ) -> Result<bool> {
     let mut seen = BTreeSet::new();
     let mut pending = vec![skill];
@@ -577,6 +600,7 @@ fn in_lineage_in_txn(
         let Some(record) = vault.get_skill_record_in_txn(txn, &id)? else {
             continue;
         };
+        reads.note(id);
         if let Some(parent) = record.forked_from {
             pending.push(parent);
         }
@@ -588,7 +612,7 @@ fn in_lineage_in_txn(
             EdgeKind::Supersedes,
         )? {
             let peer = peer?;
-            if skill_succession_in_txn(vault, txn, id, peer, &mut Reads::Off)? {
+            if skill_succession_in_txn(vault, txn, id, peer, reads)? {
                 pending.push(peer);
             }
         }

@@ -924,6 +924,18 @@ impl<'a> DreamerRunnerStore<'a> {
             .transpose()
     }
 
+    /// Reads one Dreamer attempt in the caller's snapshot.
+    pub(crate) fn status_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<DreamerAttemptStatus>> {
+        self.attempts
+            .get_in_txn(txn, id)?
+            .map(decode_dreamer_attempt_status)
+            .transpose()
+    }
+
     /// Reads a private Dreamer run-tree row.
     pub fn run_tree(&self, attempt_id: AttemptId) -> Result<Option<DreamerRunTreeRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
