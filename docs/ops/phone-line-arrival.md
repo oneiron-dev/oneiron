@@ -105,6 +105,18 @@ both the turn's sources and the additional row named by the notice. Ordinary ses
 still deliver their notices as before. This is the immediate notice-body send check,
 not a claim that every control event or saved journal page is phone-bound.
 
+The private phone-mode journal page now rechecks saved PCM, safeguard, notice and
+memories bodies before copying them into a reply. It uses the original journal epoch,
+that epoch's prepared scope, sources and audience, plus the actual event's source rows.
+The native phone reader checks their union against current line consent and disclosure
+in one snapshot. A missing original preparation admits no such body. Skipping a body
+still advances the existing cursor; ACK boundaries and source-free control events stay
+unchanged. Ordinary pages keep the original implementation through the `None` path.
+Tool source labels are not treated as source-free control: this anonymous mode admits
+no tool context through the existing owner-only tool door, and a saved label without
+its source admission is not released. These saved-page checks do not activate a phone
+session or prove the remaining live ASR, text-send and controller credential paths.
+
 `ScopedRead::phone_line_agent_read` admits the actual receiving agent's live AGENT_DEF
 body and returns a reader conjoined with that definition's native world scope. The
 current credential, line consent, row scope and facets share one read transaction.

@@ -157,11 +157,7 @@ impl PhoneCallRead {
     /// Called again by the existing weak playout fence at every dequeue,
     /// including a saved HTTP journal page. No prepared input means no audio.
     pub(super) fn accepts_output(&self, generation: GenerationEpoch) -> bool {
-        let Some(prepared) = self.prepared_output(generation) else {
-            return false;
-        };
-        self.output_is_current(&prepared.scope, &prepared.sources, &prepared.interlocutors)
-            .unwrap_or(false)
+        self.accepts_output_with_sources(generation, &[])
     }
 
     /// A notice is made from its turn and the additional row it names.
@@ -171,10 +167,20 @@ impl PhoneCallRead {
         generation: GenerationEpoch,
         notice: &oneiron::store::GateSystemNoticeRecord,
     ) -> bool {
+        self.accepts_output_with_sources(generation, &super::speech::notice_rows(notice))
+    }
+
+    /// Saved bodies also carry rows a turn found but did not say, or the
+    /// policy row a notice names. Check their union in the same snapshot.
+    pub(super) fn accepts_output_with_sources(
+        &self,
+        generation: GenerationEpoch,
+        sources: &[EntityId],
+    ) -> bool {
         let Some(mut prepared) = self.prepared_output(generation) else {
             return false;
         };
-        prepared.sources.extend(super::speech::notice_rows(notice));
+        prepared.sources.extend_from_slice(sources);
         self.output_is_current(&prepared.scope, &prepared.sources, &prepared.interlocutors)
             .unwrap_or(false)
     }
