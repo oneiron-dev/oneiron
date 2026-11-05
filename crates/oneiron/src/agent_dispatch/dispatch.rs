@@ -649,24 +649,7 @@ impl<'a> AgentDispatcher<'a> {
                 )));
             }
         };
-        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "agent definition is not active",
-            )));
-        }
-        if !matches!(
-            definition.approval_status,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        ) {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "agent definition is not approved",
-            )));
-        }
-        if !definition.enabled {
-            return Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled {
-                id: *id,
-            }));
-        }
+        Self::ensure_dispatchable_definition(*id, &definition)?;
         Ok(definition)
     }
 
