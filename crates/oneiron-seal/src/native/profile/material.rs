@@ -9,7 +9,7 @@ use crate::api::{
 use crate::error::{FatalCode, SealError, SealStage};
 use crate::memory::{MemoryLedger, SealMemoryRefusal, SharedBytes};
 
-use super::super::{cms, tsp, verify};
+use super::super::{cms, pdf, tsp, verify};
 use super::DssMaterial;
 use super::assembly::SealContext;
 
@@ -193,7 +193,14 @@ pub(super) async fn gather_validation_material(
                 .saturating_add(tsa_chain_bytes),
         )
         .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
-    let mut certs_der = vec![identity.signer_certificate_der.clone()];
+    let signer_chain_len = identity.certificate_chain_der.len().saturating_add(1);
+    let certs_len = signer_chain_len.saturating_add(token.map_or(0, |t| t.tsa_chain_ders.len()));
+    ctx.limits
+        .memory
+        .admit::<Vec<u8>>(certs_len)
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+    let mut certs_der = Vec::with_capacity(certs_len);
+    certs_der.push(identity.signer_certificate_der.clone());
     certs_der.extend(identity.certificate_chain_der.iter().cloned());
     if let Some(t) = token {
         certs_der.extend(t.tsa_chain_ders.iter().cloned());
@@ -208,9 +215,12 @@ pub(super) async fn gather_validation_material(
         .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
     // Chains must validate at the signing time before their material is
     // worth embedding.
-    let signer_chain_ders: Vec<Vec<u8>> = std::iter::once(identity.signer_certificate_der.clone())
-        .chain(identity.certificate_chain_der.iter().cloned())
-        .collect();
+    memory
+        .admit_len::<Vec<u8>>(signer_chain_len)
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+    let mut signer_chain_ders = Vec::with_capacity(signer_chain_len);
+    signer_chain_ders.push(identity.signer_certificate_der.clone());
+    signer_chain_ders.extend(identity.certificate_chain_der.iter().cloned());
     match verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000, &memory) {
         Ok(()) => {}
         Err(SealError::Fatal {
@@ -241,7 +251,8 @@ pub(super) async fn gather_validation_material(
                 let mut crl_covered = false;
                 for u in urls {
                     if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await? {
-                        crls_der.push(crl);
+                        pdf::admitted::push(ctx.limits, &mut crls_der, crl)
+                            .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
                         covered += 1;
                         crl_covered = true;
                         break;
