@@ -54353,7 +54353,7 @@
      "path": "src/origin/smart_http/intent_erase.rs",
      "purpose": "An erased actor out of the receive-pack intent journal (FIX 3877)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -97385,7 +97385,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 73,
+      "const": 74,
       "crate-vis": 1
      }
     },
