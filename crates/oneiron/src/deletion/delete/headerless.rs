@@ -144,6 +144,11 @@ impl Vault {
         // The custody revokes the actor sweeps make reach the owner's other
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.and_then(GatedDeletion::owner_act);
+        let pending_cloud_revokes = if reason.active_store_hard_purge_v1() {
+            self.cloud_registration_revokes_before_local_erase(&wtxn, id)
+        } else {
+            Default::default()
+        };
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -220,6 +225,7 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            pending_cloud_revokes.publish();
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -279,6 +285,7 @@ impl Vault {
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
@@ -315,6 +322,7 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;

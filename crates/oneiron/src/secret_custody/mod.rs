@@ -96,12 +96,12 @@ mod floor_keys {
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub use self::cloud_registration::{
-    CloudRegistrationBinding, CloudRegistrationErased, CloudRegistrationFence,
-    CloudRegistrationLink, CloudRegistrationLinked, CloudRegistrationPhase,
-    CloudRegistrationTokenUse,
+    CloudRegistrationBinding, CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker,
+    CloudRegistrationErased, CloudRegistrationFence, CloudRegistrationLink,
+    CloudRegistrationLinked, CloudRegistrationPhase, CloudRegistrationTokenUse,
 };
 pub(crate) use self::cloud_registration::{
-    cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
+    EraseRevokes, cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
     is_cloud_registration_slot,
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
