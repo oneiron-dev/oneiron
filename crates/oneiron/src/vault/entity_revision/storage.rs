@@ -15,14 +15,14 @@ use history::{
     RevisionDocument, common_binding, generic_binding, generic_revision_raw, revision_document,
     revision_raw,
 };
-pub(super) use history::{RevisionNamespace, fork_revision_with_namespace};
+pub(super) use history::{
+    RevisionNamespace, fork_revision_with_namespace, retained_row_sources_in_txn,
+};
 mod redact;
 mod retained;
 pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub(crate) use redact::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
-pub(super) use retained::{
-    retained_rows_in_txn, row_aliases_in_txn, row_revisions_starting_with_in_txn,
-};
+pub(super) use retained::{retained_rows_in_txn, row_revisions_starting_with_in_txn};
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);
@@ -113,7 +113,7 @@ pub(super) fn revision_text_fields(
         return match revision_document(store, txn, id, revision, &frontier)? {
             RevisionDocument::Common(doc) => crate::entity_doc::document_text_fields(&doc, &field),
             RevisionDocument::Generic(doc) => {
-                let raw = generic_revision_raw(id, revision, &frontier, doc)?;
+                let raw = generic_revision_raw(id, revision, &frontier, &doc)?;
                 Ok(text_fields(
                     raw.get(ENTITY_METADATA_HEADER_LEN..)
                         .ok_or(Error::CorruptedIndex("entity revision header"))?,
@@ -431,7 +431,7 @@ fn raw_for_revision(
                         )?
                     }
                     RevisionDocument::Generic(doc) => {
-                        return generic_revision_raw(id, revision, &frontier, doc);
+                        return generic_revision_raw(id, revision, &frontier, &doc);
                     }
                 }
             }

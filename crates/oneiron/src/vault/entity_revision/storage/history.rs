@@ -144,7 +144,7 @@ pub(super) fn revision_raw(
         .ok_or(Error::EntityNotFound)?;
     match revision_document(store, txn, id, revision, &raw)? {
         RevisionDocument::Common(doc) => doc_raw(&doc.doc),
-        RevisionDocument::Generic(doc) => generic_revision_raw(id, revision, &raw, doc),
+        RevisionDocument::Generic(doc) => generic_revision_raw(id, revision, &raw, &doc),
     }
 }
 
@@ -152,15 +152,47 @@ pub(super) fn generic_revision_raw(
     id: &EntityId,
     revision: RevisionRef,
     encoded: &[u8],
-    doc: LoroDoc,
+    doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
     let frontier =
         Frontiers::decode(encoded).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-    let bytes = generic_raw_at(&doc, &frontier)?;
+    let bytes = generic_raw_at(doc, &frontier)?;
     if reference(id, encoded) != revision && reference(id, &bytes) != revision {
         return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
     }
     Ok(bytes)
+}
+
+/// Retained generic row bytes and lightweight common-document row aliases.
+/// A mixed ledger's non-generic states are document commitments, not row aliases.
+pub(in crate::vault::entity_revision) fn retained_row_sources_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<(Vec<Vec<u8>>, Vec<(RevisionRef, Vec<u8>)>)> {
+    let generic = DOC
+        .get(store, txn, id)?
+        .map(|bytes| {
+            LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("entity document"))
+        })
+        .transpose()?;
+    let mut rows = Vec::new();
+    let mut aliases = Vec::new();
+    for row in FRONTIER.iter_from(store, txn, id.as_bytes())? {
+        let ((_, revision), frontier) = row?;
+        let revision = RevisionRef(revision);
+        if let Some(doc) = generic.as_ref() {
+            if generic_binding(id, doc, revision, &frontier)? {
+                rows.push(generic_revision_raw(id, revision, &frontier, doc)?);
+            } else if reference(id, &frontier) != revision {
+                // A mixed common binding uses its frontier-derived reference.
+                return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
+            }
+        } else if reference(id, &frontier) != revision {
+            aliases.push((revision, frontier));
+        }
+    }
+    Ok((rows, aliases))
 }
 
 fn generic_raw_at(doc: &LoroDoc, frontier: &Frontiers) -> Result<Vec<u8>> {
