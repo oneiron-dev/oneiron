@@ -20,7 +20,8 @@ use std::collections::HashMap;
 use stemma::edit::EditTransaction;
 use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TextMark, TrackStatus};
 pub use stories::{
-    DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body, story_anchor_blocks,
+    DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body,
+    read_docx_scoped_blocks, story_anchor_blocks,
 };
 
 /// One top-level block of the imported document, in document order.

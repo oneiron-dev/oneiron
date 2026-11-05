@@ -171,11 +171,38 @@ impl Vault {
         then: Option<&LivePin>,
         until: Option<&[u8]>,
     ) -> Result<Option<LiveUnits<String>>> {
+        self.live_scoped_paragraphs_until(artifact, then, None, until)
+    }
+
+    /// The paragraphs in one actual native story at the same whole-body pins.
+    pub(crate) fn live_scoped_paragraphs_until(
+        &self,
+        artifact: &EntityId,
+        then: Option<&LivePin>,
+        scope: Option<&oneiron_docedit::docx_body::DocxStoryScope>,
+        until: Option<&[u8]>,
+    ) -> Result<Option<LiveUnits<String>>> {
         let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Docx, then, until)? else {
             return Ok(None);
         };
         let blocks = |doc: &LoroDoc| -> Result<BTreeMap<String, [u8; 32]>> {
-            Ok(docx::read(doc)?
+            let body = docx::read(doc)?;
+            if let Some(scope) = scope {
+                return Ok(body
+                    .stories
+                    .into_iter()
+                    .find(|story| &story.scope == scope)
+                    .into_iter()
+                    .flat_map(|story| story.paragraphs)
+                    .map(|paragraph| {
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(format!("story|{}|", paragraph.locked).as_bytes());
+                        hasher.update(paragraph.text.as_bytes());
+                        (paragraph.id, *hasher.finalize().as_bytes())
+                    })
+                    .collect());
+            }
+            Ok(body
                 .blocks
                 .into_iter()
                 .map(|block| {
@@ -374,6 +401,24 @@ impl Vault {
             })
             .unwrap_or_default();
         Ok(Some((pin, cells)))
+    }
+
+    /// The addressed story's actual live paragraphs at the whole-document pin.
+    pub(crate) fn live_head_story_paragraphs(
+        &self,
+        artifact: &EntityId,
+        scope: &oneiron_docedit::docx_body::DocxStoryScope,
+    ) -> Result<Option<(LivePin, Vec<docx::StoryParagraph>)>> {
+        let Some((OfficeBodyKind::Docx, pin, doc)) = self.live_head(artifact)? else {
+            return Ok(None);
+        };
+        let paragraphs = docx::read(&doc)?
+            .stories
+            .into_iter()
+            .find(|story| &story.scope == scope)
+            .map(|story| story.paragraphs)
+            .unwrap_or_default();
+        Ok(Some((pin, paragraphs)))
     }
 
     /// The paragraphs of `artifact`'s live document at its head, with the pin

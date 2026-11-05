@@ -93,6 +93,8 @@ pub enum WithdrawnUnit {
     },
     Paragraph {
         block: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     FolderItem {
         file: EntityId,
@@ -149,6 +151,8 @@ pub enum ReaskShape {
     Paragraphs {
         author: String,
         labels: SlideReviewLabels,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     Slides {
         author: PptxAuthor,
@@ -485,7 +489,9 @@ impl Vault {
         let rows = &proposal.manifest.paragraph_judgments;
         // An edit to the live body never exported moves no version (FIX 2115).
         let judged_live = rows.first().and_then(|row| row.judged_live.clone());
-        let live = self.live_paragraphs(artifact, judged_live.as_ref())?;
+        let scope = rows.first().and_then(|row| row.scope.as_ref());
+        let live =
+            self.live_scoped_paragraphs_until(artifact, judged_live.as_ref(), scope, None)?;
         if !moved && live.is_none() {
             return Ok(None);
         }
@@ -505,7 +511,7 @@ impl Vault {
         let resources = crate::office_body::document_resources();
         let read_blocks = |bytes: &[u8]| {
             resources
-                .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
+                .docx(|| oneiron_docedit::docx_body::read_docx_scoped_blocks(bytes, limits, scope))
                 .map_err(|error| {
                     if let Some(refusal) = error.resource() {
                         return crate::office_body::document_refused(refusal);
@@ -522,9 +528,10 @@ impl Vault {
         let exported =
             self.export_span(artifact, judged_live.as_ref(), base_version, head.version)?;
         let exported_units = match &exported {
-            Some(span) => self.live_paragraphs_until(
+            Some(span) => self.live_scoped_paragraphs_until(
                 artifact,
                 judged_live.as_ref(),
+                scope,
                 Some(span.frontier.as_slice()),
             )?,
             None => None,
@@ -578,6 +585,7 @@ impl Vault {
                 Some(reason) => withdrawn.push(WithdrawnAnswer {
                     unit: WithdrawnUnit::Paragraph {
                         block: row.block.clone(),
+                        scope: row.scope.clone(),
                     },
                     judged_on: *artifact,
                     judged_version: row.judged_version,
@@ -598,6 +606,7 @@ impl Vault {
         let shape = ReaskShape::Paragraphs {
             author: rows[0].author.clone(),
             labels: rows[0].labels.clone(),
+            scope: scope.cloned(),
         };
         let carried = if carry && !kept.is_empty() {
             let mut carried =
@@ -1387,12 +1396,19 @@ impl Vault {
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (run.proposal, units, run.read_rows)
             }
-            ReaskShape::Paragraphs { author, labels } => {
+            ReaskShape::Paragraphs {
+                author,
+                labels,
+                scope,
+            } => {
                 let blocks: Vec<String> = wake
                     .answers
                     .iter()
                     .filter_map(|answer| match &answer.unit {
-                        WithdrawnUnit::Paragraph { block } => Some(block.clone()),
+                        WithdrawnUnit::Paragraph {
+                            block,
+                            scope: unit_scope,
+                        } if unit_scope == scope => Some(block.clone()),
                         _ => None,
                     })
                     .collect();
@@ -1404,6 +1420,7 @@ impl Vault {
                     &ParagraphAsk {
                         ask,
                         blocks: &blocks,
+                        scope: scope.as_ref(),
                         author,
                         labels,
                     },

@@ -14673,6 +14673,7 @@ class ArtifactAskUnitsSheetRows(TypedDict):
 class ArtifactAskUnitsParagraphs(TypedDict):
     kind: Literal["paragraphs"]
     blocks: list[str]
+    scope: NotRequired[DocxStoryScope | None]
     author: str
     labels: SlideReviewLabels
 class ArtifactAskUnitsFolderItems(TypedDict):
@@ -15489,6 +15490,7 @@ class VersionReconciliation(TypedDict):
     kept_head: ArtifactVersionView
 class ParagraphJudgment(TypedDict):
     block: str
+    scope: NotRequired[DocxStoryScope | None]
     text_hash: str
     decision: TypedDecision
     answer_contract: AnswerContract

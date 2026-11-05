@@ -46564,6 +46564,8 @@ pub enum ArtifactAskUnits {
     Paragraphs {
         #[serde(rename = "blocks")]
         blocks: Vec<String>,
+        #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+        scope: Option<DocxStoryScope>,
         #[serde(rename = "author")]
         author: String,
         #[serde(rename = "labels")]
@@ -48724,6 +48726,8 @@ pub struct VersionReconciliation {
 pub struct ParagraphJudgment {
     #[serde(rename = "block")]
     pub block: String,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
     #[serde(rename = "text_hash")]
     pub text_hash: String,
     #[serde(rename = "decision")]

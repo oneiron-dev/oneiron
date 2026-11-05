@@ -5864,7 +5864,7 @@ export type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgme
 /** `oneiron::blob_artifact::verbs::FolderItemInput` */
 export type FolderItemInput = { artifact_ref: string; row: number }
 /** `oneiron::blob_artifact::verbs::ArtifactAskUnits` */
-export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null }
+export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; scope?: DocxStoryScope | null; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskSubmit` */
 export type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitAbstention` */
@@ -6096,7 +6096,7 @@ export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name:
 /** `oneiron::blob_artifact::family::VersionReconciliation` */
 export type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView }
 /** `oneiron::edit_roundtrip::paragraph_review::ParagraphJudgment` */
-export type ParagraphJudgment = { block: string; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null }
+export type ParagraphJudgment = { block: string; scope?: DocxStoryScope | null; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null }
 /** `oneiron::edit_settle::records::PptxReviewIdentity` */
 export type PptxReviewIdentity = { thread_id: EntityId; asked_by: EntityId; answered_by: EntityId; export_author_guid: string; export_author_name: string }
 /** `oneiron::edit_settle::records::SettledReview` */

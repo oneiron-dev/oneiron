@@ -224,3 +224,20 @@ contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
 is not an old-format reader, default or migration. A later change after they
 land requires fresh current versions. No numeric ceiling, default, dependency,
 error kind, test or runtime/Word proof is added by this extension.
+
+The scoped paragraph-question extension (2026-11-06, FIX 14487) carries an optional
+actual native story through `comment_create`'s strict wire schema, EditStep and
+paragraph lookup. Absent scope keeps the existing body path; present scope never
+falls back to body ids. The existing marker splice, global comment identities,
+comment body writer, reply/resolve/delete and per-part serializers are reused.
+Note anchors refresh their entire note's content hash. Comment content ranges
+return the existing UnsupportedEdit code through a new typed error because
+ISO/IEC 29500-1 section 17.13.4 makes those markers non-conformant there. Header
+and footer lookup retains exact part, band and authored-story identity; Word
+honor of file-authored header/footer ranges is not proved. The public scoped
+block reader retains the old BODY read when scope is absent. Engine judgments,
+carry/withdraw/re-ask and standing selectors keep the same actual scope, native
+version quote and live frontier. Top-level paragraphs only; cell ParagraphAsk,
+comment-story alternatives and full FIX 14487 remain open. No numeric constant,
+cap, default, schema integer, dependency, old reader, migration, test or runtime
+proof is added.
