@@ -332,6 +332,21 @@ pub enum DocxChange {
         block: String,
         runs: Vec<DocxRun>,
     },
+    /// Replace one story table cell's FIRST-paragraph text: an authored
+    /// header/footer table, a footnote/endnote table, or a comment table cell,
+    /// by its story-local table id. `scope` names the story (story `tbl_n`
+    /// ids collide with body `tbl_n` and cross-story, so the scope is
+    /// load-bearing). Same first-paragraph law as the body `SetCell`: only
+    /// the cell's first paragraph is rewritten, any later cell paragraphs are
+    /// untouched. Header/footer and note cells land tracked; comment cells
+    /// land as Normal annotation text in both outer modes.
+    SetStoryCell {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        text: String,
+    },
 }
 
 /// A place beside an imported block, as the native writer addresses it.

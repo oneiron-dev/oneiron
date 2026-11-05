@@ -479,6 +479,21 @@ impl Vault {
                             runs: runs.clone(),
                         });
                     }
+                    DocxChange::SetStoryCell {
+                        scope,
+                        block,
+                        row,
+                        col,
+                        text,
+                    } => {
+                        main.push(DocxChange::SetStoryCell {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            row: *row,
+                            col: *col,
+                            text: text.clone(),
+                        });
+                    }
                 }
             }
             let imported: HashSet<&str> = state
