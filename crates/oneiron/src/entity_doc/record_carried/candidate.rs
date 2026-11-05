@@ -37,7 +37,7 @@ pub(crate) struct RecordDocumentCandidate<'selected, 'carrier> {
     selected: &'selected SelectedRecordDocument<'carrier>,
     prior_raw: Option<Vec<u8>>,
     prior_head: Option<Vec<u8>>,
-    prior_document: Option<[u8; 32]>,
+    prior_documents: Vec<(DocumentSlot, [u8; 32])>,
     prior_logical: Option<Vec<u8>>,
     logical: Vec<u8>,
     head: Head,
@@ -68,10 +68,24 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         let prior_raw = store.port_entity_raw(txn, &entity)?.map(|raw| raw.to_vec());
         let prior_head = storage::record_head_bytes(store, txn, &entity)?;
         let local = ENTITY_DOC_HEAD.get(store, txn, &HexId(entity))?;
-        let prior_document = local
-            .as_ref()
-            .map(|head| document_rows_digest(store, txn, &head.document))
-            .transpose()?;
+        // Even an absent head has physical slots: sequence rows may appear
+        // after preparation in this same writer. A Switch also names its
+        // destination independently of the old head's slot.
+        let mut slots = vec![DocumentSlot::of(entity)];
+        let destination = DocumentSlot::from_hex(&source.native().document)?;
+        if !slots.contains(&destination) {
+            slots.push(destination);
+        }
+        if let Some(head) = &local {
+            let held = DocumentSlot::from_hex(&head.document)?;
+            if !slots.contains(&held) {
+                slots.push(held);
+            }
+        }
+        let prior_documents = slots
+            .into_iter()
+            .map(|slot| Ok((slot, document_rows_digest(store, txn, slot)?)))
+            .collect::<Result<Vec<_>>>()?;
         let (head, document, before, left_document, deferred_purge, prior_logical) = match local {
             None => {
                 // SKILL has no lazy native birth: its existing text may
@@ -126,7 +140,12 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 if head.incarnation != native.incarnation || head.field != *source.field() {
                     return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
                 }
-                let document = storage::load(store, txn, &head)?;
+                // Updates may carry a birth projection too. Read the birth
+                // from the fully replayed document, not its snapshot's cache.
+                let document = EntityDoc::from_loro(storage::load(store, txn, &head)?.doc)?;
+                if document.birth().entity != head.entity {
+                    return Err(Error::CorruptedIndex("record document birth owner"));
+                }
                 let prior_logical = Some(storage::body_with_document(
                     &head.field,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -163,6 +182,14 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 {
                     return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
                         "snapshot does not join this vault's document",
+                    )));
+                }
+                let document = EntityDoc::from_loro(document.doc)?;
+                if document.birth().entity != head.entity
+                    || document.birth().at != incoming.birth().at
+                {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
+                        "record document birth differs",
                     )));
                 }
                 let mut deferred_purge = None;
@@ -203,7 +230,7 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             selected,
             prior_raw,
             prior_head,
-            prior_document,
+            prior_documents,
             prior_logical,
             logical,
             head,
@@ -227,13 +254,14 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         {
             return Ok(false);
         }
-        // Erasure and retained-history writes can change physical slot rows
-        // without changing the encoded head or current logical text.
-        let current = ENTITY_DOC_HEAD
-            .get(store, txn, &HexId(entity))?
-            .map(|head| document_rows_digest(store, txn, &head.document))
-            .transpose()?;
-        Ok(current == self.prior_document)
+        // Erasure and retained-history writes, including new unheaded
+        // sequence rows, need not change the encoded head or logical text.
+        for (slot, prior) in &self.prior_documents {
+            if document_rows_digest(store, txn, *slot)? != *prior {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn entity(&self) -> Result<EntityId> {
@@ -317,9 +345,8 @@ fn same_pointer_body(old: &[u8], incoming: &[u8], switched: bool, document: &str
 fn document_rows_digest(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-    document: &str,
+    slot: DocumentSlot,
 ) -> Result<[u8; 32]> {
-    let slot = DocumentSlot::from_hex(document)?;
     let mut digest = blake3::Hasher::new();
     for row in DocumentRow::ALL {
         let bytes = store.port_document_row(txn, slot, row)?;
