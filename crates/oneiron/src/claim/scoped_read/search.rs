@@ -221,7 +221,7 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         as_of: Option<u64>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of)?;
+        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -234,7 +234,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_vector_revisioned(query, limit, requested)?;
+        let result = self.search_vector_revisioned(query, limit, requested, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -298,7 +298,7 @@ impl ScopedRead<'_> {
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
-        let held = HeldAuthority::default();
+        let held = HeldAuthority::for_request(requested);
         // A withheld row counts only inside the key's own ceiling under both
         // snapshots: a request or pinned projection excluded it. A row the
         // key's baseline authority denies stays opaque (FIX 8670).

@@ -11,7 +11,7 @@ use super::alloc::{buffer_from_vec, free_vec};
 use super::guard::{ffi_guard, with_optional_slice, with_required_slice, with_vault, write_out};
 use super::parse::{
     engine, memory_result, parse_entity_id, parse_u8, string_from_optional, string_from_required,
-    ts_to_u64, validate_dimensions,
+    ts_to_u64,
 };
 use super::types::{
     OneironBuffer, OneironByteSlice, OneironEdgeInfoArray, OneironEntityInput,
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
                     // Signing doors (delete receipts) need this install's keys from the keystore.
                     vault.install_default_keystore(std::path::Path::new(&path));
                     let handle =
-                        Box::into_raw(Box::new(OneironVault::unbound(Arc::new(vault), dimensions)));
+                        Box::into_raw(Box::new(OneironVault::opened(Arc::new(vault), dimensions)));
                     write_out(out_vault, handle)?;
                     Ok(())
                 })();
@@ -148,7 +148,6 @@ pub(super) fn device_open_config(
     if dimensions != 0 {
         config.dimensions = dimensions;
     }
-    validate_dimensions(config.dimensions)?;
     config.dict_search_paths =
         with_optional_slice(dict_search_paths, dict_search_paths_len, |paths| {
             paths.map_or_else(
@@ -240,6 +239,7 @@ pub unsafe extern "C" fn oneiron_vault_bind(
                     actor_class,
                     session,
                 }),
+                native_limit_questions: None,
             };
             write_out(out_vault, Box::into_raw(Box::new(bound)))
         });

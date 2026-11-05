@@ -38,9 +38,17 @@ pub(crate) fn message_completion_in_txn(
     txn: &heed::RoTxn<'_>,
     message: &EntityId,
 ) -> Result<MessageCompletion> {
-    let generating = storage::ACTIVE.contains(&vault.store, txn, message)?;
+    message_completion_in(&vault.store, txn, message)
+}
+
+fn message_completion_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<MessageCompletion> {
+    let generating = storage::ACTIVE.contains(dbs, txn, message)?;
     // A MESSAGE no stream wrote is ordinary witnessed text: complete.
-    Ok(match storage::receipt(vault, txn, *message)? {
+    Ok(match storage::receipt_in(dbs, txn, *message)? {
         Some(receipt) => MessageCompletion {
             incomplete: !receipt.complete(),
             generating,
@@ -72,7 +80,11 @@ impl Memory<'_> {
                 if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
                     return Ok(None);
                 }
-                Ok(Some(message_completion_in_txn(self.vault, txn, message)?))
+                Ok(Some(message_completion_in(
+                    &lane.store_read(),
+                    txn,
+                    message,
+                )?))
             },
         )?;
         if let Some(completion) = result.value {

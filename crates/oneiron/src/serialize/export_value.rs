@@ -6,7 +6,7 @@
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 //! A value is kept at any depth, and its archive form is flat (FIX 10097, [`tree`]).
 use std::borrow::Cow;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use rmpv::Value as Mp;
 use serde::{Deserialize, Serialize};
@@ -215,16 +215,51 @@ impl ExportBody {
     }
 
     pub(crate) fn to_bytes(&self) -> Result<Vec<u8>> {
+        // Single code path: the streaming writer below produces exactly
+        // these bytes, so `validate`'s round trip self-checks the streaming
+        // form on every import too (FIX 11180).
+        let mut bytes = Vec::new();
+        self.write_bytes_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// The export bytes written straight to the caller (FIX 11180): the
+    /// MessagePack/Utf8 arms stream their frames with no output Vec, so an
+    /// archive writer carries a large admitted body without reassembling
+    /// it whole. The other arms keep their exact `to_bytes` behavior
+    /// (Pack/HubSource materialize in their own arms, File/Nulled error
+    /// identically). This mirrors the `read`/`with_reader` precedent:
+    /// small callers keep `to_bytes`, writers stream here. The transient
+    /// Mp tree stays: a tree-free encoder would re-implement rmpv width
+    /// framing and risk canonical-byte drift, explicitly out of scope.
+    /// Generic over the writer type because `rmpv::encode::write_value`
+    /// needs a sized writer: callers pass their concrete writer (`Vec`,
+    /// file, buffered stream) and the frames stream into it.
+    pub(crate) fn write_bytes_to<W: Write>(&self, out: &mut W) -> Result<()> {
         match self {
             Self::MessagePack(value) => {
-                let mut bytes = Vec::new();
-                rmpv::encode::write_value(&mut bytes, &value.to_msgpack()?)
+                rmpv::encode::write_value(out, &value.to_msgpack()?)
                     .map_err(|_| invalid("MessagePack encode failed"))?;
-                Ok(bytes)
+                Ok(())
             }
-            Self::Utf8(text) => Ok(text.as_bytes().to_vec()),
-            Self::Pack(value) => value.envelope()?.to_bytes(),
-            Self::HubSource(value) => value.to_bytes(),
+            Self::Utf8(text) => out
+                .write_all(text.as_bytes())
+                .map_err(|_| invalid("export body write failed")),
+            // REVIEW-5164 P1: explicit arms, never via `to_bytes` — the
+            // fallback calling `to_bytes` recursed through this writer
+            // forever for Pack/HubSource/File/Nulled. These arms keep the
+            // exact original behavior (each materializes in its own type's
+            // arm, File/Nulled error identically).
+            Self::Pack(value) => {
+                let bytes = value.envelope()?.to_bytes()?;
+                out.write_all(&bytes)
+                    .map_err(|_| invalid("export body write failed"))
+            }
+            Self::HubSource(value) => {
+                let bytes = value.to_bytes()?;
+                out.write_all(&bytes)
+                    .map_err(|_| invalid("export body write failed"))
+            }
             Self::File(_) => Err(invalid("a file body is read from its archive file")),
             Self::Nulled => Err(invalid(
                 "nulled opaque body needs its owning import adapter",

@@ -130,6 +130,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCommitmentsFulfill
         | Row::VaultCommitmentsRelease
         | Row::VaultCommitmentsSupersede
+        | Row::VaultCommitmentsReminderRouteGet
+        | Row::VaultCommitmentsReminderRouteSet
         | Row::VaultPersonasPreview
         | Row::VaultPersonasExport
         | Row::VaultPersonasEdit
@@ -175,6 +177,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSkillsRulesSet
         | Row::VaultSkillsCodeAutoInstallSet
         | Row::VaultSkillsFitSet
+        | Row::VaultSkillsAdvisoryAskSet
         | Row::VaultSkillsPermissionsApprove
         | Row::VaultSkillsOptimizeStart
         | Row::VaultSkillsOptimizeResult
@@ -454,6 +457,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstPolicy
         | Row::VaultFederationBurstPolicySet
         | Row::VaultSyncRetainedWorkWaitSet
+        | Row::VaultSyncQuarantineHeldEdits
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
@@ -769,7 +773,7 @@ pub(in crate::api::facade) fn door_admits(
         Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
         Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
         Row::SelfMemoryDiaryQuery | Row::SelfMemoryPadsRead | Row::SelfMemoryPadsAdminReads => {
-            diary_reader(server, auth).map(drop)
+            diary_reader(server, auth, verb).map(drop)
         }
         Row::VaultDecisionsAsksAnswer
         | Row::VaultDecisionsAsksClimb

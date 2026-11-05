@@ -35,7 +35,10 @@ use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
 
+mod caller;
 mod execute;
+mod parts;
+pub use caller::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 mod planning;
 mod provenance;
 
@@ -61,12 +64,16 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// summary is overlay-only (see [`Memory::witness_into_session`]).
     Session {
         session: &'a OffRecordSession<'v>,
+        /// An already captured native caller route; existing one-shot doors mint one.
+        route: Option<&'a SessionWriteRoute>,
         summary: Option<&'a str>,
         admit: Option<Admit<'a>>,
         /// The room whose roster admits speech into its overlay.
         rostered: Option<EntityId>,
         /// The server's pre-embedded turn vector, staged once on mint/extend.
         turn_vector: Option<TurnVector>,
+        /// Native RAM streaming finality, written beside the actual new MESSAGE.
+        terminal: Option<&'a super::stream::SessionStreamTerminal>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
@@ -126,6 +133,7 @@ enum Landing<'a, 'v> {
 
 /// One MESSAGE as the plan holds it. The envelope the door authorizes and the
 /// canonical body it proves come from ONE value ([`witness_message_envelope`]).
+#[derive(Clone)]
 pub(super) struct PlannedMessage<'t> {
     pub(super) message: &'t WitnessMessage,
     pub(super) id: EntityId,
@@ -137,6 +145,7 @@ pub(super) struct PlannedMessage<'t> {
 }
 
 /// Everything the program decides before its write transaction.
+#[derive(Clone)]
 pub(super) struct WitnessPlan<'t> {
     pub(super) turn: &'t WitnessTurn,
     /// Every row carries the witness's own stamps, never the wall clock:
@@ -211,7 +220,10 @@ enum WitnessSink<'a, 'v> {
 }
 
 enum Landed {
-    Base(WitnessReceipt),
+    Base {
+        receipt: WitnessReceipt,
+        bodies: Vec<(EntityId, u64, Vec<u8>)>,
+    },
     HardDeleted(EntityId),
     Overlay {
         segment: TxnSegmentGuard,

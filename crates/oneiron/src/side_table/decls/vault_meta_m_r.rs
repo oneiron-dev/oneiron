@@ -136,6 +136,9 @@ side_tables! {
     /// u64be (consecutive group index); value: optional actor + token (FIX 595).
     OFFICE_BODY_EXPORT_AUTHOR: VaultMeta b"office_body:export_author:v1:" Named
         => crate::office_body::erase_export_author_actor_in_txn;
+    /// Derived DOCX author-token lookup. Key: utf8 token; value: authoritative
+    /// export and revision-author row keys, with no actor or display author.
+    OFFICE_BODY_EXPORT_TOKEN_INDEX: VaultMeta b"office_body:export_token_index:v1:" Named;
     /// Machine work on a live office body: opener, base frontier and state. Key: id16 (artifact) +
     /// id16 (fork).
     OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named

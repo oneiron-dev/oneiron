@@ -20,8 +20,11 @@ native = [
   "dep:cms",
   "dep:const-oid",
   "dep:der",
+  "dep:encoding_rs",
+  "dep:flate2",
   "dep:ipnet",
   "dep:lopdf",
+  "dep:qrcode",
   "dep:p256",
   "dep:pkix-chain",
   "dep:rsa",
@@ -88,6 +91,12 @@ serde_json = { workspace = true, optional = true }
 cms = { version = "=0.2.3", default-features = false, features = ["std"], optional = true }
 const-oid = { version = "=0.9.6", optional = true }
 der = { version = "=0.7.10", features = ["alloc", "derive", "oid", "std", "time"], optional = true }
+# Ported prepare/inspect PDF pipeline (FIX 7980/8157): exact inflate,
+# Win1252 label decode, and organ-side QR appendix. Versions mirror
+# crates/oneiron/Cargo.toml. No `image` dep: rasters cross PNG-decoded.
+encoding_rs = { version = "0.8", optional = true }
+flate2 = { version = "1", optional = true }
+qrcode = { version = "=0.14.1", default-features = false, optional = true }
 lopdf = { version = "=0.44.0", default-features = false, optional = true }
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"], optional = true }
 pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"], optional = true }

@@ -152,9 +152,10 @@ pub fn review_artifact(
     // Fair admission for complete catalogs: past the bound, work waits its
     // turn; it is never refused for count (FIX 8173).
     let _turn = vault.admit_task_work_blocking(request.actor.entity_ref());
+    let review_key = review_identity_hash(request, catalog, &decisions.wording)?;
     {
         let txn = vault.store.env.read_txn()?;
-        if let Some(result) = cached_review(vault, &txn, request)? {
+        if let Some(result) = cached_review(vault, &txn, &review_key)? {
             drop(txn);
             let result = keep_declared_spawn(vault, request, result);
             preserve_overruled(vault, &result, request.at)?;
@@ -182,7 +183,7 @@ pub fn review_artifact(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (artifacts, receipts) = decisions.review(&inputs, request.at)?;
+    let (artifacts, receipts) = decisions.review(&inputs, &review_key, request.at)?;
     let reliabilities = read_reliabilities(vault, &artifacts)?;
     let mut triage = triage_critiques(catalog, &artifacts, &reliabilities)?;
     triage.findings =
@@ -190,7 +191,7 @@ pub fn review_artifact(
     triage.auto_resolved =
         super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
-    let result = persist_review(vault, request, &triage, &artifacts, &receipts)?;
+    let result = persist_review(vault, request, &review_key, &triage, &artifacts, &receipts)?;
     let result = keep_declared_spawn(vault, request, result);
     preserve_overruled(vault, &result, request.at)?;
     Ok(result)

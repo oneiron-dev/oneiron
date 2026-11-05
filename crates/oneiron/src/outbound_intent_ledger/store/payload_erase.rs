@@ -111,7 +111,11 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
-        force_sync(self)?;
+        let synced = force_sync(self);
+        if erased {
+            self.wake_owner_shed();
+        }
+        synced?;
         if erased {
             self.finish_connector_resume_retirements_after_commit();
             self.store
@@ -131,7 +135,11 @@ impl Vault {
         owner.revalidate_in_txn(self, &wtxn)?;
         let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
-        force_sync(self)?;
+        let synced = force_sync(self);
+        if erased {
+            self.wake_owner_shed();
+        }
+        synced?;
         if erased {
             self.finish_connector_resume_retirements_after_commit();
             self.store
