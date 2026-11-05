@@ -243,6 +243,10 @@ impl Memory<'_> {
             }))
         })?;
         if result.value.is_some() {
+            let _ = self.vault.measure_limit(
+                crate::limit_ask::EngineLimit::RequestedResultRows,
+                u64::try_from(limit).unwrap_or(u64::MAX),
+            );
             self.produced_from([message]);
         }
         Ok(result)
