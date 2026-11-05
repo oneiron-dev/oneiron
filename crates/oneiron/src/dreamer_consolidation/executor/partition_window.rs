@@ -1,4 +1,4 @@
-//! One window of plain Micro partitions (FIX 12487): slots pinned and
+//! One window of plain Micro or Meso partitions (FIX 12487): slots pinned and
 //! opened in admission order, extraction prefixes side by side, then
 //! serial finishes in order against branches re-opened at the finish,
 //! so the committed rows equal the serial run's. Split from
@@ -55,17 +55,77 @@ enum WindowSlotRun<'a> {
         run_started: Instant,
         prefix: Option<crate::llm::DurableStepResult<PartitionPrefix>>,
     },
+    /// A sieve rung job: it runs whole (its span's evidence, its reading
+    /// and its own commit) beside the prefixes, and its outcome, kept
+    /// here, settles in window order.
+    Rung(Option<Result<DreamerAttemptExecution>>),
+}
+
+/// Runs one rung job with its own panic containment: a rung commits
+/// inside the window's side-by-side phase, so a sibling's panic must not
+/// unwind its decided outcome away. A panic becomes this slot's shared
+/// executor-panic error (the payload dropped unread), which stops the
+/// window as a slot panic does.
+async fn contained_rung<F: Future<Output = Result<DreamerAttemptExecution>>>(
+    job: F,
+    attempt: &DreamerAdmittedAttempt,
+) -> Result<DreamerAttemptExecution> {
+    let mut job = pin!(job);
+    poll_fn(|task_cx| {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| job.as_mut().poll(task_cx))) {
+            Ok(poll) => poll,
+            Err(_payload) => {
+                tracing::error!(
+                    attempt_id = %bytes_to_hex_lower(attempt.status.attempt.id.as_bytes()),
+                    kind = "executor_panic",
+                    "dreamer attempt executor panicked; parking the admitted attempt"
+                );
+                Poll::Ready(Err(crate::dreamer_wake::executor_panic_error()))
+            }
+        }
+    })
+    .await
+}
+
+/// Polls `first` and `second` together until both end.
+async fn both<A: Future, B: Future>(first: A, second: B) -> (A::Output, B::Output) {
+    let mut first = pin!(first);
+    let mut second = pin!(second);
+    let (mut first_out, mut second_out) = (None, None);
+    poll_fn(|task_cx| {
+        if first_out.is_none()
+            && let Poll::Ready(out) = first.as_mut().poll(task_cx)
+        {
+            first_out = Some(out);
+        }
+        if second_out.is_none()
+            && let Poll::Ready(out) = second.as_mut().poll(task_cx)
+        {
+            second_out = Some(out);
+        }
+        match (first_out.take(), second_out.take()) {
+            (Some(a), Some(b)) => Poll::Ready((a, b)),
+            (a, b) => {
+                first_out = a;
+                second_out = b;
+                Poll::Pending
+            }
+        }
+    })
+    .await
 }
 
 impl ConsolidationExecutor<'_> {
-    /// Runs one driver window of plain Micro partitions (FIX 12487):
+    /// Runs one driver window of plain Micro or Meso partitions (FIX 12487):
     /// every slot is pinned and opened in admission order, the
     /// extraction prefixes run side by side, then each slot finishes
     /// serially in order against its branch re-opened at the finish —
     /// the live state a serial pass would read in that position — so
-    /// the committed rows equal the serial run's. The driver gates the
-    /// window to plain partitions; a slot of any other shape takes the
-    /// serial `execute` in its place as a second lock.
+    /// the committed rows equal the serial run's. A sieve rung job in the
+    /// window runs whole beside the prefixes: its commit touches only its
+    /// own span's reading, which no partition's finish reads. The driver
+    /// gates the window to these shapes; a slot of any other shape takes
+    /// the serial `execute` in its place as a second lock.
     pub(super) async fn run_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -74,14 +134,15 @@ impl ConsolidationExecutor<'_> {
             .iter()
             .map(|(attempt, ctx)| self.admit_window_slot(attempt, ctx))
             .collect();
-        // The prefixes, side by side, their outputs kept in slot order.
+        // The prefixes and the rung jobs, side by side, their outputs kept
+        // in slot order.
         let mut jobs = Vec::new();
+        let mut rungs = Vec::new();
         for (index, (slot, (attempt, ctx))) in slots.iter_mut().zip(window.iter()).enumerate() {
-            if let WindowSlotRun::Running {
-                started, run_id, ..
-            } = slot
-            {
-                jobs.push((
+            match slot {
+                WindowSlotRun::Running {
+                    started, run_id, ..
+                } => jobs.push((
                     index,
                     self.extract_partition_prefix(
                         &started.payload,
@@ -91,12 +152,28 @@ impl ConsolidationExecutor<'_> {
                         run_id.clone(),
                         &mut started.charges,
                     ),
-                ));
+                )),
+                WindowSlotRun::Rung(_) => rungs.push((
+                    index,
+                    contained_rung(self.run_sieve_rungs(attempt, ctx), attempt),
+                )),
+                WindowSlotRun::Settled(..) | WindowSlotRun::Serial => {}
             }
         }
         let (indices, prefixes): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+        let (rung_indices, rung_runs): (Vec<_>, Vec<_>) = rungs.into_iter().unzip();
         let width = prefixes.len().max(1);
-        let outcomes = super::super::sieve_ports::ordered_slots(prefixes, width).await;
+        let rung_width = rung_runs.len().max(1);
+        let (outcomes, rung_outcomes) = both(
+            super::super::sieve_ports::ordered_slots(prefixes, width),
+            super::super::sieve_ports::ordered_slots(rung_runs, rung_width),
+        )
+        .await;
+        for (index, outcome) in rung_indices.into_iter().zip(rung_outcomes) {
+            if let WindowSlotRun::Rung(done) = &mut slots[index] {
+                *done = Some(outcome);
+            }
+        }
         for (index, outcome) in indices.into_iter().zip(outcomes) {
             if let WindowSlotRun::Running { prefix, .. } = &mut slots[index] {
                 *prefix = Some(outcome);
@@ -140,6 +217,15 @@ impl ConsolidationExecutor<'_> {
                     Err(crate::dreamer_wake::executor_panic_error())
                 }
             };
+            // A rung job's contained panic stops the window as a finish's
+            // panic does.
+            if stopped.is_none()
+                && result
+                    .as_ref()
+                    .is_err_and(crate::dreamer_wake::is_executor_panic_error)
+            {
+                stopped = Some(WindowStopped::Panic);
+            }
             if stopped.is_none()
                 && result
                     .as_ref()
@@ -153,7 +239,7 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// One window slot at its admission: the serial gates and open, in
-    /// window order. What is not a plain prepared Micro partition — an
+    /// window order. What is not a plain prepared Micro or Meso partition — an
     /// unprepared or direct call, another attempt shape, a thing branch
     /// with its own scoped agent — stays serial in its place.
     fn admit_window_slot<'w>(
@@ -161,9 +247,29 @@ impl ConsolidationExecutor<'_> {
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'w>,
     ) -> WindowSlotRun<'w> {
-        if attempt.status.payload.attempt_type
-            != crate::dreamer_runner::DreamerConsolidationScope::Micro.as_str()
-        {
+        if super::super::selection::windowed_rung(
+            &attempt.status.attempt.kind,
+            &attempt.status.payload.attempt_type,
+        ) {
+            // The same authority check `execute` makes before any shape.
+            return match ctx
+                .vault
+                .dreamer_actor_for_attempt(attempt.status.attempt.id)
+            {
+                Ok(actor) if actor == self.actor => WindowSlotRun::Rung(None),
+                Ok(_) => WindowSlotRun::Settled(
+                    None,
+                    Err(invalid_consolidation(
+                        "executor actor is not the queued Dreamer authority",
+                    )),
+                ),
+                Err(error) => WindowSlotRun::Settled(None, Err(error)),
+            };
+        }
+        if !super::super::selection::windowed_partition(
+            &attempt.status.attempt.kind,
+            &attempt.status.payload.attempt_type,
+        ) {
             return WindowSlotRun::Serial;
         }
         let (Some(plan), Some(wake)) = (ctx.prepared_attempt, ctx.prepared_wake) else {
@@ -225,6 +331,13 @@ impl ConsolidationExecutor<'_> {
                 }
                 executed
             }
+            // It ran whole beside the prefixes, so its outcome stands even
+            // when an earlier finish stopped the window: its work is done.
+            WindowSlotRun::Rung(done) => done.unwrap_or_else(|| {
+                Err(crate::Error::InvariantViolation(
+                    "a window's rung job did not run",
+                ))
+            }),
             WindowSlotRun::Serial => match stopped {
                 None => self.execute(attempt, ctx).await,
                 // Never ran: no prefix, no spend. After a panic it
