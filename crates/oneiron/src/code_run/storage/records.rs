@@ -223,6 +223,26 @@ impl Vault {
         healed_model: Option<&ModelId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_code_run_replay_record_if_generation_prepared(
+            record,
+            expected,
+            healed_model,
+            |_| Ok(()),
+            also,
+        )
+    }
+
+    /// The same compare-and-put with preparation after the generation check
+    /// but before the erase fence. Owned saves stamp their first owner here;
+    /// the generic `also` callback still runs after the record and heal rows.
+    pub(super) fn put_code_run_replay_record_if_generation_prepared(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         let mut wtxn = self.store.env.write_txn()?;
@@ -240,6 +260,7 @@ impl Vault {
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
+        prepare(&mut wtxn)?;
         let record = record.over_held(current.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, &mut wtxn, record)?;
