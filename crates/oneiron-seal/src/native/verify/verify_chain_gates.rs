@@ -129,14 +129,16 @@ pub(crate) fn signer_path_status(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
-) -> VerifyCheckStatus {
+    memory: &MemoryLedger,
+) -> Result<VerifyCheckStatus, SealMemoryRefusal> {
     use der::Decode;
+    memory.admit_len::<x509_cert::Certificate>(chain_ders.len())?;
     let Ok(chain) = chain_ders
         .iter()
         .map(|d| x509_cert::Certificate::from_der(d))
         .collect::<Result<Vec<_>, _>>()
     else {
-        return VerifyCheckStatus::Fail;
+        return Ok(VerifyCheckStatus::Fail);
     };
     // This violation is provable without a root. Check it before path
     // construction so an absent CMS root cannot turn bad KeyUsage into unknown.
@@ -144,27 +146,32 @@ pub(crate) fn signer_path_status(
         .first()
         .is_none_or(|leaf| enforce_signer_leaf_key_usage(leaf).is_err())
     {
-        return VerifyCheckStatus::Fail;
+        return Ok(VerifyCheckStatus::Fail);
     }
-    match pkix_chain::verify_chain(
-        &chain,
-        anchors,
-        &pkix_chain::ValidationPolicy::new(at_unix),
-        &pkix_chain::DefaultVerifier,
-        &pkix_chain::NoRevocation,
-        &pkix_chain::NoAiaFetcher,
-    ) {
-        Ok(_) => VerifyCheckStatus::Pass,
-        Err(error) => pkix_path_status(&error),
-    }
+    Ok(
+        match pkix_chain::verify_chain(
+            &chain,
+            anchors,
+            &pkix_chain::ValidationPolicy::new(at_unix),
+            &pkix_chain::DefaultVerifier,
+            &pkix_chain::NoRevocation,
+            &pkix_chain::NoAiaFetcher,
+        ) {
+            Ok(_) => VerifyCheckStatus::Pass,
+            Err(error) => pkix_path_status(&error),
+        },
+    )
 }
 
 pub(crate) fn validate_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
+    memory: &MemoryLedger,
 ) -> Result<(), SealError> {
-    if signer_path_status(chain_ders, anchors, at_unix) == VerifyCheckStatus::Pass {
+    if signer_path_status(chain_ders, anchors, at_unix, memory).map_err(memory_refused)?
+        == VerifyCheckStatus::Pass
+    {
         Ok(())
     } else {
         Err(cert_path_err())
@@ -369,10 +376,12 @@ pub(crate) fn verify_document(
             signer_validation_time(&envelopes[index], &envelopes, ctx.clock_ms / 1000);
         let archival = archival_coverage(&envelopes[index], &envelopes, dss_end);
         if let Some(chain) = &envelopes[index].signer_chain {
+            let status = signer_path_status(chain, &anchors, validation_time.at, &memory)
+                .map_err(memory_refused)?;
             let mut path = Checks::new(limits);
             path.record_status(
                 VerifyCheckKind::CertificatePath,
-                signer_path_status(chain, &anchors, validation_time.at),
+                status,
                 VerifyFindingCode::CertificatePathInvalid,
             )
             .map_err(memory_refused)?;
