@@ -675,7 +675,7 @@ async fn self_focus_scratchpad_recall(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -684,7 +684,7 @@ async fn self_focus_scratchpad_recall(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_focus_scratchpad_append(
     server: &Arc<SyncServer>,
@@ -697,7 +697,7 @@ async fn self_focus_scratchpad_append(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -706,7 +706,7 @@ async fn self_focus_scratchpad_append(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_focus_scratchpad_seal(
     server: &Arc<SyncServer>,
@@ -719,7 +719,7 @@ async fn self_focus_scratchpad_seal(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -728,7 +728,7 @@ async fn self_focus_scratchpad_seal(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_memory_diary(
     server: &Arc<SyncServer>,
@@ -741,7 +741,7 @@ async fn self_memory_diary(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -750,7 +750,7 @@ async fn self_memory_diary(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_memory_diary_reads(
     server: &Arc<SyncServer>,
@@ -763,7 +763,7 @@ async fn self_memory_diary_reads(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -772,7 +772,7 @@ async fn self_memory_diary_reads(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_memory_diary_review(
     server: &Arc<SyncServer>,
@@ -785,7 +785,7 @@ async fn self_memory_diary_review(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -794,7 +794,7 @@ async fn self_memory_diary_review(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_standing_get(
     server: &Arc<SyncServer>,
@@ -807,7 +807,7 @@ async fn self_standing_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -816,7 +816,7 @@ async fn self_standing_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_standing_list(
     server: &Arc<SyncServer>,
@@ -829,7 +829,7 @@ async fn self_standing_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -838,7 +838,7 @@ async fn self_standing_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_standing_edit(
     server: &Arc<SyncServer>,
@@ -851,7 +851,7 @@ async fn self_standing_edit(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -860,7 +860,7 @@ async fn self_standing_edit(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_identity_answer(
     server: &Arc<SyncServer>,
@@ -916,7 +916,7 @@ async fn self_identity_settle(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -925,7 +925,7 @@ async fn self_identity_settle(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_list(
     server: &Arc<SyncServer>,
@@ -938,7 +938,7 @@ async fn self_inbox_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -947,7 +947,7 @@ async fn self_inbox_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_mark(
     server: &Arc<SyncServer>,
@@ -960,7 +960,7 @@ async fn self_inbox_mark(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -969,7 +969,7 @@ async fn self_inbox_mark(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_concern(
     server: &Arc<SyncServer>,
@@ -982,7 +982,7 @@ async fn self_inbox_concern(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -991,7 +991,7 @@ async fn self_inbox_concern(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_concern_outcome(
     server: &Arc<SyncServer>,
@@ -1004,7 +1004,7 @@ async fn self_inbox_concern_outcome(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1013,7 +1013,7 @@ async fn self_inbox_concern_outcome(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_concern_move(
     server: &Arc<SyncServer>,
@@ -1047,7 +1047,7 @@ async fn vault_diagnostics_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1056,7 +1056,7 @@ async fn vault_diagnostics_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_diagnostics_get(
     server: &Arc<SyncServer>,
@@ -1069,7 +1069,7 @@ async fn vault_diagnostics_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1078,7 +1078,7 @@ async fn vault_diagnostics_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_coach_inspect(
     server: &Arc<SyncServer>,
@@ -1091,7 +1091,7 @@ async fn vault_coach_inspect(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1100,7 +1100,7 @@ async fn vault_coach_inspect(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_people_list(
     server: &Arc<SyncServer>,
@@ -1113,7 +1113,7 @@ async fn vault_people_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1122,7 +1122,7 @@ async fn vault_people_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_people_get(
     server: &Arc<SyncServer>,
@@ -1135,7 +1135,7 @@ async fn vault_people_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1144,7 +1144,7 @@ async fn vault_people_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_people_create(
     server: &Arc<SyncServer>,
@@ -1284,7 +1284,7 @@ async fn vault_shape_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1293,7 +1293,7 @@ async fn vault_shape_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shape_plan(
     server: &Arc<SyncServer>,
@@ -1306,7 +1306,7 @@ async fn vault_shape_plan(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1315,7 +1315,7 @@ async fn vault_shape_plan(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shape_apply(
     server: &Arc<SyncServer>,
@@ -1365,7 +1365,7 @@ async fn vault_shape_plan_card(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1374,7 +1374,7 @@ async fn vault_shape_plan_card(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shape_items_receipt(
     server: &Arc<SyncServer>,
@@ -1387,7 +1387,7 @@ async fn vault_shape_items_receipt(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1396,7 +1396,7 @@ async fn vault_shape_items_receipt(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shape_groups(
     server: &Arc<SyncServer>,
@@ -1493,7 +1493,7 @@ async fn self_message(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1503,7 +1503,7 @@ async fn self_message(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_grants_ask(
     server: &Arc<SyncServer>,
@@ -1516,7 +1516,7 @@ async fn self_grants_ask(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1525,7 +1525,7 @@ async fn self_grants_ask(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_grants_asked(
     server: &Arc<SyncServer>,
@@ -1538,7 +1538,7 @@ async fn self_grants_asked(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -1547,7 +1547,7 @@ async fn self_grants_asked(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_companions_access_requests_answer(
     server: &Arc<SyncServer>,
@@ -1845,8 +1845,9 @@ async fn cancel(
     )?;
     facade_admit_receipted(server, call, actor, class, "cancel", &value, &["task_ref"])?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "cancel", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "cancel", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn steer(
     server: &Arc<SyncServer>,
@@ -1859,8 +1860,9 @@ async fn steer(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "steer", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "steer", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn describe(
     server: &Arc<SyncServer>,
@@ -1936,7 +1938,7 @@ async fn tasks_create(
     super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke_born(
+        let (output, hook_notice) = facade_invoke_born_with_notice(
             &server,
             &call,
             actor,
@@ -1946,7 +1948,10 @@ async fn tasks_create(
             position,
             &producers,
         )?;
-        Ok(FacadeCallOutput::listed(output, &producers))
+        Ok(
+            FacadeCallOutput::listed(output, &producers)
+                .with_hook_notice(hook_notice == Some(true)),
+        )
     })
     .await
     .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.create")))?
@@ -2031,7 +2036,7 @@ async fn vault_fanout_slots(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -2040,7 +2045,7 @@ async fn vault_fanout_slots(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_fanout_launch(
     server: &Arc<SyncServer>,
@@ -2053,7 +2058,7 @@ async fn vault_fanout_launch(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -2062,7 +2067,7 @@ async fn vault_fanout_launch(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_budget(
     server: &Arc<SyncServer>,
@@ -2075,8 +2080,9 @@ async fn self_budget(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "self.budget", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "self.budget", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_budget_land(
     server: &Arc<SyncServer>,
@@ -2089,7 +2095,7 @@ async fn self_budget_land(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -2098,7 +2104,7 @@ async fn self_budget_land(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_billing_account_file(
     server: &Arc<SyncServer>,
@@ -2111,7 +2117,7 @@ async fn self_billing_account_file(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -2120,7 +2126,7 @@ async fn self_billing_account_file(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_budgets_lease_open(
     server: &Arc<SyncServer>,
@@ -2882,7 +2888,7 @@ async fn tasks_update(
     super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke(
+        let (output, hook_notice) = facade_invoke_with_notice(
             &server,
             &call,
             actor,
@@ -2891,7 +2897,10 @@ async fn tasks_update(
             value,
             &producers,
         )?;
-        Ok(FacadeCallOutput::listed(output, &producers))
+        Ok(
+            FacadeCallOutput::listed(output, &producers)
+                .with_hook_notice(hook_notice == Some(true)),
+        )
     })
     .await
     .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.update")))?
@@ -2922,7 +2931,7 @@ async fn tasks_accept(
     )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -2932,7 +2941,7 @@ async fn tasks_accept(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn tasks_redo(
     server: &Arc<SyncServer>,
@@ -2954,7 +2963,7 @@ async fn tasks_redo(
     super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke_born(
+        let (output, hook_notice) = facade_invoke_born_with_notice(
             &server,
             &call,
             actor,
@@ -2964,7 +2973,10 @@ async fn tasks_redo(
             position,
             &producers,
         )?;
-        Ok(FacadeCallOutput::listed(output, &producers))
+        Ok(
+            FacadeCallOutput::listed(output, &producers)
+                .with_hook_notice(hook_notice == Some(true)),
+        )
     })
     .await
     .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.redo")))?
@@ -2980,7 +2992,7 @@ async fn vault_commit_message(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -2990,7 +3002,7 @@ async fn vault_commit_message(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_begin_message_stream(
     server: &Arc<SyncServer>,
@@ -3003,7 +3015,7 @@ async fn vault_begin_message_stream(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3012,7 +3024,7 @@ async fn vault_begin_message_stream(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_append_to_stream(
     server: &Arc<SyncServer>,
@@ -3025,7 +3037,7 @@ async fn vault_append_to_stream(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3034,7 +3046,7 @@ async fn vault_append_to_stream(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_flush_stream(
     server: &Arc<SyncServer>,
@@ -3047,7 +3059,7 @@ async fn vault_flush_stream(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3056,7 +3068,7 @@ async fn vault_flush_stream(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_finalize_stream(
     server: &Arc<SyncServer>,
@@ -3069,7 +3081,7 @@ async fn vault_finalize_stream(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3079,7 +3091,7 @@ async fn vault_finalize_stream(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_cancel_stream(
     server: &Arc<SyncServer>,
@@ -3092,7 +3104,7 @@ async fn vault_cancel_stream(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3102,7 +3114,7 @@ async fn vault_cancel_stream(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_message_stream_partial(
     server: &Arc<SyncServer>,
@@ -3115,7 +3127,7 @@ async fn vault_message_stream_partial(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3124,7 +3136,7 @@ async fn vault_message_stream_partial(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_message_streams_refused(
     server: &Arc<SyncServer>,
@@ -3182,7 +3194,7 @@ async fn vault_messages_durability(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3191,7 +3203,7 @@ async fn vault_messages_durability(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_witness(
     server: &Arc<SyncServer>,
@@ -3204,7 +3216,7 @@ async fn vault_witness(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3214,7 +3226,7 @@ async fn vault_witness(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_upsert(
     server: &Arc<SyncServer>,
@@ -3227,7 +3239,7 @@ async fn vault_claims_upsert(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_born(
+    let (output, hook_notice) = facade_invoke_born_with_notice(
         server,
         call,
         actor,
@@ -3237,7 +3249,7 @@ async fn vault_claims_upsert(
         position,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 /// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
 /// every server transport shares (`POST /v1/core/facade/vault.recall`, and
@@ -3636,7 +3648,7 @@ async fn vault_affect_annotations_put(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_born(
+    let (output, hook_notice) = facade_invoke_born_with_notice(
         server,
         call,
         actor,
@@ -3646,7 +3658,7 @@ async fn vault_affect_annotations_put(
         position,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tagging_status(
     server: &Arc<SyncServer>,
@@ -3673,7 +3685,7 @@ async fn vault_tagging_status(
         &["turn_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3682,7 +3694,7 @@ async fn vault_tagging_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tagging_tags(
     server: &Arc<SyncServer>,
@@ -3709,7 +3721,7 @@ async fn vault_tagging_tags(
         &["turn_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3718,7 +3730,7 @@ async fn vault_tagging_tags(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tagging_history(
     server: &Arc<SyncServer>,
@@ -3745,7 +3757,7 @@ async fn vault_tagging_history(
         &["turn_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3754,7 +3766,7 @@ async fn vault_tagging_history(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tagging_mentions(
     server: &Arc<SyncServer>,
@@ -3767,7 +3779,7 @@ async fn vault_tagging_mentions(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -3776,7 +3788,7 @@ async fn vault_tagging_mentions(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_affect_claims_consolidate(
     server: &Arc<SyncServer>,
@@ -4085,7 +4097,7 @@ async fn vault_cluster(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -4094,7 +4106,7 @@ async fn vault_cluster(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_cluster_proposal(
     server: &Arc<SyncServer>,
@@ -4107,7 +4119,7 @@ async fn vault_cluster_proposal(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -4116,7 +4128,7 @@ async fn vault_cluster_proposal(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_cluster_propose(
     server: &Arc<SyncServer>,
@@ -5006,7 +5018,7 @@ async fn vault_scope_position(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5015,7 +5027,7 @@ async fn vault_scope_position(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_scope_ceiling(
     server: &Arc<SyncServer>,
@@ -5028,7 +5040,7 @@ async fn vault_scope_ceiling(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5037,7 +5049,7 @@ async fn vault_scope_ceiling(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_export_scoped(
     server: &Arc<SyncServer>,
@@ -5050,7 +5062,7 @@ async fn vault_export_scoped(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5059,7 +5071,7 @@ async fn vault_export_scoped(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_receipts(
     server: &Arc<SyncServer>,
@@ -5072,7 +5084,7 @@ async fn vault_receipts(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5081,7 +5093,7 @@ async fn vault_receipts(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_assets_ingest(
     server: &Arc<SyncServer>,
@@ -5094,7 +5106,7 @@ async fn vault_assets_ingest(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5103,7 +5115,7 @@ async fn vault_assets_ingest(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_assets_resolve(
     server: &Arc<SyncServer>,
@@ -5116,7 +5128,7 @@ async fn vault_assets_resolve(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5125,7 +5137,7 @@ async fn vault_assets_resolve(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_search_vector(
     server: &Arc<SyncServer>,
@@ -5138,7 +5150,7 @@ async fn vault_search_vector(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5147,7 +5159,7 @@ async fn vault_search_vector(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_images_view(
     server: &Arc<SyncServer>,
@@ -5160,7 +5172,7 @@ async fn vault_images_view(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5169,7 +5181,7 @@ async fn vault_images_view(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_receipts_get(
     server: &Arc<SyncServer>,
@@ -5182,7 +5194,7 @@ async fn vault_receipts_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5191,7 +5203,7 @@ async fn vault_receipts_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_admission_status(
     server: &Arc<SyncServer>,
@@ -5204,7 +5216,7 @@ async fn self_admission_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5213,7 +5225,7 @@ async fn self_admission_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_admission_receipts(
     server: &Arc<SyncServer>,
@@ -5226,7 +5238,7 @@ async fn self_admission_receipts(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5235,7 +5247,7 @@ async fn self_admission_receipts(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_explain_memory(
     server: &Arc<SyncServer>,
@@ -5314,7 +5326,7 @@ async fn vault_kv_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5323,7 +5335,7 @@ async fn vault_kv_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_kv_put(
     server: &Arc<SyncServer>,
@@ -5336,7 +5348,7 @@ async fn vault_kv_put(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5345,7 +5357,7 @@ async fn vault_kv_put(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_kv_delete(
     server: &Arc<SyncServer>,
@@ -5358,7 +5370,7 @@ async fn vault_kv_delete(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5367,7 +5379,7 @@ async fn vault_kv_delete(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_kv_search(
     server: &Arc<SyncServer>,
@@ -5380,7 +5392,7 @@ async fn vault_kv_search(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5389,7 +5401,7 @@ async fn vault_kv_search(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_kv_namespaces(
     server: &Arc<SyncServer>,
@@ -5402,7 +5414,7 @@ async fn vault_kv_namespaces(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5411,7 +5423,7 @@ async fn vault_kv_namespaces(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_compliance_install(
     server: &Arc<SyncServer>,
@@ -5467,7 +5479,7 @@ async fn vault_campaign_compliance_amend(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5476,7 +5488,7 @@ async fn vault_campaign_compliance_amend(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_compliance_approve(
     server: &Arc<SyncServer>,
@@ -5618,7 +5630,7 @@ async fn vault_campaign_compliance_result(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5627,7 +5639,7 @@ async fn vault_campaign_compliance_result(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_enroll(
     server: &Arc<SyncServer>,
@@ -5640,7 +5652,7 @@ async fn vault_campaign_enroll(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5649,7 +5661,7 @@ async fn vault_campaign_enroll(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_stage_evidence(
     server: &Arc<SyncServer>,
@@ -5704,7 +5716,7 @@ async fn vault_campaign_unsubscribe(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5713,7 +5725,7 @@ async fn vault_campaign_unsubscribe(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_program_create(
     server: &Arc<SyncServer>,
@@ -5726,7 +5738,7 @@ async fn vault_campaign_program_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5735,7 +5747,7 @@ async fn vault_campaign_program_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_program_read(
     server: &Arc<SyncServer>,
@@ -5748,7 +5760,7 @@ async fn vault_campaign_program_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5757,7 +5769,7 @@ async fn vault_campaign_program_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_program_update(
     server: &Arc<SyncServer>,
@@ -5770,7 +5782,7 @@ async fn vault_campaign_program_update(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5779,7 +5791,7 @@ async fn vault_campaign_program_update(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_campaign_program_archive(
     server: &Arc<SyncServer>,
@@ -5792,7 +5804,7 @@ async fn vault_campaign_program_archive(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5801,7 +5813,7 @@ async fn vault_campaign_program_archive(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_turn_programs_arm(
     server: &Arc<SyncServer>,
@@ -5814,7 +5826,7 @@ async fn vault_turn_programs_arm(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5823,7 +5835,7 @@ async fn vault_turn_programs_arm(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_turn_programs_disarm(
     server: &Arc<SyncServer>,
@@ -5836,7 +5848,7 @@ async fn vault_turn_programs_disarm(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5845,7 +5857,7 @@ async fn vault_turn_programs_disarm(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_turn_programs_rebind(
     server: &Arc<SyncServer>,
@@ -5858,7 +5870,7 @@ async fn vault_turn_programs_rebind(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5867,7 +5879,7 @@ async fn vault_turn_programs_rebind(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_create(
     server: &Arc<SyncServer>,
@@ -5880,7 +5892,7 @@ async fn self_saved_query_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5889,7 +5901,7 @@ async fn self_saved_query_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_read(
     server: &Arc<SyncServer>,
@@ -5902,7 +5914,7 @@ async fn self_saved_query_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5911,7 +5923,7 @@ async fn self_saved_query_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_update(
     server: &Arc<SyncServer>,
@@ -5924,7 +5936,7 @@ async fn self_saved_query_update(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5933,7 +5945,7 @@ async fn self_saved_query_update(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_archive(
     server: &Arc<SyncServer>,
@@ -5946,7 +5958,7 @@ async fn self_saved_query_archive(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5955,7 +5967,7 @@ async fn self_saved_query_archive(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_members(
     server: &Arc<SyncServer>,
@@ -5968,7 +5980,7 @@ async fn self_saved_query_members(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -5977,7 +5989,7 @@ async fn self_saved_query_members(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_saved_query_evaluate(
     server: &Arc<SyncServer>,
@@ -6032,7 +6044,7 @@ async fn vault_weave_report(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6041,7 +6053,7 @@ async fn vault_weave_report(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_weave_digest(
     server: &Arc<SyncServer>,
@@ -6814,7 +6826,7 @@ async fn vault_weave_digest_render(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6823,7 +6835,7 @@ async fn vault_weave_digest_render(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_weave_link_corrections(
     server: &Arc<SyncServer>,
@@ -6836,7 +6848,7 @@ async fn vault_weave_link_corrections(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6845,7 +6857,7 @@ async fn vault_weave_link_corrections(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_lens(
     server: &Arc<SyncServer>,
@@ -6858,7 +6870,7 @@ async fn self_inbox_lens(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6867,7 +6879,7 @@ async fn self_inbox_lens(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_get(
     server: &Arc<SyncServer>,
@@ -6880,7 +6892,7 @@ async fn self_inbox_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6889,7 +6901,7 @@ async fn self_inbox_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_done(
     server: &Arc<SyncServer>,
@@ -6902,7 +6914,7 @@ async fn self_inbox_done(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6911,7 +6923,7 @@ async fn self_inbox_done(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_inbox_later(
     server: &Arc<SyncServer>,
@@ -6924,7 +6936,7 @@ async fn self_inbox_later(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -6933,7 +6945,7 @@ async fn self_inbox_later(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_skills_bootstrap(
     server: &Arc<SyncServer>,
@@ -10584,7 +10596,7 @@ async fn vault_inspection_resolve(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -10593,7 +10605,7 @@ async fn vault_inspection_resolve(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shared_propose_delete(
     server: &Arc<SyncServer>,
@@ -10916,7 +10928,7 @@ async fn vault_members_reset_project_access(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -10925,7 +10937,7 @@ async fn vault_members_reset_project_access(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_members_delegate(
     server: &Arc<SyncServer>,
@@ -10971,7 +10983,7 @@ async fn vault_members_projection(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -10980,7 +10992,7 @@ async fn vault_members_projection(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_members_add(
     server: &Arc<SyncServer>,
@@ -14739,7 +14751,7 @@ async fn vault_research_archive(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14748,7 +14760,7 @@ async fn vault_research_archive(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_install(
     server: &Arc<SyncServer>,
@@ -14761,7 +14773,7 @@ async fn vault_research_archive_install(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14770,7 +14782,7 @@ async fn vault_research_archive_install(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_record(
     server: &Arc<SyncServer>,
@@ -14783,7 +14795,7 @@ async fn vault_research_archive_record(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14792,7 +14804,7 @@ async fn vault_research_archive_record(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_get(
     server: &Arc<SyncServer>,
@@ -14805,7 +14817,7 @@ async fn vault_research_archive_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14814,7 +14826,7 @@ async fn vault_research_archive_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_best(
     server: &Arc<SyncServer>,
@@ -14827,7 +14839,7 @@ async fn vault_research_archive_best(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14836,7 +14848,7 @@ async fn vault_research_archive_best(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_repropose(
     server: &Arc<SyncServer>,
@@ -14849,7 +14861,7 @@ async fn vault_research_archive_repropose(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14858,7 +14870,7 @@ async fn vault_research_archive_repropose(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_archive_coverage(
     server: &Arc<SyncServer>,
@@ -14871,7 +14883,7 @@ async fn vault_research_archive_coverage(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -14880,7 +14892,7 @@ async fn vault_research_archive_coverage(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_evals_inventory(
     server: &Arc<SyncServer>,
@@ -15850,7 +15862,7 @@ async fn vault_research_bind(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -15859,7 +15871,7 @@ async fn vault_research_bind(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_fork(
     server: &Arc<SyncServer>,
@@ -15872,7 +15884,7 @@ async fn vault_research_fork(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -15881,7 +15893,7 @@ async fn vault_research_fork(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_weave(
     server: &Arc<SyncServer>,
@@ -15894,7 +15906,7 @@ async fn vault_research_weave(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -15903,7 +15915,7 @@ async fn vault_research_weave(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_measure_search(
     server: &Arc<SyncServer>,
@@ -15916,7 +15928,7 @@ async fn vault_research_measure_search(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -15925,7 +15937,7 @@ async fn vault_research_measure_search(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_measure_held_out(
     server: &Arc<SyncServer>,
@@ -15938,7 +15950,7 @@ async fn vault_research_measure_held_out(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -15947,7 +15959,7 @@ async fn vault_research_measure_held_out(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_evaluate_split(
     server: &Arc<SyncServer>,
@@ -15996,7 +16008,7 @@ async fn vault_research_mark_invalid(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16005,7 +16017,7 @@ async fn vault_research_mark_invalid(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_prune(
     server: &Arc<SyncServer>,
@@ -16018,7 +16030,7 @@ async fn vault_research_prune(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16027,7 +16039,7 @@ async fn vault_research_prune(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_select(
     server: &Arc<SyncServer>,
@@ -16040,7 +16052,7 @@ async fn vault_research_select(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16049,7 +16061,7 @@ async fn vault_research_select(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_promotion_basis(
     server: &Arc<SyncServer>,
@@ -16062,7 +16074,7 @@ async fn vault_research_promotion_basis(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16071,7 +16083,7 @@ async fn vault_research_promotion_basis(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_reserve_confirmation(
     server: &Arc<SyncServer>,
@@ -16084,7 +16096,7 @@ async fn vault_research_reserve_confirmation(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16093,7 +16105,7 @@ async fn vault_research_reserve_confirmation(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_promote(
     server: &Arc<SyncServer>,
@@ -16106,7 +16118,7 @@ async fn vault_research_promote(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16115,7 +16127,7 @@ async fn vault_research_promote(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_reserve_work(
     server: &Arc<SyncServer>,
@@ -16128,7 +16140,7 @@ async fn vault_research_reserve_work(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16137,7 +16149,7 @@ async fn vault_research_reserve_work(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_settle_work(
     server: &Arc<SyncServer>,
@@ -16150,7 +16162,7 @@ async fn vault_research_settle_work(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16159,7 +16171,7 @@ async fn vault_research_settle_work(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_refund_work(
     server: &Arc<SyncServer>,
@@ -16172,7 +16184,7 @@ async fn vault_research_refund_work(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16181,7 +16193,7 @@ async fn vault_research_refund_work(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_reserve_exploration(
     server: &Arc<SyncServer>,
@@ -16194,7 +16206,7 @@ async fn vault_research_reserve_exploration(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16203,7 +16215,7 @@ async fn vault_research_reserve_exploration(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_budget(
     server: &Arc<SyncServer>,
@@ -16216,7 +16228,7 @@ async fn vault_research_budget(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16225,7 +16237,7 @@ async fn vault_research_budget(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_research_record_benchmark(
     server: &Arc<SyncServer>,
@@ -16238,7 +16250,7 @@ async fn vault_research_record_benchmark(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16247,7 +16259,7 @@ async fn vault_research_record_benchmark(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_authority_handoff_alarms(
     server: &Arc<SyncServer>,
@@ -16580,7 +16592,7 @@ async fn vault_archive_delete_preview(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16589,7 +16601,7 @@ async fn vault_archive_delete_preview(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_archive_delete_confirm(
     server: &Arc<SyncServer>,
@@ -16602,7 +16614,7 @@ async fn vault_archive_delete_confirm(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -16611,7 +16623,7 @@ async fn vault_archive_delete_confirm(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_usage_events_undecodable(
     server: &Arc<SyncServer>,
@@ -18600,7 +18612,7 @@ async fn self_consent_graduation_demote(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -18609,7 +18621,7 @@ async fn self_consent_graduation_demote(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_gate_policy_get(
     server: &Arc<SyncServer>,
@@ -18688,7 +18700,7 @@ async fn vault_gate_policy_propose(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -18697,7 +18709,7 @@ async fn vault_gate_policy_propose(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_gate_checker_get(
     server: &Arc<SyncServer>,
@@ -19817,7 +19829,7 @@ async fn vault_lenses_propose(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -19826,7 +19838,7 @@ async fn vault_lenses_propose(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_lenses_propose_from_pack(
     server: &Arc<SyncServer>,
@@ -19839,7 +19851,7 @@ async fn vault_lenses_propose_from_pack(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -19848,7 +19860,7 @@ async fn vault_lenses_propose_from_pack(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_lenses_activate(
     server: &Arc<SyncServer>,
@@ -19939,7 +19951,7 @@ async fn vault_lenses_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -19948,7 +19960,7 @@ async fn vault_lenses_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_lenses_export_pack(
     server: &Arc<SyncServer>,
@@ -19961,7 +19973,7 @@ async fn vault_lenses_export_pack(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -19970,7 +19982,7 @@ async fn vault_lenses_export_pack(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_lenses_select(
     server: &Arc<SyncServer>,
@@ -20183,7 +20195,7 @@ async fn vault_disclosure_offer(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -20192,7 +20204,7 @@ async fn vault_disclosure_offer(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_disclosure_ceiling_get(
     server: &Arc<SyncServer>,
@@ -20386,8 +20398,9 @@ async fn reveal(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "reveal", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "reveal", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn reveal_wait(
     server: &Arc<SyncServer>,
@@ -20400,8 +20413,9 @@ async fn reveal_wait(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "reveal.wait", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "reveal.wait", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn reveal_describe(
     server: &Arc<SyncServer>,
@@ -20414,7 +20428,7 @@ async fn reveal_describe(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -20423,7 +20437,7 @@ async fn reveal_describe(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_use(
     server: &Arc<SyncServer>,
@@ -20646,7 +20660,7 @@ async fn vault_shares_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -20655,7 +20669,7 @@ async fn vault_shares_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_shares_revoke(
     server: &Arc<SyncServer>,
@@ -21487,7 +21501,7 @@ async fn vault_artifacts_view(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21496,7 +21510,7 @@ async fn vault_artifacts_view(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_units(
     server: &Arc<SyncServer>,
@@ -21523,7 +21537,7 @@ async fn vault_artifacts_units(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21532,7 +21546,7 @@ async fn vault_artifacts_units(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_anchors_pin(
     server: &Arc<SyncServer>,
@@ -21559,7 +21573,7 @@ async fn vault_artifacts_anchors_pin(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21568,7 +21582,7 @@ async fn vault_artifacts_anchors_pin(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_open(
     server: &Arc<SyncServer>,
@@ -21595,7 +21609,7 @@ async fn vault_artifacts_threads_open(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21604,7 +21618,7 @@ async fn vault_artifacts_threads_open(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_comment(
     server: &Arc<SyncServer>,
@@ -21631,7 +21645,7 @@ async fn vault_artifacts_threads_comment(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21640,7 +21654,7 @@ async fn vault_artifacts_threads_comment(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_read(
     server: &Arc<SyncServer>,
@@ -21667,7 +21681,7 @@ async fn vault_artifacts_threads_read(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21676,7 +21690,7 @@ async fn vault_artifacts_threads_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_list(
     server: &Arc<SyncServer>,
@@ -21703,7 +21717,7 @@ async fn vault_artifacts_threads_list(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21712,7 +21726,7 @@ async fn vault_artifacts_threads_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_assign(
     server: &Arc<SyncServer>,
@@ -21739,7 +21753,7 @@ async fn vault_artifacts_threads_assign(
         &["artifact_ref", "assignee_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21748,7 +21762,7 @@ async fn vault_artifacts_threads_assign(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_threads_state(
     server: &Arc<SyncServer>,
@@ -21775,7 +21789,7 @@ async fn vault_artifacts_threads_state(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21784,7 +21798,7 @@ async fn vault_artifacts_threads_state(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn mount(
     server: &Arc<SyncServer>,
@@ -21797,8 +21811,9 @@ async fn mount(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "mount", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "mount", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_readdir(
     server: &Arc<SyncServer>,
@@ -21811,7 +21826,7 @@ async fn graph_fs_readdir(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21820,7 +21835,7 @@ async fn graph_fs_readdir(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_read_file(
     server: &Arc<SyncServer>,
@@ -21833,7 +21848,7 @@ async fn graph_fs_read_file(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21842,7 +21857,7 @@ async fn graph_fs_read_file(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_read_link(
     server: &Arc<SyncServer>,
@@ -21855,7 +21870,7 @@ async fn graph_fs_read_link(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21864,7 +21879,7 @@ async fn graph_fs_read_link(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_ls(
     server: &Arc<SyncServer>,
@@ -21877,8 +21892,9 @@ async fn graph_fs_ls(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "graph_fs.ls", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "graph_fs.ls", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_find(
     server: &Arc<SyncServer>,
@@ -21891,7 +21907,7 @@ async fn graph_fs_find(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21900,7 +21916,7 @@ async fn graph_fs_find(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_grep(
     server: &Arc<SyncServer>,
@@ -21913,7 +21929,7 @@ async fn graph_fs_grep(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21922,7 +21938,7 @@ async fn graph_fs_grep(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_cat(
     server: &Arc<SyncServer>,
@@ -21935,7 +21951,7 @@ async fn graph_fs_cat(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21944,7 +21960,7 @@ async fn graph_fs_cat(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_head(
     server: &Arc<SyncServer>,
@@ -21957,7 +21973,7 @@ async fn graph_fs_head(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -21966,7 +21982,7 @@ async fn graph_fs_head(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn graph_fs_wc(
     server: &Arc<SyncServer>,
@@ -21979,8 +21995,9 @@ async fn graph_fs_wc(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "graph_fs.wc", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "graph_fs.wc", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_code_diff(
     server: &Arc<SyncServer>,
@@ -21993,7 +22010,7 @@ async fn vault_code_diff(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -22002,7 +22019,7 @@ async fn vault_code_diff(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_code_blame(
     server: &Arc<SyncServer>,
@@ -22015,7 +22032,7 @@ async fn vault_code_blame(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -22024,7 +22041,7 @@ async fn vault_code_blame(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_code_proposal_view(
     server: &Arc<SyncServer>,
@@ -22037,7 +22054,7 @@ async fn vault_code_proposal_view(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -22046,7 +22063,7 @@ async fn vault_code_proposal_view(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_code_symbols_declare(
     server: &Arc<SyncServer>,
@@ -22774,7 +22791,7 @@ async fn vault_code_repo_diff(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -22783,7 +22800,7 @@ async fn vault_code_repo_diff(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_code_export(
     server: &Arc<SyncServer>,
@@ -24975,7 +24992,7 @@ async fn vault_artifacts_export(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -24984,7 +25001,7 @@ async fn vault_artifacts_export(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_agents_create(
     server: &Arc<SyncServer>,
@@ -26704,7 +26721,7 @@ async fn vault_runs_pause(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26713,7 +26730,7 @@ async fn vault_runs_pause(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_runs_resume(
     server: &Arc<SyncServer>,
@@ -26726,7 +26743,7 @@ async fn vault_runs_resume(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26735,7 +26752,7 @@ async fn vault_runs_resume(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_consults_get(
     server: &Arc<SyncServer>,
@@ -26887,7 +26904,7 @@ async fn vault_agents_export_pack(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26896,7 +26913,7 @@ async fn vault_agents_export_pack(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_born_from(
     server: &Arc<SyncServer>,
@@ -26909,7 +26926,7 @@ async fn vault_artifacts_born_from(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26918,7 +26935,7 @@ async fn vault_artifacts_born_from(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_proposals(
     server: &Arc<SyncServer>,
@@ -26931,7 +26948,7 @@ async fn vault_artifacts_proposals(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26940,7 +26957,7 @@ async fn vault_artifacts_proposals(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_waits(
     server: &Arc<SyncServer>,
@@ -26953,7 +26970,7 @@ async fn vault_artifacts_waits(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26962,7 +26979,7 @@ async fn vault_artifacts_waits(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_release_wait(
     server: &Arc<SyncServer>,
@@ -26975,7 +26992,7 @@ async fn vault_artifacts_release_wait(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -26984,7 +27001,7 @@ async fn vault_artifacts_release_wait(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
@@ -27132,7 +27149,7 @@ async fn vault_artifacts_propose_outline(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27141,7 +27158,7 @@ async fn vault_artifacts_propose_outline(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_outline(
     server: &Arc<SyncServer>,
@@ -27154,7 +27171,7 @@ async fn vault_artifacts_outline(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27163,7 +27180,7 @@ async fn vault_artifacts_outline(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_keep_outline(
     server: &Arc<SyncServer>,
@@ -27261,7 +27278,7 @@ async fn vault_artifacts_design_deck(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27270,7 +27287,7 @@ async fn vault_artifacts_design_deck(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_create_deck(
     server: &Arc<SyncServer>,
@@ -27283,7 +27300,7 @@ async fn vault_artifacts_create_deck(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27292,7 +27309,7 @@ async fn vault_artifacts_create_deck(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_inspect_deck(
     server: &Arc<SyncServer>,
@@ -27319,7 +27336,7 @@ async fn vault_artifacts_inspect_deck(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27328,7 +27345,7 @@ async fn vault_artifacts_inspect_deck(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_propose_deck(
     server: &Arc<SyncServer>,
@@ -27341,7 +27358,7 @@ async fn vault_artifacts_propose_deck(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27350,7 +27367,7 @@ async fn vault_artifacts_propose_deck(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_propose_output(
     server: &Arc<SyncServer>,
@@ -27363,7 +27380,7 @@ async fn vault_artifacts_propose_output(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27372,7 +27389,7 @@ async fn vault_artifacts_propose_output(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_keep(
     server: &Arc<SyncServer>,
@@ -27385,7 +27402,7 @@ async fn vault_artifacts_keep(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27394,7 +27411,7 @@ async fn vault_artifacts_keep(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_discard(
     server: &Arc<SyncServer>,
@@ -27407,7 +27424,7 @@ async fn vault_artifacts_discard(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27416,7 +27433,7 @@ async fn vault_artifacts_discard(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_undo(
     server: &Arc<SyncServer>,
@@ -27429,7 +27446,7 @@ async fn vault_artifacts_undo(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27438,7 +27455,7 @@ async fn vault_artifacts_undo(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn can(
     server: &Arc<SyncServer>,
@@ -27452,7 +27469,7 @@ async fn can(
     let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -27462,7 +27479,7 @@ async fn can(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn peek(
     server: &Arc<SyncServer>,
@@ -27475,8 +27492,9 @@ async fn peek(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "peek", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "peek", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn ask(
     server: &Arc<SyncServer>,
@@ -27490,7 +27508,7 @@ async fn ask(
     let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -27500,7 +27518,7 @@ async fn ask(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn wait(
     server: &Arc<SyncServer>,
@@ -27514,7 +27532,7 @@ async fn wait(
     let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -27524,7 +27542,7 @@ async fn wait(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn tasks_answer(
     server: &Arc<SyncServer>,
@@ -27538,7 +27556,7 @@ async fn tasks_answer(
     let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -27548,7 +27566,7 @@ async fn tasks_answer(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn tasks_outcomes(
     server: &Arc<SyncServer>,
@@ -27561,7 +27579,7 @@ async fn tasks_outcomes(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27570,7 +27588,7 @@ async fn tasks_outcomes(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_list(
     server: &Arc<SyncServer>,
@@ -27583,7 +27601,7 @@ async fn vault_rooms_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27592,7 +27610,7 @@ async fn vault_rooms_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_messages(
     server: &Arc<SyncServer>,
@@ -27605,7 +27623,7 @@ async fn vault_rooms_messages(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27614,7 +27632,7 @@ async fn vault_rooms_messages(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_participants(
     server: &Arc<SyncServer>,
@@ -27627,7 +27645,7 @@ async fn vault_rooms_participants(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27636,7 +27654,7 @@ async fn vault_rooms_participants(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_render(
     server: &Arc<SyncServer>,
@@ -27649,7 +27667,7 @@ async fn vault_rooms_render(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27658,7 +27676,7 @@ async fn vault_rooms_render(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_find(
     server: &Arc<SyncServer>,
@@ -27671,7 +27689,7 @@ async fn vault_rooms_find(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27680,7 +27698,7 @@ async fn vault_rooms_find(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_get(
     server: &Arc<SyncServer>,
@@ -27693,7 +27711,7 @@ async fn vault_rooms_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27702,7 +27720,7 @@ async fn vault_rooms_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_trunk(
     server: &Arc<SyncServer>,
@@ -27715,7 +27733,7 @@ async fn vault_rooms_trunk(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27724,7 +27742,7 @@ async fn vault_rooms_trunk(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_reply_strips(
     server: &Arc<SyncServer>,
@@ -27737,7 +27755,7 @@ async fn vault_rooms_reply_strips(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27746,7 +27764,7 @@ async fn vault_rooms_reply_strips(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_claim(
     server: &Arc<SyncServer>,
@@ -27759,7 +27777,7 @@ async fn vault_rooms_claim(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27768,7 +27786,7 @@ async fn vault_rooms_claim(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_speak(
     server: &Arc<SyncServer>,
@@ -27781,7 +27799,7 @@ async fn vault_rooms_speak(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27791,7 +27809,7 @@ async fn vault_rooms_speak(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_audience_add(
     server: &Arc<SyncServer>,
@@ -27804,7 +27822,7 @@ async fn vault_rooms_thread_audience_add(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27814,7 +27832,7 @@ async fn vault_rooms_thread_audience_add(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_audience_open_full_history(
     server: &Arc<SyncServer>,
@@ -27827,7 +27845,7 @@ async fn vault_rooms_thread_audience_open_full_history(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27837,7 +27855,7 @@ async fn vault_rooms_thread_audience_open_full_history(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_audience_remove(
     server: &Arc<SyncServer>,
@@ -27850,7 +27868,7 @@ async fn vault_rooms_thread_audience_remove(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27860,7 +27878,7 @@ async fn vault_rooms_thread_audience_remove(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_private_threads(
     server: &Arc<SyncServer>,
@@ -27873,7 +27891,7 @@ async fn vault_rooms_private_threads(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27882,7 +27900,7 @@ async fn vault_rooms_private_threads(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_delete(
     server: &Arc<SyncServer>,
@@ -27895,7 +27913,7 @@ async fn vault_rooms_thread_delete(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27904,7 +27922,7 @@ async fn vault_rooms_thread_delete(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_join_request(
     server: &Arc<SyncServer>,
@@ -27917,7 +27935,7 @@ async fn vault_rooms_thread_join_request(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27927,7 +27945,7 @@ async fn vault_rooms_thread_join_request(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_join_requests(
     server: &Arc<SyncServer>,
@@ -27940,7 +27958,7 @@ async fn vault_rooms_thread_join_requests(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27949,7 +27967,7 @@ async fn vault_rooms_thread_join_requests(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_join_approve(
     server: &Arc<SyncServer>,
@@ -27962,7 +27980,7 @@ async fn vault_rooms_thread_join_approve(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27972,7 +27990,7 @@ async fn vault_rooms_thread_join_approve(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_thread_join_deny(
     server: &Arc<SyncServer>,
@@ -27985,7 +28003,7 @@ async fn vault_rooms_thread_join_deny(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -27995,7 +28013,7 @@ async fn vault_rooms_thread_join_deny(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_propose(
     server: &Arc<SyncServer>,
@@ -28008,7 +28026,7 @@ async fn vault_projects_propose(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28017,7 +28035,7 @@ async fn vault_projects_propose(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_proposals(
     server: &Arc<SyncServer>,
@@ -28030,7 +28048,7 @@ async fn vault_projects_proposals(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28039,7 +28057,7 @@ async fn vault_projects_proposals(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_dismiss_card(
     server: &Arc<SyncServer>,
@@ -28052,7 +28070,7 @@ async fn vault_projects_dismiss_card(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28061,7 +28079,7 @@ async fn vault_projects_dismiss_card(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_confirm(
     server: &Arc<SyncServer>,
@@ -28111,7 +28129,7 @@ async fn vault_projects_roster_write(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28120,7 +28138,7 @@ async fn vault_projects_roster_write(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_goal_intake(
     server: &Arc<SyncServer>,
@@ -28133,7 +28151,7 @@ async fn vault_projects_goal_intake(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28142,7 +28160,7 @@ async fn vault_projects_goal_intake(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_join(
     server: &Arc<SyncServer>,
@@ -28155,7 +28173,7 @@ async fn vault_rooms_join(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28164,7 +28182,7 @@ async fn vault_rooms_join(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_invite(
     server: &Arc<SyncServer>,
@@ -28177,7 +28195,7 @@ async fn vault_rooms_invite(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28186,7 +28204,7 @@ async fn vault_rooms_invite(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_consent(
     server: &Arc<SyncServer>,
@@ -28199,7 +28217,7 @@ async fn vault_rooms_consent(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28208,7 +28226,7 @@ async fn vault_rooms_consent(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_offer(
     server: &Arc<SyncServer>,
@@ -28221,7 +28239,7 @@ async fn vault_rooms_offer(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28230,7 +28248,7 @@ async fn vault_rooms_offer(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_offer_answer(
     server: &Arc<SyncServer>,
@@ -28243,7 +28261,7 @@ async fn vault_rooms_offer_answer(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28253,7 +28271,7 @@ async fn vault_rooms_offer_answer(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_offer_vote(
     server: &Arc<SyncServer>,
@@ -28266,7 +28284,7 @@ async fn vault_rooms_offer_vote(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28275,7 +28293,7 @@ async fn vault_rooms_offer_vote(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_offer_reopen(
     server: &Arc<SyncServer>,
@@ -28288,7 +28306,7 @@ async fn vault_rooms_offer_reopen(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28297,7 +28315,7 @@ async fn vault_rooms_offer_reopen(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_offers(
     server: &Arc<SyncServer>,
@@ -28310,7 +28328,7 @@ async fn vault_rooms_offers(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28319,7 +28337,7 @@ async fn vault_rooms_offers(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_goal_revisions(
     server: &Arc<SyncServer>,
@@ -28332,7 +28350,7 @@ async fn vault_projects_goal_revisions(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28341,7 +28359,7 @@ async fn vault_projects_goal_revisions(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_goal_dismiss(
     server: &Arc<SyncServer>,
@@ -28354,7 +28372,7 @@ async fn vault_projects_goal_dismiss(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28363,7 +28381,7 @@ async fn vault_projects_goal_dismiss(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_projects_route_tradeoff(
     server: &Arc<SyncServer>,
@@ -28377,7 +28395,7 @@ async fn vault_projects_route_tradeoff(
     let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -28388,7 +28406,7 @@ async fn vault_projects_route_tradeoff(
         Some(turn),
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_conversations_turn_continue(
     server: &Arc<SyncServer>,
@@ -28401,7 +28419,7 @@ async fn vault_conversations_turn_continue(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28410,7 +28428,7 @@ async fn vault_conversations_turn_continue(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_conversations_turn_retry(
     server: &Arc<SyncServer>,
@@ -28423,7 +28441,7 @@ async fn vault_conversations_turn_retry(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28432,7 +28450,7 @@ async fn vault_conversations_turn_retry(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_conversations_turn_rebind(
     server: &Arc<SyncServer>,
@@ -28445,7 +28463,7 @@ async fn vault_conversations_turn_rebind(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28454,7 +28472,7 @@ async fn vault_conversations_turn_rebind(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_messages_react(
     server: &Arc<SyncServer>,
@@ -28500,7 +28518,7 @@ async fn vault_rooms_host(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28509,7 +28527,7 @@ async fn vault_rooms_host(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_host_pin(
     server: &Arc<SyncServer>,
@@ -28522,7 +28540,7 @@ async fn vault_rooms_host_pin(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28531,7 +28549,7 @@ async fn vault_rooms_host_pin(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_host_hand(
     server: &Arc<SyncServer>,
@@ -28544,7 +28562,7 @@ async fn vault_rooms_host_hand(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28553,7 +28571,7 @@ async fn vault_rooms_host_hand(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_upkeep_pending(
     server: &Arc<SyncServer>,
@@ -28566,7 +28584,7 @@ async fn vault_rooms_upkeep_pending(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28575,7 +28593,7 @@ async fn vault_rooms_upkeep_pending(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_upkeep_voice(
     server: &Arc<SyncServer>,
@@ -28588,7 +28606,7 @@ async fn vault_rooms_upkeep_voice(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28598,7 +28616,7 @@ async fn vault_rooms_upkeep_voice(
         &producers,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_rooms_sharing(
     server: &Arc<SyncServer>,
@@ -28611,7 +28629,7 @@ async fn vault_rooms_sharing(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28620,7 +28638,7 @@ async fn vault_rooms_sharing(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_companions_sharing_get(
     server: &Arc<SyncServer>,
@@ -28633,7 +28651,7 @@ async fn vault_companions_sharing_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28642,7 +28660,7 @@ async fn vault_companions_sharing_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_companions_sharing_set(
     server: &Arc<SyncServer>,
@@ -28655,7 +28673,7 @@ async fn vault_companions_sharing_set(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28664,7 +28682,7 @@ async fn vault_companions_sharing_set(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_workspace_work_companion_get(
     server: &Arc<SyncServer>,
@@ -28677,7 +28695,7 @@ async fn vault_workspace_work_companion_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28686,7 +28704,7 @@ async fn vault_workspace_work_companion_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_workspace_work_companion_set(
     server: &Arc<SyncServer>,
@@ -28699,7 +28717,7 @@ async fn vault_workspace_work_companion_set(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28708,7 +28726,7 @@ async fn vault_workspace_work_companion_set(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_skills_save(
     server: &Arc<SyncServer>,
@@ -28721,7 +28739,7 @@ async fn self_skills_save(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28730,7 +28748,7 @@ async fn self_skills_save(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_skills_fork(
     server: &Arc<SyncServer>,
@@ -28743,7 +28761,7 @@ async fn self_skills_fork(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28752,7 +28770,7 @@ async fn self_skills_fork(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_skills_callables(
     server: &Arc<SyncServer>,
@@ -28765,7 +28783,7 @@ async fn self_skills_callables(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28774,7 +28792,7 @@ async fn self_skills_callables(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_skills_callable_amend(
     server: &Arc<SyncServer>,
@@ -28787,7 +28805,7 @@ async fn vault_skills_callable_amend(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -28796,7 +28814,7 @@ async fn vault_skills_callable_amend(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_skills_pack_receipt(
     server: &Arc<SyncServer>,
@@ -29845,7 +29863,7 @@ async fn vault_receipts_context(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -29854,7 +29872,7 @@ async fn vault_receipts_context(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_receipts_craft_reply_manifest(
     server: &Arc<SyncServer>,
@@ -29867,7 +29885,7 @@ async fn vault_receipts_craft_reply_manifest(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -29876,7 +29894,7 @@ async fn vault_receipts_craft_reply_manifest(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn ai_voice_asr_open(
     server: &Arc<SyncServer>,
@@ -32036,7 +32054,7 @@ async fn connector_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32045,7 +32063,7 @@ async fn connector_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn connector_status(
     server: &Arc<SyncServer>,
@@ -32058,7 +32076,7 @@ async fn connector_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32067,7 +32085,7 @@ async fn connector_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn connector_call(
     server: &Arc<SyncServer>,
@@ -32122,7 +32140,7 @@ async fn connector_schema(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32131,7 +32149,7 @@ async fn connector_schema(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn connector_call_status(
     server: &Arc<SyncServer>,
@@ -32144,7 +32162,7 @@ async fn connector_call_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32153,7 +32171,7 @@ async fn connector_call_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_commit(
     server: &Arc<SyncServer>,
@@ -32166,7 +32184,7 @@ async fn vault_commit(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_born(
+    let (output, hook_notice) = facade_invoke_born_with_notice(
         server,
         call,
         actor,
@@ -32176,7 +32194,7 @@ async fn vault_commit(
         position,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_remember(
     server: &Arc<SyncServer>,
@@ -32189,7 +32207,7 @@ async fn vault_remember(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32198,7 +32216,7 @@ async fn vault_remember(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_retract(
     server: &Arc<SyncServer>,
@@ -32211,7 +32229,7 @@ async fn vault_claims_retract(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32220,7 +32238,7 @@ async fn vault_claims_retract(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_forget(
     server: &Arc<SyncServer>,
@@ -32233,7 +32251,7 @@ async fn vault_forget(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32242,7 +32260,7 @@ async fn vault_forget(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_booking_availability(
     server: &Arc<SyncServer>,
@@ -32465,7 +32483,7 @@ async fn calendar_invite(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32474,7 +32492,7 @@ async fn calendar_invite(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn calendar_ics_configure(
     server: &Arc<SyncServer>,
@@ -32586,7 +32604,7 @@ async fn vault_calendar_passports_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32595,7 +32613,7 @@ async fn vault_calendar_passports_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_passports_history(
     server: &Arc<SyncServer>,
@@ -32608,7 +32626,7 @@ async fn vault_calendar_passports_history(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32617,7 +32635,7 @@ async fn vault_calendar_passports_history(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn calendar_connector_configure(
     server: &Arc<SyncServer>,
@@ -32876,7 +32894,7 @@ async fn vault_calendar_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32885,7 +32903,7 @@ async fn vault_calendar_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_ics_import(
     server: &Arc<SyncServer>,
@@ -32934,7 +32952,7 @@ async fn vault_calendar_occurrences(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -32943,7 +32961,7 @@ async fn vault_calendar_occurrences(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_instances_move(
     server: &Arc<SyncServer>,
@@ -32992,7 +33010,7 @@ async fn vault_calendar_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33001,7 +33019,7 @@ async fn vault_calendar_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_search(
     server: &Arc<SyncServer>,
@@ -33014,7 +33032,7 @@ async fn vault_calendar_search(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33023,7 +33041,7 @@ async fn vault_calendar_search(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_freebusy(
     server: &Arc<SyncServer>,
@@ -33036,7 +33054,7 @@ async fn vault_calendar_freebusy(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33045,7 +33063,7 @@ async fn vault_calendar_freebusy(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_prep(
     server: &Arc<SyncServer>,
@@ -33058,7 +33076,7 @@ async fn vault_calendar_prep(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33067,7 +33085,7 @@ async fn vault_calendar_prep(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_event_outcome(
     server: &Arc<SyncServer>,
@@ -33080,7 +33098,7 @@ async fn vault_calendar_event_outcome(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33089,7 +33107,7 @@ async fn vault_calendar_event_outcome(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_calendar_check_in_due(
     server: &Arc<SyncServer>,
@@ -33262,7 +33280,7 @@ async fn vault_calendar_transcript_ingest(
         &["source_blob_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33271,7 +33289,7 @@ async fn vault_calendar_transcript_ingest(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_list(
     server: &Arc<SyncServer>,
@@ -33284,7 +33302,7 @@ async fn vault_claims_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33293,7 +33311,7 @@ async fn vault_claims_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_demote(
     server: &Arc<SyncServer>,
@@ -33306,7 +33324,7 @@ async fn vault_claims_demote(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33315,7 +33333,7 @@ async fn vault_claims_demote(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_list_filtered(
     server: &Arc<SyncServer>,
@@ -33328,7 +33346,7 @@ async fn vault_claims_list_filtered(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33337,7 +33355,7 @@ async fn vault_claims_list_filtered(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_read_filtered(
     server: &Arc<SyncServer>,
@@ -33350,7 +33368,7 @@ async fn vault_claims_read_filtered(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33359,7 +33377,7 @@ async fn vault_claims_read_filtered(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_history(
     server: &Arc<SyncServer>,
@@ -33372,7 +33390,7 @@ async fn vault_claims_history(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33381,7 +33399,7 @@ async fn vault_claims_history(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_delete(
     server: &Arc<SyncServer>,
@@ -33394,7 +33412,7 @@ async fn vault_delete(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33403,7 +33421,7 @@ async fn vault_delete(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_writes_critical_confirm_pending(
     server: &Arc<SyncServer>,
@@ -33588,7 +33606,7 @@ async fn vault_writes_pending(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33597,7 +33615,7 @@ async fn vault_writes_pending(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_hydrate(
     server: &Arc<SyncServer>,
@@ -33610,7 +33628,7 @@ async fn vault_hydrate(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33619,7 +33637,7 @@ async fn vault_hydrate(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_get(
     server: &Arc<SyncServer>,
@@ -33632,8 +33650,9 @@ async fn vault_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "vault.get", value, &producers)?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (output, hook_notice) =
+        facade_invoke_with_notice(server, call, actor, class, "vault.get", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_refs_resolve(
     server: &Arc<SyncServer>,
@@ -33646,7 +33665,7 @@ async fn vault_refs_resolve(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33655,7 +33674,7 @@ async fn vault_refs_resolve(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_refs_links(
     server: &Arc<SyncServer>,
@@ -33668,7 +33687,7 @@ async fn vault_refs_links(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33677,7 +33696,7 @@ async fn vault_refs_links(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_search_vector_config(
     server: &Arc<SyncServer>,
@@ -33690,7 +33709,7 @@ async fn vault_search_vector_config(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33699,7 +33718,7 @@ async fn vault_search_vector_config(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_vectors_put(
     server: &Arc<SyncServer>,
@@ -33745,7 +33764,7 @@ async fn vault_search_hybrid(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33754,7 +33773,7 @@ async fn vault_search_hybrid(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_search_temporal(
     server: &Arc<SyncServer>,
@@ -33767,7 +33786,7 @@ async fn vault_search_temporal(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33776,7 +33795,7 @@ async fn vault_search_temporal(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_search_bm25(
     server: &Arc<SyncServer>,
@@ -33830,7 +33849,7 @@ async fn vault_neighbors(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33839,7 +33858,7 @@ async fn vault_neighbors(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_structural_put(
     server: &Arc<SyncServer>,
@@ -33852,7 +33871,7 @@ async fn vault_structural_put(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33861,7 +33880,7 @@ async fn vault_structural_put(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_habits_checkin(
     server: &Arc<SyncServer>,
@@ -33874,7 +33893,7 @@ async fn vault_habits_checkin(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33883,7 +33902,7 @@ async fn vault_habits_checkin(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_productivity_create(
     server: &Arc<SyncServer>,
@@ -33896,7 +33915,7 @@ async fn vault_productivity_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33905,7 +33924,7 @@ async fn vault_productivity_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_productivity_tree(
     server: &Arc<SyncServer>,
@@ -33918,7 +33937,7 @@ async fn vault_productivity_tree(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33927,7 +33946,7 @@ async fn vault_productivity_tree(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_claims_admit(
     server: &Arc<SyncServer>,
@@ -33940,7 +33959,7 @@ async fn vault_claims_admit(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33949,7 +33968,7 @@ async fn vault_claims_admit(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_create(
     server: &Arc<SyncServer>,
@@ -33962,7 +33981,7 @@ async fn vault_artifacts_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33971,7 +33990,7 @@ async fn vault_artifacts_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_create(
     server: &Arc<SyncServer>,
@@ -33984,7 +34003,7 @@ async fn vault_esign_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -33993,7 +34012,7 @@ async fn vault_esign_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_get(
     server: &Arc<SyncServer>,
@@ -34006,7 +34025,7 @@ async fn vault_esign_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34015,7 +34034,7 @@ async fn vault_esign_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_links_issue(
     server: &Arc<SyncServer>,
@@ -34028,7 +34047,7 @@ async fn vault_esign_links_issue(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34037,7 +34056,7 @@ async fn vault_esign_links_issue(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_send_for_signature(
     server: &Arc<SyncServer>,
@@ -34050,7 +34069,7 @@ async fn vault_esign_send_for_signature(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34059,7 +34078,7 @@ async fn vault_esign_send_for_signature(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_notices_dispatch(
     server: &Arc<SyncServer>,
@@ -34072,7 +34091,7 @@ async fn vault_esign_notices_dispatch(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34081,7 +34100,7 @@ async fn vault_esign_notices_dispatch(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_remind(
     server: &Arc<SyncServer>,
@@ -34094,7 +34113,7 @@ async fn vault_esign_remind(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34103,7 +34122,7 @@ async fn vault_esign_remind(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_void(
     server: &Arc<SyncServer>,
@@ -34116,7 +34135,7 @@ async fn vault_esign_void(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34125,7 +34144,7 @@ async fn vault_esign_void(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_signing_act(
     server: &Arc<SyncServer>,
@@ -34138,7 +34157,7 @@ async fn vault_esign_signing_act(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34147,7 +34166,7 @@ async fn vault_esign_signing_act(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_signing_pdf(
     server: &Arc<SyncServer>,
@@ -34160,7 +34179,7 @@ async fn vault_esign_signing_pdf(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34169,7 +34188,7 @@ async fn vault_esign_signing_pdf(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_signing_image(
     server: &Arc<SyncServer>,
@@ -34182,7 +34201,7 @@ async fn vault_esign_signing_image(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34191,7 +34210,7 @@ async fn vault_esign_signing_image(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_signing_signature(
     server: &Arc<SyncServer>,
@@ -34204,7 +34223,7 @@ async fn vault_esign_signing_signature(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34213,7 +34232,7 @@ async fn vault_esign_signing_signature(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_esign_seal_get(
     server: &Arc<SyncServer>,
@@ -34226,7 +34245,7 @@ async fn vault_esign_seal_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34235,7 +34254,7 @@ async fn vault_esign_seal_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_conversations_create(
     server: &Arc<SyncServer>,
@@ -34248,7 +34267,7 @@ async fn vault_conversations_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34257,7 +34276,7 @@ async fn vault_conversations_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_conversations_turns_create(
     server: &Arc<SyncServer>,
@@ -34376,7 +34395,7 @@ async fn vault_artifacts_put(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34385,7 +34404,7 @@ async fn vault_artifacts_put(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_import(
     server: &Arc<SyncServer>,
@@ -34412,7 +34431,7 @@ async fn vault_artifacts_body_import(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34421,7 +34440,7 @@ async fn vault_artifacts_body_import(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_head(
     server: &Arc<SyncServer>,
@@ -34448,7 +34467,7 @@ async fn vault_artifacts_body_head(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34457,7 +34476,7 @@ async fn vault_artifacts_body_head(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_read(
     server: &Arc<SyncServer>,
@@ -34484,7 +34503,7 @@ async fn vault_artifacts_body_read(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34493,7 +34512,7 @@ async fn vault_artifacts_body_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_commits(
     server: &Arc<SyncServer>,
@@ -34520,7 +34539,7 @@ async fn vault_artifacts_body_commits(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34529,7 +34548,7 @@ async fn vault_artifacts_body_commits(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_edit(
     server: &Arc<SyncServer>,
@@ -34556,7 +34575,7 @@ async fn vault_artifacts_body_edit(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34565,7 +34584,7 @@ async fn vault_artifacts_body_edit(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_fork_open(
     server: &Arc<SyncServer>,
@@ -34592,7 +34611,7 @@ async fn vault_artifacts_body_fork_open(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34601,7 +34620,7 @@ async fn vault_artifacts_body_fork_open(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_fork_edit(
     server: &Arc<SyncServer>,
@@ -34628,7 +34647,7 @@ async fn vault_artifacts_body_fork_edit(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34637,7 +34656,7 @@ async fn vault_artifacts_body_fork_edit(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_fork_diff(
     server: &Arc<SyncServer>,
@@ -34664,7 +34683,7 @@ async fn vault_artifacts_body_fork_diff(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34673,7 +34692,7 @@ async fn vault_artifacts_body_fork_diff(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_fork_merge(
     server: &Arc<SyncServer>,
@@ -34701,7 +34720,7 @@ async fn vault_artifacts_body_fork_merge(
     )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -34711,7 +34730,7 @@ async fn vault_artifacts_body_fork_merge(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_fork_discard(
     server: &Arc<SyncServer>,
@@ -34738,7 +34757,7 @@ async fn vault_artifacts_body_fork_discard(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34747,7 +34766,7 @@ async fn vault_artifacts_body_fork_discard(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_proposal_read(
     server: &Arc<SyncServer>,
@@ -34774,7 +34793,7 @@ async fn vault_artifacts_body_proposal_read(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34783,7 +34802,7 @@ async fn vault_artifacts_body_proposal_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_proposal_settle(
     server: &Arc<SyncServer>,
@@ -34811,7 +34830,7 @@ async fn vault_artifacts_body_proposal_settle(
     )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_in_turn(
+    let (output, hook_notice) = facade_invoke_in_turn_with_notice(
         server,
         call,
         actor,
@@ -34821,7 +34840,7 @@ async fn vault_artifacts_body_proposal_settle(
         &producers,
         Some(turn),
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_export(
     server: &Arc<SyncServer>,
@@ -34848,7 +34867,7 @@ async fn vault_artifacts_body_export(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34857,7 +34876,7 @@ async fn vault_artifacts_body_export(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_preview(
     server: &Arc<SyncServer>,
@@ -34884,7 +34903,7 @@ async fn vault_artifacts_body_preview(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34893,7 +34912,7 @@ async fn vault_artifacts_body_preview(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_review(
     server: &Arc<SyncServer>,
@@ -34920,7 +34939,7 @@ async fn vault_artifacts_body_deck_review(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34929,7 +34948,7 @@ async fn vault_artifacts_body_deck_review(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_merge(
     server: &Arc<SyncServer>,
@@ -34956,7 +34975,7 @@ async fn vault_artifacts_body_deck_merge(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -34965,7 +34984,7 @@ async fn vault_artifacts_body_deck_merge(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_export(
     server: &Arc<SyncServer>,
@@ -34992,7 +35011,7 @@ async fn vault_artifacts_body_deck_export(
         &["artifact_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35001,7 +35020,7 @@ async fn vault_artifacts_body_deck_export(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_gate(
     server: &Arc<SyncServer>,
@@ -35014,7 +35033,7 @@ async fn vault_artifacts_body_deck_gate(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35023,7 +35042,7 @@ async fn vault_artifacts_body_deck_gate(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_oracle(
     server: &Arc<SyncServer>,
@@ -35036,7 +35055,7 @@ async fn vault_artifacts_body_deck_oracle(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35045,7 +35064,7 @@ async fn vault_artifacts_body_deck_oracle(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_body_deck_preview(
     server: &Arc<SyncServer>,
@@ -35101,7 +35120,7 @@ async fn vault_artifacts_append(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35110,7 +35129,7 @@ async fn vault_artifacts_append(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_artifacts_read(
     server: &Arc<SyncServer>,
@@ -35129,7 +35148,7 @@ async fn vault_artifacts_read(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35138,7 +35157,7 @@ async fn vault_artifacts_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_consolidation_enqueue(
     server: &Arc<SyncServer>,
@@ -35151,7 +35170,7 @@ async fn vault_consolidation_enqueue(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35160,7 +35179,7 @@ async fn vault_consolidation_enqueue(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_consolidation_status(
     server: &Arc<SyncServer>,
@@ -35173,7 +35192,7 @@ async fn vault_consolidation_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35182,7 +35201,7 @@ async fn vault_consolidation_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_consolidation_wake_status(
     server: &Arc<SyncServer>,
@@ -35195,7 +35214,7 @@ async fn vault_consolidation_wake_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -35204,7 +35223,7 @@ async fn vault_consolidation_wake_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_runs_step(
     server: &Arc<SyncServer>,
@@ -36693,7 +36712,7 @@ async fn vault_claims_seed(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_born(
+    let (output, hook_notice) = facade_invoke_born_with_notice(
         server,
         call,
         actor,
@@ -36703,7 +36722,7 @@ async fn vault_claims_seed(
         position,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_channel_identities_provision(
     server: &Arc<SyncServer>,
@@ -36942,7 +36961,7 @@ async fn vault_channel_identities_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -36951,7 +36970,7 @@ async fn vault_channel_identities_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_channel_identities_selection_rules(
     server: &Arc<SyncServer>,
@@ -36964,7 +36983,7 @@ async fn vault_channel_identities_selection_rules(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -36973,7 +36992,7 @@ async fn vault_channel_identities_selection_rules(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_channel_identities_selection_update(
     server: &Arc<SyncServer>,
@@ -37028,7 +37047,7 @@ async fn vault_channel_identities_select(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37037,7 +37056,7 @@ async fn vault_channel_identities_select(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_channel_identities_passports_get(
     server: &Arc<SyncServer>,
@@ -37050,7 +37069,7 @@ async fn vault_channel_identities_passports_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37059,7 +37078,7 @@ async fn vault_channel_identities_passports_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_channel_identities_passports_list(
     server: &Arc<SyncServer>,
@@ -37072,7 +37091,7 @@ async fn vault_channel_identities_passports_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37081,7 +37100,7 @@ async fn vault_channel_identities_passports_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_delivery_window_policy_put(
     server: &Arc<SyncServer>,
@@ -37131,7 +37150,7 @@ async fn vault_delivery_window_policy_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37140,7 +37159,7 @@ async fn vault_delivery_window_policy_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_delivery_window_policy_retract(
     server: &Arc<SyncServer>,
@@ -37190,7 +37209,7 @@ async fn vault_delivery_window_evaluate(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37199,7 +37218,7 @@ async fn vault_delivery_window_evaluate(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn connector_outbound_schedule(
     server: &Arc<SyncServer>,
@@ -37212,7 +37231,7 @@ async fn connector_outbound_schedule(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37221,7 +37240,7 @@ async fn connector_outbound_schedule(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_summaries_create(
     server: &Arc<SyncServer>,
@@ -37276,7 +37295,7 @@ async fn vault_summaries_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37285,7 +37304,7 @@ async fn vault_summaries_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_summaries_status(
     server: &Arc<SyncServer>,
@@ -37298,7 +37317,7 @@ async fn vault_summaries_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37307,7 +37326,7 @@ async fn vault_summaries_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_summaries_keep(
     server: &Arc<SyncServer>,
@@ -37488,7 +37507,7 @@ async fn vault_summaries_proposals_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37497,7 +37516,7 @@ async fn vault_summaries_proposals_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_summaries_proposals_merge(
     server: &Arc<SyncServer>,
@@ -37639,7 +37658,7 @@ async fn vault_notes_bless_brief_kind(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37648,7 +37667,7 @@ async fn vault_notes_bless_brief_kind(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_author_brief(
     server: &Arc<SyncServer>,
@@ -37661,7 +37680,7 @@ async fn vault_notes_author_brief(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37670,7 +37689,7 @@ async fn vault_notes_author_brief(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_follow_citation(
     server: &Arc<SyncServer>,
@@ -37719,7 +37738,7 @@ async fn vault_notes_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37728,7 +37747,7 @@ async fn vault_notes_create(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_author_take(
     server: &Arc<SyncServer>,
@@ -37741,7 +37760,7 @@ async fn vault_notes_author_take(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37750,7 +37769,7 @@ async fn vault_notes_author_take(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_from_entity(
     server: &Arc<SyncServer>,
@@ -37777,7 +37796,7 @@ async fn vault_notes_from_entity(
         &["source_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37786,7 +37805,7 @@ async fn vault_notes_from_entity(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_read(
     server: &Arc<SyncServer>,
@@ -37799,7 +37818,7 @@ async fn vault_notes_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37808,7 +37827,7 @@ async fn vault_notes_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_history(
     server: &Arc<SyncServer>,
@@ -37821,7 +37840,7 @@ async fn vault_notes_history(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37830,7 +37849,7 @@ async fn vault_notes_history(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_fork(
     server: &Arc<SyncServer>,
@@ -37857,7 +37876,7 @@ async fn vault_notes_fork(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37866,7 +37885,7 @@ async fn vault_notes_fork(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_forks_read(
     server: &Arc<SyncServer>,
@@ -37879,7 +37898,7 @@ async fn vault_notes_forks_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37888,7 +37907,7 @@ async fn vault_notes_forks_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_proposals_open(
     server: &Arc<SyncServer>,
@@ -37901,7 +37920,7 @@ async fn vault_notes_proposals_open(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37910,7 +37929,7 @@ async fn vault_notes_proposals_open(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_proposals_read(
     server: &Arc<SyncServer>,
@@ -37923,7 +37942,7 @@ async fn vault_notes_proposals_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37932,7 +37951,7 @@ async fn vault_notes_proposals_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_proposals_merge(
     server: &Arc<SyncServer>,
@@ -37945,7 +37964,7 @@ async fn vault_notes_proposals_merge(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37954,7 +37973,7 @@ async fn vault_notes_proposals_merge(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_proposals_switch(
     server: &Arc<SyncServer>,
@@ -37967,7 +37986,7 @@ async fn vault_notes_proposals_switch(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37976,7 +37995,7 @@ async fn vault_notes_proposals_switch(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_proposals_reject(
     server: &Arc<SyncServer>,
@@ -37989,7 +38008,7 @@ async fn vault_notes_proposals_reject(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -37998,7 +38017,7 @@ async fn vault_notes_proposals_reject(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_version_tree(
     server: &Arc<SyncServer>,
@@ -38011,7 +38030,7 @@ async fn vault_notes_version_tree(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38020,7 +38039,7 @@ async fn vault_notes_version_tree(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_history_purge(
     server: &Arc<SyncServer>,
@@ -38241,7 +38260,7 @@ async fn vault_notes_edit(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38250,7 +38269,7 @@ async fn vault_notes_edit(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_seal(
     server: &Arc<SyncServer>,
@@ -38277,7 +38296,7 @@ async fn vault_notes_seal(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38286,7 +38305,7 @@ async fn vault_notes_seal(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_lifecycle(
     server: &Arc<SyncServer>,
@@ -38313,7 +38332,7 @@ async fn vault_notes_lifecycle(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38322,7 +38341,7 @@ async fn vault_notes_lifecycle(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_set_overrides(
     server: &Arc<SyncServer>,
@@ -38349,7 +38368,7 @@ async fn vault_notes_set_overrides(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38358,7 +38377,7 @@ async fn vault_notes_set_overrides(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_notes_defaults(
     server: &Arc<SyncServer>,
@@ -38385,7 +38404,7 @@ async fn vault_notes_defaults(
         &["note_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38394,7 +38413,7 @@ async fn vault_notes_defaults(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tasks_linear_mapping(
     server: &Arc<SyncServer>,
@@ -38421,7 +38440,7 @@ async fn vault_tasks_linear_mapping(
         &["task_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38430,7 +38449,7 @@ async fn vault_tasks_linear_mapping(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_tasks_linear_mapping_edit(
     server: &Arc<SyncServer>,
@@ -38500,7 +38519,7 @@ async fn vault_tasks_linear_provenance(
         &["task_ref"],
     )?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -38509,7 +38528,7 @@ async fn vault_tasks_linear_provenance(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_run_attach(
     server: &Arc<SyncServer>,
@@ -39331,7 +39350,7 @@ async fn vault_mail_pack_install(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39340,7 +39359,7 @@ async fn vault_mail_pack_install(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_connect(
     server: &Arc<SyncServer>,
@@ -39353,7 +39372,7 @@ async fn vault_mail_sources_connect(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39362,7 +39381,7 @@ async fn vault_mail_sources_connect(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_list(
     server: &Arc<SyncServer>,
@@ -39375,7 +39394,7 @@ async fn vault_mail_sources_list(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39384,7 +39403,7 @@ async fn vault_mail_sources_list(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_settings_set(
     server: &Arc<SyncServer>,
@@ -39397,7 +39416,7 @@ async fn vault_mail_sources_settings_set(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39406,7 +39425,7 @@ async fn vault_mail_sources_settings_set(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_members_set(
     server: &Arc<SyncServer>,
@@ -39419,7 +39438,7 @@ async fn vault_mail_sources_members_set(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39428,7 +39447,7 @@ async fn vault_mail_sources_members_set(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_audience_events(
     server: &Arc<SyncServer>,
@@ -39441,7 +39460,7 @@ async fn vault_mail_sources_audience_events(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39450,7 +39469,7 @@ async fn vault_mail_sources_audience_events(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_threads_share(
     server: &Arc<SyncServer>,
@@ -39463,7 +39482,7 @@ async fn vault_mail_threads_share(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39472,7 +39491,7 @@ async fn vault_mail_threads_share(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_threads_unshare(
     server: &Arc<SyncServer>,
@@ -39485,7 +39504,7 @@ async fn vault_mail_threads_unshare(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39494,7 +39513,7 @@ async fn vault_mail_threads_unshare(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_compliance_setting(
     server: &Arc<SyncServer>,
@@ -39507,7 +39526,7 @@ async fn vault_mail_compliance_setting(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39516,7 +39535,7 @@ async fn vault_mail_compliance_setting(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_compliance_set(
     server: &Arc<SyncServer>,
@@ -39529,7 +39548,7 @@ async fn vault_mail_compliance_set(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39538,7 +39557,7 @@ async fn vault_mail_compliance_set(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_compliance_log(
     server: &Arc<SyncServer>,
@@ -39551,7 +39570,7 @@ async fn vault_mail_compliance_log(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39560,7 +39579,7 @@ async fn vault_mail_compliance_log(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_sources_sync_status(
     server: &Arc<SyncServer>,
@@ -39573,7 +39592,7 @@ async fn vault_mail_sources_sync_status(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39582,7 +39601,7 @@ async fn vault_mail_sources_sync_status(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_inbox(
     server: &Arc<SyncServer>,
@@ -39595,7 +39614,7 @@ async fn vault_mail_inbox(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39604,7 +39623,7 @@ async fn vault_mail_inbox(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_threads_read(
     server: &Arc<SyncServer>,
@@ -39617,7 +39636,7 @@ async fn vault_mail_threads_read(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39626,7 +39645,7 @@ async fn vault_mail_threads_read(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_mail_compliance_search(
     server: &Arc<SyncServer>,
@@ -39639,7 +39658,7 @@ async fn vault_mail_compliance_search(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -39648,7 +39667,7 @@ async fn vault_mail_compliance_search(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn connector_answer(
     server: &Arc<SyncServer>,
