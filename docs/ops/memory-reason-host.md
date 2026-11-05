@@ -69,3 +69,21 @@ Provider framing, route changes after sampling, reranker wire windows and fair
 resource accounting remain unproved. These rows therefore remain partial. This
 change does not attach a production host to raw search or deadline search, and
 makes no runtime or speed claim.
+
+## Retained evidence storage
+
+The route keeps the collected citable evidence in a private owner through
+extractive rendering, deep composition and the answer boundary. Its process
+memory lease records the actual evidence-vector backing capacity and the
+`short_id`, `kind` and `text` string capacities once. The rows and their strings
+drop before this charge is released, including on projection, pin or composition
+errors. Neither the public evidence value nor the response DTO carries a lease.
+
+This is accounting after allocation, not before-growth admission. It uses an
+empty native lease and names the retained capacities allocated without joining
+the memory wait queue, reserving more room or adding a refusal. It does not
+estimate capacity from text length, projected-body length or the requested count.
+The source/projection buffers, omitted markers, derived answer and sources,
+composition frames and pins, provider scratch and allocator overhead are not
+covered by this owner. Full working-set admission and Q remain open; no runtime,
+peak-memory or no-hang result is claimed.

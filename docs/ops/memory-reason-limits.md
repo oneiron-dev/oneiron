@@ -37,8 +37,15 @@ bypass it.
 ## Remaining work
 
 These settings and the HTTP ask-and-serve path do not complete FIX 60 or
-FIX 61. Resident-memory and fair-work admission for a large evidence read
-remain unbuilt on this route. Evidence collection and composition still
-have their existing single-pass shape. Processing evidence and composing
-answers in model-sized passes under actual provider frame limits also
-remain unbuilt. No native, binding or MCP memory-reason terminal is added.
+FIX 61. Collected citable evidence now retains a process-memory charge for
+its actual vector and string capacities through composition and the answer
+boundary. This is accounting after allocation, not admission before growth;
+source/projection buffers, omitted markers, derived answers and composition
+frames remain separate owners. See [the host contract](memory-reason-host.md).
+
+Evidence collection still materializes one projected cohort. The production
+host can partition whole evidence rows and reduce drafts using sampled model
+metadata, but that sizing is an estimate rather than a provider-frame bound.
+Full working-set and fair-work admission, and composition under proven actual
+provider frame limits, remain open. No native, binding or MCP memory-reason
+terminal is added.
