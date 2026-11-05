@@ -110,6 +110,7 @@ impl CarriedRecordDocument {
         }
         let doc = EntityDoc::from_snapshot(snapshot)?;
         retained::require_current_state(&doc)?;
+        super::metadata::require_retained_record_metadata(&doc, &self.field)?;
         let floor = if doc.doc.is_shallow() {
             doc.doc.shallow_since_vv().to_vv().encode()
         } else {

@@ -167,3 +167,117 @@ impl Vault {
         Ok(frontier)
     }
 }
+
+/// Checks common record metadata at its current state, shallow floor and
+/// every retained raw mutation, including inserts hidden by later writes.
+/// Native extension roots and body/source admission remain their owners'.
+pub(super) fn require_retained_record_metadata(doc: &EntityDoc, field: &TextField) -> Result<()> {
+    require_record_metadata_state(&doc.doc, field, doc.birth())?;
+    if doc.doc.is_shallow() {
+        // This state-only export is a read of the actual retained floor,
+        // never a replacement for the candidate's full retained snapshot.
+        // A generic text prefix need not already have a native birth.
+        let floor = doc.doc.shallow_since_frontiers();
+        let bytes = doc
+            .doc
+            .export(loro::ExportMode::state_only(Some(&floor)))
+            .map_err(|_| invalid("record metadata floor export"))?;
+        let at_floor = LoroDoc::from_snapshot(&bytes)
+            .map_err(|_| invalid("record metadata floor snapshot"))?;
+        require_record_metadata_state(&at_floor, field, doc.birth())?;
+    }
+    let history = doc.doc.export_json_updates_without_peer_compression(
+        &doc.doc.shallow_since_vv().to_vv(),
+        &doc.doc.oplog_vv(),
+    );
+    for change in history.changes {
+        for operation in change.ops {
+            let loro::ContainerID::Root {
+                name,
+                container_type,
+            } = operation.container
+            else {
+                continue;
+            };
+            if name.as_str() != super::document::META {
+                continue;
+            }
+            if container_type != loro::ContainerType::Map {
+                return Err(invalid("record metadata container"));
+            }
+            match operation.content {
+                loro::JsonOpContent::Map(loro::JsonMapOp::Insert { key, value }) => {
+                    require_record_metadata_value(&key, &value, field, doc.birth())?;
+                }
+                loro::JsonOpContent::Map(loro::JsonMapOp::Delete { key })
+                    if is_metadata_field(&key) && !is_record_body_field(field, &key) => {}
+                _ => return Err(invalid("record metadata operation")),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_record_metadata_state(
+    doc: &LoroDoc,
+    field: &TextField,
+    birth: &super::Birth,
+) -> Result<()> {
+    let map = doc.get_map(super::document::META);
+    let mut failure = None;
+    map.for_each(|key, _| {
+        if failure.is_some() {
+            return;
+        }
+        let result = match map.get(key) {
+            Some(loro::ValueOrContainer::Value(value)) => {
+                require_record_metadata_value(key, &value, field, birth)
+            }
+            _ => Err(invalid("record metadata value")),
+        };
+        if let Err(error) = result {
+            failure = Some(error);
+        }
+    });
+    failure.map_or(Ok(()), Err)
+}
+
+fn require_record_metadata_value(
+    key: &str,
+    value: &loro::LoroValue,
+    field: &TextField,
+    birth: &super::Birth,
+) -> Result<()> {
+    let loro::LoroValue::Binary(bytes) = value else {
+        return Err(invalid("record metadata value"));
+    };
+    match key {
+        super::document::BIRTH => {
+            let stored = super::Birth::decode(bytes.as_slice())?;
+            if stored.entity != birth.entity
+                || stored.at != birth.at
+                || stored.encode()?.as_slice() != bytes.as_slice()
+            {
+                return Err(invalid("record metadata retained birth"));
+            }
+        }
+        RECORD_FIELDS => {
+            let fields: Vec<String> = storage::decode(bytes.as_slice())?;
+            if fields
+                .iter()
+                .any(|key| !is_metadata_field(key) || is_record_body_field(field, key))
+            {
+                return Err(invalid("record metadata record fields"));
+            }
+        }
+        _ if is_metadata_field(key) && !is_record_body_field(field, key) => {
+            validate_metadata(key, &decode_metadata_value(bytes.as_slice())?)?;
+        }
+        _ => return Err(invalid("record metadata field")),
+    }
+    Ok(())
+}
+
+fn is_record_body_field(field: &TextField, key: &str) -> bool {
+    matches!(field, TextField::MapField(body) if body == key)
+}
