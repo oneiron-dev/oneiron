@@ -4813,8 +4813,12 @@ export type ArtifactVersionView = { version: number; content_hash: string; paren
 export type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsRequest` */
 export type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null }
+/** `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand` */
+export type DocxHeaderFooterBand = "default" | "first" | "even"
+/** `oneiron_docedit::docx_body::stories::DocxStoryScope` */
+export type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string }
 /** `oneiron::anchored_annotation::wire::AnnotationLocator` */
-export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number }
+export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "docx_story"; scope: DocxStoryScope; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitView` */
 export type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsView` */
@@ -7547,10 +7551,6 @@ export type DocxRun = { text: string; marks?: DocxMark[] }
 export type DocxCellView = { row: number; col: number; text: string }
 /** `oneiron::office_body::verbs::DocxBlockView` */
 export type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; runs: DocxRun[]; cells: DocxCellView[] }
-/** `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand` */
-export type DocxHeaderFooterBand = "default" | "first" | "even"
-/** `oneiron_docedit::docx_body::stories::DocxStoryScope` */
-export type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string }
 /** `oneiron::office_body::verbs::DocxStoryParagraphView` */
 export type DocxStoryParagraphView = { id: string; locked: boolean; text: string; runs: DocxRun[] }
 /** `oneiron::office_body::verbs::DocxStoryCellParagraphView` */

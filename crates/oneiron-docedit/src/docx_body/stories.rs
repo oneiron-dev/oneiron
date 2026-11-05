@@ -88,51 +88,8 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
             });
             Ok::<_, DoceditError>(())
         };
-        for story in &canonical.headers {
-            if !story.synthesized {
-                push(
-                    DocxStoryScope::Header {
-                        part_name: story.part_name.clone(),
-                        band: (&story.kind).into(),
-                    },
-                    &story.blocks,
-                )?;
-            }
-        }
-        for story in &canonical.footers {
-            if !story.synthesized {
-                push(
-                    DocxStoryScope::Footer {
-                        part_name: story.part_name.clone(),
-                        band: (&story.kind).into(),
-                    },
-                    &story.blocks,
-                )?;
-            }
-        }
-        for story in &canonical.footnotes {
-            push(
-                DocxStoryScope::Footnote {
-                    id: story.id.clone(),
-                },
-                &story.blocks,
-            )?;
-        }
-        for story in &canonical.endnotes {
-            push(
-                DocxStoryScope::Endnote {
-                    id: story.id.clone(),
-                },
-                &story.blocks,
-            )?;
-        }
-        for story in &canonical.comments {
-            push(
-                DocxStoryScope::Comment {
-                    id: story.id.clone(),
-                },
-                &story.blocks,
-            )?;
+        for (scope, blocks) in story_blocks(&document) {
+            push(scope, blocks)?;
         }
         Ok(DocxRead {
             blocks: document
@@ -144,4 +101,120 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
             stories,
         })
     })
+}
+
+/// The authored native stories, in the same order for reads and anchors.
+fn story_blocks(document: &Document) -> Vec<(DocxStoryScope, &[stemma::domain::TrackedBlock])> {
+    let canonical = &document.snapshot().canonical;
+    let mut stories = Vec::new();
+    for story in &canonical.headers {
+        if !story.synthesized {
+            stories.push((
+                DocxStoryScope::Header {
+                    part_name: story.part_name.clone(),
+                    band: (&story.kind).into(),
+                },
+                story.blocks.as_slice(),
+            ));
+        }
+    }
+    for story in &canonical.footers {
+        if !story.synthesized {
+            stories.push((
+                DocxStoryScope::Footer {
+                    part_name: story.part_name.clone(),
+                    band: (&story.kind).into(),
+                },
+                story.blocks.as_slice(),
+            ));
+        }
+    }
+    for story in &canonical.footnotes {
+        stories.push((
+            DocxStoryScope::Footnote {
+                id: story.id.clone(),
+            },
+            story.blocks.as_slice(),
+        ));
+    }
+    for story in &canonical.endnotes {
+        stories.push((
+            DocxStoryScope::Endnote {
+                id: story.id.clone(),
+            },
+            story.blocks.as_slice(),
+        ));
+    }
+    for story in &canonical.comments {
+        stories.push((
+            DocxStoryScope::Comment {
+                id: story.id.clone(),
+            },
+            story.blocks.as_slice(),
+        ));
+    }
+    stories
+}
+
+/// Native story paragraphs in their current accepted-inline reading, with
+/// actual `w14:paraId` identities. Deleted blocks and inline tombstones are
+/// not current anchor text. The body reader keeps its redline semantics.
+#[must_use]
+pub fn story_anchor_blocks(
+    document: &Document,
+) -> Vec<(DocxStoryScope, Vec<crate::DocxAnchorBlock>)> {
+    use stemma::domain::{BlockNode, TrackingStatus};
+    story_blocks(document)
+        .into_iter()
+        .map(|(scope, blocks)| {
+            let mut current: Vec<_> = blocks
+                .iter()
+                .filter_map(|tracked| {
+                    if !matches!(
+                        tracked.status,
+                        TrackingStatus::Normal | TrackingStatus::Inserted(_)
+                    ) || !matches!(tracked.block, BlockNode::Paragraph(_))
+                    {
+                        return None;
+                    }
+                    Some(tracked.clone())
+                })
+                .collect();
+            for tracked in &mut current {
+                if let BlockNode::Paragraph(paragraph) = &mut tracked.block {
+                    paragraph.segments.retain(|segment| {
+                        matches!(
+                            segment.status,
+                            TrackingStatus::Normal | TrackingStatus::Inserted(_)
+                        )
+                    });
+                }
+            }
+            let para_ids: std::collections::HashMap<String, Option<String>> = current
+                .iter()
+                .filter_map(|tracked| match &tracked.block {
+                    BlockNode::Paragraph(paragraph) => {
+                        Some((paragraph.id.to_string(), paragraph.para_id.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            // Reuse the native label/text reader after filtering only the
+            // local clone. Neither canonical content nor native ids move.
+            let view = stemma::view::build_story_blocks_view(&current);
+            let blocks = view
+                .blocks
+                .into_iter()
+                .filter_map(|block| {
+                    let block_id = block.id.to_string();
+                    Some(crate::DocxAnchorBlock {
+                        para_id: para_ids.get(&block_id)?.clone(),
+                        block_id,
+                        text: block.text,
+                    })
+                })
+                .collect();
+            (scope, blocks)
+        })
+        .collect()
 }

@@ -19,6 +19,7 @@ use oneiron_xlsx_formula::cell_display_text;
 use super::model::{ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
 
+pub(super) mod stories;
 mod xlsx;
 
 use xlsx::{find_in_sheets, xlsx_range_text};
@@ -107,6 +108,27 @@ pub(super) fn anchor_text(
             };
             Ok(char_slice(text, *char_start, *char_end))
         }
+        Locator::DocxStory {
+            scope,
+            para_path,
+            char_start,
+            char_end,
+        } => {
+            let Some(stories) = stories::units(bytes, limits)? else {
+                return Ok(None);
+            };
+            let units = crate::office_body::DocxUnits {
+                blocks: Vec::new(),
+                stories,
+            };
+            let Some(paragraphs) = units.story(scope) else {
+                return Ok(None);
+            };
+            let Some((_, text)) = paragraphs.iter().find(|(id, _)| id == para_path) else {
+                return Ok(None);
+            };
+            Ok(char_slice(text, *char_start, *char_end))
+        }
         Locator::Pptx { slide, shape_id } => {
             let Some(deck) = deck_view(bytes, limits)? else {
                 return Ok(None);
@@ -159,7 +181,6 @@ pub(super) fn anchor_text(
             }
             Ok(char_slice(&block.text, *char_start, *char_end))
         }
-        _ => Ok(None),
     }
 }
 
@@ -178,18 +199,42 @@ pub(super) fn find_text(
     }
     let mut found = match format {
         UnitFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
-        UnitFormat::Docx => docx_blocks(bytes, limits)?
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .flat_map(|(id, block)| {
-                        char_occurrences(block, text)
-                            .into_iter()
-                            .filter_map(|(start, end)| Locator::docx(id.clone(), start, end).ok())
+        UnitFormat::Docx => {
+            let mut found: Vec<Locator> =
+                docx_blocks(bytes, limits)?
+                    .map(|blocks| {
+                        blocks
+                            .iter()
+                            .flat_map(|(id, block)| {
+                                char_occurrences(block, text).into_iter().filter_map(
+                                    |(start, end)| Locator::docx(id.clone(), start, end).ok(),
+                                )
+                            })
+                            .collect()
                     })
-                    .collect()
-            })
-            .unwrap_or_default(),
+                    .unwrap_or_default();
+            if let Some(read) = stories::units(bytes, limits)? {
+                for story in &read {
+                    if read
+                        .iter()
+                        .filter(|other| other.scope == story.scope)
+                        .count()
+                        != 1
+                    {
+                        continue;
+                    }
+                    for (id, paragraph) in &story.paragraphs {
+                        found.extend(char_occurrences(paragraph, text).into_iter().filter_map(
+                            |(start, end)| {
+                                Locator::docx_story(story.scope.clone(), id.clone(), start, end)
+                                    .ok()
+                            },
+                        ));
+                    }
+                }
+            }
+            found
+        }
         UnitFormat::Pptx => deck_view(bytes, limits)?
             .map(|deck| {
                 deck.slides
@@ -536,14 +581,32 @@ pub(super) fn unit_texts(
             let Some(blocks) = docx_blocks(bytes, limits)? else {
                 return Ok(None);
             };
-            Ok(blocks
+            let Some(mut units): Option<Vec<_>> = blocks
                 .into_iter()
                 .map(|(path, text)| {
                     let end = text.chars().count() as u64;
                     let locator = Locator::docx(path, 0, end).ok()?;
                     Some((locator, (end > 0).then_some(text)))
                 })
-                .collect())
+                .collect()
+            else {
+                return Ok(None);
+            };
+            if let Some(read) = stories::units(bytes, limits)? {
+                for story in &read {
+                    let unique = read
+                        .iter()
+                        .filter(|other| other.scope == story.scope)
+                        .count()
+                        == 1;
+                    for (id, paragraph) in &story.paragraphs {
+                        let end = paragraph.chars().count() as u64;
+                        let locator = Locator::docx_story(story.scope.clone(), id.clone(), 0, end)?;
+                        units.push((locator, (unique && end > 0).then(|| paragraph.clone())));
+                    }
+                }
+            }
+            Ok(Some(units))
         }
         UnitFormat::Xlsx => {
             let book = match read_xlsx_cells(

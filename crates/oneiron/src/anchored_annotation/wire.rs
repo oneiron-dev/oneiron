@@ -22,6 +22,12 @@ pub enum AnnotationLocator {
         char_start: u64,
         char_end: u64,
     },
+    DocxStory {
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
     Pptx {
         slide: u64,
         shape_id: String,
@@ -44,6 +50,12 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 char_start,
                 char_end,
             } => Self::docx(para_path.clone(), *char_start, *char_end),
+            AnnotationLocator::DocxStory {
+                scope,
+                para_path,
+                char_start,
+                char_end,
+            } => Self::docx_story(scope.clone(), para_path.clone(), *char_start, *char_end),
             AnnotationLocator::Pptx { slide, shape_id } => Self::pptx(*slide, shape_id.clone()),
             AnnotationLocator::Html {
                 part_id,
@@ -66,6 +78,17 @@ impl From<&Locator> for AnnotationLocator {
                 char_start,
                 char_end,
             } => Self::Docx {
+                para_path: para_path.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
+            },
+            Locator::DocxStory {
+                scope,
+                para_path,
+                char_start,
+                char_end,
+            } => Self::DocxStory {
+                scope: scope.clone(),
                 para_path: para_path.clone(),
                 char_start: *char_start,
                 char_end: *char_end,

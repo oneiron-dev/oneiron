@@ -4,7 +4,7 @@
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
-    FORMAT_HTML, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    FORMAT_DOCX_STORY, FORMAT_HTML, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -55,6 +55,8 @@ const KEY_SHEET: &str = "sheet";
 const KEY_RANGE: &str = "range";
 
 const KEY_PARA_PATH: &str = "para_path";
+
+const KEY_SCOPE: &str = "scope";
 
 const KEY_CHAR_START: &str = "char_start";
 
@@ -120,6 +122,18 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_CHAR_START), Value::from(*char_start)),
             (Value::from(KEY_CHAR_END), Value::from(*char_end)),
         ]),
+        Locator::DocxStory {
+            scope,
+            para_path,
+            char_start,
+            char_end,
+        } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_DOCX_STORY)),
+            (Value::from(KEY_SCOPE), encode_story_scope(scope)),
+            (Value::from(KEY_PARA_PATH), Value::from(para_path.as_str())),
+            (Value::from(KEY_CHAR_START), Value::from(*char_start)),
+            (Value::from(KEY_CHAR_END), Value::from(*char_end)),
+        ]),
         Locator::Pptx { slide, shape_id } => Value::Map(vec![
             (Value::from(KEY_FORMAT), Value::from(FORMAT_PPTX)),
             (Value::from(KEY_SLIDE), Value::from(*slide)),
@@ -138,6 +152,36 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
     }
 }
 
+fn encode_story_scope(scope: &oneiron_docedit::docx_body::DocxStoryScope) -> Value {
+    use oneiron_docedit::docx_body::{DocxHeaderFooterBand, DocxStoryScope};
+    let (kind, identity) = match scope {
+        DocxStoryScope::Header { part_name, band } | DocxStoryScope::Footer { part_name, band } => {
+            let kind = if matches!(scope, DocxStoryScope::Header { .. }) {
+                "header"
+            } else {
+                "footer"
+            };
+            let band = match band {
+                DocxHeaderFooterBand::Default => "default",
+                DocxHeaderFooterBand::First => "first",
+                DocxHeaderFooterBand::Even => "even",
+            };
+            return Value::Map(vec![
+                (Value::from("kind"), Value::from(kind)),
+                (Value::from("part_name"), Value::from(part_name.as_str())),
+                (Value::from("band"), Value::from(band)),
+            ]);
+        }
+        DocxStoryScope::Footnote { id } => ("footnote", id),
+        DocxStoryScope::Endnote { id } => ("endnote", id),
+        DocxStoryScope::Comment { id } => ("comment", id),
+    };
+    Value::Map(vec![
+        (Value::from("kind"), Value::from(kind)),
+        (Value::from("id"), Value::from(identity.as_str())),
+    ])
+}
+
 pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
     let format = map_str(value, KEY_FORMAT)?;
     match format {
@@ -151,6 +195,19 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let char_start = map_u64(value, KEY_CHAR_START)?;
             let char_end = map_u64(value, KEY_CHAR_END)?;
             Locator::docx(para_path, char_start, char_end)
+        }
+        FORMAT_DOCX_STORY => {
+            let scope = map_get(value, KEY_SCOPE).ok_or(Error::Artifact(
+                ArtifactError::InvalidAnchor("docx story scope"),
+            ))?;
+            let scope = rmpv::ext::from_value(scope.clone())
+                .map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor("docx story scope")))?;
+            Locator::docx_story(
+                scope,
+                map_str(value, KEY_PARA_PATH)?.to_owned(),
+                map_u64(value, KEY_CHAR_START)?,
+                map_u64(value, KEY_CHAR_END)?,
+            )
         }
         FORMAT_PPTX => {
             let slide = map_u64(value, KEY_SLIDE)?;

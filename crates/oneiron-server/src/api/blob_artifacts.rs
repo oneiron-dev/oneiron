@@ -174,6 +174,12 @@ pub(super) enum PlaceInput {
         char_start: u64,
         char_end: u64,
     },
+    DocxStory {
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
     Pptx {
         slide: u64,
         shape_id: String,
@@ -1045,6 +1051,14 @@ fn place_json(locator: &Locator) -> Value {
             "char_start": char_start,
             "char_end": char_end,
         } }),
+        Locator::DocxStory {
+            scope,
+            para_path,
+            char_start,
+            char_end,
+        } => json!({ "docx_story": {
+            "scope": scope, "para_path": para_path, "char_start": char_start, "char_end": char_end,
+        } }),
         Locator::Pptx { slide, shape_id } => {
             json!({ "pptx": { "slide": slide, "shape_id": shape_id } })
         }
@@ -1060,6 +1074,12 @@ fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
             char_start,
             char_end,
         } => Locator::docx(para_path, char_start, char_end),
+        PlaceInput::DocxStory {
+            scope,
+            para_path,
+            char_start,
+            char_end,
+        } => Locator::docx_story(scope, para_path, char_start, char_end),
         PlaceInput::Pptx { slide, shape_id } => Locator::pptx(slide, shape_id),
     }
     .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
