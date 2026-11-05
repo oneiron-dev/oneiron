@@ -90,11 +90,13 @@ async function uploadVersions(
     name, media_type: "text/plain", occurred_at,
   });
   for (const [index, bytes] of versions.entries()) {
-    const version = await client.call("vault.artifacts.append", {
+    const outcome = await client.call("vault.artifacts.append", {
       artifact_ref: record.id_hex,
       content_base64: Buffer.from(bytes).toString("base64"),
       occurred_at,
     });
+    if (!("landed" in outcome)) throw new Error(`Append proposed, expected landed (proposal ${outcome.proposed.proposal_ref})`);
+    const version = outcome.landed;
     expect(version.version).toBe(index + 1);
     // Standard hashing of fixture bytes, not an engine-generated answer.
     expect(version.content_hash_hex).toBe(Buffer.from(blake3(bytes)).toString("hex"));
