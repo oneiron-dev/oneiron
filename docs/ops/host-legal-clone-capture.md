@@ -213,6 +213,20 @@ batch's ordinals; one acknowledgement never covers another batch or the order.
 The worker takes the LMDB writer briefly as a barrier before each read, so a
 wake from a writer that has not yet committed is never read early.
 
+Managed stop does not end a prospective connection at its trigger: every
+other legal capture ends and joins at the start of teardown, while prospective
+connections keep draining. After every writer of the process has stopped and
+before the vault closes, the final drain runs: each attached prospective
+connection drains its outbox to empty under the writer barrier and sends one
+last batch, possibly empty, whose summary carries `final_next_ordinal`, the
+order's next ordinal. No entry at or after it exists and this process writes
+none; the batch's range ends there. It is a per-process statement, not the
+order's release or end: the standing stays for a later start. A HOST that is
+not connected is not waited for, and its order's outbox stays in the vault. A
+connected HOST that does not answer holds the drain only to the connection's
+existing term deadline or the supervisor's kill; its entries stay unacknowledged
+and durable.
+
 The user's own erase, scrub, compaction or prune of a captured message is
 never gated: the outbox entry is clone custody, not vault data. Release of the
 order generation, or its term end, destroys the standing and its whole outbox

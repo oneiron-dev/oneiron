@@ -48,8 +48,10 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         Some(host) => host.on_stop(),
         None => Ok(()),
     };
-    if let Some(legal) = handles.host_legal {
-        legal.stop().await;
+    // Every HOST legal capture but a prospective order's ends and joins
+    // here; prospective connections drain at the end, after every writer.
+    if let Some(legal) = handles.host_legal.as_mut() {
+        legal.quiesce().await;
     }
     if let Some(task) = handles.ctl_task {
         let _ = task.await;
@@ -136,6 +138,11 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
     }
     if let Some(oversight) = handles.oversight {
         oversight.stop().await;
+    }
+    // Every writer has stopped: each HOST prospective order drains its last
+    // entries and names its next ordinal before the vault closes.
+    if let Some(legal) = handles.host_legal {
+        legal.finish().await;
     }
     // An inherited socket belongs to the supervisor. Only paths actually
     // created by this process were retained here.
