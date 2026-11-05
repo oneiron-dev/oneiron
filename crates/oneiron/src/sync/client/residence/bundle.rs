@@ -755,7 +755,7 @@ pub(super) async fn fetch_generation(
     else {
         return Ok(None);
     };
-    let bundle = SealedVaultBundle::from_bytes(&bytes).map_err(|_| refused())?;
+    let bundle = SealedVaultBundle::from_bytes(&bytes).map_err(refill::object_parse_error)?;
     drop(bytes);
     let Some((_, bytes)) = read_object(source, Some(generation), SealedBundleObject::Pads)
         .await?
@@ -763,7 +763,7 @@ pub(super) async fn fetch_generation(
     else {
         return Ok(None);
     };
-    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(refill::object_parse_error)?;
     if bundle.generation() != generation || pads.generation() != generation {
         return Err(refused());
     }
