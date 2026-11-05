@@ -1213,7 +1213,7 @@
      "path": "src/agent_dispatch/planner_live/intent/erase.rs",
      "purpose": "A planned intent's erase (Engine 10-22)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -9634,6 +9634,16 @@
       "fn": 9,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/versions/checked.rs",
+     "purpose": "Checked append decisions shared by direct and Memory transaction doors",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -23901,7 +23911,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 4
      }
@@ -23924,6 +23934,16 @@
      "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/promotion.rs",
+     "purpose": "Preserve journaled legacy TURNs when a save joins an already-adopted DAG",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24646,7 +24666,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CarrierActorMerge",
@@ -24656,7 +24676,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2
      }
     },
@@ -26506,7 +26526,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 5,
       "re-export": 25
      }
@@ -26702,14 +26722,14 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "re-export": 1,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PartitionThing"
@@ -26717,7 +26737,7 @@
      "path": "src/dreamer_consolidation/partition/payload.rs",
      "purpose": "The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -31035,7 +31055,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
@@ -33211,6 +33231,16 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/output_retention.rs",
+     "purpose": "Native-output row preparation and direct-append retention",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -40551,7 +40581,7 @@
      "path": "src/inbox/list.rs",
      "purpose": "OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -40809,6 +40839,7 @@
      "path": "src/inference_snapshot/seal.rs",
      "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -44206,7 +44237,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -44320,7 +44351,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "re-export": 4,
       "struct": 5
@@ -44397,7 +44428,7 @@
      "path": "src/llm/registry/stored_rows.rs",
      "purpose": "The registry's stored rows",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -48983,6 +49014,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "EntityRefReceipt",
       "HabitCheckinInput",
@@ -48993,6 +49025,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
+      "enum": 1,
       "re-export": 1,
       "struct": 8
      }
@@ -51571,13 +51604,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/saving.rs",
      "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -57451,7 +57484,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -62861,6 +62894,16 @@
      "purpose": "The rows an edited summary's words were written from (FIX 10092)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/request/remake.rs",
+     "purpose": "Fresh source-only rebuilds after an off-record save cuts deleted content",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -82081,7 +82124,7 @@
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 8,
       "struct": 8
@@ -83132,7 +83175,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Vault"
@@ -83141,6 +83184,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 17,
+      "fn": 1,
       "re-export": 8,
       "struct": 1
      }
@@ -85395,7 +85439,7 @@
       "VaultReceiptsRequest"
      ],
      "path": "src/verbs/receipts_page.rs",
-     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, served at most…",
+     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on the gate ledger and at…",
      "surface": {
       "re-export": 1,
       "struct": 1
@@ -90476,7 +90520,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90798,7 +90842,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90938,7 +90982,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91547,7 +91591,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91948,7 +91992,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6415,
+   "source_files": 6419,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93388,7 +93432,7 @@
      "path": "src/request_limits.rs",
      "purpose": "Request boundary limits and pure validators",
      "surface": {
-      "const": 14,
+      "const": 13,
       "fn": 13
      }
     },
@@ -102797,7 +102841,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -102847,7 +102891,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 1,
       "struct": 10
      }
@@ -105643,6 +105687,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "TokenScore"
+     ],
+     "path": "src/llm/logprobs.rs",
+     "purpose": "Borrowed views over a reply token's reported scores",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AiMediaDoor",
       "ImageMedia",
       "MediaBackend",
@@ -105759,7 +105816,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -106035,7 +106092,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -106058,7 +106115,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -106182,6 +106239,7 @@
      "notable": [
       "NapiAdmitImportedClaimInput",
       "NapiBlobArtifactInput",
+      "NapiBlobVersionAppendOutcome",
       "NapiBlobVersionView",
       "NapiCalendarEventRead",
       "NapiCalendarEventView",
@@ -106246,7 +106304,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 61
+      "struct": 62
      }
     },
     {
@@ -106384,7 +106442,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 29
      }
     },
     {
@@ -119468,6 +119526,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EmbeddedHolderOverrides",
       "IngressAuth",
       "ServeConfig",
       "SyncServerConfig"
@@ -119475,9 +119534,10 @@
      "path": "src/config/server_config.rs",
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -129307,7 +129367,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -130831,6 +130891,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "CitedMessage",
       "ClaimInput",
@@ -130901,7 +130962,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 13,
+      "enum": 14,
       "struct": 55
      }
     },
