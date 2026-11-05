@@ -5171,7 +5171,7 @@
      "path": "src/authority/slip_pairing/re_pairing.rs",
      "purpose": "Credential-only re-pairing (FIX 8636): a machine the roster already holds live pairs again under its own…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -16755,13 +16755,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/read_worlds.rs",
      "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -35997,7 +35997,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -45975,7 +45975,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/campaign.rs",
-     "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
+     "purpose": "Campaign + saved-query wrappers over the store's native record hooks",
      "surface": {
       "fn": 20
      }
@@ -47870,7 +47870,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 40,
       "re-export": 69
      }
@@ -48391,6 +48391,16 @@
      "purpose": "Standing-query verdict tokens defined with the stored memo",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_capture.rs",
+     "purpose": "Per-call evidence from the actual admitted read, not a later row lookup",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -49485,7 +49495,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 4,
       "re-export": 1,
       "struct": 3,
@@ -62661,7 +62671,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 10,
       "re-export": 9,
       "struct": 2,
@@ -72952,7 +72962,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room…",
+     "purpose": "Native record behavior supplied by the engine when a store opens: identity, federation, room, voice, secret…",
      "surface": {
       "trait": 1
      }
@@ -90155,7 +90165,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 363,
+     "files": 364,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90864,7 +90874,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6380,
+   "source_files": 6381,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93744,7 +93754,7 @@
      "path": "src/load/dream/cycle.rs",
      "purpose": "The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -93774,7 +93784,7 @@
      "path": "src/load/dream/server_log.rs",
      "purpose": "The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -101744,7 +101754,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AttemptQueueDeadlines",
@@ -101818,7 +101828,7 @@
     "tick": {
      "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)"
     },
@@ -101837,7 +101847,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 35,
    "test_files": 10
@@ -116922,11 +116932,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar_host/feed_poll.rs",
-     "purpose": "The host's ICS feed poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the…",
+     "purpose": "The host's calendar poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the…",
      "surface": {
       "crate-vis": 1
      }
