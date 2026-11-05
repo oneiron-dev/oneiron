@@ -108,6 +108,8 @@ use self::frame_seal::{seal_outer, section_padded_len, signed_digest};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
+#[cfg(feature = "sync")]
+pub use self::publication_grant::SealedPublicationGrant;
 pub use self::retirement::{
     SEALED_BUNDLE_KEEP, SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS,
     SealedBundleGeneration, retired_bundle_generations, sealed_bundle_slot,

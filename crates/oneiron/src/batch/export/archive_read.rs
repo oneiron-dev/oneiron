@@ -21,9 +21,10 @@ use super::archive_index::{ArchiveIndex, ArchiveSpool, IndexedArchive, Section};
 use super::{
     ArchiveRecordKind, ArchiveSecretCustody, ExportAgentBundle, ExportDerivationEnvelope,
     ExportEdge, ExportEntity, ExportEpochFloor, ExportFileTree, ExportLedger, ExportPack,
-    ExportResultBody, ExportRun, ExportRunResults, ExportSkillBundle, ExportSourceContent,
-    PortableEmbeddingSpace, VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH,
-    VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument, WholeVaultDocumentManifest, archive_file_path,
+    ExportResultBody, ExportRowBirth, ExportRun, ExportRunResults, ExportSkillBundle,
+    ExportSourceContent, PortableEmbeddingSpace, VAULT_ARCHIVE_FILES_DIR,
+    VAULT_ARCHIVE_MANIFEST_PATH, VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument,
+    WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -335,6 +336,7 @@ fn check_row(
         ArchiveRecordKind::EmbeddingSpace => drop(row::<PortableEmbeddingSpace>(line)?),
         ArchiveRecordKind::SlotBinding => slots.push(row(line)?)?,
         ArchiveRecordKind::EpochFloor => drop(row::<ExportEpochFloor>(line)?),
+        ArchiveRecordKind::RowBirth => drop(row::<ExportRowBirth>(line)?),
         ArchiveRecordKind::SideTable => {
             // FIX 2768: a side row's long binary value names one attached
             // file too.
@@ -421,6 +423,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             slot_bindings: self.slot_bindings.clone(),
             epoch_floors: self.all(ArchiveRecordKind::EpochFloor)?,
             side_tables: self.all(ArchiveRecordKind::SideTable)?,
+            row_births: self.all(ArchiveRecordKind::RowBirth)?,
         })
     }
 

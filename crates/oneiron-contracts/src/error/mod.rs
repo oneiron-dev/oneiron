@@ -181,6 +181,7 @@ pub enum ErrorKind {
     ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
+    GuestClaimWithheld,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
