@@ -542,13 +542,8 @@ fn put_calendar_test_policy(
     })
 }
 
-/// KNOWN DEBT (ONE-1790 G4, LOW): the NOTE this authors is clocked by
-/// [`crate::memory::Memory::author_take`]'s own observation time
-/// (`unix_seconds_now()`), NOT by `request.arrived_at_ms`. A fallback NOTE
-/// therefore reads as "observed when the import ran", not "stamped at the
-/// import's arrival instant". Turn-bearing imports are unaffected — they carry
-/// `arrived_at_ms` and the claimed transcript stamps explicitly. Arrival-stamped
-/// NOTE authorship needs a facade-level clock seam and is a separate ticket.
+/// A nonempty file with no usable turns is retained as an attributed NOTE
+/// in the source's world, with occurrence and learning stamped at arrival.
 fn persist_note_fallback(
     vault: &crate::Vault,
     request: TranscriptFileDropRequest<'_>,
@@ -558,10 +553,11 @@ fn persist_note_fallback(
     let world = source_world(vault, request.source_blob_ref)?;
     let receipt = vault
         .memory(actor, EdgeActorClass::System)
-        .author_take_in_world(
+        .author_take_in_world_at(
             TakeTarget::Subject(request.source_blob_ref),
             request.decoded_text.trim().to_owned(),
             world,
+            at,
         )
         .map_err(|_| crate::Error::InvalidClaimBody("file-drop NOTE fallback refused"))?;
     let note_ref = crate::EntityId::from_hex(&receipt.id_hex)?;

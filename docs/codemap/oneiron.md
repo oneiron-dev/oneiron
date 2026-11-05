@@ -3339,7 +3339,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inference_snapshot/lifecycle.rs` | src | s | 3 fn · 1 re-export · 5 crate-vis | — | Inference snapshot lifecycle vault doors |
 | `src/inference_snapshot/mod.rs` | src | s | 1 mod · 4 re-export · 2 crate-vis | — | A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped… |
 | `src/inference_snapshot/retention.rs` | src | m | 5 struct · 11 fn · 1 const · 1 crate-vis | SnapshotBudget, SnapshotCandidate, SnapshotLedger, SnapshotReservation, SnapshotUsage | Each vault's sealed-snapshot budget (DESIGN-V2 §7 quotas, V2-R3): the bytes its sealed bodies hold on disk… |
-| `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 2 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
+| `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 3 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
 | `src/inference_snapshot/store.rs` | src | m | 2 struct · 8 fn · 2 crate-vis | SnapshotPublish, SnapshotReconcile | The sealed snapshot store (DESIGN-V2 §7, V2-R3): each snapshot's body sealed under its own data key in a… |
 | `src/ingest/admission.rs` | src | m | 3 struct · 8 fn · 6 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
 | `src/ingest/audience.rs` | src | m | 2 struct · 2 enum · 5 fn · 3 const · 2 crate-vis | ImportAudience, ImportAudienceCluster, ImportAudienceOption, ImportAudienceState | Import audience topics (OF-492) |
@@ -3924,7 +3924,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/skill_authoring.rs` | src | m | 1 struct · 4 fn · 2 crate-vis | SkillAuthoringReceipt | Authored skill saves and forks over the existing skill lifecycle gate |
 | `src/memory/speculative_limits.rs` | src | s | 2 const | — | Default speculative retrieval fire counts and result limits |
 | `src/memory/state_index.rs` | src | s | 4 struct · 3 const · 1 crate-vis | ModeGateInputs, StateIndex, StateIndexEvidence, StateWindow | Composite-state projection records and owner-authored window targets |
-| `src/memory/structural/affiliated.rs` | src | m | 5 fn · 4 crate-vis | — | Attributed takes and imported-claim admission verbs |
+| `src/memory/structural/affiliated.rs` | src | m | 5 fn · 5 crate-vis | — | Attributed takes and imported-claim admission verbs |
 | `src/memory/structural/codec.rs` | src | s | 3 crate-vis | — | Edge weight and registry kind lookups for structural puts |
 | `src/memory/structural/guards.rs` | src | s | 1 crate-vis | — | Create-only guards for the structural write door (ONE-1889) |
 | `src/memory/structural/mod.rs` | src | s | 2 re-export · 4 crate-vis | — | Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take` |
