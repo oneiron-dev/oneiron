@@ -554,6 +554,7 @@ fn spent_in_line(line: &str) -> Option<SeatSpent> {
     }
     let mut spent = SeatSpent::from_retryable(&limit::limit_refusal(429, &BTreeMap::new(), &body))?;
     spent.resets_at.extend(epoch_reset(&body));
+    spent.resets_at.extend(opencode_retry_reset(&event));
     Some(spent)
 }
 
@@ -611,6 +612,34 @@ fn opencode_retry_after(data: &JsonValue) -> Option<u64> {
             let seconds = (value / units_per_second).ceil();
             (seconds < u64::MAX as f64).then(|| seconds as u64)
         })
+}
+
+/// An OpenCode HTTP-date Retry-After, when no numeric retry header won.
+/// Keep the absolute reset on the provider's clock; the caller judges it.
+fn opencode_retry_reset(event: &JsonValue) -> Option<u64> {
+    if event.get("type")?.as_str()? != "error" {
+        return None;
+    }
+    let error = event.get("error")?;
+    if error.get("name")?.as_str()? != "APIError" {
+        return None;
+    }
+    let data = error.get("data")?;
+    data.get("message")?.as_str()?;
+    if opencode_retry_after(data).is_some() {
+        return None;
+    }
+    let header = data
+        .get("responseHeaders")?
+        .get("retry-after")?
+        .as_str()?
+        .trim();
+    let format = "%a, %d %b %Y %H:%M:%S GMT";
+    let reset = chrono::NaiveDateTime::parse_from_str(header, format).ok()?;
+    if reset.format(format).to_string() != header {
+        return None;
+    }
+    u64::try_from(reset.and_utc().timestamp()).ok()
 }
 
 /// A reset an error message names as a Unix-seconds suffix after a bar.
