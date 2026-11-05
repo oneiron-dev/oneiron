@@ -1,9 +1,9 @@
 //! A menu-bar voice recorder that is a vault **device node**, not a client of
 //! one: the engine is embedded in-process, segments land locally, and the
 //! ordinary device-sync path carries them to whichever node the vault elected
-//! as home. This Mac never registers home-node candidacy, so the election can
-//! never land on it and a laptop that walks out of the building takes no
-//! home node with it.
+//! as home. The recorder never declares its own home-node candidacy or
+//! starts home workers. A declaration another serving lifecycle already
+//! made for this machine is left as it stands.
 //!
 //! Three product laws hold the shape together:
 //!
