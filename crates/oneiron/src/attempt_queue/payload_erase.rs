@@ -36,6 +36,7 @@
 
 mod asker;
 mod connector_reply;
+pub(super) mod feedback_triage;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -318,6 +319,10 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
                     rewrites.push((raw.into_owned(), record));
                 }
             }
+        } else if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND {
+            if feedback_triage::rewrite_in_txn(store, txn, &mut record)? {
+                rewrites.push((raw.into_owned(), record));
+            }
         } else if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
         } else if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
@@ -383,6 +388,13 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
     for (before, record) in rewrites {
+        if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && record.dedupe_key.is_none()
+        {
+            let original = decode_record(&before, record.id)?;
+            super::AttemptQueue::from_store(store)
+                .delete_owned_dedupe_entries_for_record(txn, &original)?;
+        }
         let after = encode_record(&record)?;
         store
             .attempt_records

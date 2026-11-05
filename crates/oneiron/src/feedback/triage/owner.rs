@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BINDING, COACH_FEEDBACK_SWEEP_FACET, FeedbackTriageBinding, FeedbackTriageContinuation,
-    FeedbackTriageResult, FeedbackTriageSourceRef, HANDOFFS, SOURCES, STALE_BINDING, attempt_id,
-    attempt_ref, binding_in_txn, erased, handoff_key,
+    FeedbackTriageHandoffSource, FeedbackTriageResult, FeedbackTriageSourceRef, HANDOFFS, SOURCES,
+    STALE_BINDING, attempt_id, attempt_ref, binding_in_txn, erased, handoff_key,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::consent::AuthenticatedOwner;
@@ -180,13 +180,13 @@ pub struct FeedbackTriageProgress {
 
 /// A stable order for a source's items: an inbox's arrival numbers in
 /// numeric order.
-fn source_order(source_ref: &FeedbackTriageSourceRef) -> (&str, usize, &str, &str) {
-    (
-        source_ref.source.as_str(),
-        source_ref.id.len(),
-        source_ref.id.as_str(),
-        source_ref.revision.as_str(),
-    )
+fn source_order(source: &FeedbackTriageHandoffSource) -> (&str, usize, &str, &str) {
+    let (name, id) = source.name();
+    let revision = match source {
+        FeedbackTriageHandoffSource::Retained { source_ref, .. } => source_ref.revision.as_str(),
+        FeedbackTriageHandoffSource::Erased { .. } => "",
+    };
+    (name, id.len(), id, revision)
 }
 
 impl Vault {
@@ -340,11 +340,11 @@ impl Vault {
             holds.push(FeedbackTriageHold::SkillUnbound);
         }
         let mut handoffs = HANDOFFS.scan(&self.store, &txn)?;
-        handoffs.sort_by(|(_, a), (_, b)| {
-            source_order(&a.source_ref).cmp(&source_order(&b.source_ref))
-        });
+        handoffs.sort_by(|(_, a), (_, b)| source_order(&a.source).cmp(&source_order(&b.source)));
         for (key, handoff) in handoffs {
-            if handoff_key(&handoff.source_ref) != key {
+            if let FeedbackTriageHandoffSource::Retained { source_ref, .. } = &handoff.source
+                && handoff_key(source_ref) != key
+            {
                 return Err(Error::CorruptedIndex("feedback triage handoff identity"));
             }
             let mine = handoff.sweep == input.attempt || handoff.queued_by == input.attempt;
@@ -354,14 +354,16 @@ impl Vault {
             // A revision acknowledged before its evidence was erased keeps
             // its result, never its digest or evidence id (FIX 8305).
             if erased::evidence_erased_in_txn(self, &txn, &handoff)? {
+                let (source, id) = handoff.source.name();
                 erased.push(FeedbackTriageErased {
-                    source: handoff.source_ref.source,
-                    id: handoff.source_ref.id,
-                    erased_at: handoff.erased_at,
+                    source: source.to_owned(),
+                    id: id.to_owned(),
+                    erased_at: handoff.erased_at(),
                     result: handoff.result,
                 });
                 continue;
             }
+            let (source_ref, evidence) = handoff.retained()?;
             let record = queue.get_in_txn(&txn, attempt_id(&handoff.attempt)?)?;
             let state = record.as_ref().map(|record| record.state);
             let last_error = record.and_then(|record| record.last_error);
@@ -370,14 +372,14 @@ impl Vault {
                 // waits in `pending`, never in `holds`.
                 if state.is_some_and(|s| !s.is_terminal()) {
                     pending.push(FeedbackTriagePending {
-                        source_ref: handoff.source_ref.clone(),
+                        source_ref: source_ref.clone(),
                         attempt: handoff.attempt,
                         state,
                         last_error: last_error.clone(),
                     });
                 } else {
                     holds.push(FeedbackTriageHold::Unacknowledged {
-                        source_ref: handoff.source_ref.clone(),
+                        source_ref: source_ref.clone(),
                         attempt: handoff.attempt,
                         state,
                         last_error: last_error.clone(),
@@ -414,8 +416,8 @@ impl Vault {
                     }
                 });
                 children.push(FeedbackTriageChild {
-                    source_ref: handoff.source_ref,
-                    evidence: handoff.evidence,
+                    source_ref: source_ref.clone(),
+                    evidence,
                     attempt: handoff.attempt,
                     state,
                     last_error,

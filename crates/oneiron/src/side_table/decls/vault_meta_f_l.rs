@@ -67,7 +67,8 @@ side_tables! {
     /// holding the exact item the triage reads, the sweeps that handed it off and queued its
     /// current job, that job, and the committed result once acknowledged. Source and result
     /// identity only; the queue holds job state. Key: bytes32 (blake3 of source, id, revision).
-    FEEDBACK_TRIAGE_HANDOFF: VaultMeta b"feedback:triage-handoff:v1:" Named;
+    FEEDBACK_TRIAGE_HANDOFF: VaultMeta b"feedback:triage-handoff:v1:" Named
+        => crate::feedback::erase_handoff_actor_in_txn;
     /// Where the triage sweep resumes one feedback source: the open inbox's last arrival number
     /// handed off. Key: string (source name).
     FEEDBACK_TRIAGE_SOURCE: VaultMeta b"feedback:triage-source:v1:" Named;
