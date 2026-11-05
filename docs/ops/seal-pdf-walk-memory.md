@@ -22,7 +22,14 @@ production reference helper carries the same operation limits. Missing or
 cyclic links keep their existing absence/invalid outcome; resource refusals
 stay typed errors, never invalid-PDF verdicts or shorter results.
 
-Not covered here: the lexer, CMap and decoder heaps, third-party heaps,
+FIX 14306 admits the trailer lexer's skipped-value nesting stack before
+both dictionary and array pushes. It returns the exact successfully charged
+net growth after dropping the stack on every exit; allocator capacity is not
+used to invent credit. Malformed trailers still mean no structural proof,
+while a memory refusal stays typed through classic-xref linkage and revision
+analysis. Xref-stream linkage and existing token/depth counts are unchanged.
+
+Not covered here: CMap and decoder heaps, third-party heaps,
 allocator slack, and retained outputs. No
 whole-heap, compile, or runtime closure is claimed. FIX 14217: these
 walk containers return their own credits when they drop. `walk::pages`
