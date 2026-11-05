@@ -23901,7 +23901,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 4
      }
@@ -23924,6 +23924,16 @@
      "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/promotion.rs",
+     "purpose": "Preserve journaled legacy TURNs when a save joins an already-adopted DAG",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51572,13 +51582,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/saving.rs",
      "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -57452,7 +57462,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -62862,6 +62872,16 @@
      "purpose": "The rows an edited summary's words were written from (FIX 10092)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/request/remake.rs",
+     "purpose": "Fresh source-only rebuilds after an off-record save cuts deleted content",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90800,7 +90820,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91549,7 +91569,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91950,7 +91970,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6415,
+   "source_files": 6417,
    "test_files": 895
   },
   "oneiron-android": {
@@ -119470,6 +119490,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EmbeddedHolderOverrides",
       "IngressAuth",
       "ServeConfig",
       "SyncServerConfig"
@@ -119477,9 +119498,10 @@
      "path": "src/config/server_config.rs",
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -129309,7 +129331,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
