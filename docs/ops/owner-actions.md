@@ -1350,7 +1350,11 @@ proposals in your run tray. It never closes, moderates or deletes a note. Bind t
 is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
-already going is joined. The sweep reads every note past its cursor, keeps each note revision as
+already going is joined. If that sweep is already running, the request also retains one later
+ordinary sweep, so notes arriving after its last read need not wait for the nightly. Several such
+requests coalesce into that one follow-up. A queued, paused or scheduled sweep already covers the
+request and queues no extra sweep. The returned attempt still names the joined sweep, not its
+later follow-up. The sweep reads every note past its cursor, keeps each note revision as
 evidence and triages it as its own job. A note too long for the Coach model's context window is
 triaged in parts: the whole note is split into parts that each fit, every part is its own job,
 synthesis jobs combine the part answers in order, and the note's own job files the findings once
@@ -1548,6 +1552,10 @@ export checks and overlaps, every swap receipt, every swap question and `serving
 hashes the view showed; a result that moved since is refused as changed. `{"kind":
 "explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
 on its receipt. Either answer closes the run's other open questions.
+
+An evaluated swap needs a present, non-retired cohort and records a Promotion exposure. An
+explicit override records no Promotion exposure, so a missing or retired cohort does not by
+itself block it. Owner, viewed-result, checkpoint and manifest checks still apply.
 
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.

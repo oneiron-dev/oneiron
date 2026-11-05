@@ -582,7 +582,16 @@ fn enter_run(
         status.attempt.id.as_bytes(),
     )));
     let entered = enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
+        vault,
+        provider,
+        &bound,
+        config,
+        compaction,
+        reactor,
+        meter,
+        model_seat,
+        planned,
+        status.input.definition.models.clone(),
     );
     door.bind_meter(None);
     door.bind_lease(None);
@@ -635,11 +644,11 @@ pub(crate) fn seated_planner<'a>(
         return Ok(None);
     }
     Ok(Some(HostPlannerBinding {
-        skills: PlannerSkills::seeded().map_err(text)?,
+        skills: PlannerSkills::seeded(vault).map_err(text)?,
         seats,
         executor: executor.to_owned(),
         decisions: Some(decisions),
-        leader: LeaderStarterSkills::seeded().map_err(text)?,
+        leader: LeaderStarterSkills::seeded(vault).map_err(text)?,
         top: settings.top,
         // Callers attach the run's own runner after this binding is built:
         // a leased entry in `enter_run`, and a live-run action through

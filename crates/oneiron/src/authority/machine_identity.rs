@@ -157,7 +157,8 @@ pub(super) fn resident_genesis_vault_id_in_txn(
             roots.insert(root);
         }
     }
-    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    if let Some(adopted) =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
     {
         roots.insert(adopted.pin().genesis);
     }
