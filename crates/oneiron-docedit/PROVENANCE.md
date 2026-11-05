@@ -84,3 +84,11 @@ recognizes only its own fully deleted paragraph marks in accepted order;
 imported revisions keep their existing visibility. A surviving physical final
 mark that fails the shared body's order comparison uses the existing
 whole-window default-author projection, not a relaxed order check.
+
+The final-carrier section change (2026-11-05, FIX 13798) touches
+`src/tracked_model.rs`. After a tracked final-paragraph delete carries its
+predecessor's accepted formatting onto the surviving final-mark carrier, it
+clears the copied paragraph section break and section-property revision on that
+carrier. The original predecessor and the document body's final section remain
+unchanged. This prevents a duplicate section boundary and copied revision from
+being serialized on the carrier; no Word-runtime comparison is claimed.
