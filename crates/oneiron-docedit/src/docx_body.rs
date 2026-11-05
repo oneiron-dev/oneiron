@@ -312,19 +312,21 @@ pub enum DocxChange {
         block: String,
     },
     /// Replace one story paragraph's plain text: an authored header/footer
-    /// paragraph via its native tracked edit, or a footnote/endnote body via
-    /// its native note edit. `scope` names the story and `block` its local id.
-    /// Comment stories have no native text verb and refuse.
+    /// paragraph via its native tracked edit, a footnote/endnote body via its
+    /// native note edit, or one paragraph within a comment story via its native
+    /// Normal annotation edit. `scope` names the story and `block` its local id.
+    /// Comment text lands as Normal annotation text in both outer modes.
     SetStoryText {
         scope: DocxStoryScope,
         block: String,
         text: String,
     },
     /// Replace one story paragraph's text and inline marks as one
-    /// whole-paragraph tracked redline, not the body's granular formatting
-    /// pass: an authored header/footer paragraph, or one paragraph within a
-    /// footnote/endnote story by its story-local id. Comments refuse instead
-    /// of dropping marks.
+    /// whole-paragraph edit, not the body's granular formatting pass: an
+    /// authored header/footer paragraph or one paragraph within a
+    /// footnote/endnote story as a tracked redline, or one paragraph within a
+    /// comment story as Normal annotation text with exactly the requested six
+    /// marks, by its story-local id.
     SetStoryRuns {
         scope: DocxStoryScope,
         block: String,

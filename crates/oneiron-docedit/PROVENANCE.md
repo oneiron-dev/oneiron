@@ -142,3 +142,25 @@ shared structural-marker offset law for bookmarks, comment ranges, and foreign
 markers; the auto-number glyph stays a leading Normal run. Existing `EditNote`
 plaintext behavior is byte-unchanged. No contract schema bump, no new error,
 format, default, cap, or Loro change.
+
+The marked comment-runs change (2026-11-05, FIX 594) adds the native
+`edit_comment_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/comments.rs`) and opens the wrapper
+`SetStoryText`/`SetStoryRuns` comment arms (`docx_body/projection.rs`,
+`docx_body.rs`). The new op edits one paragraph within the actual comment `w:id`
+story with the exact six marks, paragraph-scoped across multi-paragraph comments,
+one op serving both plain-text and marked content. It reuses the shared segment
+builder, the parent-private exact-marks post-pass, the header/footer
+guard/expect/opaque law, and the shared structural-marker offset law (opaque
+`CommentReference` atoms excluded, already preserved); comments carry no
+auto-number glyph. The fresh tracked pair settles to Normal annotation text in
+both outer modes via a text-only settle that flips the fresh `Inserted` segment
+and drops the `Deleted` tombstone, leaving paragraph formatting/change metadata,
+`para_id`, author/date, threading/resolve sidecar, all other blocks, and body
+anchors verbatim; no `w:ins`/`w:del` is authored into comments.xml, and the
+edited comment's full content hash is recomputed. An empty replacement drops its
+markers with its tombstone, the same full-deletion law as the note path. Existing
+create/reply/delete behavior, the shared builder, and the exact-marks helper are
+byte-unchanged. No contract schema bump, no new error, format, default, cap, or
+Loro change. No Word-runtime comparison is claimed; shared-Loro story
+import/edit/export and story structure ops remain unbuilt.
