@@ -349,7 +349,7 @@ fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<(
         // words whichever carrier won its key, on every delivery of the
         // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
         for (id, cutoff) in &newest {
-            if withdraw_resident_words_in_txn(&vault.store, wtxn, id, *cutoff)? {
+            if withdraw_resident_words_in_txn(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, id, *cutoff)? {
                 tracing::info!(
                     entity = %id.to_hex(),
                     "withdrawn generation cutoff from another machine; its resident words are scrubbed"
@@ -381,22 +381,23 @@ fn holds_withdrawn_words_in(
 /// Withdraws `id`'s resident words as [`holds_withdrawn_words_in`] finds
 /// them; whether it did.
 fn withdraw_resident_words_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     cutoff: WithdrawnCutoff,
 ) -> Result<bool> {
+    let store = write.store;
     match cutoff.replacement {
         WithdrawnReplacement::EpochKeyframe => {
             crate::ports::withdraw_received_epoch_generation_in_txn(
-                store,
+                write,
                 wtxn,
                 id,
                 cutoff.generation,
             )
         }
         WithdrawnReplacement::Shell => {
-            crate::deletion::withdraw_received_record_in_txn(store, wtxn, id, cutoff.generation)
+            crate::deletion::withdraw_received_record_in_txn(write, wtxn, id, cutoff.generation)
         }
     }
 }
