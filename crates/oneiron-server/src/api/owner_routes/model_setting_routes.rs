@@ -127,8 +127,8 @@ async fn setup(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ModelSetupAnswers>,
 ) -> OwnerReply<ModelSetupOutcome> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let answers = payload.read(&server).await?;
-    let outcome = blocking(move || setup_models_on_open_vault(&server, answers)).await?;
+    let outcome = blocking(move || setup_models_on_open_vault(&server, &owner, answers)).await?;
     Ok(Json(outcome))
 }
