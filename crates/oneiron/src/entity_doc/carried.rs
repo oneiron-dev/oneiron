@@ -502,7 +502,12 @@ fn switched_in(
     let left = storage::document_slot(&head)?.to_hex();
     head.storage_document = storage::free_document_storage(&vault.store, txn, &carried.document)?;
     head.document = carried.document.clone();
-    storage::move_pointer(&vault.store, txn, message, &head.document)?;
+    storage::move_pointer(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        message,
+        &head.document,
+    )?;
     storage::persist(vault, txn, message, &mut head, &doc, None)?;
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(

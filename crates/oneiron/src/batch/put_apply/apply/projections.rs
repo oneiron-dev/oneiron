@@ -6,7 +6,7 @@ use super::authority::observe_authority_put;
 /// claim indexes, authority observation, entity indexes, short ids, and
 /// embeddings — and report the applied put.
 pub(super) fn stage_put_projections(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -25,6 +25,7 @@ pub(super) fn stage_put_projections(
         &crate::entity_doc::InstalledRecordDocument<'_>,
     >,
 ) -> Result<AppliedPut> {
+    let store = write.store;
     #[cfg(feature = "sync")]
     let source_origin = match installed_record_document {
         Some(installed) => installed.require_in_txn(store, wtxn, &fixed.id, data)?,
@@ -138,8 +139,8 @@ pub(super) fn stage_put_projections(
             fixed.learned_at,
         )?;
     }
-    crate::agent_def::stage_birth_custody_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {

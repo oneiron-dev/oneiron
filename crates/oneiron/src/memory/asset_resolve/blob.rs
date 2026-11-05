@@ -126,6 +126,10 @@ pub(crate) fn release_asset_blob_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> crate::error::Result<()> {
     let Some(raw) = store.port_entity_raw(wtxn, id)? else {
         return Ok(());
@@ -152,5 +156,5 @@ pub(crate) fn release_asset_blob_in_txn(
     let Some(blob) = AssetBlobRef::of_body(body) else {
         return Ok(());
     };
-    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &blob.hash)
+    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &blob.hash, deindex)
 }

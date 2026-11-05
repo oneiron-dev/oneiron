@@ -288,12 +288,16 @@ impl Vault {
             })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
-            response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
+            response_rows::removals::scrub_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &since,
+            )?;
             // A step claim's response pins go with what the rows no longer
             // hold, now the type index is back: an erased shell's release,
             // an omitted claim's or version's pin goes alone (FIX 6225).
             crate::llm::prune_step_response_pins_in_txn(
-                &vault.store,
+                &crate::secret_custody::CustodyWrite::of(&vault),
                 txn,
                 &BTreeSet::new(),
                 &BTreeSet::new(),
