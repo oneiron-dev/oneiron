@@ -164,6 +164,22 @@ pub(crate) async fn ai_voice_tool(
             result: Some(result),
             ..
         } => session.tool(result.clone(), listed.clone()).await,
+        ConnectorCallReply::Held { call_ref, .. }
+        | ConnectorCallReply::PendingDelivery {
+            call_ref: Some(call_ref),
+            ..
+        }
+        | ConnectorCallReply::AwaitingInput { call_ref, .. } => {
+            super::live_voice_settlement::follow(
+                server,
+                auth,
+                caller,
+                &session,
+                call_ref.clone(),
+                listed.clone(),
+            )
+            .and_then(|()| session.processed())
+        }
         _ => session.processed(),
     };
     // The rows the call's passes picked ride beside them in the answer, as
