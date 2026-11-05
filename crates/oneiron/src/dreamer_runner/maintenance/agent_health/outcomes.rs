@@ -63,7 +63,10 @@ pub struct HealthReviewReceipt {
     pub dial: i64,
     /// The number the card showed.
     pub measured: i64,
-    /// The exact native dial and measured values, frozen from the card.
+    /// The exact native dial and measured values, frozen from the card. Units
+    /// are signal-specific: `long_wait` share, `cost_spike` ratio, `silent`
+    /// minutes for the dial; `long_wait` share, `cost_spike` ratio, `silent`
+    /// quiet seconds for the measured.
     pub exact_dial: Option<f64>,
     pub exact_measured: Option<f64>,
     /// The card's DIAGNOSTICs when it was set, newest last.
