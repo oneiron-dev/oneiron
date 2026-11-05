@@ -277,6 +277,15 @@ impl Drop for Vault {
     }
 }
 
+impl Vault {
+    /// The embedding width this vault opened with: its configured vector
+    /// dimensions, read where a host measures the opened vault. Read-only:
+    /// the width is fixed when the vault opens.
+    pub fn embedding_dimensions(&self) -> usize {
+        self.config.dimensions
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
