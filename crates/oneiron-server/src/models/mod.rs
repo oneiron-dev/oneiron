@@ -42,6 +42,7 @@ mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
 mod drafter_serving;
+mod drafter_training;
 mod driven;
 mod exl3_evidence;
 #[cfg(test)]
@@ -128,6 +129,8 @@ pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
 // own managed EXL3 worker.
 pub use drafter_serving::VaultLoadSet;
 pub(crate) use drafter_serving::{drafter_retrain_target, install_drafter_serving};
+// FIX 14974: a drafter training job's place on its target's device work line.
+pub(crate) use drafter_training::DrafterTrainingSlot;
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
