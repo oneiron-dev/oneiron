@@ -51,6 +51,13 @@ its JSON field, so field evaluation order is unchanged. The vector moves into
 the serialization temporary while the enclosing arm keeps the lease alive.
 The source IDs and copied retained JSON are outside this charge.
 
+Access-factor override replay also records the actual backing capacity of its
+sorted temporary vector and each newly owned hex-ID string on that line. Its
+borrowed factor values and source map are not owned by the temporary. The
+existing collection, sort and JSON field evaluation stay in place. The lease
+survives the returned vector's serialization temporary, but does not cover the
+retained replay JSON.
+
 The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
 native attempt releases the identity. Each hash copy is recorded immediately
