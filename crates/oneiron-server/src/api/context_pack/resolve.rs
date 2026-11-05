@@ -15,8 +15,7 @@ use super::response::{
 };
 use super::response_limits::ContextPackResponseLimits;
 use super::{
-    narrow_to_core_audience, narrow_to_reader, reader_optional_memory,
-    resolve_core_disclosure_with_once, resolve_core_interlocutor_set, resolve_core_room,
+    narrow_to_core_audience, narrow_to_reader, resolve_core_disclosure_with_once,
     spend_core_once_disclosures,
 };
 use crate::auth::CoreAuth;
@@ -83,20 +82,19 @@ pub(crate) async fn run_context_pack(
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let optional_memory = reader_optional_memory(&scoped_read, req.reader.as_ref())?;
-    let room_id = req
-        .conversation_id
-        .as_deref()
-        .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
-        .transpose()?;
-    let (room_members, room) = resolve_core_room(&server.vault, auth, &scoped_read, room_id)?;
-    let interlocutors = resolve_core_interlocutor_set(
-        &server.vault,
-        auth,
-        &scoped_read,
-        req.interlocutors.as_ref(),
-        room.as_ref(),
-    )?;
+    let super::input_worker::ResolvedContextInputs {
+        read,
+        req: resolved_req,
+        optional_memory,
+        room_id,
+        room_members,
+        room,
+        interlocutors,
+    } = super::input_worker::resolve_context_inputs(server, auth, scoped_read, req).await?;
+    req = resolved_req;
+    let scoped_read = read
+        .into_borrowed(&server.vault)
+        .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
     // A media query seeds the pack on its own; a vector beside it is still
     // checked.
