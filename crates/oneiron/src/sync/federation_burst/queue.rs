@@ -164,12 +164,21 @@ impl DeferredWork {
         kind: WorkKind,
         payload: &[u8],
     ) -> Result<Self> {
-        if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+        Self::from_input(peer, key, kind, super::PayloadInput::Borrowed(payload))
+    }
+
+    pub(super) fn from_input(
+        peer: &FederationPeer,
+        key: &WindowKey,
+        kind: WorkKind,
+        payload: super::PayloadInput<'_>,
+    ) -> Result<Self> {
+        if payload.as_slice().len() > MAX_DECODED_PAYLOAD_BYTES {
             return Err(crate::Error::InvalidConfig(
                 "federation payload exceeds transport bound".into(),
             ));
         }
-        let (id, selector) = Self::identity(peer, key, kind, payload)?;
+        let (id, selector) = Self::identity(peer, key, kind, payload.as_slice())?;
         Ok(Self {
             id,
             authority_digest: [0; 32],
@@ -177,7 +186,7 @@ impl DeferredWork {
             selector,
             window: key.as_str().to_owned(),
             kind,
-            payload: FederationPayloadBytes::copy_from_slice(payload)?,
+            payload: payload.into_payload()?,
             isolated_update: None,
             streak_ratio: 0.0,
             inputs: NormalizedBurstInputs {

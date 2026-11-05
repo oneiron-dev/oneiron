@@ -41,6 +41,33 @@ use oneiron_model::llm::NormalizedBurstInputs;
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 pub(crate) use queue::{earliest_retained_deadline, expire_retained_work};
 
+/// A raw borrowed request or native bytes with their existing memory admission.
+pub(in crate::sync) enum PayloadInput<'a> {
+    Borrowed(&'a [u8]),
+    Owned {
+        bytes: Vec<u8>,
+        memory: oneiron_contracts::host_memory::MemoryLease,
+    },
+}
+
+impl PayloadInput<'_> {
+    pub(in crate::sync) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Owned { bytes, .. } => bytes,
+        }
+    }
+
+    fn into_payload(self) -> Result<FederationPayloadBytes> {
+        match self {
+            Self::Borrowed(bytes) => FederationPayloadBytes::copy_from_slice(bytes),
+            Self::Owned { bytes, memory } => {
+                Ok(FederationPayloadBytes::from_admitted(bytes, memory))
+            }
+        }
+    }
+}
+
 /// An admitted update as review evidence: each part it lands as, with the
 /// window that part imports into, in import order (FIX 3662).
 pub(in crate::sync) type AdmittedParts<'a> = &'a [(&'a str, &'a [u8])];
@@ -226,6 +253,26 @@ pub(in crate::sync) fn admit_work(
     (writes, carried): (u64, &[EntityId]),
     admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
+    admit_payload_work(
+        vault,
+        peer,
+        key,
+        kind,
+        PayloadInput::Borrowed(payload),
+        (writes, carried),
+        admitted_update,
+    )
+}
+
+pub(in crate::sync) fn admit_payload_work(
+    vault: &Vault,
+    peer: &FederationPeer,
+    key: &WindowKey,
+    kind: WorkKind,
+    payload: PayloadInput<'_>,
+    (writes, carried): (u64, &[EntityId]),
+    admitted_update: Option<AdmittedParts<'_>>,
+) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     admit_work_at(
         vault,
         peer,
@@ -242,13 +289,13 @@ fn admit_work_at(
     peer: &FederationPeer,
     key: &WindowKey,
     kind: WorkKind,
-    payload: &[u8],
+    payload: PayloadInput<'_>,
     sample: (u64, u64, &[EntityId]),
     admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     let (writes, now, carried) = sample;
     peer.revalidate(vault)?;
-    let mut work = DeferredWork::new(peer, key, kind, payload)?;
+    let mut work = DeferredWork::from_input(peer, key, kind, payload)?;
     work.carried = carried.to_vec();
     vault.with_write_txn_grouped(|txn| {
         work.authority_digest = peer.authority_digest_in_txn(vault, txn)?;

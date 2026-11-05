@@ -20,6 +20,13 @@ pub struct FederationPayloadBytes {
 }
 
 impl FederationPayloadBytes {
+    pub(super) fn from_admitted(bytes: Vec<u8>, memory: MemoryLease) -> Self {
+        Self {
+            bytes: Arc::new(bytes),
+            _memory: Some(Arc::new(memory)),
+        }
+    }
+
     pub(super) fn copy_from_slice(source: &[u8]) -> crate::Result<Self> {
         let size = source.len() as u64;
         let mut memory = reserve_memory(size)?;

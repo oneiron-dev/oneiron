@@ -10,7 +10,7 @@ use crate::federation::PactDelivery;
 use crate::sync::asset_body::references::bound_refs;
 use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
 use crate::sync::federation_burst::{
-    FederationBurstDecision, WorkKind, admit_work, record_outcome,
+    FederationBurstDecision, PayloadInput, WorkKind, admit_payload_work, record_outcome,
 };
 use crate::sync::ingest::{Delivery, watch_births, with_delivery};
 use crate::sync::selector::{
@@ -182,6 +182,28 @@ impl SyncClient {
         role: FederationAdmissionRole,
     ) -> std::result::Result<crate::sync::federation_burst::FederationBurstReceipt, TransportError>
     {
+        self.import_federated_payload(window_key, PayloadInput::Borrowed(update), role)
+    }
+
+    pub(super) fn import_received_federated_window_update(
+        &mut self,
+        window_key: &str,
+        bytes: Vec<u8>,
+        memory: oneiron_contracts::host_memory::MemoryLease,
+        role: FederationAdmissionRole,
+    ) -> std::result::Result<(), TransportError> {
+        self.import_federated_payload(window_key, PayloadInput::Owned { bytes, memory }, role)
+            .map(|_| ())
+    }
+
+    fn import_federated_payload(
+        &mut self,
+        window_key: &str,
+        payload: PayloadInput<'_>,
+        role: FederationAdmissionRole,
+    ) -> std::result::Result<crate::sync::federation_burst::FederationBurstReceipt, TransportError>
+    {
+        let update = payload.as_slice();
         if update.len() > MAX_DECODED_PAYLOAD_BYTES {
             return Err(TransportError::FrameTooLarge {
                 size: update.len(),
@@ -255,12 +277,12 @@ impl SyncClient {
                 .flat_map(|part| part.delivered().keys().copied()),
         );
         let carried = carried.into_iter().collect::<Vec<_>>();
-        let (decision, work) = admit_work(
+        let (decision, work) = admit_payload_work(
             &self.vault,
             &peer,
             &key,
             kind,
-            update,
+            payload,
             (writes, carried.as_slice()),
             Some(parts.as_slice()),
         )
