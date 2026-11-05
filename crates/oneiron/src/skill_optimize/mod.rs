@@ -293,6 +293,7 @@ pub(crate) use gate::{
     with_optimized_skill_admission,
 };
 pub(crate) use gate::{project_axes, project_rules_for_record};
+pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
