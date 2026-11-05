@@ -280,6 +280,7 @@ impl ActionRegistry {
             Err(error) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: error.to_string(),
+                code: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the
