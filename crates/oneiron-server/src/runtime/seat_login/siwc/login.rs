@@ -254,6 +254,7 @@ async fn attempt(options: LoginOptions) -> anyhow::Result<bool> {
             ext_agent_host_id: host_id,
             redirect_uri: registered_redirect,
             nonce,
+            session_active: true,
             access_token: std::mem::take(&mut tokens.access_token),
             id_token: std::mem::take(&mut tokens.id_token),
             refresh_token: tokens.refresh_token.take(),

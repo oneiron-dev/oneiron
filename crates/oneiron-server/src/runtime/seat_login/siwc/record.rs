@@ -21,6 +21,7 @@ pub(super) struct CredentialRecord {
     /// The registered scheme, host and path; only its port may change.
     pub redirect_uri: String,
     pub nonce: String,
+    pub session_active: bool,
     pub id_token: String,
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -68,6 +69,17 @@ impl CredentialRecord {
                 .map_err(|_| anyhow::anyhow!("cannot encode the local SIWC credential record"))?,
         );
         credential_file::replace(path, &bytes)
+    }
+
+    pub(super) fn clear_tokens(&mut self) {
+        self.session_active = false;
+        self.id_token.zeroize();
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.refresh_token = None;
+        self.scopes.clear();
+        self.expires_at = 0;
+        self.earliest_refresh_at = None;
     }
 
     pub(super) fn plan_usage_enabled(&self) -> bool {

@@ -61,7 +61,7 @@ impl CredentialSource {
             self.matches(record),
             "SIWC registration changed; rebuild the model runtime"
         );
-        Ok(())
+        active(record)
     }
 
     pub(crate) async fn open(&self) -> anyhow::Result<ActiveCredential> {
@@ -136,7 +136,13 @@ fn expired(record: &CredentialRecord) -> anyhow::Result<bool> {
     Ok(record.expires_at <= now)
 }
 
+fn active(record: &CredentialRecord) -> anyhow::Result<()> {
+    anyhow::ensure!(record.session_active, "local SIWC session is signed out");
+    Ok(())
+}
+
 fn usable(record: &CredentialRecord) -> anyhow::Result<()> {
+    active(record)?;
     anyhow::ensure!(
         !expired(record)?,
         "local SIWC access token expired; sign in again"
