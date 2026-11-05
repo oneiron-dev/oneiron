@@ -148,6 +148,21 @@ impl Memory<'_> {
         self.graph_fs_bytes(input, "graph_fs.cat")
     }
 
+    /// The same cat read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_cat_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            "graph_fs.cat",
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
     fn graph_fs_bytes(&self, input: GraphFsPathRequest, verb: &str) -> MemoryResult<GraphFsOutput> {
         self.graph_fs_bytes_with_reader(
             input,
