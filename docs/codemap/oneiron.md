@@ -119,7 +119,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/planner_live/team_launch.rs` | src | m | 1 fn | — | The planned launch (DOOR-111 S4a, S4c-2): a planned intent's plan, launched as one group, at the root for… |
 | `src/agent_dispatch/planner_live/team_launch/child.rs` | src | s | 1 fn | — | The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under… |
 | `src/agent_dispatch/planner_live/width_outcomes.rs` | src | s | 5 crate-vis | — | The width evidence the live planner weighs (FIX 9568): each admitted pattern skill's anchored team outcomes… |
-| `src/agent_dispatch/project_conversation.rs` | src | m | 1 struct · 3 fn | ProjectConversationSkills | The skill a project conversation's run loads before it starts (OF-501, ARCH-0067) |
+| `src/agent_dispatch/project_conversation.rs` | src | m | 1 struct · 4 fn | ProjectConversationSkills | The skill a project conversation's run loads before it starts (OF-501, ARCH-0067) |
 | `src/agent_dispatch/project_proposal.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ProjectDetection, ProjectDetectionRun | The house mind's one typed question on a conversation (OF-501, ARCH-0067): does this sound like a project? |
 | `src/agent_dispatch/requester.rs` | src | s | 1 struct · 2 enum · 1 fn · 6 crate-vis | QueuedRequester, RequesterStanding, RequesterWithdrawn | Who queued an agent dispatch, and what his request stood on (FIX 11592, ruling 4624(a)) |
 | `src/agent_dispatch/resident.rs` | src | m | 2 struct · 1 enum · 8 fn · 3 crate-vis | ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode | Persistent resident bindings |
@@ -130,6 +130,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/run_lineage.rs` | src | s | 1 crate-vis | — | The store-only lineage step the Gate's delegation-chain read takes at each write of a delegated run (FIX… |
 | `src/agent_dispatch/run_objectives.rs` | src | s | 1 fn | — | The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim |
 | `src/agent_dispatch/scope.rs` | src | s | 1 crate-vis | — | Project descent for a dispatched child's resource scope (FIX 8626): a child under a parent scope that names… |
+| `src/agent_dispatch/skill_default.rs` | src | s | 1 crate-vis | — | Default-hub workflow references, with the existing derived fallback |
 | `src/agent_dispatch/spend_calibration.rs` | src | m | 3 struct · 3 enum · 1 trait · 7 fn · 1 const · 9 crate-vis | AgentSpendCalibration, DollarBasis, ExpectedSpend, LaunchUsdPrices, SpendBasis, UsdPriceTarget, UsdUnitPrice | Per-agent spend calibration, learned from settled launches (OF-532) |
 | `src/agent_dispatch/spend_handoff.rs` | src | m | 3 crate-vis | — | FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's… |
 | `src/agent_dispatch/spend_lease.rs` | src | m | 17 fn · 9 crate-vis | — | Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks) |
@@ -137,7 +138,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/spend_lease/closed_scope.rs` | src | s | 6 crate-vis | — | The closed hard scopes one booking passes through (FIX 10541) |
 | `src/agent_dispatch/spend_lease/late_spend.rs` | src | s | 2 crate-vis | — | Corrections when already-consumed units land after a scope closed |
 | `src/agent_dispatch/spend_record.rs` | src | s | 5 struct · 2 enum · 1 fn · 2 re-export · 2 crate-vis | SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendSettlement, SpendSignal | Durable spend scopes and their typed reads (OF-532) |
-| `src/agent_dispatch/task_type_tree.rs` | src | m | 1 struct · 5 fn · 1 re-export · 4 crate-vis | SourcedTypeTree | The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and… |
+| `src/agent_dispatch/task_type_tree.rs` | src | m | 1 struct · 5 fn · 1 re-export · 5 crate-vis | SourcedTypeTree | The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and… |
 | `src/agent_dispatch/task_type_tree/validation.rs` | src | s | 1 crate-vis | — | A stored task-type tree's structure (FIX 9566), checked on store and on load: the root has no parent, every… |
 | `src/agent_dispatch/team_shape.rs` | src | s | 1 fn · 1 const · 2 re-export · 2 crate-vis | — | The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed shape vocabulary the planner… |
 | `src/agent_dispatch/team_stamp.rs` | src | s | 1 struct · 2 fn · 1 re-export | TeamRunStamp | OF-540 (c): the team run a dispatch works in, frozen at dispatch |

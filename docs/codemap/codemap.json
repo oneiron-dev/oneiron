@@ -1283,7 +1283,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -1406,6 +1406,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/skill_default.rs",
+     "purpose": "Default-hub workflow references, with the existing derived fallback",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1510,7 +1520,7 @@
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -91629,7 +91639,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93171,7 +93181,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6520,
+   "source_files": 6521,
    "test_files": 895
   },
   "oneiron-android": {
