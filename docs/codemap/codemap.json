@@ -44965,7 +44965,7 @@
      "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 28,
       "re-export": 2,
@@ -45126,7 +45126,7 @@
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
       "crate-vis": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -123995,9 +123995,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/vm_init/outbox.rs",
-     "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its…",
+     "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` before…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -124047,7 +124047,17 @@
      "path": "src/managed/vm_outbox/endpoint.rs",
      "purpose": "The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/endpoint/runtime.rs",
+     "purpose": "Boot-lifetime replay of the companion's already authenticated lifecycle requests",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -127129,7 +127139,7 @@
      "path": "src/runtime/usage.rs",
      "purpose": "Trusted-host attribution of served run settlements to one vault",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -128116,15 +128126,17 @@
       "UsageRollup",
       "UsageRollupStatus",
       "UsageRun",
+      "UsageServiceCost",
+      "UsageServiceCostBasis",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 5,
-      "enum": 5,
+      "crate-vis": 7,
+      "enum": 6,
       "fn": 11,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -129341,7 +129353,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 100,
+     "files": 101,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129525,7 +129537,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1557,
+   "source_files": 1558,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
