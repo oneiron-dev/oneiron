@@ -169,8 +169,21 @@ impl Store {
     where
         E: From<Error>,
     {
+        self.group_write_classed_accounted(callback, class, None, write)
+    }
+
+    pub(crate) fn group_write_classed_accounted<T, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        attempt: Option<&super::native_write::NativeWriteAttempt>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
         if class == BackupWriteClass::Content {
-            return self.group_write_as(callback, None, |txn| {
+            return self.group_write_as_accounted(callback, None, attempt, |txn| {
                 let rows = write(txn);
                 if matches!(rows, Rows::Discard(_)) {
                     return rows;
@@ -181,7 +194,7 @@ impl Store {
                 }
             });
         }
-        self.group_write_as(Callback::Opaque, None, |txn| {
+        self.group_write_as_accounted(Callback::Opaque, None, attempt, |txn| {
             let rows = write(txn);
             if matches!(rows, Rows::Discard(_)) {
                 return rows;

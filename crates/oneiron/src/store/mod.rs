@@ -208,6 +208,7 @@ pub mod model_score_diff;
 pub(crate) mod model_step_response_carriage;
 pub mod model_step_submission;
 pub(crate) mod model_stream_row;
+pub mod native_write;
 pub mod note_body;
 pub mod note_kind;
 pub mod outbound_actor;
