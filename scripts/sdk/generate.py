@@ -2161,6 +2161,8 @@ UNIFFI_RESULTS = {
 UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
     'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
+    'crate::memory::KeyValueItem': 'KeyValueItem',
+    'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
     'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
