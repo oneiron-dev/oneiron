@@ -143,6 +143,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     // The hook blocks a fresh board read's answer shows; a continuation
     // restates a retained answer and spends nothing again.
     let mut hooks = None;
+    let mut hook_notice = None;
     let (mut output, health, carrier, snapshot, producer_epoch) =
         if let Some(continuation) = dispatch.continuation.as_ref() {
             let snapshot = continuation.snapshot.clone().ok_or_else(|| {
@@ -199,14 +200,26 @@ pub(crate) async fn execute_mcp_generated_verb(
                     // A verb hook's stop is a result the client reads, not a
                     // refusal (ARCH-0080 §3).
                     Err(McpGatewayError {
-                        hook: Some(stop), ..
-                    }) => return mcp_hook_stop_result(server, &args, actor, *stop, served.rows()),
+                        hook: Some(stop),
+                        hook_notice,
+                        ..
+                    }) => {
+                        return mcp_hook_stop_result(
+                            server,
+                            &args,
+                            actor,
+                            *stop,
+                            served.rows(),
+                            hook_notice,
+                        );
+                    }
                     produced => produced,
                 };
                 // A refusal is released by the rows its verb served first.
-                let (output, source, carrier, epoch) = produced.map_err(|error| {
+                let (output, source, carrier, epoch, notice) = produced.map_err(|error| {
                     super::device_release::mcp_release_error(server, actor, served.rows(), error)
                 })?;
+                hook_notice = notice;
                 (output, source, carrier, epoch.or(task_epoch))
             };
             // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
@@ -246,7 +259,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     }
     // A step's type feedback leaves on its own release (FIX 10390).
     let feedback = super::type_feedback_release::hold_verb_feedback(args.tool.name, &mut output);
-    let structured = json!({
+    let mut structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
         "verb": args.tool.verb,
@@ -259,6 +272,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             args.payload.cache,
         ),
     });
+    if let Some(notice) = hook_notice {
+        structured["meta"]["hook_notice"] = Value::String(notice);
+    }
     // A board read records the receipt its hook rows owe before it goes out
     // and spends their blocks once it has, as setup's page one does (OF-579).
     if let Some(hooks) = &mut hooks {
@@ -492,17 +508,23 @@ fn mcp_hook_stop_result(
     actor: &McpCallContext,
     stop: oneiron::runtime_hooks::VerbHookStop,
     served: Option<&[oneiron::EntityId]>,
+    hook_notice: Option<String>,
 ) -> Result<Value, McpGatewayError> {
     let text = stop.to_string();
-    let structured = json!({
+    let mut structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
         "verb": args.tool.verb,
         "hook": stop,
         "actor": mcp_actor_result(actor),
     });
+    let mut content = vec![mcp_text_content(text)];
+    if let Some(notice) = hook_notice {
+        content.push(mcp_text_content(notice.clone()));
+        structured["meta"] = json!({"hook_notice": notice});
+    }
     let result = json!({
-        "content": [mcp_text_content(text)],
+        "content": content,
         "structuredContent": structured,
         "isError": true,
     });
@@ -575,6 +597,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("hook".to_owned(), json!(*stop));
+    }
+    if let Some(notice) = error.hook_notice
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("hook_notice".to_owned(), Value::String(notice));
     }
     if let Some(legal_hold) = error.legal_hold
         && let Some(object) = data.as_object_mut()

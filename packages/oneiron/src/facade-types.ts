@@ -829,7 +829,7 @@ export type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "
 /** `oneiron::store::attempt_cancel::CancelStanding` */
 export type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none"
 /** `oneiron::store::attempt_cancel::ForceCancelGrounds` */
-export type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality"
+export type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality" | "erased_payload"
 /** `oneiron::store::attempt_cancel::AttemptResumePoint` */
 export type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number }
 /** `oneiron::store::attempt_cancel::AttemptCancelReceipt` */
