@@ -69,13 +69,13 @@ pub use self::fetch::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse,
     IcsHttpTransport,
 };
+pub(crate) use self::poll::calendar_ics_feed_cursor_accepts_masked;
 pub use self::poll::{
     ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedPauseException, IcsFeedPollConfig,
     IcsFeedPollPayload, IcsPollRunState, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
     ics_feed_pause_exceptions, ics_feed_poll_dedupe_key, run_ics_feed_poll,
     run_ics_feed_poll_with_screener,
 };
-pub(crate) use self::poll::calendar_ics_feed_cursor_accepts_masked;
 
 use super::CalendarError;
 
