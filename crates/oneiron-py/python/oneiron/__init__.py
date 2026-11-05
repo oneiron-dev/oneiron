@@ -2978,6 +2978,9 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs":
             return Oneiron._VaultOffRecordNotesVerbs(self._client)
         @property
+        def artifacts(self) -> "Oneiron._VaultOffRecordArtifactsVerbs":
+            return Oneiron._VaultOffRecordArtifactsVerbs(self._client)
+        @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs":
             return Oneiron._VaultOffRecordClaimsVerbs(self._client)
         @property
@@ -2987,13 +2990,19 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+            """A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_notes_create(json.dumps(spec))))
+    class _VaultOffRecordArtifactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            """A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_artifacts_save(json.dumps(spec))))
     class _VaultOffRecordClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def upsert(self, spec):
-            """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+            """A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
     class _VaultOffRecordRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3002,7 +3011,7 @@ class Oneiron:
             """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_status(json.dumps(spec))))
         def start(self, spec):
-            """A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential."""
+            """A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_start(json.dumps(spec))))
         def witness(self, spec):
             """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
@@ -3014,7 +3023,7 @@ class Oneiron:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
         def export(self, spec):
-            """A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
+            """A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
         def suggest_save(self, spec):
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
@@ -5826,7 +5835,7 @@ class Oneiron:
         def browser(self) -> "Oneiron._SelfBrowserVerbs":
             return Oneiron._SelfBrowserVerbs(self._client)
         def fold(self, spec):
-            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles."""
             return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
         def compact(self, spec):
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""

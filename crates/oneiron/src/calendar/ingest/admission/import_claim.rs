@@ -175,6 +175,7 @@ fn ensure_ics_import_actor_in_txn(
                     end: now,
                 },
                 learned_at: now,
+                row_version: 0,
                 body: ics_import_actor_body()?,
             },
         )?;
