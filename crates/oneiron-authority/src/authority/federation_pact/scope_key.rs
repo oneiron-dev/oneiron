@@ -131,7 +131,12 @@ pub fn open_scope_opening(
         argon2_max: Argon2Cost::RFC9106_SECOND,
     };
     let plain = Envelope::parse(sealed)
-        .map_err(|_| invalid_authority())?
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            _ => invalid_authority(),
+        })?
         .open_with_aad(OpenKey::Hybrid(secret), &policy, &aad_bytes)
         .map_err(|_| invalid_authority())?;
     if plain.len() != 32 {

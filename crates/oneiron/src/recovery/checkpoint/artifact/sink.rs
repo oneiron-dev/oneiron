@@ -79,7 +79,12 @@ impl Sealer<'_> {
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
         let compressed = Envelope::parse(envelope)
-            .map_err(|_| codec())?
+            .map_err(|error| match error {
+                oneiron_crypto::Error::OutOfMemory => {
+                    std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                }
+                _ => codec(),
+            })?
             .open(OpenKey::SymmetricKek(&self.key.kek), &policy)
             .map_err(|_| refused("the checkpoint does not open with this key"))?;
         zstd::bulk::decompress(&compressed, CHUNK_LEN).map_err(|_| codec())
