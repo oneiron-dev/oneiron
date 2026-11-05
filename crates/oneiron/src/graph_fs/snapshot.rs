@@ -1,7 +1,7 @@
 //! Core half of `graph_fs::snapshot`: its store-layer items live in `oneiron_store::graph_fs::snapshot` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::graph_fs::snapshot::*;
+pub(crate) use oneiron_store::graph_fs::snapshot::*;
 
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,

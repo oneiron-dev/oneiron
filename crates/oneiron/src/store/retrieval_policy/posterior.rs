@@ -1,7 +1,7 @@
 //! Core half of `store::retrieval_policy::posterior`: its store-layer items live in `oneiron_store::retrieval_policy::posterior` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::retrieval_policy::posterior::*;
+pub(crate) use oneiron_store::retrieval_policy::posterior::*;
 
 use super::{RetrievalPolicyAction, RetrievalPolicyIdentity, RetrievalPolicyTier};
 use crate::error::{Error, Result};

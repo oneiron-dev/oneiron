@@ -1,7 +1,7 @@
 //! Core half of `store::diagnostic_record::diagnostic_codec`: its store-layer items live in `oneiron_store::diagnostic_record::diagnostic_codec` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::diagnostic_record::diagnostic_codec::*;
+pub(crate) use oneiron_store::diagnostic_record::diagnostic_codec::*;
 
 use super::admission::validate_detector_id;
 use super::event::{

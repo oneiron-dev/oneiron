@@ -1,7 +1,7 @@
 //! Core half of `store::pending_gate_consent::records`: its store-layer items live in `oneiron_store::pending_gate_consent::records` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::pending_gate_consent::records::*;
+pub(crate) use oneiron_store::pending_gate_consent::records::*;
 
 use super::{GATE_DIFF_HANDLE_MAX_LEN, GateDecisionId};
 use crate::error::{Error, Result};
