@@ -20,8 +20,15 @@ same predicate. Room P7 word-closure checks also apply it after the revision's
 own scope check, before following the words' sources. A withheld copy is absent;
 this adds no legal-order refusal and changes no legal-hold or use-limit rule.
 
-This is not a claim that every read or export path is covered. Standalone Grant
-reads, selector egress, and private-room paths that bypass P7 with no clearance
-still need audience-aware integration. Same-owner replication is not assumed to
+Scoped reads also check the retained-copy choice after ordinary row admission,
+including both cached CLAIM admission and the uncached path. The decision stays
+outside the access-class cache, so it remains per copy. Named, collection and
+selected-revision reads and their source checks use that same row admission.
+Existing actual owner lanes remain exempt; an owner-exempt delegated key is not
+itself an owner lane.
+
+This is not a claim that every read or export path is covered. Selector egress
+and standalone private-room renders that bypass P7 with no clearance still need
+audience-aware integration. Same-owner replication is not assumed to
 be ordinary shared retrieval. No storage format, migration, SDK, config, default,
 or deployment change is required by this native disclosure slice.
