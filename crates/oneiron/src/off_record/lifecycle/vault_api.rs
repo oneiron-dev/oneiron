@@ -435,7 +435,7 @@ impl Vault {
         // release it before draining overlay leases. Mutators observe the
         // published closing bit and reject while close reconciles the frozen
         // record after every blocking phase.
-        let (record, close_overlay) = {
+        let (record, close_overlay, spill_instance) = {
             let mut state = session_entry_state(entry)?;
             if state.gone {
                 return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
@@ -444,7 +444,11 @@ impl Vault {
             }
             state.record.closing = true;
             entry.publish_state(&state);
-            (state.record.clone(), !state.overlay_closed)
+            (
+                state.record.clone(),
+                !state.overlay_closed,
+                state.overlay_shell,
+            )
         };
         // The hook records and paused calls the in-memory keep holds for
         // this stretch go with it, once `closing` is published, so a late
@@ -472,6 +476,21 @@ impl Vault {
             (0, 0)
         };
         if close_overlay {
+            #[cfg(unix)]
+            if let Some(captures) = self.pending_live_spill_captures(session_ref, spill_instance)? {
+                match super::live_spill::with_closing_published_spill(
+                    self,
+                    session_ref,
+                    entry,
+                    spill_instance,
+                    |source| captures.capture(self, source),
+                )? {
+                    super::live_spill::PublishedSpillOutcome::NoPublishedSpill => {
+                        captures.no_published_spill()?;
+                    }
+                    super::live_spill::PublishedSpillOutcome::CapturedPublishedSpill => {}
+                }
+            }
             // Session handles lend composed views from `&self`, so safe
             // callers must drop all read views before consuming close.
             entry.overlay.close()?;
