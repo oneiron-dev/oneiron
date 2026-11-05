@@ -493,6 +493,68 @@ impl SessionHookKeep {
     }
 }
 
+impl SessionHooks<'_> {
+    /// The Hook receipts this call's room staged itself, newest first, at
+    /// most `limit` (FIX 5429): the room's own runs, which base's receipt
+    /// family does not hold, for a room chain's receipt tail. Each is listed
+    /// only when `reader`, on the room's view, reads every row its run read;
+    /// a run whose reads are unknown is withheld. The in-memory keep, and a
+    /// call with no reader, list none.
+    ///
+    /// # Errors
+    ///
+    /// The room's read refusals and storage errors.
+    pub(super) fn room_hook_receipts(
+        &self,
+        vault: &Vault,
+        reader: Option<&crate::claim::ScopedReadActorKey>,
+        limit: usize,
+    ) -> Result<Vec<ReceiptRecord>> {
+        let (HooksTarget::Room { session, .. }, Some(reader)) = (&self.target, reader) else {
+            return Ok(Vec::new());
+        };
+        session.routed_side_read(|rtxn, dbs| {
+            let RoutedDbs::Session(view) = dbs else {
+                return Ok(Vec::new());
+            };
+            let Some(staged) = dbs.side_vault_meta().staged_rows() else {
+                return Ok(Vec::new());
+            };
+            let prefix = crate::side_table::HOOKS_RECEIPT.prefix;
+            let lane = vault.scoped_read_in_session(reader.clone(), view);
+            let mut listed = Vec::new();
+            for (row_key, value) in staged.rows {
+                let (Some(run_key), Some(_)) = (row_key.strip_prefix(prefix), value) else {
+                    continue;
+                };
+                let Ok(key) = RunKey::try_from(run_key) else {
+                    continue;
+                };
+                let Some(receipt) = store::RECEIPTS.get(&dbs, rtxn, &key)? else {
+                    continue;
+                };
+                let hex = crate::receipt::hex_lower(&key);
+                let Some(rows) = store::hook_run_read_rows_in(&dbs, rtxn, &hex)? else {
+                    continue;
+                };
+                let mut shown = true;
+                for row in &rows {
+                    if !lane.is_entity_readable_in(rtxn, row)? {
+                        shown = false;
+                        break;
+                    }
+                }
+                if shown {
+                    listed.push(receipt);
+                }
+            }
+            listed.sort_by(crate::store::receipt_row::receipt_newest_first_order);
+            listed.truncate(limit);
+            Ok(listed)
+        })
+    }
+}
+
 impl<'s> SessionHooks<'s> {
     /// The hooks of a call in `session`'s room, on `route`, the route its
     /// run captured; a hook's pause waits under `key`, the stretch's own.

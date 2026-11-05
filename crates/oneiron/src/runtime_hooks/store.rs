@@ -594,8 +594,9 @@ pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
-/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
-fn hook_run_read_rows_in(
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c; a room chain's receipt
+/// tail, FIX 5429).
+pub(super) fn hook_run_read_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
     run_key: &str,
