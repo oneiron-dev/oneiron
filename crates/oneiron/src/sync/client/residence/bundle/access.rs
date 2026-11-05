@@ -241,10 +241,10 @@ async fn serve_generation(
         }
         match own_grant(vault, rpc, &pads, asks).await {
             Ok(grant) => grants.extend(grant),
-            Err(OwnGrantError::Resource(error)) => {
+            Err(PadAdmissionError::Resource(error)) => {
                 resource_error.get_or_insert(error);
             }
-            Err(OwnGrantError::Transport(error)) => return Err(error),
+            Err(PadAdmissionError::Transport(error)) => return Err(error),
         }
     }
     let sealed: Vec<SealedPadAdmissionGrant> = {
@@ -296,14 +296,24 @@ async fn offer(
         .is_ok())
 }
 
-pub(super) enum OwnGrantError {
+/// A pad admission's local resource failure or its original transport error.
+#[derive(Debug, thiserror::Error)]
+pub enum PadAdmissionError {
+    /// The local opening could not allocate; not a denial or a missing capsule.
+    #[error(transparent)]
     Resource(Error),
-    Transport(TransportError),
+    /// The connection or home returned a transport error.
+    #[error(transparent)]
+    Transport(#[from] TransportError),
 }
 
-impl From<TransportError> for OwnGrantError {
-    fn from(error: TransportError) -> Self {
-        Self::Transport(error)
+impl From<Error> for PadAdmissionError {
+    fn from(error: Error) -> Self {
+        if opening_out_of_memory(&error) {
+            Self::Resource(error)
+        } else {
+            Self::Transport(storage(error))
+        }
     }
 }
 
@@ -320,7 +330,7 @@ pub(super) async fn own_grant(
     rpc: &mut ResidenceRpc,
     pads: &SealedKeyPads,
     asks: &mut OwnAsks,
-) -> Result<Option<SealedPadAdmissionGrant>, OwnGrantError> {
+) -> Result<Option<SealedPadAdmissionGrant>, PadAdmissionError> {
     let me = vault.pad_admission_self_target().map_err(storage)?;
     let generation = pads.generation();
     let reply = rpc
@@ -363,7 +373,7 @@ pub(super) async fn own_grant(
         }
     }
     if let Some(error) = resource_error {
-        return Err(OwnGrantError::Resource(error));
+        return Err(PadAdmissionError::Resource(error));
     }
     if offered {
         asks.invalid.push(generation);
@@ -431,16 +441,16 @@ impl SyncClient {
         owner: &AuthenticatedOwner,
         seed: &RecoveryRootSeed,
         recipient: PadAdmissionTarget,
-    ) -> Result<PadAdmissionReport, TransportError> {
+    ) -> Result<PadAdmissionReport, PadAdmissionError> {
         let vault = &self.vault;
-        owner.revalidate(vault).map_err(storage)?;
+        owner.revalidate(vault)?;
         let mut report = PadAdmissionReport::default();
         if self.config.federation_peer.is_some() {
             return Ok(report);
         }
         let budgets = residence_budgets(vault)?;
         let Some(mut rpc) = ResidenceRpc::connect(vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::Storage("home node offline".into()).into());
         };
         let me = vault.pad_admission_self_target().ok();
         for generation in list_generations(&mut rpc).await? {
@@ -455,10 +465,15 @@ impl SyncClient {
                 report.pending.push(generation);
                 continue;
             };
-            let pads =
-                SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
+            let pads = SealedKeyPads::from_bytes(&bytes).map_err(|error| {
+                if opening_out_of_memory(&error) {
+                    PadAdmissionError::Resource(error)
+                } else {
+                    super::refill::object_parse_error(error).into()
+                }
+            })?;
             if pads.generation() != generation {
-                return Err(refused());
+                return Err(refused().into());
             }
             let grant = match vault.seal_pad_admission_grant_with_kit(owner, &pads, seed, recipient)
             {
@@ -467,7 +482,7 @@ impl SyncClient {
                     report.pending.push(generation);
                     continue;
                 }
-                Err(error) => return Err(storage(error)),
+                Err(error) => return Err(error.into()),
             };
             if !offer(&mut rpc, &grant).await? {
                 report.pending.push(generation);

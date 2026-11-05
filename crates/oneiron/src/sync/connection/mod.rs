@@ -491,7 +491,8 @@ impl SyncConnection {
         owner: &crate::consent::AuthenticatedOwner,
         seed: &crate::world_keys::RecoveryRootSeed,
         recipient: crate::world_keys::PadAdmissionTarget,
-    ) -> Result<crate::sync::client::PadAdmissionReport, crate::sync::TransportError> {
+    ) -> Result<crate::sync::client::PadAdmissionReport, crate::sync::client::PadAdmissionError>
+    {
         self.client()?
             .grant_sealed_bundle_pad_access_with_kit(owner, seed, recipient)
             .await
