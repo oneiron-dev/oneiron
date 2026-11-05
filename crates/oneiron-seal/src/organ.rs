@@ -769,22 +769,29 @@ impl ReplyMemory {
         };
         match memory.grow(bytes) {
             Ok(()) | Err(SealMemoryRefusal::Unavailable) => Ok(()),
-            Err(SealMemoryRefusal::Cancelled) => {
-                Err(OrganError::new(ErrorCode::Cancelled, "cancelled"))
-            }
-            Err(refusal) => Err(OrganError::new(
-                ErrorCode::Budget,
-                format!("the call's memory: {refusal}"),
-            )),
+            Err(refusal) => Err(Self::error(refusal)),
         }
     }
 
-    /// `value` read as `T`, its encoded copy and the most it decodes into
-    /// (the codec's own count, [`read_cost`]) reserved first.
+    fn error(refusal: SealMemoryRefusal) -> OrganError {
+        match refusal {
+            SealMemoryRefusal::Cancelled => OrganError::new(ErrorCode::Cancelled, "cancelled"),
+            refusal => OrganError::new(ErrorCode::Budget, format!("the call's memory: {refusal}")),
+        }
+    }
+
+    /// `value` read as `T`, with its traversal scratch, encoded copy and
+    /// maximum decoded allocation admitted through the same call's memory.
     fn args<T: DeserializeOwned>(&self, value: &Value, what: &str) -> Result<T, OrganError> {
-        let cost = read_cost(value).map_err(|err| bad(format!("{what}: {err}")))?;
-        self.reserve(cost)?;
-        from_value(value, what)
+        let memory = AskedMemory {
+            asks: Arc::new(CallAsks {
+                asker: self.0.clone(),
+            }),
+        };
+        memory.read_value(value).map_err(|error| match error {
+            ValueReadError::Codec(error) => bad(format!("{what}: {error}")),
+            ValueReadError::Memory(refusal) => Self::error(refusal),
+        })
     }
 }
 
@@ -908,25 +915,51 @@ impl SealMemory for AskedMemory {
     }
 }
 
-/// Identity encoding uses the existing host grants, held until call end.
-/// Freed traversal stacks do not return those grants early.
-struct IdentityEncoding {
-    memory: AskedMemory,
-    refused: Option<SealMemoryRefusal>,
+enum ValueReadError {
+    Codec(CodecError),
+    Memory(SealMemoryRefusal),
 }
 
-impl IdentityEncoding {
-    fn error(&mut self) -> BackendError {
-        self.refused.take().map_or(
-            BackendError::Rejected {
-                code: BackendRejectCode::InvalidResponse,
-            },
-            BackendError::Memory,
-        )
+impl AskedMemory {
+    fn read_value<T: DeserializeOwned>(&self, value: &Value) -> Result<T, ValueReadError> {
+        let encoding = RefCell::new(ValueEncoding {
+            memory: self,
+            refused: None,
+        });
+        let value = MemoryValue {
+            value,
+            encoding: &encoding,
+        };
+        let cost = read_cost(&value).map_err(|error| encoding.borrow_mut().error(error))?;
+        match self.grow(cost) {
+            Ok(()) | Err(SealMemoryRefusal::Unavailable) => {}
+            Err(refusal) => return Err(ValueReadError::Memory(refusal)),
+        }
+        let encoded = oneiron_organ_protocol::to_vec(&value)
+            .map_err(|error| encoding.borrow_mut().error(error))?;
+        let decoded =
+            oneiron_organ_protocol::from_slice(&encoded).map_err(ValueReadError::Codec)?;
+        drop(encoded);
+        Ok(decoded)
     }
 }
 
-impl EncodeScratch for IdentityEncoding {
+/// Value encoding uses the existing host grants, held until call end.
+/// Freed traversal stacks do not return those grants early.
+struct ValueEncoding<'memory> {
+    memory: &'memory AskedMemory,
+    refused: Option<SealMemoryRefusal>,
+}
+
+impl ValueEncoding<'_> {
+    fn error(&mut self, error: CodecError) -> ValueReadError {
+        self.refused
+            .take()
+            .map_or(ValueReadError::Codec(error), ValueReadError::Memory)
+    }
+}
+
+impl EncodeScratch for ValueEncoding<'_> {
     fn grow(&mut self, bytes: u64) -> Result<(), CodecError> {
         if self.refused.is_none() {
             match self.memory.grow(bytes) {
@@ -934,12 +967,12 @@ impl EncodeScratch for IdentityEncoding {
                 Err(refusal) => self.refused = Some(refusal),
             }
         }
-        Err(CodecError::Invalid("identity encoding admission failed"))
+        Err(CodecError::Invalid("value encoding admission failed"))
     }
 
     fn materialized(&mut self, reserved: u64, actual: u64) {
         if actual > reserved {
-            // grow latches a refusal; IdentityValue checks it after every pass.
+            // grow latches a refusal; MemoryValue checks it after every pass.
             let _ = self.grow(actual - reserved);
         }
     }
@@ -947,21 +980,19 @@ impl EncodeScratch for IdentityEncoding {
     fn shrink(&mut self, _bytes: u64) {}
 }
 
-struct IdentityValue<'a> {
-    value: &'a Value,
-    encoding: &'a RefCell<IdentityEncoding>,
+struct MemoryValue<'value, 'memory> {
+    value: &'value Value,
+    encoding: &'value RefCell<ValueEncoding<'memory>>,
 }
 
-impl Serialize for IdentityValue<'_> {
+impl Serialize for MemoryValue<'_, '_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut encoding = self.encoding.borrow_mut();
         let result = self
             .value
             .serialize_with_scratch(serializer, &mut *encoding);
         if encoding.refused.is_some() {
-            Err(serde::ser::Error::custom(
-                "identity encoding admission failed",
-            ))
+            Err(serde::ser::Error::custom("value encoding admission failed"))
         } else {
             result
         }
@@ -1015,28 +1046,18 @@ impl SealBackend for AskedBackend {
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
-        let encoding = RefCell::new(IdentityEncoding {
-            memory: AskedMemory {
-                asks: Arc::clone(&self.asks),
-            },
-            refused: None,
-        });
-        let value = IdentityValue {
-            value: &reply.value,
-            encoding: &encoding,
+        let memory = AskedMemory {
+            asks: Arc::clone(&self.asks),
         };
-        let decode_cost = read_cost(&value).map_err(|_| encoding.borrow_mut().error())?;
-        match encoding.borrow().memory.grow(decode_cost) {
-            Ok(()) | Err(SealMemoryRefusal::Unavailable) => {}
-            Err(refusal) => return Err(BackendError::Memory(refusal)),
-        }
-        let encoded =
-            oneiron_organ_protocol::to_vec(&value).map_err(|_| encoding.borrow_mut().error())?;
         let answer: IdentityAnswer =
-            oneiron_organ_protocol::from_slice(&encoded).map_err(|_| BackendError::Rejected {
-                code: BackendRejectCode::InvalidResponse,
-            })?;
-        drop(encoded);
+            memory
+                .read_value(&reply.value)
+                .map_err(|error| match error {
+                    ValueReadError::Codec(_) => BackendError::Rejected {
+                        code: BackendRejectCode::InvalidResponse,
+                    },
+                    ValueReadError::Memory(refusal) => BackendError::Memory(refusal),
+                })?;
         let identity = SigningIdentity {
             algorithm: answer.algorithm,
             signer_certificate_der: answer.signer_certificate.into_vec(),
