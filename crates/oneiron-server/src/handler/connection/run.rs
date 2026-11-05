@@ -89,7 +89,7 @@ pub(super) async fn handle_connection(
     match server.export_root_snapshot() {
         Ok(snapshot) => {
             let msg = protocol::encode_root_update(&snapshot);
-            if !transport.send_binary(msg).await {
+            if !super::super::root_updates::send_root_frame(&mut transport, msg).await {
                 tracing::warn!(conn_id, "failed to send root snapshot");
                 return;
             }

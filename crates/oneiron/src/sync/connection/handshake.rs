@@ -236,6 +236,7 @@ impl SyncConnection {
                             &mut shutdown_rx,
                         )
                         .await;
+                    client.reset_root_parts();
 
                     match reason {
                         LoopExit::Shutdown => {
@@ -267,6 +268,7 @@ impl SyncConnection {
                     }
                 }
                 Err(e) => {
+                    client.reset_root_parts();
                     let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                 }
@@ -299,6 +301,7 @@ impl SyncConnection {
             }
         }
 
+        client.reset_root_parts();
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);
@@ -342,6 +345,7 @@ impl SyncConnection {
         client.home_peer = crate::authority::PeerMachine::Unknown;
         client.residence_acks.clear();
         client.reset_window_pads();
+        client.reset_root_parts();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has

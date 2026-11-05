@@ -38,6 +38,11 @@ pub use leaf_keys::{
     decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
     encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
 };
+mod root_updates;
+pub use root_updates::{
+    ROOT_PART_HEADER_BYTES, RootUpdateFrames, RootUpdatePart, TAG_ROOT_PART,
+    decode_root_update_part, root_update_frames,
+};
 mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
