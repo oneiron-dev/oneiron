@@ -16,6 +16,8 @@ Admission rechecks live caller proof, room membership, the exact instance's
 published open state and the captured route in that transaction without acquiring
 the session-state mutex. This preserves the
 session-state-before-base-writer lock order used by promotion and close.
+The shared overlay sink also captures its immutable room before the writer opens;
+its in-transaction guard reads that value without taking session state.
 
 - OffRecord witnesses retain only session-local rows and return
   `SessionWitnessOutcome::Retained` with the session-local witness receipt.
