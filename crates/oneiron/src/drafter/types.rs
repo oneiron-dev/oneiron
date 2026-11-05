@@ -60,16 +60,24 @@ impl DrafterServing {
 }
 
 /// The recipe a nightly retrain runs, as data: the engine supplies no
-/// learning rate, epoch count or other number of its own.
+/// learning rate, epoch count or other number of its own (FIX 14974).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DrafterRecipe {
-    /// The recipe's name, as a host's trainer registers it.
+    /// The trainer family's name, as a host's trainer connector lists it
+    /// (`[models.training.drafters.<name>].recipes`).
     pub id: String,
     /// The immutable source revision of the trainer and the recipe.
     pub revision: SourcePin,
     /// The recipe's settings, read by its trainer only.
     pub settings: serde_json::Value,
+    /// The GPU wall seconds one night's training may take: the quantity its
+    /// run admission reserves at the connector's unit cost, and the time
+    /// after which the host stops the trainer.
+    pub gpu_seconds: u64,
+    /// The GPU memory, in MiB, the trainer declares on its device's work
+    /// line beside the serving worker.
+    pub device_memory_mib: u64,
 }
 
 /// Everything a version's training read, each named by its id, so an erase
@@ -243,9 +251,67 @@ pub struct DrafterVersion {
     pub corpus: Option<DrafterCorpus>,
     /// Its qualification record, once the host evaluated it.
     pub evaluation: Option<EntityId>,
+    /// Its training job, once the host dispatched it (FIX 14974).
+    pub training: Option<DrafterTraining>,
     /// The vault's recorded clock when it was prepared and last changed.
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+/// One version's training job, as the host dispatched it and as it ended
+/// (FIX 14974): the connector and quote it ran under and the receipt's
+/// measurements. Names, counts and digests only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterTraining {
+    /// The trainer connector it was dispatched on, by its configured name.
+    pub connector: String,
+    /// The connector's immutable revision at dispatch.
+    pub connector_revision: Option<String>,
+    /// The GPU wall seconds its quote reserved, the unit cost and the unit.
+    pub quoted_units: u64,
+    pub unit_cost: u64,
+    pub cost_unit: String,
+    /// The version's generation the dispatch moved it to: its completion
+    /// names it, and a moved one is refused.
+    pub generation: u64,
+    /// The vault's recorded clock at dispatch.
+    pub dispatched_at: u64,
+    /// The GPU wall seconds the trainer measured, as its receipt reports.
+    pub gpu_seconds: Option<u64>,
+    /// BLAKE3 of the trainer's receipt, once one was read.
+    pub receipt_blake3: Option<[u8; 32]>,
+    /// The vault's recorded clock when the job ended.
+    pub finished_at: Option<u64>,
+    /// Why the job ended without a trained version; `None` while it runs
+    /// and once it trained.
+    pub failure: Option<DrafterTrainingFailure>,
+}
+
+/// Why a dispatched training ended without a trained version (FIX 14974).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DrafterTrainingFailure {
+    /// The host refused the job before the trainer started: its device line
+    /// stopped, its job directory or its inputs did not stage, or the
+    /// process did not start.
+    Refused,
+    /// The trainer ended with no receipt, or a receipt that says it did not
+    /// train.
+    TrainerFailed,
+    /// The receipt or an output file did not verify against the job.
+    ReceiptUnverified,
+    /// The trained load set did not seal or publish.
+    SealFailed,
+    /// The trainer ran past the recipe's GPU seconds and was stopped.
+    OverBudget,
+    /// The trainer's process is gone with no receipt: a restart lost it.
+    Lost,
+    /// The policy went off, or its recipe changed, while it trained; the
+    /// trainer was stopped.
+    Cancelled,
+    /// A source its ancestry names was erased while it trained.
+    Erased,
 }
 
 /// One target's active drafter pointer. A target with no row serves stock
@@ -333,17 +399,46 @@ pub enum DrafterSkipReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DrafterHoldReason {
-    /// No trainer for a recipe is wired on this host, or no recipe is
-    /// chosen.
+    /// No recipe is chosen, or no trainer connector on this host lists the
+    /// recipe's trainer family.
     NoTrainerRecipe,
+    /// This host serves no drafter target: no managed worker it launches
+    /// serves a draft.
+    NoDrafterTarget,
+    /// The policy moved while the corpus was exported.
+    PolicyMoved,
+    /// The corpus had no training example or no held-out example.
+    EmptyCorpus,
+    /// The prepared corpus's sealed training side did not open.
+    CorpusMissing,
+    /// An earlier night's version of the same target still trains.
+    TrainingInProgress,
+    /// The recipe's quote built no run admission, or the budget refused it.
+    NoAdmission,
 }
 
-/// How one night's retrain ended. Neither outcome is a successful retrain.
+/// How one night's retrain ended. Only `trained` is a retrain, and it names
+/// the version that trained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DrafterRetrainOutcome {
-    Skipped { reason: DrafterSkipReason },
-    Held { reason: DrafterHoldReason },
+    Skipped {
+        reason: DrafterSkipReason,
+    },
+    Held {
+        reason: DrafterHoldReason,
+    },
+    /// The night trained `version`: its sealed load set is published and it
+    /// waits for its qualification.
+    Trained {
+        version: EntityId,
+    },
+    /// The night dispatched `version` and its training ended without a
+    /// trained head.
+    Failed {
+        version: EntityId,
+        reason: DrafterTrainingFailure,
+    },
 }
 
 /// Why a version was rolled back.
