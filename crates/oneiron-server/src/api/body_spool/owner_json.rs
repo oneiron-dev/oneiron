@@ -4,8 +4,9 @@
 //! whether it declared its length or not; a longer one spools whole on the
 //! vault's disk and decodes from there, so no length is refused as invalid
 //! JSON and none is held in memory twice (CALLS OWNER_JSON_IN_MEMORY_BYTES).
-//! The spool sets no wait of its own on the client: the listener's body
-//! policy is the only one, as for a body read in memory.
+//! The default read sets no wait of its own on the client: the listener's
+//! body policy is the only one, as for a body read in memory. Transfer reads
+//! opt into the existing disk reserve and idle policy for their spool.
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
@@ -105,6 +106,23 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
     /// that did not arrive whole; capacity when the vault's disk has no room
     /// for its spool.
     pub(in crate::api) async fn read(self, server: &SyncServer) -> Result<T, ApiError> {
+        self.read_with_policy(server, SpoolPolicy::default()).await
+    }
+
+    /// A transfer body's JSON under the existing disk reserve and idle policy.
+    pub(in crate::api) async fn read_for_transfer(
+        self,
+        server: &SyncServer,
+    ) -> Result<T, ApiError> {
+        self.read_with_policy(server, SpoolPolicy::custody(server))
+            .await
+    }
+
+    async fn read_with_policy(
+        self,
+        server: &SyncServer,
+        policy: SpoolPolicy,
+    ) -> Result<T, ApiError> {
         if !self.json {
             return Err(invalid_json());
         }
@@ -123,15 +141,9 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
                 Held::Past(body) => body,
             },
         };
-        spool_then(
-            server,
-            self.declared,
-            body,
-            SpoolPolicy::default(),
-            decode_spool::<T>,
-        )
-        .await
-        .map_err(Unspooled::refusal)?
-        .ok_or_else(invalid_json)
+        spool_then(server, self.declared, body, policy, decode_spool::<T>)
+            .await
+            .map_err(Unspooled::refusal)?
+            .ok_or_else(invalid_json)
     }
 }
