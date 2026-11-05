@@ -163,6 +163,10 @@ pub enum Purpose {
     /// caller binds the world key id in `key_id`, its row family as the recipient,
     /// and its native row identity and revisions as extra associated data.
     WorldSideRow = 29,
+    /// A noncanonical default CLAIM source and its settled vector, sealed to one
+    /// own machine. The caller binds its sending machine, window and delivered
+    /// payload as extra associated data; source and model stay inside the seal.
+    HomeClaimVector = 31,
 }
 
 impl Purpose {
@@ -197,6 +201,7 @@ impl Purpose {
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
+            31 => Self::HomeClaimVector,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
