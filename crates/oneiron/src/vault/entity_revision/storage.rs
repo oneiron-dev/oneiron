@@ -22,8 +22,8 @@ use history::{
     revision_raw,
 };
 pub(super) use history::{
-    RevisionNamespace, citation_live_doc, fork_revision_with_namespace, retained_row_sources_in_txn,
-    revision_text_fields,
+    RevisionNamespace, citation_live_doc, fork_revision_with_namespace,
+    retained_row_sources_in_txn, revision_text_fields,
 };
 mod redact;
 mod retained;
@@ -665,10 +665,13 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         let body = row.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
         stale.admits(body).then_some(row)
     };
+    let current = state(store, txn, id)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+        native::ensure_readable(vault, store, txn, id, mode, current.as_ref())?;
+    }
     if mode == ReadMode::Live {
         return raw_for_revision(store, txn, id, &raw, None).map(admit);
     }
-    let current = state(store, txn, id)?;
     let target = match mode {
         ReadMode::Live => unreachable!(),
         ReadMode::Indexed => current
