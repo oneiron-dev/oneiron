@@ -1,8 +1,8 @@
 //! The rows a saved weave period's copies depend on, for its erase index:
-//! the sources its own checks read, each loop row's refs, and the rows a
-//! health card's numeric input witness names or its Coach draft was
-//! written from (FIX 8672). A deleted numeric member clears the whole
-//! witness, independently of the draft. The draft's
+//! the sources its own checks read, each loop row's refs, audit decision
+//! candidates, and the rows a health card's numeric input witness names
+//! or its Coach draft was written from (FIX 8672). A deleted numeric
+//! member clears the whole witness, independently of the draft. The draft's
 //! diagnosis and proposal are text copied out of the agent's TASK and its
 //! sealed pads, so the card's copy depends on every row its answer froze
 //! (FIX 9220). A hard delete of one scrubs the text from the period's
@@ -24,13 +24,16 @@ use crate::store::Store;
 /// Every ref a saved period carries, for its erase index: the sources its
 /// checks read, each loop row's claim, actor and evidence refs, and the
 /// rows each card's numeric witness names or its unscrubbed draft text
-/// was written from. A hard delete
+/// was written from, plus audit decision candidates. A hard delete
 /// of a source erases the period; of any other ref, it rewrites the rows
 /// that name it (`rewrite.rs`).
 pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
     let mut sources = report_sources(report)?;
     for item in report.sections.iter().flat_map(|section| &section.items) {
         sources.extend(loop_decisions::row_refs(item));
+        if let WeaveItem::SieveAudit { audit, .. } = item {
+            sources.extend(audit.decision_candidate_refs());
+        }
         if let WeaveItem::AgentHealth { card, .. } = item {
             sources.extend(card.source_rows.iter().flatten().copied());
         }
