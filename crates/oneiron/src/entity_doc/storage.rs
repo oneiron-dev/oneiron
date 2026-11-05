@@ -236,6 +236,27 @@ pub(super) fn persist_purged_document(
     )
 }
 
+/// Publish the original SWITCH's owned stored-source merge after its existing
+/// stale-base guard and pointer move, with no receiver alias for a native fact.
+pub(super) fn persist_switched_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    switched: &super::forks::SwitchedDocument<'_>,
+) -> Result<()> {
+    let native_tokens = switched.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        switched.vault(),
+        txn,
+        entity,
+        h,
+        switched.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
 fn persist_scanned_inner(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
