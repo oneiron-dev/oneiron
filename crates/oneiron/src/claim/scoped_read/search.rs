@@ -471,7 +471,7 @@ impl ScopedRead<'_> {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Whether every `ceilings` snapshot of the key's own read, with no
     /// request, admits `id`: only then is a row a ranked filter withheld a
     /// request or projection exclusion its receipt counts (FIX 8670).

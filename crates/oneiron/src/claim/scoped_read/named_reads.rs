@@ -51,7 +51,7 @@ impl PointReadOutcome {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// [`Self::read`] for a door whose caller named each target (FIX 5226):
     /// each slot is its row, `None` where every collection read omits it (a
     /// missing or withheld row, as before), or the refusal of the legal

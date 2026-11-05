@@ -310,8 +310,8 @@ impl ClassVerdicts {
 /// relationship gate (a Grant stands in for it, FIX 7462), the guest bound,
 /// the facet limits, the principal audience, a mined preference's principal,
 /// the claim status and the scalar ceiling, then the claim read selectors.
-fn class_judge_in<'v>(
-    vault: &'v crate::Vault,
+fn class_judge_in(
+    vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     reader: &ClassReader<'_>,
     view: &ClassView<'_>,
@@ -360,7 +360,7 @@ fn class_judge_in<'v>(
     ))
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The CLAIM row `raw` of `id`'s admission judged by its access class
     /// (FIX 11915), or `None` where the row takes the row admission: a
     /// reader with a record list, a row with no body, a history control, or

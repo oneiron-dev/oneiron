@@ -158,7 +158,7 @@ impl ReadRowRevision for ReadRow {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Compatibility projection of point rows; policy and body share the read snapshot.
     pub fn get_entity_parts_with_receipt(
         &self,

@@ -40,7 +40,7 @@ pub(super) fn record_family(record: &GateDecisionRecord) -> Option<LoopDecisionF
     })
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// What `record`'s kept read context admits, when the reader is admitted
     /// to every read context it kept (a bundle's every member): `None` when
     /// it kept none or one does not admit. A decision on a claim `claim`

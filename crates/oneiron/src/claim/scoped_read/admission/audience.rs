@@ -5,7 +5,7 @@
 use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(in crate::claim::scoped_read) fn audience_readable_in(

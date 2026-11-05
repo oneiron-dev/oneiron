@@ -163,7 +163,7 @@ impl ScopedRead<'_> {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     fn filter_context_entities(
         &self,
         rtxn: &heed::RoTxn<'_>,
