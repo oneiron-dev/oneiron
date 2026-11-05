@@ -9,7 +9,7 @@ use crate::api::{
 use crate::error::{FatalCode, SealError, SealStage};
 use crate::memory::{MemoryLedger, SealMemoryRefusal, SharedBytes};
 
-use super::super::{cms, tsp, verify};
+use super::super::{cms, pdf, tsp, verify};
 use super::DssMaterial;
 use super::assembly::SealContext;
 
@@ -251,7 +251,8 @@ pub(super) async fn gather_validation_material(
                 let mut crl_covered = false;
                 for u in urls {
                     if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await? {
-                        crls_der.push(crl);
+                        pdf::admitted::push(ctx.limits, &mut crls_der, crl)
+                            .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
                         covered += 1;
                         crl_covered = true;
                         break;
