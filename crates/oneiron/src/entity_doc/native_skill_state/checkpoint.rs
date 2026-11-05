@@ -48,11 +48,13 @@ pub(in crate::entity_doc) fn check_checkpoint_op(op: &JsonOp) -> Result<()> {
 /// Check every retained raw insert, including overwritten values, and the
 /// separate shallow floor. A source's explicit deletions remain deletions.
 /// The witness's document coordinate names its original publication source,
-/// not a later storage slot selected by SWITCH.
+/// not a later storage slot selected by SWITCH. Returns that document only
+/// when it contains native state or writes, so its caller can check an
+/// original fork basis without parsing the history a second time.
 pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
     entity: EntityId,
     rows: impl IntoIterator<Item = &'a [u8]>,
-) -> Result<()> {
+) -> Result<Option<EntityDoc>> {
     let mut rows = rows.into_iter();
     let snapshot = rows.next().ok_or_else(invalid)?;
     let doc = EntityDoc::from_snapshot(snapshot)?;
@@ -74,6 +76,12 @@ pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
         }
     };
     let inventory = inspect(&doc)?;
+    let has_native = inventory.current.is_some()
+        || !inventory.mutations.is_empty()
+        || inventory
+            .floor
+            .as_ref()
+            .is_some_and(|floor| floor.fact.is_some());
     if let Some(current) = &inventory.current {
         check(current)?;
     }
@@ -87,5 +95,5 @@ pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
             check(&fact)?;
         }
     }
-    Ok(())
+    Ok(has_native.then_some(doc))
 }
