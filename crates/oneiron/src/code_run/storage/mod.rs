@@ -70,7 +70,9 @@ pub(crate) use self::replay_capsule::{
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
-pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
+pub(crate) use self::response_erase::{
+    actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+};
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
