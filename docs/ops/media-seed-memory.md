@@ -13,8 +13,9 @@ choice `none` still skips embedding and produces an empty vector.
 The context-pack consumer's same initial charge also includes the retained
 capacity of each seed's owned space string and kind-filter vector. It counts
 these capacities once beside the existing outer buffer, using the concrete
-`InputKind` size for the kind filters. The builder only borrows those fields;
-the unchanged payload and guard keep the same drop order.
+`InputKind` size for the kind filters. The builder copies those borrowed fields;
+its copies are outside this charge. The returned seeds and their guard keep the
+same drop order.
 
 The MCP door keeps its original fallback and error handling. It drains the
 returned seeds into the existing `EmbeddedMediaSeed` result vector, keeping the
