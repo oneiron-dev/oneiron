@@ -143,7 +143,7 @@ export_facade! {
 "self.identity.settle" => fn self_identity_settle(&self, input: IdentityActNowRequest) -> IdentityActNow = |client| {
     let input: oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest = crate::codec::lower_record("self.identity.settle", input)?;
     let output = client.self_identity_settle(&input)?;
-    crate::codec::lift_record("self.identity.settle", &output)
+    Lift::lift(output)
 };
 "self.inbox.list" => fn self_inbox_list(&self, input: InboxListRequest) -> NotificationPage = |client| {
     let input: oneiron::task_verb::sdk::InboxListRequest = crate::codec::lower_record("self.inbox.list", input)?;
