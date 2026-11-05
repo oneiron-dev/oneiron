@@ -2172,6 +2172,7 @@ UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::skill::helper::CallableCardView': 'CallableCardView',
     'crate::task_verb::sdk::AiOptions': 'AiOptions',
     'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
+    'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
     'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',

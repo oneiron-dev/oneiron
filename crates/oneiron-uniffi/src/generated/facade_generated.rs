@@ -5389,7 +5389,7 @@ export_facade! {
 "vault.runs.checkpoint" => fn vault_runs_checkpoint(&self, input: CheckpointReadRequest) -> Option<CheckpointView> = |client| {
     let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
     let output = client.vault_runs_checkpoint(&input)?;
-    crate::codec::lift_record("vault.runs.checkpoint", &output)
+    Lift::lift(output)
 };
 "vault.turn_programs.admission" => fn vault_turn_programs_admission(&self, input: TurnProgramAdmissionRequest) -> Option<TurnProgramAdmissionView> = |client| {
     let input: oneiron::dreamer_runner::TurnProgramAdmissionRequest = crate::codec::lower_record("vault.turn_programs.admission", input)?;

@@ -88,6 +88,13 @@ including a present JSON null; id, entity type and learned-at keep their
 existing types. Native writers, announcement projection and client hooks
 still complete before the conversion; request bodies are not substituted.
 
+`vault.runs.checkpoint` uses an owned checkpoint-page lift. Every resumed
+reply is consumed before a conversion error returns or finite step metadata
+crosses the existing record codec. Optional reply null still reads as absent,
+just like a missing reply. Run identity, completed steps, checkpoint order,
+wait identity, effect, output handle and next-step cursor retain their existing
+fields and widths. The native inline-size and taint checks remain unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
