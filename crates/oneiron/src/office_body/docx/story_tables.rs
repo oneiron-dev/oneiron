@@ -117,7 +117,7 @@ pub(super) fn read(entry: &LoroMap) -> Result<Vec<StoryTable>> {
         let mut body_cells = Vec::with_capacity(positions.len());
         for ((row, col), key) in positions {
             // Reject aliases such as 00:1: one logical cell has one native key.
-            if cell_key(row, col) != key {
+            if cell_key(row, col) != key.as_str() {
                 return Err(invalid("story cell key"));
             }
             let cell = child_map(&cells, &key).ok_or_else(|| invalid("story cell"))?;
