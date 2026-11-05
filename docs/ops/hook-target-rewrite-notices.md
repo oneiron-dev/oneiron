@@ -1,4 +1,4 @@
-# Hook target rewrite notices on MCP
+# Hook target rewrite notices
 
 The vault owner's hooks may rewrite a restrictive action's target. The row's
 existing validation and caller-bound execution checks still apply. This does
@@ -28,6 +28,38 @@ clipped at the owner notice's existing detail limit. It adds no caller or
 invocation identifier, table, receipt, or durable recipient. Existing owner
 inbox notices are unchanged.
 
-This covers direct MCP replies only. It does not add caller notice delivery to
-raw HTTP success bodies, native calls, or code-mode verb results. Those paths
-remain separate work; their typed result shapes are not wrapped by this change.
+The detailed notices above cover direct MCP replies. Code-mode replies carry
+notices in their existing MCP metadata; see [code-run hook notices](code-run-hook-notices.md).
+Neither path changes the verb's typed result shape.
+
+## HTTP facade success
+
+Generated HTTP host/server doors with an explicit pre/post hook chain carry a
+content-free notice in `x-oneiron-hook-notice` when a take-away hook changed
+arguments or had a proposed change ignored. The header contains no verb,
+target, argument, caller or invocation detail. MCP's detailed notices are
+unchanged. The HTTP JSON body keeps its original shape, including arrays and
+primitive results.
+
+The HTTP SDK returns the original `Response`; read the notice through
+`response.headers.get("x-oneiron-hook-notice")`. The CORS exposure list includes
+this header. Connected Rust clients expose `last_hook_notice()`, Python clients
+expose `last_hook_notice()`, and native TypeScript clients expose
+`lastHookNotice()`. These getters return the notice string or none/null beside
+the typed result. A clone starts with none. The next facade call clears the
+notice before serialization or sending, including when that call fails before
+reaching the server. Server-backed in-process clients use the same path;
+vault-direct handles return none.
+
+A saved HTTP/chat reply keeps only its original result and a boolean notice
+flag in its private replay record, never in the public result body. Fresh and
+replayed replies send the same content-free notice. The result's dependency
+rows, destination release, program feedback and erasure owners are unchanged;
+a notice cannot make an otherwise valid result disappear. Session-only calls
+may carry the notice without adding a durable receipt or notice record.
+
+This HTTP slice does not cover ordinary core-invoke rows that run their hooks
+inside the engine, action-wrapper routes, custody-spool routes, non-facade
+calls, or HTTP errors and post-hook stops. It adds no notice to those paths.
+The wider caller-notice row remains partial. Deploy matching engine/server and
+native SDK binaries; no guest artifact change is needed.

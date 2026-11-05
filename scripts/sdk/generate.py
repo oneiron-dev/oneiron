@@ -1519,7 +1519,8 @@ def facade_dispatch(facade_rows):
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
                 let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }})
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows), hook_notice }})
             }}\n'''
             continue
         if r.get('host_door'):
@@ -1563,10 +1564,12 @@ def facade_dispatch(facade_rows):
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
-                Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                Ok(FacadeCallOutput::unlisted({post_hooks}.await?).with_hook_notice(hook_notice))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
                            # FIX 6867: a lane door judges its records in its engine door.
@@ -1697,7 +1700,8 @@ def facade_dispatch(facade_rows):
         Ok::<_, FacadeApiError>((output, rows))
         }}.await;
         let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
-        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
+        let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows, hook_notice }})
         }}\n'''
             continue
         # Rule 5: a task-work row's turn, bound on the surface its engine call

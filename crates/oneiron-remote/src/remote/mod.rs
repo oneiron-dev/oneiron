@@ -101,6 +101,8 @@ pub(crate) struct RemoteClient {
     /// The call receipt the last verb's reply stated, success or refusal
     /// (OF-538). Per handle: a clone starts with none.
     last_receipt_ref: std::sync::Mutex<Option<String>>,
+    /// Content-free hook notice beside the last facade reply; never a receipt.
+    last_hook_notice: std::sync::Mutex<Option<String>>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -126,6 +128,7 @@ impl Clone for RemoteClient {
             room_turn: self.room_turn,
             off_record_session: self.off_record_session.clone(),
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         }
     }
 }
@@ -171,6 +174,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -192,6 +196,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -272,6 +277,32 @@ impl RemoteClient {
             .clone()
     }
 
+    pub(crate) fn last_hook_notice(&self) -> Option<String> {
+        self.last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn note_hook_notice(&self, notice: Option<String>) {
+        *self
+            .last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = notice;
+    }
+
+    fn note_reply_hook_notice(&self, headers: &HeaderMap) {
+        use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+
+        self.note_hook_notice(
+            headers
+                .get(CALLER_NOTICE_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| *value == CALLER_NOTICE_SUMMARY)
+                .map(str::to_owned),
+        );
+    }
+
     fn note_receipt_ref(&self, receipt_ref: Option<String>) {
         *self
             .last_receipt_ref
@@ -310,6 +341,7 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
+        self.note_hook_notice(None);
         let body = serialize_whole(request)?;
         // A sealed custody change past the ceiling goes to the owner route
         // that spools it whole, whatever its length (FIX 11454).
@@ -339,6 +371,7 @@ impl RemoteClient {
                 .map(str::to_owned),
         );
 
+        self.note_reply_hook_notice(&reply.headers);
         let status = reply.status;
         // A 202 is a verb hook's pending ask: the verb did not run, and the
         // body is the refusal naming the ask and this call's invocation

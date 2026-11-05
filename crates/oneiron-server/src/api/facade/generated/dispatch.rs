@@ -35,9 +35,11 @@ async fn vault_commitments_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_get(
@@ -66,9 +68,11 @@ async fn vault_commitments_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_instances(
@@ -100,9 +104,11 @@ async fn vault_commitments_instances(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_proposals(
@@ -134,9 +140,11 @@ async fn vault_commitments_proposals(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_fulfill(
@@ -168,9 +176,11 @@ async fn vault_commitments_fulfill(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_release(
@@ -202,9 +212,11 @@ async fn vault_commitments_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_supersede(
@@ -236,9 +248,11 @@ async fn vault_commitments_supersede(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_reminder_route_get(
@@ -271,9 +285,11 @@ async fn vault_commitments_reminder_route_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_commitments_reminder_route_set(
@@ -306,9 +322,11 @@ async fn vault_commitments_reminder_route_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn fetch(
@@ -346,9 +364,11 @@ async fn fetch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn crawl(
@@ -386,9 +406,11 @@ async fn crawl(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn report(
@@ -427,9 +449,11 @@ async fn report(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
+        hook_notice,
     })
 }
 async fn feedback_preview(
@@ -457,9 +481,11 @@ async fn feedback_preview(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn feedback_send(
@@ -487,9 +513,11 @@ async fn feedback_send(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_reports_disclosure(
@@ -521,9 +549,11 @@ async fn vault_reports_disclosure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_reports_route(
@@ -552,9 +582,11 @@ async fn vault_reports_route(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_reports_outbound(
@@ -583,9 +615,11 @@ async fn vault_reports_outbound(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_focus_wakes(
@@ -624,9 +658,11 @@ async fn self_focus_wakes(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn self_focus_scratchpad_recall(
     server: &Arc<SyncServer>,
@@ -862,9 +898,11 @@ async fn self_identity_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_identity_settle(
@@ -1143,9 +1181,11 @@ async fn vault_people_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_entities_look_before_mint(
@@ -1184,9 +1224,11 @@ async fn vault_entities_look_before_mint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_mention(
@@ -1224,9 +1266,11 @@ async fn vault_identity_mention(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shape_read(
@@ -1303,9 +1347,11 @@ async fn vault_shape_apply(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shape_plan_card(
@@ -1387,9 +1433,11 @@ async fn vault_shape_groups(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shape_groups_resolve(
@@ -1427,9 +1475,11 @@ async fn vault_shape_groups_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_message(
@@ -1534,9 +1584,11 @@ async fn vault_companions_access_requests_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_grants_answer(
@@ -1565,9 +1617,11 @@ async fn self_grants_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_personas_preview(
@@ -1596,9 +1650,11 @@ async fn vault_personas_preview(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_personas_export(
@@ -1627,9 +1683,11 @@ async fn vault_personas_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_personas_edit(
@@ -1658,9 +1716,11 @@ async fn vault_personas_edit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_memory_diary_query(
@@ -1692,9 +1752,11 @@ async fn self_memory_diary_query(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_memory_pads_read(
@@ -1723,9 +1785,11 @@ async fn self_memory_pads_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_memory_pads_admin_reads(
@@ -1757,9 +1821,11 @@ async fn self_memory_pads_admin_reads(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn cancel(
@@ -1849,9 +1915,11 @@ async fn describe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
+        hook_notice,
     })
 }
 async fn tasks_create(
@@ -1908,9 +1976,11 @@ async fn tasks_wave(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_fanout_spawn(
@@ -1943,9 +2013,11 @@ async fn vault_fanout_spawn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_fanout_slots(
@@ -2079,9 +2151,11 @@ async fn vault_budgets_lease_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_lease(
@@ -2110,9 +2184,11 @@ async fn vault_budgets_lease(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_lease_top_up(
@@ -2144,9 +2220,11 @@ async fn vault_budgets_lease_top_up(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_hold(
@@ -2175,9 +2253,11 @@ async fn vault_budgets_hold(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_hold_resume(
@@ -2209,9 +2289,11 @@ async fn vault_budgets_hold_resume(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_local(
@@ -2240,9 +2322,11 @@ async fn vault_budgets_local(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_reservations(
@@ -2274,9 +2358,11 @@ async fn vault_budgets_reservations(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_settlements(
@@ -2308,9 +2394,11 @@ async fn vault_budgets_settlements(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_rsi_configure(
@@ -2342,9 +2430,11 @@ async fn vault_budgets_rsi_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_rsi(
@@ -2373,9 +2463,11 @@ async fn vault_budgets_rsi(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_rsi_top_up(
@@ -2407,9 +2499,11 @@ async fn vault_budgets_rsi_top_up(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_rsi_hold(
@@ -2438,9 +2532,11 @@ async fn vault_budgets_rsi_hold(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_rsi_hold_resume(
@@ -2472,9 +2568,11 @@ async fn vault_budgets_rsi_hold_resume(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_resident_shares(
@@ -2506,9 +2604,11 @@ async fn vault_budgets_resident_shares(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_budgets_resident_shares_set(
@@ -2541,9 +2641,11 @@ async fn vault_budgets_resident_shares_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runners_seats_quotas(
@@ -2575,9 +2677,11 @@ async fn vault_runners_seats_quotas(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runners_seats_top_up(
@@ -2609,9 +2713,11 @@ async fn vault_runners_seats_top_up(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runners_seats_resume(
@@ -2643,9 +2749,11 @@ async fn vault_runners_seats_resume(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_fanout_resume(
@@ -2674,9 +2782,11 @@ async fn vault_fanout_resume(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_fanout_resume_as(
@@ -2705,9 +2815,11 @@ async fn vault_fanout_resume_as(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_fanout_ack(
@@ -2735,9 +2847,11 @@ async fn vault_fanout_ack(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn tasks_update(
@@ -3041,9 +3155,11 @@ async fn vault_message_streams_refused(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_messages_durability(
@@ -3176,9 +3292,11 @@ async fn vault_recall(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
+        hook_notice,
     })
 }
 async fn vault_retrieval_aging_get(
@@ -3210,9 +3328,11 @@ async fn vault_retrieval_aging_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_aging_configure(
@@ -3245,9 +3365,11 @@ async fn vault_retrieval_aging_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_weights_get(
@@ -3279,9 +3401,11 @@ async fn vault_retrieval_weights_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_weights_configure(
@@ -3314,9 +3438,11 @@ async fn vault_retrieval_weights_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_hyde_configure(
@@ -3348,9 +3474,11 @@ async fn vault_retrieval_hyde_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_hyde_get(
@@ -3382,9 +3510,11 @@ async fn vault_retrieval_hyde_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_hyde_pending(
@@ -3416,9 +3546,11 @@ async fn vault_retrieval_hyde_pending(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_hyde_complete(
@@ -3450,9 +3582,11 @@ async fn vault_retrieval_hyde_complete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_hyde_receipt(
@@ -3484,9 +3618,11 @@ async fn vault_retrieval_hyde_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_annotations_put(
@@ -3672,9 +3808,11 @@ async fn vault_affect_claims_consolidate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_coping_record(
@@ -3706,9 +3844,11 @@ async fn vault_affect_coping_record(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_coping_update(
@@ -3740,9 +3880,11 @@ async fn vault_affect_coping_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_coping_aggregate(
@@ -3774,9 +3916,11 @@ async fn vault_affect_coping_aggregate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_wellness_policy_get(
@@ -3809,9 +3953,11 @@ async fn vault_affect_wellness_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_wellness_policy_configure(
@@ -3849,9 +3995,11 @@ async fn vault_affect_wellness_policy_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_wellness_derive(
@@ -3883,9 +4031,11 @@ async fn vault_affect_wellness_derive(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_affect_wellness_get(
@@ -3917,9 +4067,11 @@ async fn vault_affect_wellness_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cluster(
@@ -3996,9 +4148,11 @@ async fn vault_cluster_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cluster_merge(
@@ -4031,9 +4185,11 @@ async fn vault_cluster_merge(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cluster_split(
@@ -4066,9 +4222,11 @@ async fn vault_cluster_split(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cluster_resolve_proposal(
@@ -4101,9 +4259,11 @@ async fn vault_cluster_resolve_proposal(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_recall(
@@ -4132,9 +4292,11 @@ async fn vault_retrieval_recall(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_runs(
@@ -4163,9 +4325,11 @@ async fn vault_retrieval_runs(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_run(
@@ -4194,9 +4358,11 @@ async fn vault_retrieval_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_turn(
@@ -4225,9 +4391,11 @@ async fn vault_retrieval_turn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_outcomes_put(
@@ -4259,9 +4427,11 @@ async fn vault_retrieval_outcomes_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_outcomes_end(
@@ -4293,9 +4463,11 @@ async fn vault_retrieval_outcomes_end(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_trace(
@@ -4324,9 +4496,11 @@ async fn vault_retrieval_trace(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_export(
@@ -4355,9 +4529,11 @@ async fn vault_retrieval_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_replay(
@@ -4386,9 +4562,11 @@ async fn vault_retrieval_replay(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_get(
@@ -4420,9 +4598,11 @@ async fn vault_retrieval_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_pin(
@@ -4454,9 +4634,11 @@ async fn vault_retrieval_policy_pin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_train(
@@ -4488,9 +4670,11 @@ async fn vault_retrieval_policy_train(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_evaluate(
@@ -4523,9 +4707,11 @@ async fn vault_retrieval_policy_evaluate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_admit(
@@ -4557,9 +4743,11 @@ async fn vault_retrieval_policy_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_retrieval_policy_update(
@@ -4591,9 +4779,11 @@ async fn vault_retrieval_policy_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_export(
@@ -4659,9 +4849,11 @@ async fn vault_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: Some(rows),
+        hook_notice,
     })
 }
 async fn vault_export_transfer_read(
@@ -4693,9 +4885,11 @@ async fn vault_export_transfer_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_export_transfer_release(
@@ -4727,9 +4921,11 @@ async fn vault_export_transfer_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_credential_attenuate(
@@ -4761,9 +4957,11 @@ async fn self_credential_attenuate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_actor(
@@ -4791,9 +4989,11 @@ async fn self_actor(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_scope_position(
     server: &Arc<SyncServer>,
@@ -5063,9 +5263,11 @@ async fn vault_explain_memory(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_explain_gate(
@@ -5094,9 +5296,11 @@ async fn vault_explain_gate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_kv_get(
@@ -5245,9 +5449,11 @@ async fn vault_campaign_compliance_install(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_campaign_compliance_amend(
@@ -5308,9 +5514,11 @@ async fn vault_campaign_compliance_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_campaign_compliance_reject(
@@ -5349,9 +5557,11 @@ async fn vault_campaign_compliance_reject(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_campaign_compliance_verify(
@@ -5390,9 +5600,11 @@ async fn vault_campaign_compliance_verify(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_campaign_compliance_result(
@@ -5474,9 +5686,11 @@ async fn vault_campaign_stage_evidence(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_campaign_unsubscribe(
@@ -5801,9 +6015,11 @@ async fn self_saved_query_evaluate(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_weave_report(
     server: &Arc<SyncServer>,
@@ -5853,9 +6069,11 @@ async fn vault_weave_digest(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_lens(
@@ -5889,9 +6107,11 @@ async fn vault_weave_lens(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_link_wrong(
@@ -5920,9 +6140,11 @@ async fn vault_weave_link_wrong(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_owner_link_wrong(
@@ -5954,9 +6176,11 @@ async fn vault_weave_owner_link_wrong(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_item_wrong(
@@ -5985,9 +6209,11 @@ async fn vault_weave_item_wrong(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_owner_item_wrong(
@@ -6019,9 +6245,11 @@ async fn vault_weave_owner_item_wrong(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_enqueue(
@@ -6059,9 +6287,11 @@ async fn vault_weave_enqueue(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_schedules_list(
@@ -6099,9 +6329,11 @@ async fn vault_weave_schedules_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_schedules_put(
@@ -6139,9 +6371,11 @@ async fn vault_weave_schedules_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_schedules_clear(
@@ -6179,9 +6413,11 @@ async fn vault_weave_schedules_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_setting_changes_list(
@@ -6220,9 +6456,11 @@ async fn vault_weave_setting_changes_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_setting_changes_answer(
@@ -6261,9 +6499,11 @@ async fn vault_weave_setting_changes_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_setting_changes_undo(
@@ -6302,9 +6542,11 @@ async fn vault_weave_setting_changes_undo(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_digest_feedback_put(
@@ -6343,9 +6585,11 @@ async fn vault_weave_digest_feedback_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_owner_digest_render(
@@ -6384,9 +6628,11 @@ async fn vault_weave_owner_digest_render(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_inbox_concerns_review(
@@ -6424,9 +6670,11 @@ async fn vault_inbox_concerns_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_inbox_lens(
@@ -6464,9 +6712,11 @@ async fn vault_inbox_lens(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_inbox_groups(
@@ -6504,9 +6754,11 @@ async fn vault_inbox_groups(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_inbox_groups_resolve(
@@ -6544,9 +6796,11 @@ async fn vault_inbox_groups_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_weave_digest_render(
@@ -6707,9 +6961,11 @@ async fn vault_skills_bootstrap(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_default_get(
@@ -6741,9 +6997,11 @@ async fn vault_skill_hubs_default_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_restoreDefaults(
@@ -6775,9 +7033,11 @@ async fn vault_skills_restoreDefaults(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_put(
@@ -6806,9 +7066,11 @@ async fn vault_skill_hubs_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_get(
@@ -6837,9 +7099,11 @@ async fn vault_skill_hubs_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_publishers_admit(
@@ -6872,9 +7136,11 @@ async fn vault_skill_hubs_publishers_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_publishers_revoke(
@@ -6907,9 +7173,11 @@ async fn vault_skill_hubs_publishers_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_refs_get(
@@ -6941,9 +7209,11 @@ async fn vault_skill_hubs_refs_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skill_hubs_refs_set(
@@ -6975,9 +7245,11 @@ async fn vault_skill_hubs_refs_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_install(
@@ -7006,9 +7278,11 @@ async fn vault_packs_install(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sync(
@@ -7036,9 +7310,11 @@ async fn vault_packs_sync(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_get(
@@ -7066,9 +7342,11 @@ async fn vault_packs_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_import(
@@ -7097,9 +7375,11 @@ async fn vault_skills_import(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_sync(
@@ -7128,9 +7408,11 @@ async fn vault_skills_sync(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_receipts(
@@ -7159,9 +7441,11 @@ async fn vault_skills_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_convert(
@@ -7190,9 +7474,11 @@ async fn vault_skills_convert(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_get(
@@ -7220,9 +7506,11 @@ async fn vault_skills_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_list(
@@ -7251,9 +7539,11 @@ async fn vault_skills_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_archive(
@@ -7282,9 +7572,11 @@ async fn vault_skills_archive(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_restore(
@@ -7313,9 +7605,11 @@ async fn vault_skills_restore(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_fork(
@@ -7344,9 +7638,11 @@ async fn vault_skills_fork(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_rules_set(
@@ -7375,9 +7671,11 @@ async fn vault_skills_rules_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_code_auto_install_set(
@@ -7410,9 +7708,11 @@ async fn vault_skills_code_auto_install_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_fit_set(
@@ -7441,9 +7741,11 @@ async fn vault_skills_fit_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_advisory_ask_set(
@@ -7475,9 +7777,11 @@ async fn vault_skills_advisory_ask_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_permissions_approve(
@@ -7510,9 +7814,11 @@ async fn vault_skills_permissions_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_start(
@@ -7544,9 +7850,11 @@ async fn vault_skills_optimize_start(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_result(
@@ -7578,9 +7886,11 @@ async fn vault_skills_optimize_result(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_projects_goal_intake_complete(
@@ -7613,9 +7923,11 @@ async fn vault_projects_goal_intake_complete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_projects_goal_get(
@@ -7647,9 +7959,11 @@ async fn vault_projects_goal_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_propose(
@@ -7681,9 +7995,11 @@ async fn vault_skills_optimize_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_measure(
@@ -7715,9 +8031,11 @@ async fn vault_skills_optimize_measure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_score(
@@ -7749,9 +8067,11 @@ async fn vault_skills_optimize_score(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_admit(
@@ -7783,9 +8103,11 @@ async fn vault_skills_optimize_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_goal_get(
@@ -7817,9 +8139,11 @@ async fn vault_skills_optimize_goal_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_goal_bind(
@@ -7852,9 +8176,11 @@ async fn vault_skills_optimize_goal_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_preferences_get(
@@ -7887,9 +8213,11 @@ async fn vault_skills_optimize_preferences_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_preferences_set(
@@ -7922,9 +8250,11 @@ async fn vault_skills_optimize_preferences_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_tradeoff_asks(
@@ -7957,9 +8287,11 @@ async fn vault_skills_optimize_tradeoff_asks(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_tradeoff_asks_pick(
@@ -7997,9 +8329,11 @@ async fn vault_skills_optimize_tradeoff_asks_pick(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_optimize_tradeoff_asks_resolve(
@@ -8037,9 +8371,11 @@ async fn vault_skills_optimize_tradeoff_asks_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_governance_get(
@@ -8071,9 +8407,11 @@ async fn vault_skills_governance_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_governance_set(
@@ -8105,9 +8443,11 @@ async fn vault_skills_governance_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_hooks_bind(
@@ -8136,9 +8476,11 @@ async fn vault_packs_hooks_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_hooks_list(
@@ -8167,9 +8509,11 @@ async fn vault_packs_hooks_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_hooks_grant_set(
@@ -8201,9 +8545,11 @@ async fn vault_packs_hooks_grant_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_hooks_grant_get(
@@ -8235,9 +8581,11 @@ async fn vault_packs_hooks_grant_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_hooks_qualify(
@@ -8269,9 +8617,11 @@ async fn vault_packs_hooks_qualify(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_put(
@@ -8299,9 +8649,11 @@ async fn vault_packs_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_preview(
@@ -8330,9 +8682,11 @@ async fn vault_packs_preview(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_packs_connector_prepare(
     server: &Arc<SyncServer>,
@@ -8363,9 +8717,11 @@ async fn vault_packs_connector_prepare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_get(
@@ -8397,9 +8753,11 @@ async fn vault_packs_connector_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_qualify(
@@ -8431,9 +8789,11 @@ async fn vault_packs_connector_qualify(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_accept(
@@ -8465,9 +8825,11 @@ async fn vault_packs_connector_accept(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_update(
@@ -8499,9 +8861,11 @@ async fn vault_packs_connector_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_grants_get(
@@ -8534,9 +8898,11 @@ async fn vault_packs_connector_grants_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_connector_grants_put(
@@ -8569,9 +8935,11 @@ async fn vault_packs_connector_grants_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_remove(
@@ -8600,9 +8968,11 @@ async fn vault_packs_remove(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_propose(
@@ -8640,9 +9010,11 @@ async fn vault_packs_sections_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_list(
@@ -8680,9 +9052,11 @@ async fn vault_packs_sections_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_grant(
@@ -8720,9 +9094,11 @@ async fn vault_packs_sections_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_revoke(
@@ -8760,9 +9136,11 @@ async fn vault_packs_sections_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_suggest(
@@ -8800,9 +9178,11 @@ async fn vault_packs_sections_suggest(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_suggestions_get(
@@ -8841,9 +9221,11 @@ async fn vault_packs_sections_suggestions_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_sections_suggestions_set(
@@ -8882,9 +9264,11 @@ async fn vault_packs_sections_suggestions_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_chat_completions(
@@ -8918,9 +9302,11 @@ async fn ai_chat_completions(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_proxy_admit(
@@ -8952,9 +9338,11 @@ async fn vault_connectors_proxy_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_proxy_revoke_write(
@@ -8987,9 +9375,11 @@ async fn vault_connectors_proxy_revoke_write(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_redraft(
@@ -9022,9 +9412,11 @@ async fn vault_connectors_slates_redraft(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_narrow(
@@ -9062,9 +9454,11 @@ async fn vault_connectors_slates_narrow(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_scope_outcome(
@@ -9097,9 +9491,11 @@ async fn vault_connectors_slates_scope_outcome(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_revision_offers(
@@ -9137,9 +9533,11 @@ async fn vault_connectors_slates_revision_offers(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_defer_revision(
@@ -9177,9 +9575,11 @@ async fn vault_connectors_slates_defer_revision(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_accept_revision(
@@ -9217,9 +9617,11 @@ async fn vault_connectors_slates_accept_revision(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_slates_reask_issuer(
@@ -9252,9 +9654,11 @@ async fn vault_connectors_slates_reask_issuer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_subscriptions_put(
@@ -9287,9 +9691,11 @@ async fn vault_connectors_subscriptions_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_subscriptions_list(
@@ -9322,9 +9728,11 @@ async fn vault_connectors_subscriptions_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_subscriptions_revoke(
@@ -9357,9 +9765,11 @@ async fn vault_connectors_subscriptions_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_setup_prepare(
@@ -9391,9 +9801,11 @@ async fn vault_packs_setup_prepare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_setup_get(
@@ -9422,9 +9834,11 @@ async fn vault_packs_setup_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_setup_answer(
@@ -9456,9 +9870,11 @@ async fn vault_packs_setup_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_packs_setup_verify(
@@ -9490,9 +9906,11 @@ async fn vault_packs_setup_verify(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_authority_audit(
@@ -9521,9 +9939,11 @@ async fn vault_authority_audit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_authority_history_export(
@@ -9555,9 +9975,11 @@ async fn vault_authority_history_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_authority_history_import(
@@ -9589,9 +10011,11 @@ async fn vault_authority_history_import(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_authority_clock_repair(
@@ -9623,9 +10047,11 @@ async fn vault_authority_clock_repair(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_wire_health_thresholds_get(
@@ -9658,9 +10084,11 @@ async fn vault_wire_health_thresholds_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_wire_health_thresholds_set(
@@ -9693,9 +10121,11 @@ async fn vault_wire_health_thresholds_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_slim_policy(
@@ -9724,9 +10154,11 @@ async fn vault_slim_policy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_slim_state(
@@ -9754,9 +10186,11 @@ async fn vault_slim_state(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_slim_resume_step(
@@ -9785,9 +10219,11 @@ async fn vault_slim_resume_step(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_slim_drop_heavy(
@@ -9816,9 +10252,11 @@ async fn vault_slim_drop_heavy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_slim_resume(
@@ -9847,9 +10285,11 @@ async fn vault_slim_resume(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_path_receipts(
@@ -9881,9 +10321,11 @@ async fn vault_mesh_path_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_identity(
@@ -9912,9 +10354,11 @@ async fn vault_mesh_identity(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_bind_machine(
@@ -9946,9 +10390,11 @@ async fn vault_mesh_bind_machine(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_set_alpn_grant(
@@ -9980,9 +10426,11 @@ async fn vault_mesh_set_alpn_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_revoke_machine(
@@ -10014,9 +10462,11 @@ async fn vault_mesh_revoke_machine(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mesh_dial(
@@ -10044,9 +10494,11 @@ async fn vault_mesh_dial(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_outbox_diverged_list(
@@ -10078,9 +10530,11 @@ async fn vault_outbox_diverged_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_outbox_diverged_answer(
@@ -10112,9 +10566,11 @@ async fn vault_outbox_diverged_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_inspection_resolve(
@@ -10168,9 +10624,11 @@ async fn vault_shared_propose_delete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_propose_transfer(
@@ -10202,9 +10660,11 @@ async fn vault_shared_propose_transfer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_propose_remove_owner(
@@ -10237,9 +10697,11 @@ async fn vault_shared_propose_remove_owner(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_execute(
@@ -10268,9 +10730,11 @@ async fn vault_shared_execute(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_receipt(
@@ -10299,9 +10763,11 @@ async fn vault_shared_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_outcomes(
@@ -10330,9 +10796,11 @@ async fn vault_shared_outcomes(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_deletion(
@@ -10361,9 +10829,11 @@ async fn vault_shared_deletion(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_org_admin_configure(
@@ -10395,9 +10865,11 @@ async fn vault_org_admin_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_org_admin_powers(
@@ -10426,9 +10898,11 @@ async fn vault_org_admin_powers(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_reset_project_access(
@@ -10479,9 +10953,11 @@ async fn vault_members_delegate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_projection(
@@ -10532,9 +11008,11 @@ async fn vault_members_add(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_invitation_slip(
@@ -10566,9 +11044,11 @@ async fn vault_members_invitation_slip(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_change(
@@ -10597,9 +11077,11 @@ async fn vault_members_change(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_remove(
@@ -10628,9 +11110,11 @@ async fn vault_members_remove(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_leave(
@@ -10659,9 +11143,11 @@ async fn vault_members_leave(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_invitations(
@@ -10693,9 +11179,11 @@ async fn vault_members_invitations(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_accept(
@@ -10724,9 +11212,11 @@ async fn vault_members_accept(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_decline(
@@ -10755,9 +11245,11 @@ async fn vault_members_decline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_members_withdraw_invitation(
@@ -10790,9 +11282,11 @@ async fn vault_members_withdraw_invitation(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_object(
@@ -10821,9 +11315,11 @@ async fn vault_shared_object(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_withdraw_objection(
@@ -10856,9 +11352,11 @@ async fn vault_shared_withdraw_objection(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_started(
@@ -10887,9 +11385,11 @@ async fn vault_shared_started(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_matured(
@@ -10918,9 +11418,11 @@ async fn vault_shared_matured(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_erase_ask(
@@ -10949,9 +11451,11 @@ async fn vault_shared_erase_ask(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_erase_asks(
@@ -10983,9 +11487,11 @@ async fn vault_shared_erase_asks(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_close_erase_ask(
@@ -11017,9 +11523,11 @@ async fn vault_shared_close_erase_ask(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_policy_get(
@@ -11051,9 +11559,11 @@ async fn vault_shared_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_policy_propose(
@@ -11085,9 +11595,11 @@ async fn vault_shared_policy_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_policy_answer(
@@ -11119,9 +11631,11 @@ async fn vault_shared_policy_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_policy_change(
@@ -11153,9 +11667,11 @@ async fn vault_shared_policy_change(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shared_policy_changes(
@@ -11187,9 +11703,11 @@ async fn vault_shared_policy_changes(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_coreference_link(
@@ -11222,9 +11740,11 @@ async fn vault_federation_coreference_link(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_coreference_confirm(
@@ -11257,9 +11777,11 @@ async fn vault_federation_coreference_confirm(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_coreference_share_consent(
@@ -11297,9 +11819,11 @@ async fn vault_federation_coreference_share_consent(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_coreference_unlink(
@@ -11332,9 +11856,11 @@ async fn vault_federation_coreference_unlink(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_baseline(
@@ -11367,9 +11893,11 @@ async fn vault_federation_burst_baseline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_policy(
@@ -11401,9 +11929,11 @@ async fn vault_federation_burst_policy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_policy_set(
@@ -11436,9 +11966,11 @@ async fn vault_federation_burst_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sync_quarantine_held_edits(
@@ -11471,9 +12003,11 @@ async fn vault_sync_quarantine_held_edits(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sync_retained_work_wait_set(
@@ -11506,9 +12040,11 @@ async fn vault_sync_retained_work_wait_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_ingress(
@@ -11540,9 +12076,11 @@ async fn vault_federation_burst_ingress(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_disposition(
@@ -11575,9 +12113,11 @@ async fn vault_federation_burst_disposition(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_review(
@@ -11609,9 +12149,11 @@ async fn vault_federation_burst_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_review_release(
@@ -11644,9 +12186,11 @@ async fn vault_federation_burst_review_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_review_reject(
@@ -11679,9 +12223,11 @@ async fn vault_federation_burst_review_reject(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_burst_replay(
@@ -11713,9 +12259,11 @@ async fn vault_federation_burst_replay(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_identity(
@@ -11748,9 +12296,11 @@ async fn vault_federation_connect_identity(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_grants_mint(
@@ -11783,9 +12333,11 @@ async fn vault_federation_connect_grants_mint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_offer(
@@ -11817,9 +12369,11 @@ async fn vault_federation_connect_offer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_accept(
@@ -11852,9 +12406,11 @@ async fn vault_federation_connect_accept(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_narrow(
@@ -11887,9 +12443,11 @@ async fn vault_federation_connect_narrow(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_rescope_offer(
@@ -11927,9 +12485,11 @@ async fn vault_federation_connect_rescope_offer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_rescope_accept(
@@ -11967,9 +12527,11 @@ async fn vault_federation_connect_rescope_accept(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_disconnect(
@@ -12002,9 +12564,11 @@ async fn vault_federation_connect_disconnect(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_export(
@@ -12037,9 +12601,11 @@ async fn vault_federation_connect_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_rejoin(
@@ -12072,9 +12638,11 @@ async fn vault_federation_connect_rejoin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_world_privacy_export(
@@ -12115,9 +12683,11 @@ async fn vault_federation_connect_world_privacy_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_federation_connect_world_privacy_receive(
@@ -12158,9 +12728,11 @@ async fn vault_federation_connect_world_privacy_receive(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_name(
@@ -12192,9 +12764,11 @@ async fn vault_trusted_contacts_name(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_list(
@@ -12226,9 +12800,11 @@ async fn vault_trusted_contacts_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_consent(
@@ -12260,9 +12836,11 @@ async fn vault_trusted_contacts_consent(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_revoke(
@@ -12294,9 +12872,11 @@ async fn vault_trusted_contacts_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_dial_set(
@@ -12329,9 +12909,11 @@ async fn vault_trusted_contacts_dial_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_tier_set(
@@ -12364,9 +12946,11 @@ async fn vault_trusted_contacts_tier_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_concern_asks(
@@ -12399,9 +12983,11 @@ async fn vault_trusted_contacts_concern_asks(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_concern_authorize(
@@ -12439,9 +13025,11 @@ async fn vault_trusted_contacts_concern_authorize(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_concern_propose(
@@ -12485,9 +13073,11 @@ async fn vault_trusted_contacts_concern_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_trusted_contacts_concern_deliver(
@@ -12531,9 +13121,11 @@ async fn vault_trusted_contacts_concern_deliver(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_guests_share(
@@ -12562,9 +13154,11 @@ async fn vault_guests_share(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_guests_export_envelope(
@@ -12596,9 +13190,11 @@ async fn vault_guests_export_envelope(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_guests_reshare(
@@ -12627,9 +13223,11 @@ async fn vault_guests_reshare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_guests_revoke(
@@ -12658,9 +13256,11 @@ async fn vault_guests_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_guests_mint_slip(
@@ -12689,9 +13289,11 @@ async fn vault_guests_mint_slip(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_support_grants_mint(
@@ -12723,9 +13325,11 @@ async fn vault_support_grants_mint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_support_grants_list(
@@ -12757,9 +13361,11 @@ async fn vault_support_grants_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_support_grants_revoke(
@@ -12791,9 +13397,11 @@ async fn vault_support_grants_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_files_sources_attach(
@@ -12825,9 +13433,11 @@ async fn vault_files_sources_attach(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_files_sources_rescan(
@@ -12859,9 +13469,11 @@ async fn vault_files_sources_rescan(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_files_sources_detach(
@@ -12893,9 +13505,11 @@ async fn vault_files_sources_detach(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_files_sources_list(
@@ -12927,9 +13541,11 @@ async fn vault_files_sources_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_files_sources_files(
@@ -12961,9 +13577,11 @@ async fn vault_files_sources_files(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_residence_mode(
@@ -12992,9 +13610,11 @@ async fn vault_residence_mode(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_residence_open(
@@ -13023,9 +13643,11 @@ async fn vault_residence_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_residence_index(
@@ -13054,9 +13676,11 @@ async fn vault_residence_index(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_residence_prune(
@@ -13085,9 +13709,11 @@ async fn vault_residence_prune(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_residence_directives(
@@ -13119,9 +13745,11 @@ async fn vault_residence_directives(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_start(
@@ -13150,9 +13778,11 @@ async fn vault_off_record_start(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_status(
@@ -13184,9 +13814,11 @@ async fn vault_off_record_status(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_witness(
@@ -13218,9 +13850,11 @@ async fn vault_off_record_witness(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_discard(
@@ -13252,9 +13886,11 @@ async fn vault_off_record_discard(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_recall(
@@ -13286,9 +13922,11 @@ async fn vault_off_record_recall(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_notes_create(
@@ -13320,9 +13958,11 @@ async fn vault_off_record_notes_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_artifacts_save(
@@ -13355,9 +13995,11 @@ async fn vault_off_record_artifacts_save(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_claims_upsert(
@@ -13389,9 +14031,11 @@ async fn vault_off_record_claims_upsert(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_off_record_execute(
@@ -13423,9 +14067,11 @@ async fn self_off_record_execute(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_off_record_results_list(
@@ -13457,9 +14103,11 @@ async fn self_off_record_results_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_off_record_results_read(
@@ -13491,9 +14139,11 @@ async fn self_off_record_results_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_off_record_waits_get(
@@ -13525,9 +14175,11 @@ async fn self_off_record_waits_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_off_record_waits_answer(
@@ -13559,9 +14211,11 @@ async fn self_off_record_waits_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_off_record_rooms_status(
@@ -13594,9 +14248,11 @@ async fn vault_off_record_rooms_status(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_start(
     server: &Arc<SyncServer>,
@@ -13628,9 +14284,11 @@ async fn vault_off_record_rooms_start(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_witness(
     server: &Arc<SyncServer>,
@@ -13662,9 +14320,11 @@ async fn vault_off_record_rooms_witness(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_save(
     server: &Arc<SyncServer>,
@@ -13696,9 +14356,11 @@ async fn vault_off_record_rooms_save(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_save_from_here(
     server: &Arc<SyncServer>,
@@ -13731,9 +14393,11 @@ async fn vault_off_record_rooms_save_from_here(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_export(
     server: &Arc<SyncServer>,
@@ -13765,9 +14429,11 @@ async fn vault_off_record_rooms_export(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_suggest_save(
     server: &Arc<SyncServer>,
@@ -13801,9 +14467,11 @@ async fn vault_off_record_rooms_suggest_save(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_confirm_save(
     server: &Arc<SyncServer>,
@@ -13836,9 +14504,11 @@ async fn vault_off_record_rooms_confirm_save(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_off_record_rooms_decline_save(
     server: &Arc<SyncServer>,
@@ -13871,9 +14541,11 @@ async fn vault_off_record_rooms_decline_save(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_records_erase_preview(
     server: &Arc<SyncServer>,
@@ -13904,9 +14576,11 @@ async fn vault_records_erase_preview(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_records_erase_confirm(
@@ -13938,9 +14612,11 @@ async fn vault_records_erase_confirm(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_records_erase_sweep(
@@ -13972,9 +14648,11 @@ async fn vault_records_erase_sweep(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_outbound_calls_request_erase(
@@ -14007,9 +14685,11 @@ async fn vault_outbound_calls_request_erase(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_research_create_child(
@@ -14041,9 +14721,11 @@ async fn vault_research_create_child(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_research_archive(
@@ -14226,9 +14908,11 @@ async fn vault_evals_inventory(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_cohorts_setup(
@@ -14260,9 +14944,11 @@ async fn vault_evals_cohorts_setup(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_author_now(
@@ -14291,9 +14977,11 @@ async fn vault_evals_author_now(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_authoring_result(
@@ -14325,9 +15013,11 @@ async fn vault_evals_authoring_result(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_families(
@@ -14356,9 +15046,11 @@ async fn vault_evals_families(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_families_assign(
@@ -14390,9 +15082,11 @@ async fn vault_evals_families_assign(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_cases(
@@ -14421,9 +15115,11 @@ async fn vault_evals_cases(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_cases_record(
@@ -14455,9 +15151,11 @@ async fn vault_evals_cases_record(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_cohorts(
@@ -14486,9 +15184,11 @@ async fn vault_evals_cohorts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_cohorts_open(
@@ -14520,9 +15220,11 @@ async fn vault_evals_cohorts_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_exposure(
@@ -14551,9 +15253,11 @@ async fn vault_evals_exposure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_sufficiency(
@@ -14585,9 +15289,11 @@ async fn vault_evals_sufficiency(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_labels_blocked(
@@ -14619,9 +15325,11 @@ async fn vault_evals_labels_blocked(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_evals_labels_pick(
@@ -14653,9 +15361,11 @@ async fn vault_evals_labels_pick(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers(
@@ -14687,9 +15397,11 @@ async fn vault_coach_training_offers(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_get(
@@ -14722,9 +15434,11 @@ async fn vault_coach_training_offers_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_trigger(
@@ -14757,9 +15471,11 @@ async fn vault_coach_training_offers_trigger(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_result(
@@ -14792,9 +15508,11 @@ async fn vault_coach_training_offers_result(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_answer(
@@ -14827,9 +15545,11 @@ async fn vault_coach_training_offers_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_undo(
@@ -14862,9 +15582,11 @@ async fn vault_coach_training_offers_undo(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_candidates(
@@ -14902,9 +15624,11 @@ async fn vault_coach_training_offers_candidates(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_candidates_prepare(
@@ -14945,9 +15669,11 @@ async fn vault_coach_training_offers_candidates_prepare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_pilots_prepare(
@@ -14985,9 +15711,11 @@ async fn vault_coach_training_offers_pilots_prepare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_pilots_complete(
@@ -15025,9 +15753,11 @@ async fn vault_coach_training_offers_pilots_complete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_pilots_get(
@@ -15065,9 +15795,11 @@ async fn vault_coach_training_offers_pilots_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_coach_training_offers_sources(
@@ -15100,9 +15832,11 @@ async fn vault_coach_training_offers_sources(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_research_bind(
@@ -15244,9 +15978,11 @@ async fn vault_research_evaluate_split(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_research_mark_invalid(
@@ -15542,9 +16278,11 @@ async fn vault_authority_handoff_alarms(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_authority_handoff_alarms_acknowledge(
@@ -15582,9 +16320,11 @@ async fn vault_authority_handoff_alarms_acknowledge(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_roots_requests_cancel(
@@ -15617,9 +16357,11 @@ async fn vault_roots_requests_cancel(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_roots_requests_create(
@@ -15652,9 +16394,11 @@ async fn vault_roots_requests_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_roots_requests_list(
@@ -15686,9 +16430,11 @@ async fn vault_roots_requests_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_owner_work_get(
@@ -15717,9 +16463,11 @@ async fn vault_owner_work_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cleanup_run(
@@ -15748,9 +16496,11 @@ async fn vault_cleanup_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cleanup_review(
@@ -15779,9 +16529,11 @@ async fn vault_cleanup_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_cleanup_decide(
@@ -15810,9 +16562,11 @@ async fn vault_cleanup_decide(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_archive_delete_preview(
@@ -15888,9 +16642,11 @@ async fn vault_usage_events_undecodable(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_usage_events_remove_undecodable(
@@ -15924,9 +16680,11 @@ async fn vault_usage_events_remove_undecodable(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_usage_repair_receipts(
@@ -15958,9 +16716,11 @@ async fn vault_usage_repair_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_entities_mention(
@@ -15989,9 +16749,11 @@ async fn vault_entities_mention(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_place(
@@ -16023,9 +16785,11 @@ async fn vault_legal_holds_place(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_widen(
@@ -16057,9 +16821,11 @@ async fn vault_legal_holds_widen(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_list(
@@ -16088,9 +16854,11 @@ async fn vault_legal_holds_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_log(
@@ -16119,9 +16887,11 @@ async fn vault_legal_holds_log(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_lift_and_erase(
@@ -16154,9 +16924,11 @@ async fn vault_legal_holds_lift_and_erase(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_legal_holds_withdraw_erase(
@@ -16189,9 +16961,11 @@ async fn vault_legal_holds_withdraw_erase(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_courtesy_delete_send(
@@ -16223,9 +16997,11 @@ async fn vault_courtesy_delete_send(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_courtesy_delete_sent(
@@ -16257,9 +17033,11 @@ async fn vault_courtesy_delete_sent(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_courtesy_delete_incoming(
@@ -16291,9 +17069,11 @@ async fn vault_courtesy_delete_incoming(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_courtesy_delete_answer(
@@ -16325,9 +17105,11 @@ async fn vault_courtesy_delete_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_list(
@@ -16359,9 +17141,11 @@ async fn vault_embedding_spaces_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_declare(
@@ -16393,9 +17177,11 @@ async fn vault_embedding_spaces_declare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_bind(
@@ -16427,9 +17213,11 @@ async fn vault_embedding_spaces_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_one_space(
@@ -16462,9 +17250,11 @@ async fn vault_embedding_spaces_one_space(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_retire(
@@ -16496,9 +17286,11 @@ async fn vault_embedding_spaces_retire(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_move(
@@ -16530,9 +17322,11 @@ async fn vault_embedding_spaces_move(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_move_check(
@@ -16565,9 +17359,11 @@ async fn vault_embedding_spaces_move_check(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_move_approve(
@@ -16600,9 +17396,11 @@ async fn vault_embedding_spaces_move_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_move_undo(
@@ -16635,9 +17433,11 @@ async fn vault_embedding_spaces_move_undo(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_move_abandon(
@@ -16670,9 +17470,11 @@ async fn vault_embedding_spaces_move_abandon(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_probes_list(
@@ -16705,9 +17507,11 @@ async fn vault_embedding_spaces_probes_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_probes_put(
@@ -16740,9 +17544,11 @@ async fn vault_embedding_spaces_probes_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_embedding_spaces_probes_delete(
@@ -16775,9 +17581,11 @@ async fn vault_embedding_spaces_probes_delete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_policy_owner_get(
@@ -16806,9 +17614,11 @@ async fn vault_policy_owner_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_policy_owner_configure(
@@ -16840,9 +17650,11 @@ async fn vault_policy_owner_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_policy_owner_row_change(
@@ -16874,9 +17686,11 @@ async fn vault_policy_owner_row_change(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_policy_outbound_decide(
@@ -16915,9 +17729,11 @@ async fn vault_policy_outbound_decide(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_policy_relay_decide(
@@ -16956,9 +17772,11 @@ async fn vault_policy_relay_decide(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_approve_once(
@@ -16990,9 +17808,11 @@ async fn vault_consent_approve_once(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_calls_approve_once(
@@ -17025,9 +17845,11 @@ async fn vault_connectors_calls_approve_once(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_deny(
@@ -17056,9 +17878,11 @@ async fn vault_consent_deny(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_create_standing_grant(
@@ -17091,9 +17915,11 @@ async fn vault_consent_create_standing_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_create_auto_weave_grant(
@@ -17126,9 +17952,11 @@ async fn vault_consent_create_auto_weave_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_registry(
@@ -17157,9 +17985,11 @@ async fn vault_consent_registry(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_failure_signals_held(
@@ -17192,9 +18022,11 @@ async fn vault_consent_failure_signals_held(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_revoke(
@@ -17223,9 +18055,11 @@ async fn vault_consent_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_bypass_grant_warning(
@@ -17258,9 +18092,11 @@ async fn vault_consent_bypass_grant_warning(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_create_bypass_grant(
@@ -17293,9 +18129,11 @@ async fn vault_consent_create_bypass_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_active_bypass_grants(
@@ -17328,9 +18166,11 @@ async fn vault_consent_active_bypass_grants(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_bypassed_effect_receipts(
@@ -17368,9 +18208,11 @@ async fn vault_consent_bypassed_effect_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_policy(
@@ -17403,9 +18245,11 @@ async fn vault_consent_graduation_policy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_policy_set(
@@ -17438,9 +18282,11 @@ async fn vault_consent_graduation_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_policy_clear(
@@ -17473,9 +18319,11 @@ async fn vault_consent_graduation_policy_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_stats(
@@ -17507,9 +18355,11 @@ async fn vault_consent_graduation_stats(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_outcome(
@@ -17542,9 +18392,11 @@ async fn vault_consent_graduation_outcome(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_offers(
@@ -17577,9 +18429,11 @@ async fn vault_consent_graduation_offers(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_answer(
@@ -17612,9 +18466,11 @@ async fn vault_consent_graduation_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_trust_table(
@@ -17647,9 +18503,11 @@ async fn vault_consent_graduation_trust_table(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_settings_unpin(
@@ -17687,9 +18545,11 @@ async fn vault_consent_graduation_settings_unpin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consent_graduation_demote(
@@ -17722,9 +18582,11 @@ async fn vault_consent_graduation_demote(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_consent_graduation_demote(
@@ -17775,9 +18637,11 @@ async fn vault_gate_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_gate_policy_put(
@@ -17806,9 +18670,11 @@ async fn vault_gate_policy_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_gate_policy_propose(
@@ -17859,9 +18725,11 @@ async fn vault_gate_checker_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_gate_checker_set(
@@ -17890,9 +18758,11 @@ async fn vault_gate_checker_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_learning_read(
@@ -17921,9 +18791,11 @@ async fn vault_learning_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_learning_projection(
@@ -17955,9 +18827,11 @@ async fn vault_learning_projection(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_confess(
@@ -17986,9 +18860,11 @@ async fn vault_seal_confess(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_audit(
@@ -18016,9 +18892,11 @@ async fn vault_seal_audit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_receipt(
@@ -18047,9 +18925,11 @@ async fn vault_seal_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_pending(
@@ -18078,9 +18958,11 @@ async fn vault_seal_pending(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_run(
@@ -18108,9 +18990,11 @@ async fn vault_seal_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_seal_complete(
@@ -18139,9 +19023,11 @@ async fn vault_seal_complete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_learning(
@@ -18173,9 +19059,11 @@ async fn vault_settings_learning(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_learning_put(
@@ -18207,9 +19095,11 @@ async fn vault_settings_learning_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_learning_clear(
@@ -18241,9 +19131,11 @@ async fn vault_settings_learning_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_code_run_lifts(
@@ -18275,9 +19167,11 @@ async fn vault_secrets_code_run_lifts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_lift_history(
@@ -18309,9 +19203,11 @@ async fn vault_secrets_lift_history(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_register(
@@ -18344,9 +19240,11 @@ async fn vault_secrets_register(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_rotate(
@@ -18379,9 +19277,11 @@ async fn vault_secrets_rotate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_rewrap(
@@ -18414,9 +19314,11 @@ async fn vault_secrets_rewrap(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_revoke(
@@ -18449,9 +19351,11 @@ async fn vault_secrets_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_custody_get(
@@ -18483,9 +19387,11 @@ async fn vault_secrets_custody_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_secrets_custody_submit(
@@ -18518,9 +19424,11 @@ async fn vault_secrets_custody_submit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_widen_proposals(
@@ -18549,9 +19457,11 @@ async fn vault_widen_proposals(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_widen_proposals_approve(
@@ -18583,9 +19493,11 @@ async fn vault_widen_proposals_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_widen_proposals_decline(
@@ -18617,9 +19529,11 @@ async fn vault_widen_proposals_decline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_review(
@@ -18657,9 +19571,11 @@ async fn vault_claims_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_settle(
@@ -18697,9 +19613,11 @@ async fn vault_claims_settle(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_craft_candidates(
@@ -18728,9 +19646,11 @@ async fn vault_craft_candidates(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_craft_candidates_answer(
@@ -18762,9 +19682,11 @@ async fn vault_craft_candidates_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_wake_policy_set(
@@ -18797,9 +19719,11 @@ async fn vault_settings_wake_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_inference_defaults(
@@ -18832,9 +19756,11 @@ async fn vault_settings_inference_defaults(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_inference_defaults_replace(
@@ -18873,9 +19799,11 @@ async fn vault_settings_inference_defaults_replace(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_lenses_propose(
@@ -18948,9 +19876,11 @@ async fn vault_lenses_activate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_lenses_deactivate(
@@ -18982,9 +19912,11 @@ async fn vault_lenses_deactivate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_lenses_list(
@@ -19084,9 +20016,11 @@ async fn vault_lenses_select(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_lenses_resolve(
@@ -19133,9 +20067,11 @@ async fn vault_lenses_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_lenses_result_set_action(
@@ -19183,9 +20119,11 @@ async fn vault_lenses_result_set_action(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_lenses_default(
     server: &Arc<SyncServer>,
@@ -19227,9 +20165,11 @@ async fn vault_lenses_default(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_disclosure_offer(
@@ -19283,9 +20223,11 @@ async fn vault_disclosure_ceiling_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_disclosure_ceiling_set(
@@ -19317,9 +20259,11 @@ async fn vault_disclosure_ceiling_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_disclosure_ceiling_clear(
@@ -19351,9 +20295,11 @@ async fn vault_disclosure_ceiling_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_disclosure_reveals(
@@ -19385,9 +20331,11 @@ async fn vault_disclosure_reveals(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_disclosure_reveals_answer(
@@ -19420,9 +20368,11 @@ async fn vault_disclosure_reveals_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn reveal(
@@ -19510,9 +20460,11 @@ async fn self_use(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_secrets_materialize(
@@ -19550,9 +20502,11 @@ async fn self_secrets_materialize(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_secrets_renew(
@@ -19590,9 +20544,11 @@ async fn self_secrets_renew(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_secrets_teardown(
@@ -19630,9 +20586,11 @@ async fn self_secrets_teardown(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_secrets_use(
@@ -19670,9 +20628,11 @@ async fn self_secrets_use(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shares_create(
@@ -19723,9 +20683,11 @@ async fn vault_shares_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shares_view(
@@ -19754,9 +20716,11 @@ async fn vault_shares_view(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn host_compact(
@@ -19794,9 +20758,11 @@ async fn host_compact(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn host_wake(
@@ -19834,9 +20800,11 @@ async fn host_wake(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn host_budget_hit(
@@ -19874,9 +20842,11 @@ async fn host_budget_hit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_replay(
@@ -19905,9 +20875,11 @@ async fn vault_hooks_replay(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_due(
@@ -19936,9 +20908,11 @@ async fn vault_hooks_regen_due(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_get(
@@ -19967,9 +20941,11 @@ async fn vault_hooks_regen_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_adopt(
@@ -20001,9 +20977,11 @@ async fn vault_hooks_regen_adopt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_publish_approval(
@@ -20036,9 +21014,11 @@ async fn vault_artifacts_publish_approval(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_publish(
@@ -20070,9 +21050,11 @@ async fn vault_artifacts_publish(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_repoint(
@@ -20104,9 +21086,11 @@ async fn vault_artifacts_repoint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_pointer(
@@ -20138,9 +21122,11 @@ async fn vault_artifacts_pointer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_unpublish(
@@ -20172,9 +21158,11 @@ async fn vault_artifacts_unpublish(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_link_token(
@@ -20206,9 +21194,11 @@ async fn vault_artifacts_link_token(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_register(
@@ -20241,9 +21231,11 @@ async fn vault_artifacts_live_preview_register(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_read(
@@ -20282,9 +21274,11 @@ async fn vault_artifacts_live_preview_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_close(
@@ -20317,9 +21311,11 @@ async fn vault_artifacts_live_preview_close(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_invite(
@@ -20352,9 +21348,11 @@ async fn vault_artifacts_live_preview_invite(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_revoke_invite(
@@ -20392,9 +21390,11 @@ async fn vault_artifacts_live_preview_revoke_invite(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_share(
@@ -20427,9 +21427,11 @@ async fn vault_artifacts_live_preview_share(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_live_preview_revoke_share(
@@ -20467,9 +21469,11 @@ async fn vault_artifacts_live_preview_revoke_share(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_view(
@@ -21073,9 +22077,11 @@ async fn vault_code_symbols_declare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_symbols_renew(
@@ -21107,9 +22113,11 @@ async fn vault_code_symbols_renew(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_symbols_release(
@@ -21141,9 +22149,11 @@ async fn vault_code_symbols_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_proposal_submit(
@@ -21175,9 +22185,11 @@ async fn vault_code_proposal_submit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_conflict_record(
@@ -21209,9 +22221,11 @@ async fn vault_code_conflict_record(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_conflict_view(
@@ -21243,9 +22257,11 @@ async fn vault_code_conflict_view(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_proposal_resolve(
@@ -21277,9 +22293,11 @@ async fn vault_code_proposal_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_proposal_review(
@@ -21311,9 +22329,11 @@ async fn vault_code_proposal_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_proposal_settle(
@@ -21345,9 +22365,11 @@ async fn vault_code_proposal_settle(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_proposal_settlement(
@@ -21379,9 +22401,11 @@ async fn vault_code_proposal_settlement(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_oplog(
@@ -21409,9 +22433,11 @@ async fn vault_code_oplog(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn execute_code(
@@ -21454,9 +22480,11 @@ async fn execute_code(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_model_heal_count(
@@ -21488,9 +22516,11 @@ async fn vault_code_model_heal_count(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_type_diagnostics(
@@ -21522,9 +22552,11 @@ async fn vault_code_type_diagnostics(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_waits_resolve(
@@ -21556,9 +22588,11 @@ async fn vault_code_waits_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_waits_receipt(
@@ -21590,9 +22624,11 @@ async fn vault_code_waits_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_results_status(
@@ -21621,9 +22657,11 @@ async fn vault_results_status(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_results_recover(
@@ -21652,9 +22690,11 @@ async fn vault_results_recover(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_results_read(
@@ -21683,9 +22723,11 @@ async fn vault_results_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_results_slice(
@@ -21714,9 +22756,11 @@ async fn vault_results_slice(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_repo_diff(
@@ -21767,9 +22811,11 @@ async fn vault_code_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_export_preview(
@@ -21807,9 +22853,11 @@ async fn vault_code_export_preview(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_export_preview_read(
@@ -21847,9 +22895,11 @@ async fn vault_code_export_preview_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_import(
@@ -21878,9 +22928,11 @@ async fn vault_code_import(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_repos_get(
@@ -21909,9 +22961,11 @@ async fn vault_code_repos_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_forks_get(
@@ -21940,9 +22994,11 @@ async fn vault_code_forks_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_imports_create(
@@ -21974,9 +23030,11 @@ async fn vault_code_imports_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_imports_get(
@@ -22005,9 +23063,11 @@ async fn vault_code_imports_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_ingress_get(
@@ -22036,9 +23096,11 @@ async fn vault_code_ingress_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_register(
@@ -22070,9 +23132,11 @@ async fn vault_code_origin_register(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_get(
@@ -22104,9 +23168,11 @@ async fn vault_code_origin_mirror_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_plan(
@@ -22138,9 +23204,11 @@ async fn vault_code_origin_mirror_plan(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_set(
@@ -22172,9 +23240,11 @@ async fn vault_code_origin_mirror_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_strategy(
@@ -22207,9 +23277,11 @@ async fn vault_code_origin_mirror_strategy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_clear(
@@ -22241,9 +23313,11 @@ async fn vault_code_origin_mirror_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_mirror_push(
@@ -22275,9 +23349,11 @@ async fn vault_code_origin_mirror_push(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_request(
@@ -22310,9 +23386,11 @@ async fn vault_code_origin_publish_request(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_review(
@@ -22345,9 +23423,11 @@ async fn vault_code_origin_publish_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_get(
@@ -22379,9 +23459,11 @@ async fn vault_code_origin_publish_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_approve(
@@ -22414,9 +23496,11 @@ async fn vault_code_origin_publish_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_execute(
@@ -22449,9 +23533,11 @@ async fn vault_code_origin_publish_execute(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publish_cancel(
@@ -22484,9 +23570,11 @@ async fn vault_code_origin_publish_cancel(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_authority_get(
@@ -22519,9 +23607,11 @@ async fn vault_code_origin_authority_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_authority_set(
@@ -22554,9 +23644,11 @@ async fn vault_code_origin_authority_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_origin_publications(
@@ -22588,9 +23680,11 @@ async fn vault_code_origin_publications(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_bind(
@@ -22622,9 +23716,11 @@ async fn vault_code_checkout_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_claim(
@@ -22656,9 +23752,11 @@ async fn vault_code_checkout_claim(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_get(
@@ -22690,9 +23788,11 @@ async fn vault_code_checkout_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_renew(
@@ -22724,9 +23824,11 @@ async fn vault_code_checkout_renew(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_reclaim(
@@ -22758,9 +23860,11 @@ async fn vault_code_checkout_reclaim(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_takeover(
@@ -22792,9 +23896,11 @@ async fn vault_code_checkout_takeover(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_publish(
@@ -22826,9 +23932,11 @@ async fn vault_code_checkout_publish(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_settle(
@@ -22860,9 +23968,11 @@ async fn vault_code_checkout_settle(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checkout_teardown(
@@ -22894,9 +24004,11 @@ async fn vault_code_checkout_teardown(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_views_materialize(
@@ -22928,9 +24040,11 @@ async fn vault_code_views_materialize(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_views_get(
@@ -22959,9 +24073,11 @@ async fn vault_code_views_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_views_read(
@@ -22990,9 +24106,11 @@ async fn vault_code_views_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_views_action(
@@ -23024,9 +24142,11 @@ async fn vault_code_views_action(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_views_build(
@@ -23055,9 +24175,11 @@ async fn vault_code_views_build(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_cache_get(
@@ -23086,9 +24208,11 @@ async fn vault_code_cache_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_cache_reuse(
@@ -23117,9 +24241,11 @@ async fn vault_code_cache_reuse(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_snapshots_ingest(
@@ -23151,9 +24277,11 @@ async fn vault_code_snapshots_ingest(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_snapshots_get(
@@ -23185,9 +24313,11 @@ async fn vault_code_snapshots_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_snapshots_read(
@@ -23219,9 +24349,11 @@ async fn vault_code_snapshots_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_symbols_definitions(
@@ -23253,9 +24385,11 @@ async fn vault_code_symbols_definitions(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_enqueue(
@@ -23287,9 +24421,11 @@ async fn vault_code_merge_queue_enqueue(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_stage(
@@ -23321,9 +24457,11 @@ async fn vault_code_merge_queue_stage(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_observe(
@@ -23355,9 +24493,11 @@ async fn vault_code_merge_queue_observe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_requeue_survivors(
@@ -23395,9 +24535,11 @@ async fn vault_code_merge_queue_requeue_survivors(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_land_reviewed(
@@ -23430,9 +24572,11 @@ async fn vault_code_merge_queue_land_reviewed(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_settle_slow(
@@ -23465,9 +24609,11 @@ async fn vault_code_merge_queue_settle_slow(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_recover(
@@ -23499,9 +24645,11 @@ async fn vault_code_merge_queue_recover(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_init(
@@ -23533,9 +24681,11 @@ async fn vault_code_merge_queue_init(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_check(
@@ -23567,9 +24717,11 @@ async fn vault_code_merge_queue_check(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_diagnose(
@@ -23602,9 +24754,11 @@ async fn vault_code_merge_queue_diagnose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_check_status(
@@ -23637,9 +24791,11 @@ async fn vault_code_merge_queue_check_status(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_checks_get(
@@ -23668,9 +24824,11 @@ async fn vault_code_checks_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_review_policy_get(
@@ -23714,9 +24872,11 @@ async fn vault_code_merge_queue_review_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_review_policy_set(
@@ -23760,9 +24920,11 @@ async fn vault_code_merge_queue_review_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_merge_queue_export_green(
@@ -23795,9 +24957,11 @@ async fn vault_code_merge_queue_export_green(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_export(
@@ -23848,9 +25012,11 @@ async fn vault_agents_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_get(
@@ -23878,9 +25044,11 @@ async fn vault_agents_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_update(
@@ -23909,9 +25077,11 @@ async fn vault_agents_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_dreaming_get(
@@ -23943,9 +25113,11 @@ async fn vault_agents_dreaming_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_dreaming_set(
@@ -23977,9 +25149,11 @@ async fn vault_agents_dreaming_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_grants_mint(
@@ -24012,9 +25186,11 @@ async fn vault_agents_grants_mint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_grants_revoke(
@@ -24047,9 +25223,11 @@ async fn vault_agents_grants_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_git_push_mint(
@@ -24082,9 +25260,11 @@ async fn vault_repo_git_push_mint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_git_push_revoke(
@@ -24117,9 +25297,11 @@ async fn vault_repo_git_push_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_read_grants_grant(
@@ -24153,9 +25335,11 @@ async fn vault_connectors_read_grants_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_read_grants_revoke(
@@ -24189,9 +25373,11 @@ async fn vault_connectors_read_grants_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_anchor_bind(
@@ -24220,9 +25406,11 @@ async fn vault_repo_anchor_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_snapshots_get(
@@ -24261,9 +25449,11 @@ async fn vault_repo_snapshots_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_snapshots_read(
@@ -24302,9 +25492,11 @@ async fn vault_repo_snapshots_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_symbols_definitions(
@@ -24343,9 +25535,11 @@ async fn vault_repo_symbols_definitions(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_views_get(
@@ -24384,9 +25578,11 @@ async fn vault_repo_views_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_views_read(
@@ -24425,9 +25621,11 @@ async fn vault_repo_views_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_merge_queue_observe(
@@ -24466,9 +25664,11 @@ async fn vault_repo_merge_queue_observe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_snapshots_ingest(
@@ -24507,9 +25707,11 @@ async fn vault_repo_snapshots_ingest(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_work_open(
@@ -24548,9 +25750,11 @@ async fn vault_repo_work_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_symbols_declare(
@@ -24589,9 +25793,11 @@ async fn vault_repo_symbols_declare(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_symbols_renew(
@@ -24630,9 +25836,11 @@ async fn vault_repo_symbols_renew(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_symbols_release(
@@ -24671,9 +25879,11 @@ async fn vault_repo_symbols_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_proposal_submit(
@@ -24712,9 +25922,11 @@ async fn vault_repo_proposal_submit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_merge_queue_enqueue(
@@ -24753,9 +25965,11 @@ async fn vault_repo_merge_queue_enqueue(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_checkout_bind(
@@ -24794,9 +26008,11 @@ async fn vault_repo_checkout_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_export(
@@ -24835,9 +26051,11 @@ async fn vault_repo_export(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_base(
@@ -24866,9 +26084,11 @@ async fn vault_agents_base(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_standing_blocks_configure(
@@ -24901,9 +26121,11 @@ async fn vault_standing_blocks_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_standing_blocks_reconfigure(
@@ -24936,9 +26158,11 @@ async fn vault_standing_blocks_reconfigure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_standing_blocks_get(
@@ -24970,9 +26194,11 @@ async fn vault_standing_blocks_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_standing_blocks_list(
@@ -25004,9 +26230,11 @@ async fn vault_standing_blocks_list(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_save(
@@ -25035,9 +26263,11 @@ async fn vault_workflows_save(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_get(
@@ -25066,9 +26296,11 @@ async fn vault_workflows_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_update(
@@ -25097,9 +26329,11 @@ async fn vault_workflows_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_dispatch(
@@ -25131,9 +26365,11 @@ async fn vault_workflows_dispatch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_dispatch_bound(
@@ -25171,9 +26407,11 @@ async fn vault_workflows_dispatch_bound(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workflows_status(
@@ -25202,9 +26440,11 @@ async fn vault_workflows_status(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_task_types_pin(
@@ -25233,9 +26473,11 @@ async fn vault_task_types_pin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_task_types_get(
@@ -25264,9 +26506,11 @@ async fn vault_task_types_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_spawn_get(
@@ -25295,9 +26539,11 @@ async fn vault_agents_spawn_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_spawn(
@@ -25326,9 +26572,11 @@ async fn vault_agents_spawn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_tasks_cancel_force(
@@ -25360,9 +26608,11 @@ async fn vault_tasks_cancel_force(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_tasks_comm_widen_revoke(
@@ -25400,9 +26650,11 @@ async fn vault_tasks_comm_widen_revoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_branches_get(
@@ -25434,9 +26686,11 @@ async fn vault_runs_branches_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_pause(
@@ -25509,9 +26763,11 @@ async fn vault_consults_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workspace_establish(
@@ -25543,9 +26799,11 @@ async fn vault_workspace_establish(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workspace_members_onboard(
@@ -25578,9 +26836,11 @@ async fn vault_workspace_members_onboard(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_workspace_roster(
@@ -25609,9 +26869,11 @@ async fn vault_workspace_roster(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_agents_export_pack(
@@ -25753,9 +27015,11 @@ async fn vault_artifacts_review_slides(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_ask(
@@ -25784,9 +27048,11 @@ async fn vault_artifacts_ask(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_admit(
@@ -25815,9 +27081,11 @@ async fn vault_artifacts_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_critic_review(
@@ -25846,9 +27114,11 @@ async fn vault_critic_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_propose_outline(
@@ -25930,9 +27200,11 @@ async fn vault_artifacts_keep_outline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_decline_outline(
@@ -25971,9 +27243,11 @@ async fn vault_artifacts_decline_outline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_design_deck(
@@ -26819,9 +28093,11 @@ async fn vault_projects_confirm(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_projects_roster_write(
@@ -27206,9 +28482,11 @@ async fn vault_messages_react(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_rooms_host(
@@ -27549,9 +28827,11 @@ async fn vault_skills_pack_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_outcomes_project(
@@ -27583,9 +28863,11 @@ async fn vault_skills_outcomes_project(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_outcomes_get(
@@ -27617,9 +28899,11 @@ async fn vault_skills_outcomes_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_manifest_read(
@@ -27651,9 +28935,11 @@ async fn vault_models_manifest_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_manifest_replace(
@@ -27685,9 +28971,11 @@ async fn vault_models_manifest_replace(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_web_connector(
@@ -27719,9 +29007,11 @@ async fn vault_settings_web_connector(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_settings_web_connector_replace(
@@ -27754,9 +29044,11 @@ async fn vault_settings_web_connector_replace(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_connectors_web_usage(
@@ -27788,9 +29080,11 @@ async fn vault_connectors_web_usage(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_oneironer_bind(
@@ -27822,9 +29116,11 @@ async fn vault_models_oneironer_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_routes_read(
@@ -27856,9 +29152,11 @@ async fn vault_models_routes_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_routes_replace(
@@ -27890,9 +29188,11 @@ async fn vault_models_routes_replace(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_roles_read(
@@ -27924,9 +29224,11 @@ async fn vault_models_roles_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_roles_invoke(
@@ -27958,9 +29260,11 @@ async fn vault_models_roles_invoke(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_skills_attribution_settle(
@@ -27994,9 +29298,11 @@ async fn vault_skills_attribution_settle(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_read(
     server: &Arc<SyncServer>,
@@ -28028,9 +29334,11 @@ async fn vault_skills_attribution_read(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_evidence_record(
     server: &Arc<SyncServer>,
@@ -28068,9 +29376,11 @@ async fn vault_skills_attribution_evidence_record(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_project(
     server: &Arc<SyncServer>,
@@ -28103,9 +29413,11 @@ async fn vault_skills_attribution_project(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_judgments(
     server: &Arc<SyncServer>,
@@ -28138,9 +29450,11 @@ async fn vault_skills_attribution_judgments(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_proposals(
     server: &Arc<SyncServer>,
@@ -28173,9 +29487,11 @@ async fn vault_skills_attribution_proposals(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn vault_skills_attribution_positive_retire(
     server: &Arc<SyncServer>,
@@ -28213,9 +29529,11 @@ async fn vault_skills_attribution_positive_retire(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_steps_submit(
     server: &Arc<SyncServer>,
@@ -28242,9 +29560,11 @@ async fn ai_steps_submit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_steps_receipt(
@@ -28272,9 +29592,11 @@ async fn ai_steps_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_streams_open(
@@ -28303,9 +29625,11 @@ async fn ai_streams_open(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_streams_subscribe(
     server: &Arc<SyncServer>,
@@ -28333,9 +29657,11 @@ async fn ai_streams_subscribe(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_streams_events(
     server: &Arc<SyncServer>,
@@ -28363,9 +29689,11 @@ async fn ai_streams_events(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_streams_detach(
     server: &Arc<SyncServer>,
@@ -28393,9 +29721,11 @@ async fn ai_streams_detach(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_streams_abort(
     server: &Arc<SyncServer>,
@@ -28423,9 +29753,11 @@ async fn ai_streams_abort(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_streams_terminal(
     server: &Arc<SyncServer>,
@@ -28453,9 +29785,11 @@ async fn ai_streams_terminal(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn ai_reply(
     server: &Arc<SyncServer>,
@@ -28493,9 +29827,11 @@ async fn ai_reply(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_receipts_context(
@@ -28568,9 +29904,11 @@ async fn ai_voice_asr_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_asr_hypothesis(
@@ -28602,9 +29940,11 @@ async fn ai_voice_asr_hypothesis(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_asr_finalize(
@@ -28633,9 +29973,11 @@ async fn ai_voice_asr_finalize(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_asr_close(
@@ -28664,9 +30006,11 @@ async fn ai_voice_asr_close(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_start(
@@ -28694,9 +30038,11 @@ async fn ai_voice_start(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_audio(
@@ -28724,9 +30070,11 @@ async fn ai_voice_audio(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_events(
@@ -28754,9 +30102,11 @@ async fn ai_voice_events(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_ack(
@@ -28784,9 +30134,11 @@ async fn ai_voice_ack(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_usage(
@@ -28814,9 +30166,11 @@ async fn ai_voice_usage(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_tool(
@@ -28854,9 +30208,11 @@ async fn ai_voice_tool(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_end(
@@ -28884,9 +30240,11 @@ async fn ai_voice_end(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_voice_close(
@@ -28914,9 +30272,11 @@ async fn ai_voice_close(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_anonymous_chat(
@@ -28962,9 +30322,11 @@ async fn vault_models_catalog_refresh(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_catalog_get(
@@ -28996,9 +30358,11 @@ async fn vault_models_catalog_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_catalog_diff(
@@ -29030,9 +30394,11 @@ async fn vault_models_catalog_diff(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_nominate(
@@ -29064,9 +30430,11 @@ async fn vault_models_trials_nominate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_get(
@@ -29098,9 +30466,11 @@ async fn vault_models_trials_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_approve(
@@ -29132,9 +30502,11 @@ async fn vault_models_trials_approve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_run(
@@ -29166,9 +30538,11 @@ async fn vault_models_trials_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_resend_arm(
@@ -29200,9 +30574,11 @@ async fn vault_models_trials_resend_arm(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_trials_complete(
@@ -29234,9 +30610,11 @@ async fn vault_models_trials_complete(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_bindings_propose(
@@ -29268,9 +30646,11 @@ async fn vault_models_bindings_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_bindings_get(
@@ -29302,9 +30682,11 @@ async fn vault_models_bindings_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_bindings_read(
@@ -29336,9 +30718,11 @@ async fn vault_models_bindings_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_bindings_accept(
@@ -29370,9 +30754,11 @@ async fn vault_models_bindings_accept(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_models_bindings_deny(
@@ -29404,9 +30790,11 @@ async fn vault_models_bindings_deny(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_options(
@@ -29434,9 +30822,11 @@ async fn ai_options(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_image(
@@ -29464,9 +30854,11 @@ async fn ai_image(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_speech(
@@ -29494,9 +30886,11 @@ async fn ai_speech(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_packs_put(
@@ -29525,9 +30919,11 @@ async fn vault_voices_packs_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_render_consent(
@@ -29559,9 +30955,11 @@ async fn vault_voices_render_consent(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_targets_provision(
@@ -29593,9 +30991,11 @@ async fn vault_voices_targets_provision(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_targets_evict(
@@ -29627,9 +31027,11 @@ async fn vault_voices_targets_evict(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_inspect(
@@ -29658,9 +31060,11 @@ async fn vault_voices_inspect(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_voices_lineage(
@@ -29689,9 +31093,11 @@ async fn vault_voices_lineage(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_transcribe(
@@ -29719,9 +31125,11 @@ async fn ai_transcribe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_embed(
@@ -29749,9 +31157,11 @@ async fn ai_embed(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_video(
@@ -29779,9 +31189,11 @@ async fn ai_video(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_video_poll(
@@ -29809,9 +31221,11 @@ async fn ai_video_poll(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_video_cancel(
@@ -29839,9 +31253,11 @@ async fn ai_video_cancel(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_ask_image(
@@ -29869,9 +31285,11 @@ async fn ai_ask_image(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn ai_verdict(
@@ -29899,9 +31317,11 @@ async fn ai_verdict(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_graph_ask(
@@ -29929,9 +31349,11 @@ async fn vault_graph_ask(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_graph_admit(
@@ -29960,9 +31382,11 @@ async fn vault_graph_admit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_create(
@@ -29991,9 +31415,11 @@ async fn vault_questions_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_edit(
@@ -30022,9 +31448,11 @@ async fn vault_questions_edit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_pause(
@@ -30053,9 +31481,11 @@ async fn vault_questions_pause(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_backfill(
@@ -30087,9 +31517,11 @@ async fn vault_questions_backfill(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_read(
@@ -30118,9 +31550,11 @@ async fn vault_questions_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_outcome_windows(
@@ -30153,9 +31587,11 @@ async fn vault_questions_outcome_windows(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_answers(
@@ -30187,9 +31623,11 @@ async fn vault_questions_answers(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_refresh(
@@ -30221,9 +31659,11 @@ async fn vault_questions_refresh(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_outcomes(
@@ -30255,9 +31695,11 @@ async fn vault_questions_outcomes(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_outcomes_project(
@@ -30290,9 +31732,11 @@ async fn vault_questions_outcomes_project(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_questions_schedule(
@@ -30324,9 +31768,11 @@ async fn vault_questions_schedule(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_bands_read(
@@ -30358,9 +31804,11 @@ async fn vault_decisions_bands_read(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_bands_learn(
@@ -30392,9 +31840,11 @@ async fn vault_decisions_bands_learn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_bands_enforce(
@@ -30426,9 +31876,11 @@ async fn vault_decisions_bands_enforce(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_asks_answer(
@@ -30460,9 +31912,11 @@ async fn vault_decisions_asks_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_asks_climb(
@@ -30494,9 +31948,11 @@ async fn vault_decisions_asks_climb(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_decisions_asks_confirm_grant(
@@ -30529,9 +31985,11 @@ async fn vault_decisions_asks_confirm_grant(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_decisions_asks(
@@ -30560,9 +32018,11 @@ async fn self_decisions_asks(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn connector_list(
@@ -30644,9 +32104,11 @@ async fn connector_call(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn connector_schema(
@@ -30811,9 +32273,11 @@ async fn vault_booking_availability(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_booking_book(
@@ -30842,9 +32306,11 @@ async fn vault_booking_book(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_booking_reschedule(
@@ -30876,9 +32342,11 @@ async fn vault_booking_reschedule(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_booking_cancel(
@@ -30907,9 +32375,11 @@ async fn vault_booking_cancel(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_booking_constraint_turn(
@@ -30941,9 +32411,11 @@ async fn vault_booking_constraint_turn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_booking_page_token(
@@ -30975,9 +32447,11 @@ async fn vault_booking_page_token(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_invite(
@@ -31028,9 +32502,11 @@ async fn calendar_ics_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_ics_poll(
@@ -31059,9 +32535,11 @@ async fn calendar_ics_poll(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_ics_status(
@@ -31090,9 +32568,11 @@ async fn calendar_ics_status(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_passports_read(
@@ -31168,9 +32648,11 @@ async fn calendar_connector_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_connector_get(
@@ -31199,9 +32681,11 @@ async fn calendar_connector_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_connector_pull(
@@ -31233,9 +32717,11 @@ async fn calendar_connector_pull(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_connector_write(
@@ -31267,9 +32753,11 @@ async fn calendar_connector_write(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_connector_kill(
@@ -31301,9 +32789,11 @@ async fn calendar_connector_kill(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_imip_configure(
@@ -31335,9 +32825,11 @@ async fn calendar_imip_configure(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn calendar_imip_get(
@@ -31366,9 +32858,11 @@ async fn calendar_imip_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_create(
@@ -31422,9 +32916,11 @@ async fn vault_calendar_ics_import(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_occurrences(
@@ -31478,9 +32974,11 @@ async fn vault_calendar_instances_move(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_read(
@@ -31622,9 +33120,11 @@ async fn vault_calendar_check_in_due(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_check_in_answer(
@@ -31656,9 +33156,11 @@ async fn vault_calendar_check_in_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_outcome_policy_get(
@@ -31691,9 +33193,11 @@ async fn vault_calendar_outcome_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_outcome_policy_set(
@@ -31726,9 +33230,11 @@ async fn vault_calendar_outcome_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_calendar_transcript_ingest(
@@ -31935,9 +33441,11 @@ async fn vault_writes_critical_confirm_pending(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_writes_critical_confirm_clear(
@@ -31976,9 +33484,11 @@ async fn vault_writes_critical_confirm_clear(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_writes_critical_confirm_decline(
@@ -32017,9 +33527,11 @@ async fn vault_writes_critical_confirm_decline(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_writes_critical_confirm_receipt(
@@ -32058,9 +33570,11 @@ async fn vault_writes_critical_confirm_receipt(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_writes_pending(
@@ -32213,9 +33727,11 @@ async fn vault_vectors_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_search_hybrid(
@@ -32296,9 +33812,11 @@ async fn vault_search_bm25(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
+        hook_notice,
     })
 }
 async fn vault_neighbors(
@@ -32771,9 +34289,11 @@ async fn vault_conversations_turns_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_conversations_records_append(
@@ -32806,9 +34326,11 @@ async fn vault_conversations_records_append(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_batch(
@@ -32836,9 +34358,11 @@ async fn vault_batch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_put(
@@ -33553,9 +35077,11 @@ async fn vault_artifacts_body_deck_preview(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_append(
@@ -33715,9 +35241,11 @@ async fn vault_runs_step(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_checkpoint(
@@ -33755,9 +35283,11 @@ async fn vault_runs_checkpoint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_turn_programs_admission(
@@ -33795,9 +35325,11 @@ async fn vault_turn_programs_admission(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_program(
@@ -33835,9 +35367,11 @@ async fn vault_runs_program(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_program_step(
@@ -33875,9 +35409,11 @@ async fn vault_runs_program_step(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_program_checkpoint(
@@ -33915,9 +35451,11 @@ async fn vault_runs_program_checkpoint(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_program_hold_release(
@@ -33950,9 +35488,11 @@ async fn vault_runs_program_hold_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_home_get(
@@ -33984,9 +35524,11 @@ async fn vault_consolidation_home_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_home_pick(
@@ -34019,9 +35561,11 @@ async fn vault_consolidation_home_pick(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_lineage(
@@ -34053,9 +35597,11 @@ async fn vault_consolidation_lineage(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_candidate_decisions(
@@ -34093,9 +35639,11 @@ async fn vault_consolidation_candidate_decisions(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_promote(
@@ -34133,9 +35681,11 @@ async fn vault_consolidation_promote(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_pin(
@@ -34173,9 +35723,11 @@ async fn vault_consolidation_pin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_frontier(
@@ -34213,9 +35765,11 @@ async fn vault_consolidation_frontier(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_accounting(
@@ -34253,9 +35807,11 @@ async fn vault_consolidation_accounting(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_consolidation_evidence(
@@ -34293,9 +35849,11 @@ async fn vault_consolidation_evidence(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_evidence(
@@ -34324,9 +35882,11 @@ async fn vault_sieve_evidence(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_evidence_replay(
@@ -34358,9 +35918,11 @@ async fn vault_sieve_evidence_replay(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_cadence(
@@ -34389,9 +35951,11 @@ async fn vault_sieve_cadence(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_settlements(
@@ -34423,9 +35987,11 @@ async fn vault_sieve_settlements(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_settlements_get(
@@ -34457,9 +36023,11 @@ async fn vault_sieve_settlements_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_queue(
@@ -34488,9 +36056,11 @@ async fn vault_sieve_queue(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_retained(
@@ -34519,9 +36089,11 @@ async fn vault_sieve_retained(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_receipts(
@@ -34550,9 +36122,11 @@ async fn vault_sieve_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_policy(
@@ -34581,9 +36155,11 @@ async fn vault_sieve_policy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_policy_set(
@@ -34612,9 +36188,11 @@ async fn vault_sieve_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_recipe_policy(
@@ -34646,9 +36224,11 @@ async fn vault_sieve_recipe_policy(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_recipe_policy_set(
@@ -34680,9 +36260,11 @@ async fn vault_sieve_recipe_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_lease(
@@ -34711,9 +36293,11 @@ async fn vault_sieve_lease(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_sieve_lease_refill(
@@ -34745,9 +36329,11 @@ async fn vault_sieve_lease_refill(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_free_time_policy_get(
@@ -34779,9 +36365,11 @@ async fn vault_free_time_policy_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_free_time_policy_set(
@@ -34814,9 +36402,11 @@ async fn vault_free_time_policy_set(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_free_time_policy_set_as(
@@ -34848,9 +36438,11 @@ async fn vault_free_time_policy_set_as(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_free_time_cycles(
@@ -34879,9 +36471,11 @@ async fn vault_free_time_cycles(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_free_time_cycle(
@@ -34910,9 +36504,11 @@ async fn vault_free_time_cycle(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_vet(
@@ -34950,9 +36546,11 @@ async fn vault_claims_vet(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_vetting(
@@ -34990,9 +36588,11 @@ async fn vault_claims_vetting(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_memory_signal_extraction(
@@ -35031,9 +36631,11 @@ async fn vault_memory_signal_extraction(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_memory_signal_extraction_result(
@@ -35073,9 +36675,11 @@ async fn vault_memory_signal_extraction_result(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_seed(
@@ -35131,9 +36735,11 @@ async fn vault_channel_identities_provision(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_bind(
@@ -35165,9 +36771,11 @@ async fn vault_channel_identities_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_fulfill(
@@ -35200,9 +36808,11 @@ async fn vault_channel_identities_fulfill(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_rotate(
@@ -35235,9 +36845,11 @@ async fn vault_channel_identities_rotate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_release(
@@ -35270,9 +36882,11 @@ async fn vault_channel_identities_release(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_route_inbound(
@@ -35310,9 +36924,11 @@ async fn vault_channel_identities_route_inbound(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_get(
@@ -35394,9 +37010,11 @@ async fn vault_channel_identities_selection_update(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_channel_identities_select(
@@ -35495,9 +37113,11 @@ async fn vault_delivery_window_policy_put(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_delivery_window_policy_list(
@@ -35552,9 +37172,11 @@ async fn vault_delivery_window_policy_retract(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_delivery_window_evaluate(
@@ -35636,9 +37258,11 @@ async fn vault_summaries_create(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_read(
@@ -35720,9 +37344,11 @@ async fn vault_summaries_keep(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_edit(
@@ -35760,9 +37386,11 @@ async fn vault_summaries_edit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_patch(
@@ -35800,9 +37428,11 @@ async fn vault_summaries_patch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_regenerate(
@@ -35840,9 +37470,11 @@ async fn vault_summaries_regenerate(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_proposals_read(
@@ -35903,9 +37535,11 @@ async fn vault_summaries_proposals_merge(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_proposals_switch(
@@ -35944,9 +37578,11 @@ async fn vault_summaries_proposals_switch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_summaries_proposals_reject(
@@ -35985,9 +37621,11 @@ async fn vault_summaries_proposals_reject(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_bless_brief_kind(
@@ -36063,9 +37701,11 @@ async fn vault_notes_follow_citation(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_create(
@@ -36411,9 +38051,11 @@ async fn vault_notes_history_purge(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_history_purge_execute(
@@ -36446,9 +38088,11 @@ async fn vault_notes_history_purge_execute(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_history_purge_receipts(
@@ -36481,9 +38125,11 @@ async fn vault_notes_history_purge_receipts(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_editor_bind(
@@ -36521,9 +38167,11 @@ async fn vault_notes_editor_bind(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_editor_close(
@@ -36561,9 +38209,11 @@ async fn vault_notes_editor_close(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_notes_edit(
@@ -36818,9 +38468,11 @@ async fn vault_tasks_linear_mapping_edit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_tasks_linear_provenance(
@@ -36894,9 +38546,11 @@ async fn self_run_attach(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_folds_describe(
@@ -36934,9 +38588,11 @@ async fn self_folds_describe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_history(
@@ -36974,9 +38630,11 @@ async fn self_history(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_review(
@@ -37014,9 +38672,11 @@ async fn vault_runs_review(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_settle(
@@ -37055,9 +38715,11 @@ async fn vault_runs_settle(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_runs_settlement(
@@ -37095,9 +38757,11 @@ async fn vault_runs_settlement(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_revert_run(
@@ -37136,9 +38800,11 @@ async fn vault_revert_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_merge(
@@ -37171,9 +38837,11 @@ async fn vault_identity_merge(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_split(
@@ -37206,9 +38874,11 @@ async fn vault_identity_split(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_facet(
@@ -37241,9 +38911,11 @@ async fn vault_identity_facet(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_assert_distinct(
@@ -37276,9 +38948,11 @@ async fn vault_identity_assert_distinct(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_propose(
@@ -37311,9 +38985,11 @@ async fn vault_identity_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_undo(
@@ -37346,9 +39022,11 @@ async fn vault_identity_undo(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_resolve(
@@ -37377,9 +39055,11 @@ async fn vault_identity_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_events_get(
@@ -37411,9 +39091,11 @@ async fn vault_identity_events_get(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_proposals_resolve(
@@ -37447,9 +39129,11 @@ async fn vault_identity_proposals_resolve(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_identity_proposals_for_pair(
@@ -37482,9 +39166,11 @@ async fn vault_identity_proposals_for_pair(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_custody_members_drain_begin(
@@ -37517,9 +39203,11 @@ async fn vault_custody_members_drain_begin(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_custody_members_drain_commit(
@@ -37552,9 +39240,11 @@ async fn vault_custody_members_drain_commit(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_custody_members_drain_folder(
@@ -37587,9 +39277,11 @@ async fn vault_custody_members_drain_folder(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_custody_members_reenrol(
@@ -37621,9 +39313,11 @@ async fn vault_custody_members_reenrol(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_mail_pack_install(
@@ -37991,9 +39685,11 @@ async fn connector_answer(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_open(
@@ -38032,9 +39728,11 @@ async fn self_browser_open(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_observe(
@@ -38073,9 +39771,11 @@ async fn self_browser_observe(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_find(
@@ -38114,9 +39814,11 @@ async fn self_browser_find(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_click(
@@ -38155,9 +39857,11 @@ async fn self_browser_click(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_click_at(
@@ -38196,9 +39900,11 @@ async fn self_browser_click_at(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_type(
@@ -38237,9 +39943,11 @@ async fn self_browser_type(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_select(
@@ -38278,9 +39986,11 @@ async fn self_browser_select(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_wait_for(
@@ -38319,9 +40029,11 @@ async fn self_browser_wait_for(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_expect(
@@ -38360,9 +40072,11 @@ async fn self_browser_expect(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_screenshot(
@@ -38401,9 +40115,11 @@ async fn self_browser_screenshot(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_view(
@@ -38442,9 +40158,11 @@ async fn self_browser_view(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_crop(
@@ -38483,9 +40201,11 @@ async fn self_browser_crop(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_zoom(
@@ -38524,9 +40244,11 @@ async fn self_browser_zoom(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_batch(
@@ -38566,10 +40288,12 @@ async fn self_browser_batch(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post_counted(server, hooks, "self.browser.batch", output, decided)
             .await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_find(
@@ -38608,9 +40332,11 @@ async fn self_browser_library_find(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_draft(
@@ -38649,9 +40375,11 @@ async fn self_browser_library_draft(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_demonstration_start(
@@ -38691,9 +40419,11 @@ async fn self_browser_demonstration_start(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_demonstration_stop(
@@ -38733,9 +40463,11 @@ async fn self_browser_demonstration_stop(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_propose(
@@ -38774,9 +40506,11 @@ async fn self_browser_library_propose(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_retire(
@@ -38815,9 +40549,11 @@ async fn self_browser_library_retire(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_retired(
@@ -38856,9 +40592,11 @@ async fn self_browser_library_retired(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_library_run(
@@ -38898,6 +40636,7 @@ async fn self_browser_library_run(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post_counted(
             server,
@@ -38908,6 +40647,7 @@ async fn self_browser_library_run(
         )
         .await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_handover(
@@ -38946,9 +40686,11 @@ async fn self_browser_handover(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_browser_switch_engine(
@@ -38987,9 +40729,11 @@ async fn self_browser_switch_engine(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_claims_supersede(
@@ -39022,9 +40766,11 @@ async fn vault_claims_supersede(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_fold(
@@ -39063,9 +40809,11 @@ async fn self_fold(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_compact(
@@ -39103,9 +40851,11 @@ async fn self_compact(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_unfold(
@@ -39143,9 +40893,11 @@ async fn self_unfold(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_folds(
@@ -39183,9 +40935,11 @@ async fn self_folds(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn tasks_refuse(
@@ -39218,9 +40972,11 @@ async fn tasks_refuse(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_report_blocked(
@@ -39253,9 +41009,11 @@ async fn self_report_blocked(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_agents_spawn(
@@ -39288,9 +41046,11 @@ async fn self_agents_spawn(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_leader_split(
@@ -39323,9 +41083,11 @@ async fn self_leader_split(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_skills_call(
@@ -39358,9 +41120,11 @@ async fn self_skills_call(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn self_focus_refresh(
@@ -39400,9 +41164,11 @@ async fn self_focus_refresh(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn self_focus_subscribe(
     server: &Arc<SyncServer>,
@@ -39441,9 +41207,11 @@ async fn self_focus_subscribe(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 async fn self_focus_unsubscribe(
     server: &Arc<SyncServer>,
@@ -39482,9 +41250,11 @@ async fn self_focus_unsubscribe(
             return Err(error);
         }
     };
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    Ok(
+        FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)
+            .with_hook_notice(hook_notice),
+    )
 }
 /// The nested `readable` paths of each facade row that declares one (2690):
 /// a hook's rewrite of one meets its credential read check again.
