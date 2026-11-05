@@ -18,8 +18,9 @@ The settlement stores a required `external_reply` boolean beside its actual
 reply digest. It does not derive the boolean from approval, a verb name,
 `source_rows`, or the broad settlement outcome `Delivered`. The settlement
 facts digest includes the boolean under `oneiron:code-consent-settled:v2`.
-The native consent binding schema version is **3** (previously 2); the new
-settlement field has no default, migration, or old-format reader.
+The native consent binding schema version is **4**. The required settlement
+field introduced in schema 3 and the required frozen owner set introduced in
+schema 4 have no defaults, migrations, or old-format readers.
 
 Before each subsequent guest step dispatches, the canonical dispatcher
 joins the committed proof into its existing monotone lineage state. Reopening
@@ -38,3 +39,27 @@ into the base vault. It does not change browser lineage, hook retry rules,
 held-call delivery, grants, masking, output erasure, or pending bridge outcomes.
 Direct recorded SDK connector answers are a separate lineage supplier. These
 slices do not by themselves close every connector or session provenance path.
+
+## Shared-vault owner questions
+
+A held call freezes every live vault owner's identity in its minting writer,
+not just the lowest-ID owner. The frozen, sorted set is part of the binding
+digest under `oneiron:code-consent-binding:v2`. One native `People` TASK ask
+creates a member consult for each owner and registers the existing human
+followup path. Missing contact routes leave questions on the asks list; this
+does not claim delivery to a client without a route.
+
+Only an asked owner's own Human word is admitted, and the same word writer
+checks that the speaker is still a live vault owner before recording it or
+settling the TASK ask. A newly added owner is not silently added to the frozen
+question. The TASK ask's first-word receipt does not approve the held call.
+Later words remain evidence: if one speaker loses ownership before answering
+the consent wait, another still-live asked owner can give their own word and
+answer it. The consent operation reads the admitted word, not just the TASK
+ask's first-word selection.
+
+The first authenticated consent answer still wins in one writer. Existing
+sealed-target, same-speaker, current owner authentication, opener-slip lineage,
+original-caller authority, and effect-gate checks stay in place. This adds no
+quorum, extra approval step, new wait, public answer fields, or membership
+refresh on an already-open question.
