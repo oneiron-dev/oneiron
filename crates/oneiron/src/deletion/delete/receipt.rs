@@ -126,6 +126,12 @@ impl Vault {
                 crate::llm::erase_step_state_owner_in_txn(&self.store, &mut wtxn, id)?;
                 crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
+                #[cfg(feature = "sync")]
+                crate::sync::queue::clear_embed_job_home_claim_copy_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    id,
+                )?;
             }
             cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),

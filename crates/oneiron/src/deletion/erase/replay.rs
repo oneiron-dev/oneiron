@@ -329,6 +329,8 @@ impl Vault {
                 crate::llm::erase_step_state_owner_in_txn(&self.store, wtxn, id)?;
                 crate::store::erase_sync_response_owner_in_txn(&self.store, wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, wtxn, id)?;
+                #[cfg(feature = "sync")]
+                crate::sync::queue::clear_embed_job_home_claim_copy_in_txn(&self.store, wtxn, id)?;
             }
             // Cleanup's rows that name it go, as the registry's tear takes
             // them on every other erase (FIX 7517).

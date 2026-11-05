@@ -295,6 +295,8 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
         crate::llm::erase_step_state_owner_in_txn(store, txn, row)?;
         crate::store::erase_sync_response_owner_in_txn(store, txn, row)?;
         crate::store::erase_response_owner_in_txn(store, txn, row)?;
+        #[cfg(feature = "sync")]
+        crate::sync::queue::clear_embed_job_home_claim_copy_in_txn(store, txn, row)?;
     }
     Ok(())
 }
