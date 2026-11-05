@@ -14,8 +14,9 @@
 //! speaker is never dropped from an audience while it waits to be
 //! identified. Its "who is this?" ask (ILDF2 P4) is raised once, on the
 //! roster revision it first entered under. A speaker its roster placed but
-//! who is no room member gets its entry fact too, asked nothing; so does any
-//! speaker in a project room, which no PERSON entry is recorded for.
+//! who is covered by neither a member nor a live vault Owner gets its entry
+//! fact too, asked nothing; so does any such speaker in a project room,
+//! which no PERSON entry is recorded for.
 //!
 //! The owner answers P5 on a private surface: [`Vault::confirm_container_attendee`]
 //! clears the entry's contact standing under a frozen offer and sets the
@@ -301,15 +302,17 @@ impl Memory<'_> {
     }
 
     /// Records the entry into `container`, the committed room its voice
-    /// session is heard in, of each speaker of `roster` the room's members
-    /// do not cover: the speakers its live call must place there, as the
-    /// room's reads require them (FIX 1388/1389 C1). Each enters as a
+    /// session is heard in, of each speaker of `roster` that neither its
+    /// members nor a positive live vault Owner covers: the speakers its
+    /// live call must place there, as the room's reads require them
+    /// (FIX 1388/1389 C1). Each enters as a
     /// [`ContainerAttendee::Speaker`] by the session's ref and the capture's
     /// speaker key, under the roster's revision, the keys the interlocutor
     /// read asks the identity at. A speaker the roster could not place goes
-    /// through [`Self::container_attendee_entered`]; one it placed, as no
-    /// member, enters asked nothing. A voice host that binds its session to
-    /// a room calls it once the matcher has written the roster;
+    /// through [`Self::container_attendee_entered`]; one it placed, covered
+    /// by neither a member nor a live vault Owner, enters asked nothing.
+    /// A voice host that binds its session to a room calls it once the
+    /// matcher has written the roster;
     /// `trigger_turn`, `candidates` (live contacts, in its order, offered by
     /// an unplaced speaker's ask only) and `until` are its own. A speaker
     /// already entered replays its stored entry. Answers each "who is
@@ -322,9 +325,16 @@ impl Memory<'_> {
         candidates: &[EntityId],
         until: u64,
     ) -> MemoryResult<Vec<TaskAskReceipt>> {
-        let members = self.vault().room_audience_members(container)?;
+        let required = {
+            let vault = self.vault();
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let members = vault.room_audience_members_in_txn(&txn, container)?;
+            crate::conversation::required_live_speakers(roster, &members, |identity| {
+                crate::disclosure::live_vault_owner_person_in_txn(vault, &txn, identity)
+            })?
+        };
         let mut asks = Vec::new();
-        for speaker in crate::conversation::required_live_speakers(roster, &members) {
+        for speaker in required {
             let (ask, candidates) = if speaker.placed {
                 (EntryAsk::Unasked, Vec::new())
             } else {
