@@ -77,8 +77,9 @@ canonical selection, including private worlds. Scheduled, managed-hourly and pre
 use a separate automatic selection. When an entity's known world dependencies are all resolved
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
 and the document rows the native checkpoint getter assigns wholly to it. The same native ownership
-check covers NOTE heads, head-document indexes and overrides, and typed-body heads and head snapshots.
-Forks, proposal snapshots, receipts, bundles and pins keep their existing treatment. Attachment occurrence
+check covers NOTE heads, head-document indexes and overrides, typed-body heads and head snapshots,
+office source pointers, and blob artifact current heads. Forks, proposal snapshots, receipts, bundles,
+pins, exports and version histories keep their existing treatment. Attachment occurrence
 rows whose native body getter binds every part to that record are also left out, including
 their body descriptors and digest-holder rows, before body files are counted. A shared body
 file still travels when another included row names it; its digest is never a world identity.
