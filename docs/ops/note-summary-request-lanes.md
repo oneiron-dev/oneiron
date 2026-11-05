@@ -33,9 +33,12 @@ widen the saved source-reading bound. The native planner checks the current
 requester, frozen credential and source permissions again. Projection identity,
 principal declarations and other summary targets are unchanged.
 
-A full transferred credential can still freeze as principal before the new
-metadata is captured; that separate existing case remains open. No old-format
-reader or migration is supplied.
+A full non-guest credential whose native key lacks the owner's full floor
+keeps its credential id even when its read scope is top and it names no records.
+It therefore reaches the same native basis capture and live-credential checks,
+rather than becoming its holder's principal lane. This includes a transferred
+owner credential. Native owner keys, bare-identity keys and the existing full
+guest principal path are unchanged. No old-format reader or migration is supplied.
 
 The request's existing named-map version remains 2; only its private declaration
 metadata changes. Matching engine/server deployment needs no SDK, worker,
