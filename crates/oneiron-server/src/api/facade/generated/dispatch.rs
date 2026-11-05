@@ -38789,6 +38789,7 @@ async fn self_fold(
                 &hooks,
             )),
             facade_door_input(&mut hooks)?,
+            oneiron::code_run::actions::PreHookedFold::from_pre(&hooks),
         )
         .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
