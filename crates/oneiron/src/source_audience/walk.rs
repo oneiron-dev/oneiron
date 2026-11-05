@@ -286,24 +286,145 @@ struct Judge<'a, 's, 't> {
     rows: BTreeMap<EntityId, bool>,
 }
 
+/// A row the judge has opened: decided at once, or waiting on what its
+/// words came from.
+enum Opened {
+    Decided(bool),
+    Waiting(Frame),
+}
+
+/// One row being judged on the heap: every row of `every` must read, and,
+/// when `supports` names any, one of them must.
+struct Frame {
+    id: EntityId,
+    every: Vec<EntityId>,
+    supports: Vec<EntityId>,
+    next_every: usize,
+    next_support: usize,
+    /// Whether the row last visited was a support.
+    visiting_support: bool,
+    decided: Option<bool>,
+}
+
+/// What a frame asks next.
+enum Step {
+    Visit(EntityId),
+    Done(bool),
+}
+
+impl Frame {
+    const fn new(id: EntityId, every: Vec<EntityId>, supports: Vec<EntityId>) -> Self {
+        Self {
+            id,
+            every,
+            supports,
+            next_every: 0,
+            next_support: 0,
+            visiting_support: false,
+            decided: None,
+        }
+    }
+
+    /// Takes the verdict on the row last visited: one of `every` that does
+    /// not read decides no; one support that reads decides yes.
+    fn take(&mut self, readable: bool) {
+        if self.visiting_support {
+            if readable {
+                self.decided = Some(true);
+            }
+        } else if !readable {
+            self.decided = Some(false);
+        }
+    }
+
+    fn next(&mut self) -> Step {
+        if let Some(verdict) = self.decided {
+            return Step::Done(verdict);
+        }
+        while let Some(source) = self.every.get(self.next_every).copied() {
+            self.next_every += 1;
+            if source != self.id {
+                self.visiting_support = false;
+                return Step::Visit(source);
+            }
+        }
+        if self.supports.is_empty() {
+            return Step::Done(true);
+        }
+        match self.supports.get(self.next_support).copied() {
+            // A row that supports itself reads as it does.
+            Some(source) if source == self.id => Step::Done(true),
+            Some(source) => {
+                self.next_support += 1;
+                self.visiting_support = true;
+                Step::Visit(source)
+            }
+            None => Step::Done(false),
+        }
+    }
+}
+
 impl Judge<'_, '_, '_> {
+    /// The verdict on `id`, its ancestry judged on a heap stack of frames, so
+    /// a chain of any length is read without growing the call stack (FIX
+    /// 12559 follow-up). A row in progress reads as `true` to a cycle back
+    /// to it: a cycle adds no restriction.
     fn row_readable(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
         if let Some(known) = self.rows.get(&id) {
             return Ok(*known);
         }
-        // In progress: a cycle back to this row adds no restriction.
-        self.rows.insert(id, true);
-        let verdict = self.judge_row(id, raw)?;
-        self.rows.insert(id, verdict);
-        Ok(verdict)
+        let mut stack = match self.open(id, raw)? {
+            Opened::Decided(verdict) => {
+                self.rows.insert(id, verdict);
+                return Ok(verdict);
+            }
+            Opened::Waiting(frame) => {
+                self.rows.insert(id, true);
+                vec![frame]
+            }
+        };
+        let mut finished: Option<bool> = None;
+        while let Some(frame) = stack.last_mut() {
+            if let Some(readable) = finished.take() {
+                frame.take(readable);
+            }
+            match frame.next() {
+                Step::Done(verdict) => {
+                    let done = frame.id;
+                    stack.pop();
+                    self.rows.insert(done, verdict);
+                    finished = Some(verdict);
+                }
+                Step::Visit(source) => {
+                    if let Some(known) = self.rows.get(&source) {
+                        finished = Some(*known);
+                        continue;
+                    }
+                    match self.open(source, None)? {
+                        Opened::Decided(verdict) => {
+                            self.rows.insert(source, verdict);
+                            finished = Some(verdict);
+                        }
+                        Opened::Waiting(frame) => {
+                            self.rows.insert(source, true);
+                            stack.push(frame);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(finished.unwrap_or(true))
     }
 
-    fn judge_row(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
+    /// What the row `id` needs: its own binding's verdict, its own bytes
+    /// (`raw`, else as this view holds them), and the rows its words came
+    /// from.
+    fn open(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<Opened> {
         let binding = super::binding_in(self.vault, self.txn, &id)?;
         if let Some(policy) = binding
             && !self.policy_readable(policy)?
         {
-            return Ok(false);
+            return Ok(Opened::Decided(false));
         }
         let bytes = match raw {
             Some(raw) => raw.to_vec(),
@@ -312,29 +433,16 @@ impl Judge<'_, '_, '_> {
                     Some(bytes) => bytes,
                     // A row gone from this view carries no words to judge; its
                     // own binding, read above, still stands.
-                    None => return Ok(true),
+                    None => return Ok(Opened::Decided(true)),
                 }
             }
         };
         // A row a source landed whose binding is absent here reads to no one.
         if binding.is_none() && source_marked_in(self.dbs, self.txn, id, &bytes)? {
-            return Ok(false);
+            return Ok(Opened::Decided(false));
         }
         let (every, supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;
-        for source in every {
-            if source != id && !self.row_readable(source, None)? {
-                return Ok(false);
-            }
-        }
-        if supports.is_empty() {
-            return Ok(true);
-        }
-        for source in supports {
-            if source == id || self.row_readable(source, None)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(Opened::Waiting(Frame::new(id, every, supports)))
     }
 
     fn policy_readable(&mut self, policy: EntityId) -> Result<bool> {
