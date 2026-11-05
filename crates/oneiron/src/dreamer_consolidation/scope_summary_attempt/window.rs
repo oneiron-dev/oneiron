@@ -15,11 +15,12 @@ use std::collections::BTreeMap;
 impl<E> ScopeSummaryExecutor<'_, E> {
     /// The tokens one call's input may fill on the model: the host's count,
     /// else the vault's own row for the model, its context less the output
-    /// it reserves where that is below it, as the host counts. `None` when
-    /// neither is known: a zero context, or a row that did not read.
+    /// it reserves where that is below it, as the host counts. A zero host
+    /// count is unknown and does not fall back to the vault's row. A zero
+    /// registry context or a row that did not read is likewise unknown.
     pub(super) fn session_window(&self, vault: &Vault) -> Option<u64> {
-        if let Some(window) = self.window_tokens.filter(|window| *window > 0) {
-            return Some(window);
+        if let Some(window) = self.window_tokens {
+            return (window > 0).then_some(window);
         }
         let row = match vault.model_registry_row(&self.model) {
             Ok(row) => row?,
