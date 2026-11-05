@@ -638,6 +638,14 @@ cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
 
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates.
+
 ## 3. Let the Dreamer work
 
 The Dreamer consolidates witnessed turns into claims in the background. It
