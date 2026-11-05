@@ -501,7 +501,7 @@ const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// pass. The compaction door does exactly that
 /// ([`crate::error::CompactionPacketError::SessionMembershipNotRecorded`]).
 pub(crate) fn turn_session_membership_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<EntityId>> {

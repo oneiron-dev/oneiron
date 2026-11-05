@@ -2,7 +2,10 @@
 
 use std::{ptr, sync::Arc};
 
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{EdgeActorClass, EntityId, Memory, Vault};
+
+use super::limit_questions::NativeLimitQuestions;
 
 pub(super) const DEFAULT_FFI_SEARCH_LIMIT: u32 = 10;
 
@@ -193,6 +196,9 @@ pub struct OneironVault {
     /// The caller a bound handle writes as (`oneiron_vault_bind`); `None`
     /// writes as the host, through the bare vault doors.
     pub(super) binding: Option<VaultBinding>,
+    /// This handle's engine-limit questions when it opened its vault raw;
+    /// `None` on a bound handle or an engine-shared handle, which ask none.
+    pub(super) native_limit_questions: Option<Arc<NativeLimitQuestions>>,
 }
 
 /// The caller one bound handle names (OF-063, FIX 3387): the principal its
@@ -212,6 +218,25 @@ impl OneironVault {
             vault,
             dimensions,
             binding: None,
+            native_limit_questions: None,
+        }
+    }
+
+    /// A handle over a freshly raw-opened `vault`: installs one fresh
+    /// collector where the vault's engine rows ask and measures the opened
+    /// width once, inline. Only the two raw opens call this, after their
+    /// open (and profile, where applicable) has succeeded.
+    pub(super) fn opened(vault: Arc<Vault>, dimensions: usize) -> Self {
+        let questions = Arc::new(NativeLimitQuestions::new());
+        vault.set_limit_ask(questions.clone());
+        if let Ok(measured) = u64::try_from(vault.embedding_dimensions()) {
+            let _ = vault.measure_limit(EngineLimit::EmbeddingDimensions, measured);
+        }
+        Self {
+            vault,
+            dimensions,
+            binding: None,
+            native_limit_questions: Some(questions),
         }
     }
 

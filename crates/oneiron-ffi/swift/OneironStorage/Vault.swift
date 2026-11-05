@@ -497,6 +497,28 @@ public final class Vault {
         }
         return string
     }
+
+    /// The latest engine-limit questions this raw-opened vault asked, as a JSON array string:
+    /// nil on a bound handle or an engine-shared handle, which carry none, `"[]"` when no row
+    /// has been crossed yet. Each element is exactly `{"row", "bound", "measured"}` with full
+    /// `u64` digits; the caller's JSON parser chooses its own number precision. The read does
+    /// not clear. UTF-8 bytes cross exactly; a malformed payload throws `utf8`, never nil.
+    public func nativeLimitQuestions() throws -> String? {
+        var available: UInt8 = 0
+        var buffer = OneironBuffer(ptr: nil, len: 0, cap: 0)
+        let status = oneiron_vault_native_limit_questions(handle, &available, &buffer)
+        try OneironStorageError.check(status)
+        defer {
+            _ = oneiron_buffer_free(buffer)
+        }
+        guard available != 0 else {
+            return nil
+        }
+        guard let string = String(data: bytes(buffer), encoding: .utf8) else {
+            throw OneironStorageError.utf8
+        }
+        return string
+    }
 }
 
 /// The app's side of an `Engine`. The engine calls these on threads of its
