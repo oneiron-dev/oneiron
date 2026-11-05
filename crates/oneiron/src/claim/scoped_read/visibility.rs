@@ -211,6 +211,9 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
+        if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
         if self.actor_key.vault_owner_ref().is_some() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited

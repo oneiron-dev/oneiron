@@ -48,6 +48,10 @@
 //! the same action on the same inputs. A call whose inputs were not
 //! captured states none, and is never read as equal to another.
 
+mod call_agent_witness;
+
+pub(crate) use call_agent_witness::unread_call_receipt_actor_in_txn;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -532,7 +536,9 @@ impl Vault {
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
-        CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+        let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+        let stored = CALL_RECEIPTS.decode_value(&stored)?;
+        call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
         Ok(receipt_ref)
     }
 
@@ -575,7 +581,9 @@ impl Vault {
                 served_records: Vec::new(),
                 ..original
             };
-            CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.decode_value(&stored)?;
+            call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
             Ok(Some(receipt_ref))
         })
     }
@@ -621,6 +629,7 @@ impl Vault {
             receipt.attempt_ref = None;
             CALL_RECEIPTS.put(self, wtxn, &id, &receipt)?;
         }
+        call_agent_witness::erase_actor_in_txn(self, wtxn, actor)?;
         Ok(())
     }
 }
