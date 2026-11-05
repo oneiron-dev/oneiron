@@ -194,6 +194,7 @@ mod stream_recovery_doors;
 mod streamed_claims;
 mod summary_doors;
 mod support_grant_doors;
+mod sync_quarantine_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;

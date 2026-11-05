@@ -33,11 +33,12 @@ mod timer;
 pub use self::hybrid::HybridTick;
 pub(crate) use self::hybrid::wait_for_change;
 pub use self::model::{
-    ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, Tick, TickSource, WakeSignal,
+    ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, QueuedSessionHint, Tick, TickSource,
+    WakeSignal,
 };
 pub(crate) use self::model::{SessionHintCarrier, SessionHintStamp};
 pub use self::policy::{IdleSample, WakePolicyTicks};
-pub use self::push::{HintPusher, PushTick, TickPushError, WakePusher};
+pub use self::push::{AppOpenApplyHandle, HintPusher, PushTick, TickPushError, WakePusher};
 pub(crate) use self::timer::sleep_until_due;
 pub use self::timer::{AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick};
 
