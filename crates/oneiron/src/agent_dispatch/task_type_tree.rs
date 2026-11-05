@@ -137,13 +137,22 @@ pub fn load_vault_type_tree_sourced(
     projects: &BTreeSet<EntityId>,
 ) -> Result<SourcedTypeTree> {
     let txn = vault.store.env.read_txn()?;
+    load_vault_type_tree_sourced_in_txn(vault, &txn, projects)
+}
+
+/// The same source selection in the caller's existing snapshot or writer.
+pub(crate) fn load_vault_type_tree_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    projects: &BTreeSet<EntityId>,
+) -> Result<SourcedTypeTree> {
     let mut reads = Reads::Named(BTreeSet::new());
-    let tree = tree_in_force_in_txn(vault, &txn, None, &mut reads)?;
-    let head = head_in_force_in_txn(vault, &txn, None, &mut reads)?;
+    let tree = tree_in_force_in_txn(vault, txn, None, &mut reads)?;
+    let head = head_in_force_in_txn(vault, txn, None, &mut reads)?;
     let mut project_heads = BTreeMap::new();
     for project in projects {
         let mut project_reads = Reads::Named(BTreeSet::new());
-        let project_head = head_in_force_in_txn(vault, &txn, Some(*project), &mut project_reads)?;
+        let project_head = head_in_force_in_txn(vault, txn, Some(*project), &mut project_reads)?;
         project_heads.insert(*project, (project_head, project_reads.into_rows()));
     }
     Ok(SourcedTypeTree {

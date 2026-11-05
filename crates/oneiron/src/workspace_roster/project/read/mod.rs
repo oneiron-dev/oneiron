@@ -162,7 +162,7 @@ struct Overlay {
     chain: Vec<(ProjectRevisionHash, ProjectRevision)>,
 }
 
-struct ProjectAuthority {
+struct ProjectAuthorityRead {
     fold: Rc<AuthorityFold>,
     source_rows: Option<BTreeSet<EntityId>>,
 }
@@ -175,7 +175,7 @@ pub(crate) struct ProjectReader<'a, 't> {
     posture: HostingPrivacyPosture,
     kind: u8,
     root: Option<EntityId>,
-    fold: RefCell<Option<ProjectAuthority>>,
+    fold: RefCell<Option<ProjectAuthorityRead>>,
     read_rows: RefCell<Option<BTreeSet<EntityId>>>,
     overlay: Option<Overlay>,
     facts: RefCell<BTreeMap<EntityId, Option<Rc<Facts>>>>,
@@ -553,7 +553,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
             self.txn,
         )?;
         let fold = Rc::new((*view).clone());
-        *self.fold.borrow_mut() = Some(ProjectAuthority {
+        *self.fold.borrow_mut() = Some(ProjectAuthorityRead {
             fold: fold.clone(),
             source_rows: view.source_rows().cloned(),
         });
