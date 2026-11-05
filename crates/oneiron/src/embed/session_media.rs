@@ -489,33 +489,25 @@ impl Vault {
 }
 
 /// Drops, in every live room and retained sealed stretch, `id`'s staged media vector and device
-/// rows in each space `wtxn` declares and its `MediaVector` journal entries, in `wtxn`, the
-/// writer that deletes or erases it beside base's own ([`super::delete_media_vectors_in_txn`]),
-/// FIX 9398. A promotion keeps the room's copies of the vectors it replayed, so without this
-/// they would outlive the record until the room closes, and a later promotion of an entry staged
-/// after the cut would write one back. A room whose overlay lock is poisoned serves no read; it
-/// keeps its rows until it closes.
-///
-/// # Errors
-/// A store failure of `wtxn`.
-pub(crate) fn drop_room_media_copies_in_txn(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
+/// rows in every space, one retired since included, and its `MediaVector` journal entries, inside
+/// `_writer`, the writer that deletes or erases it beside base's own
+/// ([`super::delete_media_vectors_in_txn`]), FIX 9398. It runs before that writer commits, so no
+/// older room write can publish a dropped row again. A promotion keeps the room's copies of the
+/// vectors it replayed, so without this they would outlive the record until the room closes. A
+/// room whose overlay lock is poisoned serves no read; it keeps its rows until it closes.
+pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, id: &EntityId) {
     let overlays = store.off_record_sessions.live_overlay_handles();
     if overlays.is_empty() {
-        return Ok(());
+        return;
     }
+    let prefixes = super::space::repo_projection::media_row_prefixes();
     let ids = BTreeSet::from([*id]);
-    let keys = super::space::repo_projection::media_row_keys_in(store, wtxn, &ids)?;
     for overlay in overlays {
-        if let Err(error) = overlay.invalidate_repo_media_copies(&keys, &ids) {
+        if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, &ids) {
             tracing::warn!(
                 error = %error,
                 "a room keeps its staged media copies of a deleted record until it closes"
             );
         }
     }
-    Ok(())
 }

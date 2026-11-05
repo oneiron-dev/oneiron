@@ -6,13 +6,18 @@
 //!
 //! A delete or erase of a record drops them the same way (FIX 9398): a
 //! promotion keeps the room's copies of the vectors it replayed, byte-equal
-//! to base's, and base's go with the record, so the room's must go too.
+//! to base's, and base's go with the record, so the room's must go too. The
+//! copies are found by what the room stages, in every space, so a space
+//! retired since cannot keep one.
 use std::collections::BTreeSet;
+use std::ops::Bound;
 use std::sync::Arc;
 
 use crate::batch_op::BatchOp;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
+
+use crate::side_table::key::SideKey;
 
 use super::super::journal::JournalEntry;
 use super::super::keyspace::{
@@ -22,10 +27,12 @@ use super::ACTIVE_SEGMENT;
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
 
 impl SessionOverlay {
-    /// Drops the room's cached media vectors of `ids`: the vault-meta rows
-    /// at `keys` (their vector and device rows in every declared space) and
-    /// every `MediaVector` journal entry of one of `ids`. Puts, texts, edges,
-    /// turn ownership and every other entry stay.
+    /// Drops the room's cached media vectors of `ids`: every vault-meta row
+    /// it stages under one of `prefixes` as a copy of one of `ids` (a row key
+    /// is a prefix, then a `([u8; 16], EntityId)` side-table key: the space
+    /// key and the record), in any space, declared or retired since, with its
+    /// bookkeeping mark, and every `MediaVector` journal entry of one of
+    /// `ids`. Puts, texts, edges, turn ownership and every other entry stay.
     ///
     /// It runs inside the writer that changed the marks, or that deletes or
     /// erases one of `ids` (FIX 9398), before that writer commits, as a
@@ -43,7 +50,7 @@ impl SessionOverlay {
     /// Only a poisoned overlay lock.
     pub fn invalidate_repo_media_copies(
         self: &Arc<Self>,
-        keys: &BTreeSet<Vec<u8>>,
+        prefixes: &[&[u8]],
         ids: &BTreeSet<EntityId>,
     ) -> Result<()> {
         let stale = |entry: &JournalEntry| matches!(&entry.op, BatchOp::MediaVector { id, .. } if ids.contains(id));
@@ -57,15 +64,16 @@ impl SessionOverlay {
             };
             segment
                 .mutations
-                .retain(|mutation| !stages_row(mutation, keys));
+                .retain(|mutation| !stages_copy(mutation, prefixes, ids));
             segment.journal.retain(|entry| !stale(entry));
             segment.journal_bytes = segment
                 .journal
                 .iter()
                 .map(JournalEntry::byte_size)
                 .fold(0_usize, usize::saturating_add);
+            let keys = staged_copies(&segment.preview, prefixes, ids);
             let mut preview = segment.preview.as_ref().clone();
-            drop_rows(&mut preview, keys, &stale);
+            drop_rows(&mut preview, &keys, &stale);
             segment.preview = Arc::new(preview);
             true
         });
@@ -87,11 +95,12 @@ impl SessionOverlay {
             return Ok(());
         }
         let current = self.state.load_full();
-        if !same_thread && !holds_rows(&current, keys, &stale) {
+        let keys = staged_copies(&current, prefixes, ids);
+        if !same_thread && keys.is_empty() && !current.journal.iter().any(|entry| stale(&**entry)) {
             return Ok(());
         }
         let mut next = current.as_ref().clone();
-        drop_rows(&mut next, keys, &stale);
+        drop_rows(&mut next, &keys, &stale);
         self.state.store(Arc::new(next));
         drop(lifecycle);
         // A room stretch's charge follows what its overlay retains, this
@@ -101,26 +110,48 @@ impl SessionOverlay {
     }
 }
 
-/// Whether `state` stages a vault-meta row or a bookkeeping mark at one of
-/// `keys`, or holds a `stale` journal entry: what [`drop_rows`] would drop.
-fn holds_rows(
+/// Whether `key` is a copy of one of `ids`: one of `prefixes`, then a
+/// `([u8; 16], EntityId)` side-table key naming one of them.
+fn copy_of(key: &[u8], prefixes: &[&[u8]], ids: &BTreeSet<EntityId>) -> bool {
+    prefixes.iter().any(|prefix| {
+        key.strip_prefix(*prefix)
+            .and_then(<([u8; 16], EntityId) as SideKey>::decode_key)
+            .is_some_and(|(_, id)| ids.contains(&id))
+    })
+}
+
+/// The key of every vault-meta row `state` stages, or marks as bookkeeping,
+/// as a copy of one of `ids` under one of `prefixes`.
+fn staged_copies(
     state: &OverlayState,
-    keys: &BTreeSet<Vec<u8>>,
-    stale: &impl Fn(&JournalEntry) -> bool,
-) -> bool {
+    prefixes: &[&[u8]],
+    ids: &BTreeSet<EntityId>,
+) -> BTreeSet<Vec<u8>> {
     let slot = OverlayKeyspace::VaultMeta.slot();
-    let staged = match state.keyspaces[slot].as_ref() {
-        KeyspaceState::Single { rows, .. } => keys
-            .iter()
-            .any(|key| matches!(rows.get(key.as_slice()), Some(OverlayValue::Present(_)))),
-        KeyspaceState::DupSort { .. } => false,
-    };
-    staged
-        || state
-            .bookkeeping
-            .get(&slot)
-            .is_some_and(|marked| keys.iter().any(|key| marked.contains(key)))
-        || state.journal.iter().any(|entry| stale(&**entry))
+    let mut keys = BTreeSet::new();
+    for prefix in prefixes {
+        let from = (Bound::Included(*prefix), Bound::Unbounded);
+        if let KeyspaceState::Single { rows, .. } = state.keyspaces[slot].as_ref() {
+            keys.extend(
+                rows.range::<[u8], _>(from)
+                    .take_while(|(key, _)| key.starts_with(prefix))
+                    .filter(|(key, value)| {
+                        matches!(value, OverlayValue::Present(_)) && copy_of(key, prefixes, ids)
+                    })
+                    .map(|(key, _)| key.clone()),
+            );
+        }
+        if let Some(marked) = state.bookkeeping.get(&slot) {
+            keys.extend(
+                marked
+                    .range::<[u8], _>(from)
+                    .take_while(|key| key.starts_with(prefix))
+                    .filter(|key| copy_of(key, prefixes, ids))
+                    .cloned(),
+            );
+        }
+    }
+    keys
 }
 
 /// Drops the vault-meta rows at `keys`, their bookkeeping marks and every
@@ -142,9 +173,9 @@ fn drop_rows(
     state.recalculate_bytes();
 }
 
-/// Whether `mutation` stages (or marks as bookkeeping) a vault-meta row at
-/// one of `keys`.
-fn stages_row(mutation: &OverlayMutation, keys: &BTreeSet<Vec<u8>>) -> bool {
+/// Whether `mutation` stages (or marks as bookkeeping) a vault-meta row
+/// that is a copy of one of `ids` under one of `prefixes`.
+fn stages_copy(mutation: &OverlayMutation, prefixes: &[&[u8]], ids: &BTreeSet<EntityId>) -> bool {
     match mutation {
         OverlayMutation::Put {
             keyspace: OverlayKeyspace::VaultMeta,
@@ -154,7 +185,7 @@ fn stages_row(mutation: &OverlayMutation, keys: &BTreeSet<Vec<u8>>) -> bool {
         | OverlayMutation::Bookkeeping {
             keyspace: OverlayKeyspace::VaultMeta,
             key,
-        } => keys.contains(key),
+        } => copy_of(key, prefixes, ids),
         _ => false,
     }
 }
