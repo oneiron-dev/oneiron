@@ -54,6 +54,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -267,6 +268,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -289,6 +291,7 @@ impl PipelineBuilder<'_> {
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let mut read_suppressed = attempt.read_suppressed;
+        let mut read_suppressed_candidates = attempt.read_suppressed_candidates;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
         let mut disclosure_clamped = attempt.disclosure_clamped;
@@ -371,6 +374,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 read_suppressed = retry.read_suppressed;
+                read_suppressed_candidates = retry.read_suppressed_candidates;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
                 disclosure_clamped = retry.disclosure_clamped;
                 total_in_scope = retry.total_in_scope;
@@ -592,6 +596,7 @@ impl PipelineBuilder<'_> {
             pending_vectors,
             claims_suppressed,
             read_suppressed,
+            read_suppressed_candidates,
             cosine_ghosts_dampened,
             disclosure_clamped,
             total_in_scope,

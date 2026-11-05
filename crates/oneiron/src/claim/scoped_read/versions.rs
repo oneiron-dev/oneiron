@@ -166,13 +166,16 @@ impl<'v> ScopedRead<'v> {
             }
             _ => None,
         };
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -237,13 +240,16 @@ impl<'v> ScopedRead<'v> {
             pipeline = pipeline.with_temporal_now(as_of);
         }
         let results = pipeline.run_for_pack()?;
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
