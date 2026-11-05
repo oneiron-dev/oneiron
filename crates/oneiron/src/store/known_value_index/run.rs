@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{Keys, KnownSource, KnownValues, MatchedSpan, ValueOrigin, replace_spans};
 use crate::entity_id::EntityId;
@@ -88,10 +88,31 @@ impl RunKnownSource {
                 return Ok(None);
             };
             let data = text.as_bytes();
-            let custody = custody
-                .map(|known| known.matched_spans_except(data, |_| false))
-                .unwrap_or_default();
-            let spans = person_spans(person, data, &custody);
+            let mut spans = person.matched_spans_except(data, |_| false);
+            if spans.is_empty() {
+                return Ok(None);
+            }
+            if let Some(known) = custody {
+                // The original sink matches JSON bytes, not the unescaped Text.
+                let encoded = Zeroizing::new(serde_json::to_vec(text).map_err(|error| {
+                    Error::InvalidConfig(format!("result body encoding failed: {error}"))
+                })?);
+                let held = known.matched_spans_except(&encoded, |_| false);
+                let view = super::forms::json_view(&encoded);
+                spans.retain(|hit| {
+                    // One decode of a serialized string is quote + Text + quote.
+                    let quoted = (hit.span.start + 1)..(hit.span.end + 1);
+                    let encoded_span = match &view {
+                        Some(view) => view
+                            .source_mapped(quoted)
+                            .expect("serialized text maps every source byte"),
+                        None => quoted,
+                    };
+                    !held.iter().any(|held| {
+                        encoded_span.start < held.span.end && held.span.start < encoded_span.end
+                    })
+                });
+            }
             if spans.is_empty() {
                 return Ok(None);
             }
