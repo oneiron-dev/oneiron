@@ -33,13 +33,31 @@ Approval, usage reset, operation receipt, and the existing ID floor commit in
 one writer. Reopening the vault therefore does not turn a body-only approval ID
 into a reusable allocation. No second accounting ledger or clock is added.
 
+## Certain non-delivery and retry
+
+A certain non-delivery releases key, charter, and mixed reservations in its
+outcome writer. Prior possible delivery keeps the reservation. Before retry
+restores usage, each charter debit's original approval must still match the
+same key in that writer. A changed or missing approval skips that obsolete
+debit, even if a new approval uses the same positional row.
+
+Still-current debits keep their original entry IDs, amounts, and accounting
+times. Native window expiry and missing-row handling still apply. All owning
+rows, including repeated debits, co-actors, and catalog pools, must fit the
+existing combined-capacity preflight before any usage is restored. A blocked
+claim keeps its Released reservation, provider wait, and retry outcome; the
+existing owner-selected suspend policy still applies.
+
+Zero estimates and unpriced spend targets keep their original approvals without
+inventing an estimate entry. Done-time actual-cost reconciliation still checks
+each target's original approval before touching current usage.
+
 ## Scope
 
-This fixes current terminal release and Done-time spend reconciliation. It does
-not enable charter-backed non-delivery retry release or change uncertain or
-mixed retry behavior. [Reserved-versus-settled budget projections](effector-usage-lifecycle.md)
-now use those same native debit identities. The timing of budget ladder signals
-is separate work. Existing admission, limits, pricing, owner checks, and the
+Terminal release, retry restoration, and Done-time spend reconciliation share
+the original approval binding. [Reserved-versus-settled budget projections](effector-usage-lifecycle.md)
+use those same native debit identities. The timing of budget ladder signals is
+separate work. Existing admission, limits, pricing, owner checks, and the
 text/compiled approval checks remain unchanged.
 
 This is a source contract, not a runtime or timing measurement.

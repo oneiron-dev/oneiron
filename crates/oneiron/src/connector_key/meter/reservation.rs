@@ -103,6 +103,7 @@ pub(crate) fn release_effector_debits_in_txn(
 }
 
 /// Restores retained, still-live debits only if every owning row has room.
+/// Original charter approvals must still match before a debit is grouped.
 /// Preflight includes repeated debits of the same row and all co-actor/pool
 /// rows before writing any usage. A blocked retry keeps its released budget.
 pub(crate) fn restore_effector_debits_in_txn(
@@ -113,6 +114,16 @@ pub(crate) fn restore_effector_debits_in_txn(
 ) -> Result<BudgetBlock> {
     let mut grouped = std::collections::BTreeMap::new();
     for debit in debits {
+        if debit.row.source != EffectorBudgetRowSource::Key
+            || debit.approval != EffectorBudgetApproval::Key
+        {
+            let Some(record) = read_connector_key_in_txn(store, wtxn, &debit.key_ref)? else {
+                continue;
+            };
+            if !debit.approval.matches(&record, debit.row) {
+                continue;
+            }
+        }
         grouped
             .entry((debit.key_ref, debit.row))
             .or_insert_with(Vec::new)
