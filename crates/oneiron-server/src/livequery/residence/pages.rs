@@ -56,7 +56,7 @@ pub(super) fn search_pages(
     let forwarded = input.forwarded_caller(server, peer, &selector)?;
     *attribution = forwarded
         .as_ref()
-        .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
+        .map(|forwarded| ForwardedAttribution::of(&forwarded.caller).at(forwarded.locality));
     let admission = match &forwarded {
         Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,
