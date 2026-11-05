@@ -100,8 +100,17 @@ finishes only after its writer and growth waits return. The encoded Vec frees
 before its allocated charge is released; cached native buffers keep their own
 charge until their physical free callback.
 
-This covers the native dirty-page malloc request, including its actual heap-only
-prefix. It does not cover IDL/control allocations, encryption stash, mmap, read
-pages, every metadata/overlay copy or native physical-disk/CoW costs. The disk
-claim above still covers encoded values only. This is not complete FIX8125,
-whole-heap coverage or runtime proof.
+The account also covers encrypted read-cache heap buffers allocated during the
+held write. Each physical buffer has one native ticket. Environment and
+transaction cache entries hold references to that buffer, not copied tickets.
+A replacement admits its full allocation beside the old buffer and validates
+it before changing the old cache entry. Old cursor plaintext remains alive
+through the replacement's retained-buffer chain. Removing cache entries and
+closing the environment release their references. Only the final reference
+zeros the buffer's actual allocation, frees it, and releases its charge.
+
+This covers dirty-page and encrypted read-cache malloc requests, including
+their actual heap-only prefixes. It does not cover IDL/control allocations,
+encryption stash, mmap, every metadata/overlay copy or native physical-disk/CoW
+costs. The disk claim above still covers encoded values only. This is not
+complete FIX8125, whole-heap coverage or runtime proof.
