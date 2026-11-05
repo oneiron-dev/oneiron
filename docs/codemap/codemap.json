@@ -19459,7 +19459,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 9
      }
     },
