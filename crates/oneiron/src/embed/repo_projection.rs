@@ -211,6 +211,25 @@ pub(crate) fn repo_media_bytes(
     Ok(crate::memory::asset_media_in(body, read)?.map(|(_, bytes)| bytes))
 }
 
+/// Referenced blob bytes from the caller's snapshot, materializing a native
+/// file-plane body before its media envelope checks the size and hash.
+///
+/// # Errors
+/// A store failure, or a failure to read the file body.
+pub(crate) fn repo_blob_body_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    match crate::store::asset_file_in_txn(&vault.store, txn, id, &row.body)? {
+        Some(manifest) => vault.asset_file_body(txn, &manifest).map(Some),
+        None => Ok(Some(row.body)),
+    }
+}
+
 /// What a mask change on the blobs `sources` reaches beyond the records
 /// `entities` that hold them (FIX 7608 S3F), in `wtxn`, the writer that
 /// changed the marks, each with the same affected set: the texts a model
@@ -281,12 +300,7 @@ pub(crate) fn repo_envelope_copies_in_txn(
                     }
                     None => row.body.as_slice(),
                 };
-                repo_media_bytes(body, |blob| {
-                    Ok(vault
-                        .store
-                        .port_entity_record(txn, blob)?
-                        .map(|blob| blob.body))
-                })?
+                repo_media_bytes(body, |blob| repo_blob_body_in_txn(vault, txn, blob))?
             }
             ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY => {
                 derived::derived_text_words(&row.body).map(String::into_bytes)
