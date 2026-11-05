@@ -153,6 +153,7 @@ impl ArcRun<'_> {
         );
         if let Some(reviewed) = reviewed {
             row.reviewed.truncate(reviewed);
+            row.compose_opened.clear();
             row.parts = 0;
         }
         row.composed.truncate(composed);
@@ -538,6 +539,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     let mut call = CallBuilder::new(&run.members, run.view);
                     call.group(&group)?;
                     call.observations(&chosen)?;
+                    if let Some(opened) = row.compose_opened.get(&(part as u32)) {
+                        call.whole(opened)?;
+                    }
                     let shape = CallShape {
                         kind: KIND_COMPOSE,
                         child,
@@ -560,36 +564,34 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             if framed_tokens(run.instruction, &user, &run.schema)? > run.manifest.pins.window {
                 return self.split(run, ctx, position, row);
             }
-            if row.mode == ChildMode::Single || shape.kind == KIND_REVIEW {
-                let candidates: Vec<_> = context
-                    .shown
-                    .keys()
-                    .copied()
-                    .filter(|turn| !opened.contains(turn))
-                    .collect();
-                let ask = match self
-                    .arc_open_turns(
-                        ctx,
-                        step_ctx,
-                        run.evidence,
-                        &user,
-                        &context.labels,
-                        &candidates,
-                        &mut run.calls,
-                        Some(run.limit),
-                        &mut run.charges,
-                    )
-                    .await?
-                {
-                    ControlFlow::Continue(ask) => ask,
-                    ControlFlow::Break(exit) => return Ok(ChildStep::Exit(exit)),
-                };
-                if super::arc_open_apply::open_advised(run, ctx, row, &group, &shape, &ask) {
-                    if let Some(exit) = run.save(ctx, id, row, true) {
-                        return Ok(ChildStep::Exit(exit));
-                    }
-                    continue;
+            let candidates: Vec<_> = context
+                .shown
+                .keys()
+                .copied()
+                .filter(|turn| !opened.contains(turn))
+                .collect();
+            let ask = match self
+                .arc_open_turns(
+                    ctx,
+                    step_ctx,
+                    run.evidence,
+                    &user,
+                    &context.labels,
+                    &candidates,
+                    &mut run.calls,
+                    Some(run.limit),
+                    &mut run.charges,
+                )
+                .await?
+            {
+                ControlFlow::Continue(ask) => ask,
+                ControlFlow::Break(exit) => return Ok(ChildStep::Exit(exit)),
+            };
+            if super::arc_open_apply::open_advised(run, ctx, row, &shape, &fields, &ask) {
+                if let Some(exit) = run.save(ctx, id, row, true) {
+                    return Ok(ChildStep::Exit(exit));
                 }
+                continue;
             }
             let (reply, step) = match self
                 .child_call(run, ctx, step_ctx, user, context, opened)
@@ -616,6 +618,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 if row.mode == ChildMode::Review {
                     // Its observations grew: every compose part is asked again.
                     row.composed.clear();
+                    row.compose_opened.clear();
                     row.parts = 0;
                 }
             } else if let Some(step) = compose_step {

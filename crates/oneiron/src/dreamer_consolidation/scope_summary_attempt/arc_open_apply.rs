@@ -2,7 +2,9 @@
 
 use super::arc_children::ArcRun;
 use super::arc_chunks::opened_member;
-use super::arc_review::{CallBuilder, CallShape, KIND_REVIEW, call_input};
+use super::arc_review::{
+    CallBuilder, CallFields, CallShape, KIND_COMPOSE, KIND_REVIEW, call_input,
+};
 use super::arc_turns::{Opened, open_turns};
 use super::window::framed_tokens;
 use crate::EntityId;
@@ -13,8 +15,8 @@ pub(super) fn open_advised(
     run: &mut ArcRun<'_>,
     ctx: &WakeAttemptContext<'_>,
     row: &mut ArcChildRow,
-    group: &[ArcRange],
     shape: &CallShape,
+    fields: &CallFields,
     ask: &[EntityId],
 ) -> bool {
     if ask.is_empty() {
@@ -23,7 +25,7 @@ pub(super) fn open_advised(
     let review_at = match row.mode {
         ChildMode::Single => None,
         ChildMode::Review if shape.kind == KIND_REVIEW => Some(row.reviewed.len()),
-        ChildMode::Review => return false,
+        ChildMode::Review => None,
     };
     let Ok(Opened::Turns(turns)) = open_turns(ctx.vault, run.evidence, run.view, ask) else {
         return false;
@@ -58,25 +60,9 @@ pub(super) fn open_advised(
     run.members.extend(added);
     let fits = (|| -> crate::Result<bool> {
         let mut call = CallBuilder::new(&run.members, run.view);
-        call.group(group)?;
-        if let Some(at) = review_at {
-            let Some(cell) = row.cells.get(at) else {
-                return Ok(false);
-            };
-            call.context(cell)?;
-            call.whole(&indices)?;
-        } else {
-            let mut read: Vec<u32> = (0_u32..)
-                .zip(&run.manifest.members)
-                .filter(|(_, member)| matches!(member.kind, MemberKind::Claim { .. }))
-                .map(|(index, _)| index)
-                .collect();
-            read.extend(row.opened.iter().copied());
-            read.extend(indices.iter().copied());
-            call.whole(&read)?;
-        }
-        let (fields, _, _) = call.finish()?;
-        let user = call_input(run.plan, shape, &fields)?;
+        call.whole(&indices)?;
+        let (extra, _, _) = call.finish()?;
+        let user = call_input(run.plan, shape, &fields.with_opened(&extra))?;
         Ok(framed_tokens(run.instruction, &user, &run.schema)? <= run.manifest.pins.window)
     })();
     if !matches!(fits, Ok(true)) {
@@ -95,6 +81,13 @@ pub(super) fn open_advised(
             end: run.members[*index as usize].member.len,
         }));
     }
-    row.opened.extend(indices);
+    if row.mode == ChildMode::Review && shape.kind == KIND_COMPOSE {
+        row.compose_opened
+            .entry(row.composed.len() as u32)
+            .or_default()
+            .extend(indices);
+    } else {
+        row.opened.extend(indices);
+    }
     true
 }

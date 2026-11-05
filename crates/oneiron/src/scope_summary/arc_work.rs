@@ -186,6 +186,8 @@ pub(crate) struct ArcChildRow {
     pub(crate) reviewed: Vec<ArcStepRef>,
     /// Its checked lines so far, one step per part of its reviews.
     pub(crate) composed: Vec<ArcStepRef>,
+    /// Optional TURN openings read whole by each zero-based compose piece.
+    pub(crate) compose_opened: BTreeMap<u32, Vec<u32>>,
     /// The parts its reviews compose in; 0 until counted.
     pub(crate) parts: u32,
     pub(crate) done: bool,
@@ -200,6 +202,7 @@ impl ArcChildRow {
             cells: Vec::new(),
             reviewed: Vec::new(),
             composed: Vec::new(),
+            compose_opened: BTreeMap::new(),
             parts: 0,
             done: false,
         }
@@ -405,8 +408,9 @@ pub(crate) fn cells_cover(cells: &[Vec<ArcRange>], member: u32, len: u64) -> boo
 }
 
 /// Whether part `row` is done to the end under `manifest`: every review
-/// cell and every compose part checked, every claim and every TURN it
-/// opened read whole when it reviews, one call when it does not.
+/// cell and every compose part checked, every claim and mandatory opening
+/// read in cells when it reviews, optional openings in their compose pieces,
+/// and one call when it does not review.
 pub(crate) fn child_terminal(row: &ArcChildRow, manifest: &ArcManifest) -> bool {
     if !row.done || row.parts == 0 || row.composed.len() != row.parts as usize {
         return false;
@@ -418,7 +422,9 @@ pub(crate) fn child_terminal(row: &ArcChildRow, manifest: &ArcManifest) -> bool 
             .is_some_and(|member| is_turn(&member.kind))
     });
     match row.mode {
-        ChildMode::Single => opened && row.cells.is_empty() && row.parts == 1,
+        ChildMode::Single => {
+            opened && row.cells.is_empty() && row.compose_opened.is_empty() && row.parts == 1
+        }
         ChildMode::Review => {
             let read = |index: u32| {
                 manifest
@@ -427,6 +433,15 @@ pub(crate) fn child_terminal(row: &ArcChildRow, manifest: &ArcManifest) -> bool 
                     .is_some_and(|member| cells_cover(&row.cells, index, member.len))
             };
             opened
+                && row.compose_opened.iter().all(|(part, indices)| {
+                    *part < row.parts
+                        && indices.iter().all(|index| {
+                            manifest
+                                .members
+                                .get(*index as usize)
+                                .is_some_and(|member| is_turn(&member.kind))
+                        })
+                })
                 && row.reviewed.len() == row.cells.len()
                 && manifest
                     .members

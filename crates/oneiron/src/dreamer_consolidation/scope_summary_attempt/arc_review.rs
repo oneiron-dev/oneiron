@@ -57,13 +57,22 @@ pub(super) struct CallShape {
 }
 
 /// What one call shows, by input field.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct CallFields {
     lines: String,
     turns: String,
     claims: String,
     opened: String,
     observations: String,
+}
+
+impl CallFields {
+    /// Adds opened words without changing any of the original input fields.
+    pub(super) fn with_opened(&self, extra: &Self) -> Self {
+        let mut fields = self.clone();
+        fields.opened.push_str(&extra.opened);
+        fields
+    }
 }
 
 /// The input one call reads: the declaration's purpose and `keep`, no
