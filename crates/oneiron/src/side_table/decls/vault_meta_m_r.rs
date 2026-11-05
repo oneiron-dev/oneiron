@@ -311,6 +311,10 @@ side_tables! {
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
     /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
+    /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
+    /// status word; the session and credential choice stay in the settlement's handle. Key:
+    /// hash32 (intent id).
+    OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named;
     /// A call a restore holds no record of, as its per-tool bound counts it (FIX 6260): the
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).

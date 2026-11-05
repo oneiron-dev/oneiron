@@ -76,6 +76,7 @@ mod json_wire;
 mod live_exchange;
 mod presenting;
 mod remote_task;
+mod remote_task_poll;
 mod reply_read;
 mod resume;
 mod sent;
@@ -85,6 +86,7 @@ use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
+pub(crate) use remote_task_poll::poll_remote_tasks;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
 
