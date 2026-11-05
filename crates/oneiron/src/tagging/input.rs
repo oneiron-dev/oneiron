@@ -129,9 +129,13 @@ fn read_in_txn(
         context: Vec::new(),
         following: Vec::new(),
         register: EncoderRegister::Live,
-        // No stored or configured fact names a turn's language yet, so the
-        // tagger detects it.
-        language: None,
+        // The vault's configured processing language, when it names one;
+        // without it the language remains unspecified.
+        language: vault
+            .config
+            .tagging
+            .as_ref()
+            .and_then(|tagging| tagging.language.clone()),
         speaker,
     };
     let text_hash = input_hash(&input);

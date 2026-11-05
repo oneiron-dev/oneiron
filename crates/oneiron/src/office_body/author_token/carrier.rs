@@ -16,7 +16,7 @@ use super::super::{
     EXPORT_AUTHORS, EXPORTS, OfficeBodyExportAuthor, OfficeBodyExportRecord, document_refused,
     document_resources, invalid, version_key,
 };
-use super::{DOCUMENT_PART, revision_token};
+use super::{DOCUMENT_PART, index, revision_token};
 use crate::Vault;
 use crate::deletion::carrier_actor_merged;
 use crate::entity_id::EntityId;
@@ -37,17 +37,12 @@ impl Vault {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
-        let mut records = Vec::new();
-        for (_, record) in EXPORTS.scan(&self.store, txn)? {
-            if record
-                .token
-                .as_deref()
-                .is_some_and(|token| tokens.contains(token.as_bytes()))
-            {
-                records.push(record);
-            }
-        }
-        Ok(records)
+        // The token lookup (FIX 12403) reads the same rows a scan would, in
+        // the same key order; the validators and mergers below are untouched.
+        Ok(index::lookup_exports(&self.store, txn, &tokens)?
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect())
     }
 
     /// Validate carried records against the actual DOCX tokens and each
@@ -114,6 +109,10 @@ impl Vault {
                 None => carried,
             };
             EXPORTS.put(&self.store, wtxn, &key, &merged)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            if let Some(token) = merged.token.as_deref() {
+                index::note_export_put(&self.store, wtxn, &key, token)?;
+            }
         }
         Ok(())
     }
@@ -129,13 +128,9 @@ impl Vault {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
-        let mut records = Vec::new();
-        for (key, record) in EXPORT_AUTHORS.scan(&self.store, txn)? {
-            if tokens.contains(record.token.as_bytes()) {
-                records.push((key, record));
-            }
-        }
-        Ok(records)
+        // The token lookup (FIX 12403) reads the same rows a scan would, in
+        // the same key order; the validators and mergers below are untouched.
+        index::lookup_authors(&self.store, txn, &tokens)
     }
 
     /// Validate per-group revision-author rows against the DOCX bytes and
@@ -200,6 +195,8 @@ impl Vault {
                 None => carried,
             };
             EXPORT_AUTHORS.put(&self.store, wtxn, key, &merged)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            index::note_author_put(&self.store, wtxn, key, &merged.token)?;
         }
         Ok(())
     }
