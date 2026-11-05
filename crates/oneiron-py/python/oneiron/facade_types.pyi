@@ -1275,6 +1275,7 @@ class TurnProgramWakeOutcomeUnpersisted(TypedDict):
     reason: UnpersistedWakeReason
 TurnProgramWakeOutcome = TurnProgramWakeOutcomeNotArmed | TurnProgramWakeOutcomeEvaluated | TurnProgramWakeOutcomeUnpersisted
 class WitnessReceipt(TypedDict):
+    turn_id: EntityId
     turn_short_id: str
     message_short_ids: list[str]
     receipt_ref: str

@@ -5,11 +5,11 @@
 use oneiron::llm::{WorkClass, WorkContext};
 
 use super::{
-    AgentWakeSignals, AiHandle, Answer, AnswerOpen, AnswerOutcome, AnswerRefused, Answering, Arc,
-    AssistantMessage, BTreeMap, BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose,
-    EntityId, LlmEventBus, LlmMessage, LlmRequest, MessageStreamError, ModelTierRef, Mutex,
-    Producer, ReplyCraft, ResponseFormat, Seat, SessionHint, StreamCancelReason, TierPrecedence,
-    Vault, WakeTurnSubject, answer_memory, compaction, model_call, produce,
+    AgentWakeSignals, AiHandle, Answer, AnswerOpen, AnswerOutcome, AnswerRefused, AnswerStream,
+    Answering, Arc, AssistantMessage, BTreeMap, BudgetExhaustionPolicy, CallClass, CallEnvelope,
+    CallPurpose, EntityId, LlmEventBus, LlmMessage, LlmRequest, MessageStreamError, ModelTierRef,
+    Mutex, Producer, ReplyCraft, ResponseFormat, Seat, SessionHint, StreamCancelReason,
+    TierPrecedence, Vault, WakeTurnSubject, answer_memory, compaction, model_call, produce,
 };
 
 /// Opens the reply's stream, admits its run and starts the model call, then
@@ -77,11 +77,23 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         }
         let memory = answer_memory(&vault, agent, session_key);
         match &open {
-            AnswerOpen::Turn { turn, .. } => memory.begin_message_stream(turn, Some(mode)),
-            AnswerOpen::Retry { turn, action } => {
-                memory.begin_message_regeneration(turn, action, Some(mode))
+            AnswerOpen::Turn { turn, .. } => memory
+                .begin_message_stream(turn, Some(mode))
+                .map(AnswerStream::Recorded),
+            AnswerOpen::Session { turn, binding, .. } => {
+                let token =
+                    binding
+                        .clone()
+                        .begin_assistant_stream(&vault, agent, session_key, turn)?;
+                let id = token.partial(&vault)?.stream_id;
+                Ok(AnswerStream::Session { token, id })
             }
-            AnswerOpen::Continue(message) => memory.begin_message_continuation(message, Some(mode)),
+            AnswerOpen::Retry { turn, action } => memory
+                .begin_message_regeneration(turn, action, Some(mode))
+                .map(AnswerStream::Recorded),
+            AnswerOpen::Continue(message) => memory
+                .begin_message_continuation(message, Some(mode))
+                .map(AnswerStream::Recorded),
         }
     });
     let handle = match begun {
@@ -103,7 +115,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
             &vault,
             breakpoint,
             &admitted,
-            handle.message_id(),
+            handle.correlation_id(),
             compaction::TurnMeter {
                 payer,
                 funding: funding.clone(),
@@ -123,7 +135,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     );
     let started = vault
         .policy_budget_guard(
-            format!("chat:{}", handle.message_id().to_hex()),
+            format!("chat:{}", handle.correlation_id().to_hex()),
             budget_units,
             oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(budget_units),
             BudgetExhaustionPolicy::Suspend,
@@ -134,7 +146,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
             let run = ai
                 .model_runtime()
                 .funded_run(
-                    format!("chat:{}", handle.message_id().to_hex()),
+                    format!("chat:{}", handle.correlation_id().to_hex()),
                     meter,
                     funding,
                 )
@@ -158,12 +170,14 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         // TURN or MESSAGE is left (FIX 3152).
         Err(reason) => {
             let memory = answer_memory(&vault, agent, session_key);
-            if matches!(open, AnswerOpen::Retry { .. }) {
+            if let AnswerStream::Recorded(recorded) = &handle
+                && matches!(open, AnswerOpen::Retry { .. })
+            {
                 memory
-                    .abandon_unstarted_retry(handle)
+                    .abandon_unstarted_retry(*recorded)
                     .map_err(|error| AnswerRefused::Engine(error.to_string()))?;
             } else {
-                let _ = memory.cancel_stream(handle, StreamCancelReason::AgentAborted);
+                let _ = handle.cancel(&vault, &memory, StreamCancelReason::AgentAborted);
             }
             return Err(AnswerRefused::NotAdmitted(reason));
         }
@@ -175,7 +189,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         vault: Arc::clone(&vault),
         agent,
         session_key,
-        handle,
+        handle: handle.clone(),
         credential: credential.clone(),
         streamed: Arc::clone(&streamed),
         saved: Arc::clone(&saved),
@@ -191,7 +205,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         vault,
         agent,
         session_key,
-        handle,
+        handle: handle.clone(),
         credential,
         streamed: Arc::clone(&streamed),
         saved: Arc::clone(&saved),
@@ -203,8 +217,9 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         assertions,
         model_call,
     };
+    let terminal_stream = handle.clone();
     tokio::spawn(async move {
-        let result = produce(producer).await;
+        let mut result = produce(producer).await;
         if let Some(sitting) = activity {
             ai.session_hint(sitting, SessionHint::Activity, None);
         }
@@ -216,14 +231,33 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 signals: AgentWakeSignals::default(),
             },
         );
-        let saved = saved.lock().ok().and_then(|mut slot| slot.take());
+        let mut saved = saved.lock().ok().and_then(|mut slot| slot.take());
+        let native = match terminal_stream.finished(&landed.0) {
+            Ok(finished) => finished,
+            Err(error) => {
+                result = Err(error.to_string());
+                None
+            }
+        };
+        if let Some(finished) = &native {
+            saved = match &finished.outcome {
+                oneiron::memory::SessionStreamOutcome::Retained(receipt) => Some(receipt.clone()),
+                oneiron::memory::SessionStreamOutcome::Unretained(_) => None,
+            };
+        }
         let fell_back = pending
             .as_ref()
             .is_some_and(|pending| !pending.answered_live());
         compaction::keep(&landed.0, pending, saved.as_ref());
-        let text = streamed
-            .lock()
-            .map_or_else(|_| String::new(), |text| text.clone());
+        let text = if terminal_stream.is_session() {
+            native
+                .as_ref()
+                .map_or_else(String::new, |finished| finished.text.clone())
+        } else {
+            streamed
+                .lock()
+                .map_or_else(|_| String::new(), |text| text.clone())
+        };
         if let (Some((entries, request_digest)), Some(receipt), Some(conversation)) =
             (craft, saved.as_ref(), container)
         {
@@ -243,6 +277,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
+            native,
             text,
             fell_back,
         });
@@ -265,7 +300,9 @@ pub(in crate::api::ai::chat) fn answer_container(
     let record = match open {
         // Its TURN is not written until the reply lands: the conversation
         // its user's turn was witnessed into is the one it answers in.
-        AnswerOpen::Turn { conversation, .. } => return *conversation,
+        AnswerOpen::Turn { conversation, .. } | AnswerOpen::Session { conversation, .. } => {
+            return *conversation;
+        }
         // A Retry's TURN lands only with its reply (FIX 3152): the reply it
         // answers again sits in the same conversation.
         AnswerOpen::Retry { action, .. } => action.message,

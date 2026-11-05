@@ -87,6 +87,8 @@ pub struct NapiQuoteSpan {
 /// Receipt for one witnessed turn.
 #[napi(object)]
 pub struct NapiWitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// TURN short ref.
     pub turn_short_id: String,
     /// MESSAGE short refs, input order.

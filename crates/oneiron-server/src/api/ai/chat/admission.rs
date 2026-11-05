@@ -69,6 +69,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // the request is assembled from, its board's included (FIX 1389, 8133).
     let (actor, class) = principal(auth, &vault)?;
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
+    let session_binding = super::session_invocation::caller_binding(server, auth, locality)?;
     let settings = server.ai.chat_settings();
     let engine = |error: &dyn std::fmt::Display| {
         refused(StatusCode::CONFLICT, "turn_refused", error.to_string())
@@ -251,7 +252,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // A turn that answers in a thread replies there to the TURN it names,
     // its own id minted here so the reply below answers it (FIX 3572); a
     // trunk turn keeps the witness's own id.
-    let user_turn_id = reply_to.map(|_| EntityId::now());
+    let user_turn_id = reply_to
+        .filter(|_| session_binding.is_none())
+        .map(|_| EntityId::now());
     let mut user_turn = witness_turn(
         &request.conversation_ref,
         user_turn_id,
@@ -420,6 +423,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
+    let mut native_user_turn = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
         let (memory, hooked) = match invocation {
@@ -432,7 +436,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
             &hooked,
             &user_turn,
             witness_session.as_ref(),
+            session_binding.as_ref(),
             &mut written,
+            &mut native_user_turn,
         )
     })
     .map_err(|error| engine(&error))?
@@ -478,17 +484,20 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // answers in one (FIX 3572).
     let mut reply = witness_turn(
         &request.conversation_ref,
-        Some(turn),
+        session_binding.is_none().then_some(turn),
         WitnessAuthor::Companion,
         String::new(),
         at,
     );
-    if let Some(user) = user_turn_id {
+    if let Some(user) = user_turn_id.or(native_user_turn.filter(|_| reply_to.is_some())) {
         stamp_reply(&mut reply, user);
     }
     let hooks_vault = Arc::clone(&vault);
     let mut reply_rows = sources.known_rows();
-    reply_rows.extend([destination, turn]);
+    reply_rows.push(destination);
+    if session_binding.is_none() {
+        reply_rows.push(turn);
+    }
     let answering = begin_sourced_answer(
         &server.ai,
         Answer {
@@ -496,9 +505,16 @@ pub(in crate::api::ai::chat) async fn start_turn(
             agent,
             session_key: Some(session_key),
             activity: signals.then_some(session_key),
-            open: AnswerOpen::Turn {
-                turn: reply,
-                conversation,
+            open: match session_binding {
+                Some(binding) => AnswerOpen::Session {
+                    turn: reply,
+                    conversation,
+                    binding,
+                },
+                None => AnswerOpen::Turn {
+                    turn: reply,
+                    conversation,
+                },
             },
             mode,
             admitted,

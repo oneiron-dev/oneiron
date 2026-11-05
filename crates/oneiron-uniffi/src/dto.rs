@@ -135,6 +135,8 @@ pub struct QuoteSpan {
 /// Receipt for one witnessed turn.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// Turn short ref.
     pub turn_short_id: String,
     /// Message short refs, in input order.
