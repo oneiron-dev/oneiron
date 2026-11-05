@@ -124,7 +124,7 @@ impl Selection {
             // Reuse the native head/NOTE marker/birth/fork associations and its
             // shared-owner verdict. A document slot is never an entity guess.
             let documents = crate::entity_doc::checkpoint::capture(&vault.store, txn)?;
-            out.captured_rows(&documents);
+            out.captured_rows(&documents, |_| true);
 
             // The native body getter binds each occurrence part to the
             // record that actually holds it, not to its shared digest.
@@ -140,7 +140,20 @@ impl Selection {
                     out.owners.insert(owner.owner());
                 }
             }
-            out.captured_rows(&bodies);
+            out.captured_rows(&bodies, |_| true);
+            for getter in [super::Getter::Note, super::Getter::TypedBody] {
+                out.captured_rows(&getter.capture(&vault.store, txn)?, |at| {
+                    [
+                        &crate::side_table::NOTE_HEAD,
+                        &crate::side_table::NOTE_HEAD_DOC,
+                        &crate::side_table::NOTE_OVERRIDE,
+                        &crate::side_table::TYPED_BODY_HEAD,
+                        &crate::side_table::TYPED_BODY_DOC,
+                    ]
+                    .into_iter()
+                    .any(|decl| at.in_table(decl))
+                });
+            }
         }
         #[cfg(feature = "sync")]
         out.queue_rows(&vault.store, txn)?;
@@ -219,9 +232,12 @@ impl Selection {
 
     /// A whole native row leaves only when every part belongs to an excluded
     /// owner. A shared row retains its other owners' fragments.
-    fn captured_rows(&mut self, captured: &Captured) {
+    fn captured_rows(&mut self, captured: &Captured, includes: impl Fn(&RowLocator) -> bool) {
         let mut excluded = BTreeMap::<(RowDb, Vec<u8>), bool>::new();
         let mut note = |at: &RowLocator, off: bool| {
+            if !includes(at) {
+                return;
+            }
             excluded
                 .entry((at.db, at.key.clone()))
                 .and_modify(|all_off| *all_off &= off)

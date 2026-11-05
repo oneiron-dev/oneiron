@@ -76,7 +76,9 @@ An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps th
 canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
 use a separate automatic selection. When an entity's known world dependencies are all resolved
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
-and the document rows the native checkpoint getter assigns wholly to it. Attachment occurrence
+and the document rows the native checkpoint getter assigns wholly to it. The same native ownership
+check covers NOTE heads, head-document indexes and overrides, and typed-body heads and head snapshots.
+Forks, proposal snapshots, receipts, bundles and pins keep their existing treatment. Attachment occurrence
 rows whose native body getter binds every part to that record are also left out, including
 their body descriptors and digest-holder rows, before body files are counted. A shared body
 file still travels when another included row names it; its digest is never a world identity.
