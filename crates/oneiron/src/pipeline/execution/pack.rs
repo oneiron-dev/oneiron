@@ -300,6 +300,7 @@ impl PipelineBuilder<'_> {
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
+        let mut _replay_inputs_memory = attempt.replay_inputs_memory;
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
@@ -382,6 +383,7 @@ impl PipelineBuilder<'_> {
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
+                _replay_inputs_memory = retry.replay_inputs_memory;
                 critical = retry.critical;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();

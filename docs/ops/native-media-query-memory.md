@@ -81,6 +81,16 @@ space ID. Its buffers are declared before the private lease. The space
 declarations' sets and maps remain outside that charge. Native declaration
 checks, floors, hashes and capture gates stay unchanged.
 
+Replay capture also records the actual capacities of the two copied query and
+corpus-snapshot reference strings. A private per-attempt lease stays after the
+payload fields and moves into the pack before its replay-input local. A retry
+replaces the old payload before its old lease. The original strings remain
+charged through replay metadata patches, record construction and borrowed
+writes, until that original payload drops. Public replay types, their deep
+clone and serialization behavior stay unchanged. The provisional writer's
+detached record clone owns different backing and is not covered by this lease;
+neither are retained config JSON, serialized row bytes or later decoded rows.
+
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
 working-set bound remain open.

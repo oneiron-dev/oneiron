@@ -161,6 +161,7 @@ impl PipelineBuilder<'_> {
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
         let capture_replay_enabled = self.captures_replay();
+        let mut replay_inputs_memory = None;
         let trace_candidate_limit = self.result_limit;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
@@ -541,12 +542,14 @@ impl PipelineBuilder<'_> {
                             occurred_range,
                             temporal_now,
                             rerank_query,
+                            &mut replay_inputs_memory,
                         )
                     }),
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: !capture_replay_enabled,
                     temporal_report: metadata_cache.temporal_report,
                     critical: Default::default(),
+                    replay_inputs_memory,
                 });
             }
 
@@ -935,6 +938,7 @@ impl PipelineBuilder<'_> {
                     occurred_range,
                     temporal_now,
                     rerank_query,
+                    &mut replay_inputs_memory,
                 )
             });
             // A hit whose indexed revision cannot be read has no pin, so it
@@ -1020,6 +1024,7 @@ impl PipelineBuilder<'_> {
                 early_empty_no_telemetry: false,
                 temporal_report: metadata_cache.temporal_report,
                 critical,
+                replay_inputs_memory,
             })
         }
     }
