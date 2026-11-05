@@ -733,6 +733,15 @@ fn backfill_answer_with_caller(
             {
                 return Err(Error::EntityNotFound);
             }
+            // Admit the already-recorded proposal under this caller's live
+            // bounds too; its principal's bare read is not the caller's grant.
+            if let Some(caller) = caller
+                && !caller
+                    .recorded_lane()?
+                    .entities_readable_in_txn(txn, &[id])?[0]
+            {
+                return Err(Error::EntityNotFound);
+            }
             return Ok(answer);
         }
         let mut answer = AnswerRecord {
