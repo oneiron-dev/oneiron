@@ -97,7 +97,11 @@ impl CampaignTasteDecisions<'_> {
     /// Asks the score and the usefulness reading as one pack over the blind
     /// input. The anchor digest is carried from the input, never chosen by a
     /// model; a score that abstains is no grade and refuses the report.
-    pub(super) fn taste(&self, input: &BlindCampaignJudgeInput) -> CampaignResult<CampaignTaste> {
+    pub(super) fn taste(
+        &self,
+        vault: Option<&crate::Vault>,
+        input: &BlindCampaignJudgeInput,
+    ) -> CampaignResult<CampaignTaste> {
         if input.held_out_gold.gold_digest.is_empty() {
             return Err(CampaignError::ReportMismatch {
                 reason: "taste judgment has no external anchor digest",
@@ -116,8 +120,12 @@ impl CampaignTasteDecisions<'_> {
         let state = serde_json::to_value(input).map_err(|_| CampaignError::ReportMismatch {
             reason: "blind judge input does not encode",
         })?;
+        let questions = [&score, &useful];
+        if let Some(vault) = vault {
+            let _ = vault.measure_decision_pack(&self.bands, questions.len());
+        }
         let decisions = self.ladder.run_pack(
-            &[&score, &useful],
+            &questions,
             self.principal,
             &[],
             &state,

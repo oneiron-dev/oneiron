@@ -140,6 +140,7 @@ impl ReviewDecisions<'_> {
     /// Asks every lens's questions and assembles one artifact per input, in input order.
     pub(super) fn review(
         &self,
+        vault: &Vault,
         inputs: &[CriticReviewInput],
         review_key: &[u8; 32],
         at: u64,
@@ -163,7 +164,7 @@ impl ReviewDecisions<'_> {
                 .map(|&field| self.question(input, field))
                 .collect::<Result<Vec<_>>>()?;
             // One answer per question, in order.
-            let decisions = self.ask(&questions, &[input.target])?;
+            let decisions = self.ask(vault, &questions, &[input.target])?;
             let verdict = label(&decisions[0], &VERDICTS)?;
             let identity = rmp_serde::to_vec_named(&(
                 questions[0].id,
@@ -272,10 +273,12 @@ impl ReviewDecisions<'_> {
     /// answer fails the whole review, as a failed critic call did.
     fn ask(
         &self,
+        vault: &Vault,
         questions: &[DecisionQuestion],
         evidence: &[EntityId],
     ) -> Result<Vec<TypedDecision>> {
         let questions = questions.iter().collect::<Vec<_>>();
+        let _ = vault.measure_decision_pack(&self.bands, questions.len());
         let decisions = self.ladder.run_pack(
             &questions,
             self.principal,

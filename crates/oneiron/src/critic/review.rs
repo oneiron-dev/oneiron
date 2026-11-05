@@ -180,7 +180,7 @@ pub fn review_artifact(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (artifacts, receipts) = decisions.review(&inputs, &review_key, request.at)?;
+    let (artifacts, receipts) = decisions.review(vault, &inputs, &review_key, request.at)?;
     let reliabilities = read_reliabilities(vault, &artifacts)?;
     let mut triage = triage_critiques(catalog, &artifacts, &reliabilities)?;
     triage.findings =

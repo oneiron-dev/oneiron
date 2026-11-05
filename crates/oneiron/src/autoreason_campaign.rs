@@ -45,6 +45,7 @@ pub use judge::{
     BlindCampaignJudgeInput, CAMPAIGN_TASTE_DIAL, CampaignGoldAnchor, CampaignTaste,
     CampaignTasteDecisions, CampaignTasteWording,
 };
+pub(crate) use report::build_campaign_split_report_in_vault;
 pub use report::{
     CampaignArmReport, CampaignCost, CampaignEvaluationSplit, CampaignSmokeOutcome,
     CampaignSplitReport, build_campaign_split_report, merge_campaign_arm_report,

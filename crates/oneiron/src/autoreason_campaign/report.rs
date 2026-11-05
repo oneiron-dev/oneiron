@@ -150,6 +150,42 @@ pub fn build_campaign_split_report(
     taste: &CampaignTasteDecisions<'_>,
     smoke: CampaignSmokeOutcome,
 ) -> CampaignResult<CampaignSplitReport> {
+    build_campaign_split_report_inner(
+        None, config, arm, split, dataset, run, cost, blind, taste, smoke,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn build_campaign_split_report_in_vault(
+    vault: &crate::Vault,
+    config: &CampaignConfig,
+    arm: CampaignExecutableArm,
+    split: CampaignEvaluationSplit,
+    dataset: &Of360GoldDataset,
+    run: &Of360ExtractionRun,
+    cost: CampaignCost,
+    blind: &BlindCampaignJudgeInput,
+    taste: &CampaignTasteDecisions<'_>,
+    smoke: CampaignSmokeOutcome,
+) -> CampaignResult<CampaignSplitReport> {
+    build_campaign_split_report_inner(
+        Some(vault), config, arm, split, dataset, run, cost, blind, taste, smoke,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+fn build_campaign_split_report_inner(
+    vault: Option<&crate::Vault>,
+    config: &CampaignConfig,
+    arm: CampaignExecutableArm,
+    split: CampaignEvaluationSplit,
+    dataset: &Of360GoldDataset,
+    run: &Of360ExtractionRun,
+    cost: CampaignCost,
+    blind: &BlindCampaignJudgeInput,
+    taste: &CampaignTasteDecisions<'_>,
+    smoke: CampaignSmokeOutcome,
+) -> CampaignResult<CampaignSplitReport> {
     config.validate()?;
     let dataset_ref = campaign_split_dataset_ref(config, split);
     if dataset.dataset_id != dataset_ref.dataset_id || dataset.revision != dataset_ref.revision {
@@ -167,7 +203,7 @@ pub fn build_campaign_split_report(
 
     let of360 = of360_ar3_metric_tier(dataset, run)?;
     check_metric_pin(&config.metric_pin, &of360.metric_definitions)?;
-    let taste = taste.taste(blind)?;
+    let taste = taste.taste(vault, blind)?;
     validate_taste(&taste)?;
     let metric_definition_digest = of360
         .metric_definitions
