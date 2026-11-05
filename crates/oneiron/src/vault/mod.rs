@@ -167,9 +167,10 @@ pub struct Vault {
     /// handed it (FIX 11702). In memory only: the debt rows are the debt.
     pub(crate) claim_vad_payment: crate::store::claim_vad_payment::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
-    /// state mutex and nothing else: the fixed-order drop transaction and the
-    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
-    /// outbound callback, no timer handle and no second connection owner.
+    /// state mutex, the live-wait list with its id counter, the outbound-wait
+    /// host callback and the owner shed line: the fixed-order drop transaction
+    /// and the lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It
+    /// adds no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
     /// One in-process idle policy timer per open vault, released on wrapper drop.
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
