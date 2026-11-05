@@ -83,6 +83,8 @@ pub struct NapiCodebaseSnapshot {
     pub project_id: String,
     /// Canonical or parseable repo_ref string.
     pub repo_ref: String,
+    /// Caller-declared source anchor for absolute exclusions; absent means unknown.
+    pub custody_root: Option<String>,
     /// 40-hex commit hash, required for GitHub-at-commit repo_refs.
     pub commit_hash: Option<String>,
     /// Deterministic manifest hash computed by core. Optional on input.

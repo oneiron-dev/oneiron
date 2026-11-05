@@ -419,6 +419,9 @@ pub(super) fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Re
     secret_scan::scan_metadata_field(&snapshot.project_id)?;
     let repo_ref = snapshot.repo_ref.canonical();
     secret_scan::scan_metadata_field(&repo_ref)?;
+    if let Some(custody_root) = &snapshot.custody_root {
+        secret_scan::scan_metadata_field(custody_root)?;
+    }
     if let Some(commit_hash) = &snapshot.commit_hash {
         secret_scan::scan_metadata_field(commit_hash)?;
     }

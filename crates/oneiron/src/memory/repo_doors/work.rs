@@ -330,6 +330,15 @@ impl Memory<'_> {
         let snapshot = CodebaseSnapshot::new(
             input.repo.to_hex(),
             membership.repo_ref.clone(),
+            Some(
+                queue
+                    .queue
+                    .repository()
+                    .repo_root()
+                    .to_string_lossy()
+                    .trim_end_matches('/')
+                    .to_owned(),
+            ),
             Some(queue.green.clone()),
             entries,
         )?;

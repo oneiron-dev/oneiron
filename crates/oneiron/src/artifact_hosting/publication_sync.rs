@@ -384,6 +384,7 @@ impl Vault {
         let Ok(rebuilt) = CodebaseSnapshot::new(
             snapshot.project_id.clone(),
             snapshot.repo_ref.clone(),
+            snapshot.custody_root.clone(),
             snapshot.commit_hash.clone(),
             snapshot.files.clone(),
         ) else {

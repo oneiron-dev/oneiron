@@ -314,12 +314,13 @@ impl Vault {
             &wtxn,
             &repo_marks,
             snapshot,
-            crate::secret_snapshot::snapshot_root(&snapshot.repo_ref),
+            snapshot.custody_root.as_deref(),
             file_contents,
         )?;
         let filtered_snapshot = CodebaseSnapshot::new(
             snapshot.project_id.clone(),
             snapshot.repo_ref.clone(),
+            snapshot.custody_root.clone(),
             snapshot.commit_hash.clone(),
             files,
         )?;

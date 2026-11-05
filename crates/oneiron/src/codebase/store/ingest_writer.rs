@@ -198,7 +198,8 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?;
+        let snapshot =
+            Self::build_ingest_snapshot(project_id, &repo_ref, custody_root, &commit_hash, &blobs)?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -245,6 +246,7 @@ impl Vault {
     fn build_ingest_snapshot(
         project_id: String,
         repo_ref: &RepoRef,
+        custody_root: Option<&str>,
         commit_hash: &str,
         blobs: &[RepoIngestBlob],
     ) -> Result<CodebaseSnapshot> {
@@ -260,6 +262,7 @@ impl Vault {
         let snapshot = CodebaseSnapshot::new(
             project_id,
             repo_ref.clone(),
+            custody_root.map(str::to_owned),
             Some(commit_hash.to_owned()),
             files,
         )?;
@@ -293,11 +296,17 @@ impl Vault {
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
-            let (files, custody_report) =
-                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, custody_root, contents)?;
+            let (files, custody_report) = self.repo_snapshot_inputs_in_txn(
+                wtxn,
+                &repo_marks,
+                snapshot,
+                custody_root,
+                contents,
+            )?;
             let filtered_snapshot = CodebaseSnapshot::new(
                 snapshot.project_id.clone(),
                 snapshot.repo_ref.clone(),
+                snapshot.custody_root.clone(),
                 snapshot.commit_hash.clone(),
                 files,
             )?;

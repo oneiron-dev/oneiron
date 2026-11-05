@@ -137,6 +137,7 @@ pub(super) fn read_codebase_snapshot(
     Ok(super::types::NapiCodebaseSnapshot {
         project_id: read_project_id(&snapshot, memory)?,
         repo_ref: read_required_js_string(&snapshot, "repoRef", memory)?,
+        custody_root: read_optional_js_string(&snapshot, "custodyRoot", memory)?,
         commit_hash: read_optional_js_string(&snapshot, "commitHash", memory)?,
         fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
         scope_key: snapshot.get::<Option<Buffer>>("scopeKey")?.flatten(),

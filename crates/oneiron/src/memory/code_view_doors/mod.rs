@@ -109,7 +109,8 @@ impl Memory<'_> {
                 )
             })
             .collect();
-        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, entries)?;
+        // This mixed in-memory revision has no single supplied source-root anchor.
+        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, None, entries)?;
         Ok((snapshot, contents, documents))
     }
 
