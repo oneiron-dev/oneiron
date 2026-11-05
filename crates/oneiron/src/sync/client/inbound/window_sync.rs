@@ -580,13 +580,30 @@ impl SyncClient {
         // FIX 11709: the MESSAGE rows an own machine's proven connection sent
         // take the own-device lane in the doors this import and its retained
         // world pass run, and no others.
-        crate::sync::ingest::with_own_device_import(
+        let landed = crate::sync::ingest::with_record_document_import(
             &self.vault,
             own_device,
             (&key, &window.doc),
             payload,
-            || self.land_window_update(window, &key, payload),
-        )?;
+            || {
+                crate::sync::ingest::with_own_device_import(
+                    &self.vault,
+                    own_device,
+                    (&key, &window.doc),
+                    payload,
+                    || self.land_window_update(window, &key, payload),
+                )
+            },
+        );
+        match landed {
+            Ok(landed) => landed?,
+            Err(error) => {
+                self.manager.discard_window(&key);
+                return Err(TransportError::Storage(format!(
+                    "materialize record document update: {error}"
+                )));
+            }
+        }
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc

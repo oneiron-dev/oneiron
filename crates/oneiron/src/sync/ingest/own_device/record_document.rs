@@ -79,7 +79,8 @@ impl Drop for Restore {
 /// the land closure's own value or result stays unchanged. An error does not
 /// undo Loro's import: its owner must discard the live window before ACK or
 /// persistence, as on its existing persist-failure path.
-/// This helper has no call sites until the cohesive pair door is complete.
+/// The client inlet handles the outer error before either durability path;
+/// the land closure still owns and returns its original transport result.
 pub(in crate::sync) fn with_import<T>(
     vault: &Vault,
     import: Option<&OwnDeviceImport>,
