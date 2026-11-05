@@ -1352,7 +1352,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_artifacts/licence.rs` | src | s | 6 crate-vis | — | Which licences let a model download start (the owner's standing grant: any licence that does not hurt us… |
 | `src/model_artifacts/manifest.rs` | src | s | 10 crate-vis | — | The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence… |
 | `src/model_artifacts/mod.rs` | src | s | 5 crate-vis | — | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
-| `src/models/anthropic.rs` | src | s | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
+| `src/models/anthropic.rs` | src | m | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
 | `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 19 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/broker_context.rs` | src | s | 11 crate-vis | — | One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys… |
 | `src/models/broker_context/secret_use.rs` | src | s | 1 crate-vis | — | A secret-free installed adapter for `self.use`'s broker model listing |
@@ -1376,7 +1376,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/fallback_tests.rs` | test | L | 9 crate-vis | — | Done means for provider cooldowns and call-time fallback (OF-305, ONEIRON-FALLBACK = A): an offer refused… |
 | `src/models/family.rs` | src | s | 2 fn | — | Model families (OF-184): the line of models one developer trains, as a provider's config (`family`… |
 | `src/models/forward.rs` | src | s | 2 crate-vis | — | One rung's stream handed to the caller event by event, up to its terminal or its failure |
-| `src/models/gemini_chat.rs` | src | s | 2 crate-vis | — | The Gemini API's chat transport (FIX 1816): a `gemini` provider's chat rungs send `generateContent` and… |
+| `src/models/gemini_chat.rs` | src | m | 2 crate-vis | — | The Gemini API's chat transport (FIX 1816): a `gemini` provider's chat rungs send `generateContent` and… |
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/host_budgets.rs` | src | s | 7 crate-vis | — | The bytes one served vault's model host holds at once (FIX 9321, FIX 9323): one set per vault's runtime… |
 | `src/models/hosted_speech.rs` | src | m | 2 struct · 5 fn · 3 crate-vis | HostedCloner, VendorVoice | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |

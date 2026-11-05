@@ -362,6 +362,25 @@ pub trait StoreRecordHooks: Send + Sync {
         turn: &EntityId,
     ) -> Result<bool>;
 
+    /// The engine's `saved_query::repair_saved_queries_after_pack_move_in_txn`.
+    /// The install door drops the per-query resolutions, so this reports only
+    /// success.
+    #[allow(clippy::too_many_arguments)]
+    fn repair_saved_queries_after_pack_move_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        pack: &str,
+        from_version: &str,
+        to_version: &str,
+        from_source: &str,
+        to_source: &str,
+        from_predicates: &BTreeSet<String>,
+        to_predicates: &BTreeSet<String>,
+        shipped: Option<crate::store::pack_predicate_rewrites::PackMigrationMap>,
+        now: u64,
+    ) -> Result<()>;
+
     /// The engine's `affect::processed_subjects`, using the caller's read lane.
     fn processed_subjects(
         &self,
