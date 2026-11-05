@@ -13,7 +13,7 @@ use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
 use super::super::entity::{IngestCtx, Residence};
-use crate::entity_doc::CarriedRecordDocument;
+use crate::entity_doc::{CarriedRecordDocument, RefinementOriginSource};
 use crate::error::Result;
 use crate::sync::client::OwnDeviceImport;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes};
@@ -26,14 +26,27 @@ struct PairDigest {
     row: [u8; 32],
     head: [u8; 32],
     snapshot: [u8; 32],
+    refinement: Option<[u8; 32]>,
 }
 
 impl PairDigest {
-    fn of(raw: &[u8], head: &CarriedRecordDocument, snapshot: &[u8]) -> Result<Self> {
+    fn of(
+        raw: &[u8],
+        head: &CarriedRecordDocument,
+        snapshot: &[u8],
+        refinement: Option<&RefinementOriginSource>,
+    ) -> Result<Self> {
+        let refinement = refinement.map(|source| {
+            let mut digest = blake3::Hasher::new();
+            digest.update(&source.revision().0);
+            digest.update(source.raw());
+            *digest.finalize().as_bytes()
+        });
         Ok(Self {
             row: *blake3::hash(raw).as_bytes(),
             head: *blake3::hash(&head.encode()?).as_bytes(),
             snapshot: *blake3::hash(snapshot).as_bytes(),
+            refinement,
         })
     }
 }
@@ -95,6 +108,7 @@ pub(crate) struct SelectedRecordDocument<'a> {
     raw: Vec<u8>,
     head: CarriedRecordDocument,
     snapshot: Vec<u8>,
+    refinement: Option<RefinementOriginSource>,
 }
 
 impl SelectedRecordDocument<'_> {
@@ -110,7 +124,12 @@ impl SelectedRecordDocument<'_> {
             return Ok(false);
         }
         let entity = self.head.entity()?;
-        let expected = PairDigest::of(&self.raw, &self.head, &self.snapshot)?;
+        let expected = PairDigest::of(
+            &self.raw,
+            &self.head,
+            &self.snapshot,
+            self.refinement.as_ref(),
+        )?;
         let current = RECORD_DOCUMENT_SPAN.with(|slot| {
             slot.borrow().as_ref().is_some_and(|span| {
                 Weak::ptr_eq(&self.scope, &Rc::downgrade(&span.scope))
@@ -128,11 +147,12 @@ impl SelectedRecordDocument<'_> {
         {
             return Ok(false);
         }
-        let Some((head, snapshot)) = selected_record_document(self.carrier, &entity, &self.raw)?
+        let Some((head, snapshot, refinement)) =
+            selected_record_document(self.carrier, &entity, &self.raw)?
         else {
             return Ok(false);
         };
-        if PairDigest::of(&self.raw, &head, &snapshot)? != expected {
+        if PairDigest::of(&self.raw, &head, &snapshot, refinement.as_ref())? != expected {
             return Ok(false);
         }
         Ok(!crate::sync::ingest::peer_row_in_txn(
@@ -167,6 +187,11 @@ impl SelectedRecordDocument<'_> {
     pub(crate) fn snapshot(&self) -> &[u8] {
         &self.snapshot
     }
+
+    /// Exact transported FIRST bytes, not a local origin or admission proof.
+    pub(crate) fn refinement_source(&self) -> Option<&RefinementOriginSource> {
+        self.refinement.as_ref()
+    }
 }
 
 /// Bind the actual current carrier in the same writer that recorded its
@@ -199,10 +224,10 @@ pub(in crate::sync) fn selected_in_txn<'a>(
     let Some((machine, scope, expected)) = transport else {
         return Ok(None);
     };
-    let Some((head, snapshot)) = selected_record_document(doc, entity, raw)? else {
+    let Some((head, snapshot, refinement)) = selected_record_document(doc, entity, raw)? else {
         return Ok(None);
     };
-    if PairDigest::of(raw, &head, &snapshot)? != expected {
+    if PairDigest::of(raw, &head, &snapshot, refinement.as_ref())? != expected {
         return Ok(None);
     }
     if crate::sync::ingest::peer_row_in_txn(ctx.vault, txn, ctx.window_key, entity, raw)? {
@@ -217,6 +242,7 @@ pub(in crate::sync) fn selected_in_txn<'a>(
         raw: raw.to_vec(),
         head,
         snapshot,
+        refinement,
     }))
 }
 
@@ -277,8 +303,9 @@ fn selected_pairs(doc: &LoroDoc, update: &[u8]) -> BTreeMap<EntityId, PairDigest
     rows.into_iter()
         .filter_map(|entity| {
             let raw = map_get_bytes(&entities, &entity.to_hex())?;
-            let (head, snapshot) = selected_record_document(&candidate, &entity, &raw).ok()??;
-            let digest = PairDigest::of(&raw, &head, &snapshot).ok()?;
+            let (head, snapshot, refinement) =
+                selected_record_document(&candidate, &entity, &raw).ok()??;
+            let digest = PairDigest::of(&raw, &head, &snapshot, refinement.as_ref()).ok()?;
             Some((entity, digest))
         })
         .collect()

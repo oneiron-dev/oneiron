@@ -312,6 +312,12 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         self.selected.snapshot()
     }
 
+    /// Historical exact bytes bound to this selected import. Shape and hash
+    /// do not admit them or create a receiver's permanent origin.
+    pub(crate) fn refinement_source(&self) -> Option<&super::RefinementOriginSource> {
+        self.selected.refinement_source()
+    }
+
     /// The actual local snapshot BEFORE join or purge, with all of its
     /// retained operations. An absent local head supplies no native snapshot.
     pub(crate) fn local_snapshot(&self) -> Option<&[u8]> {

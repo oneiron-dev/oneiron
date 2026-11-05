@@ -15,7 +15,9 @@ use super::carrier_parts::{
 };
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
-use crate::entity_doc::{CarriedRecordDocument, export_skill_record_document_in_txn};
+use crate::entity_doc::{
+    CarriedRecordDocument, RefinementOriginSource, export_skill_record_document_in_txn,
+};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
@@ -30,6 +32,22 @@ fn refused(reason: &'static str) -> Error {
 struct CarriedHead {
     record: CarriedRecordDocument,
     snapshot: Parts,
+    refinement: Option<RefinementOriginParts>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefinementOriginParts {
+    revision: crate::vault::entity_revision::RevisionRef,
+    row: Parts,
+}
+
+impl CarriedHead {
+    fn part_keys(&self) -> impl Iterator<Item = String> + '_ {
+        self.snapshot
+            .keys()
+            .chain(self.refinement.iter().flat_map(|source| source.row.keys()))
+    }
 }
 
 fn encode(carried: &CarriedHead) -> Result<Vec<u8>> {
@@ -40,7 +58,12 @@ fn decode(bytes: &[u8]) -> Result<(CarriedHead, EntityId)> {
     let carried: CarriedHead =
         rmp_serde::from_slice(bytes).map_err(|_| refused("not a document head"))?;
     let entity = carried.record.entity()?;
-    if encode(&carried)? != bytes || !carried.snapshot.well_formed() {
+    if encode(&carried)? != bytes
+        || !carried.snapshot.well_formed()
+        || carried.refinement.as_ref().is_some_and(|source| {
+            carried.record.refinement_origin().is_none() || !source.row.well_formed()
+        })
+    {
         return Err(refused("not a whole head in its one spelling"));
     }
     Ok((carried, entity))
@@ -90,7 +113,13 @@ pub(crate) fn selected_record_document(
     doc: &LoroDoc,
     entity: &EntityId,
     raw: &[u8],
-) -> Result<Option<(CarriedRecordDocument, Vec<u8>)>> {
+) -> Result<
+    Option<(
+        CarriedRecordDocument,
+        Vec<u8>,
+        Option<RefinementOriginSource>,
+    )>,
+> {
     if !holds_skill_doc_map(doc) {
         return Ok(None);
     }
@@ -106,7 +135,20 @@ pub(crate) fn selected_record_document(
         return Ok(None);
     };
     carried.record.document(raw, &snapshot)?;
-    Ok(Some((carried.record, snapshot)))
+    let refinement = match &carried.refinement {
+        Some(source) => {
+            let Some(raw) = join_parts(&map, &source.row) else {
+                return Ok(None);
+            };
+            Some(RefinementOriginSource::from_carried(
+                &carried.record,
+                source.revision,
+                raw,
+            )?)
+        }
+        None => None,
+    };
+    Ok(Some((carried.record, snapshot, refinement)))
 }
 
 /// The entity carriers affected by head or part inserts. A part-only delta
@@ -122,7 +164,7 @@ pub(crate) fn affected_rows(doc: &LoroDoc, updated: &BTreeSet<String>) -> BTreeS
         .filter_map(|(key, bytes)| {
             let (head, entity) = decode(&bytes).ok()?;
             (updated.contains(&key)
-                || (parts_changed && head.snapshot.keys().any(|part| updated.contains(&part))))
+                || (parts_changed && head.part_keys().any(|part| updated.contains(&part))))
             .then_some(entity)
         })
         .collect()
@@ -145,9 +187,9 @@ pub(crate) fn mirror_skill_document(
     };
     let source = {
         let txn = vault.store.env.read_txn()?;
-        export_skill_record_document_in_txn(&vault.store, &txn, entity, &raw)?
+        export_skill_record_document_in_txn(vault, &txn, entity, &raw)?
     };
-    let Some((record, snapshot)) = source else {
+    let Some((record, snapshot, refinement_source)) = source else {
         return Ok(false);
     };
     let map = doc.get_map(SKILL_DOCS_MAP);
@@ -156,27 +198,52 @@ pub(crate) fn mirror_skill_document(
         .map(|bytes| decode(&bytes))
         .transpose()?
         .map(|(held, _)| held);
+    let held_refinement = held
+        .as_ref()
+        .and_then(|held| held.refinement.as_ref())
+        .map(|source| (source.revision, join_parts(&map, &source.row)));
+    let same_refinement = match (&held_refinement, &refinement_source) {
+        (None, None) => true,
+        (Some((revision, Some(raw))), Some(source)) => {
+            *revision == source.revision() && raw.as_slice() == source.raw()
+        }
+        _ => false,
+    };
     if let Some(held) = &held {
         let local = record.native();
         let remote = held.record.native();
         if !(local.holds(remote) || local.replaces(remote))
             || (remote.covers(local)
                 && held.record.source_birth_frontier() == record.source_birth_frontier()
-                && held.record.refinement_origin() == record.refinement_origin())
+                && held.record.refinement_origin() == record.refinement_origin()
+                && same_refinement)
             || remote.purges(local)
         {
             return Ok(false);
         }
     }
-    let (parts, pieces) = split_parts(&snapshot)?;
+    let (parts, mut pieces) = split_parts(&snapshot)?;
+    let refinement = refinement_source
+        .as_ref()
+        .map(|source| {
+            let (row, source_pieces) = split_parts(source.raw())?;
+            pieces.extend(source_pieces);
+            Ok::<_, Error>(RefinementOriginParts {
+                revision: source.revision(),
+                row,
+            })
+        })
+        .transpose()?;
     let carried = CarriedHead {
         record,
         snapshot: parts,
+        refinement,
     };
     if let Some(held) = &held
-        && !carried.record.native().covers(held.record.native())
-        && (!carried.record.native().replaces(held.record.native())
-            || carried.record.native().purges(held.record.native()))
+        && ((held.refinement.is_some() && !same_refinement)
+            || (!carried.record.native().covers(held.record.native())
+                && (!carried.record.native().replaces(held.record.native())
+                    || carried.record.native().purges(held.record.native()))))
     {
         super::window::require_history_free_window(vault, window)?;
     }
@@ -188,7 +255,7 @@ pub(crate) fn mirror_skill_document(
     let mut referenced = BTreeSet::new();
     for (_, bytes) in head_rows(&map) {
         let (head, _) = decode(&bytes)?;
-        referenced.extend(head.snapshot.keys());
+        referenced.extend(head.part_keys());
     }
     for part in unreferenced_parts(&map, &referenced) {
         map_delete(&map, &part)?;
@@ -240,7 +307,7 @@ pub(crate) fn scrub_skill_docs(
             {
                 gone.push(key);
             } else {
-                referenced.extend(head.snapshot.keys());
+                referenced.extend(head.part_keys());
             }
         }
     }
