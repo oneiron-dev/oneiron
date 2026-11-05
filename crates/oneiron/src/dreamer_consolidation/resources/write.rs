@@ -65,6 +65,7 @@ pub(crate) struct ConsolidationFence {
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     fallback_binding: Option<FallbackOutputPin>,
+    root_binding: Option<crate::dreamer_consolidation::root_evidence::bridge::RootBinding>,
     sources: BTreeMap<EntityId, SourcePin>,
     /// Each fenced TURN with the conversation of its declared part: every
     /// binding is fenced exactly (FIX 7524).
@@ -263,6 +264,7 @@ impl BranchResources<'_> {
             actor: self.actor,
             attempt: self.attempt,
             fallback_binding: self.fallback_binding(),
+            root_binding: self.origin.root_binding().cloned(),
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             texts: self.texts.clone(),
@@ -404,6 +406,9 @@ impl ConsolidationFence {
         // set, bindings, versions and frontiers must still match the pin.
         for (turn, text) in &self.texts {
             text.check_live_in(&read, txn, turn)?;
+        }
+        if let Some(binding) = &self.root_binding {
+            binding.validate_after_closes_in_txn(vault, &read, &recorded, txn, &closed)?;
         }
         Ok(())
     }

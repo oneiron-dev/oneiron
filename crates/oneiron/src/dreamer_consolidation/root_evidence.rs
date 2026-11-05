@@ -21,8 +21,16 @@ use serde::{Deserialize, Serialize};
 const ROOTS: SideTable<EntityId, Root, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_ROOT);
 
+pub(super) mod bridge;
 mod work;
 pub(crate) use work::{frontier_frozen, pin_frozen};
+
+pub(crate) const ROOT_BRIDGE_ATTEMPT_TYPE: &str = bridge::ATTEMPT;
+
+/// Only actual entity rows named by the root payload, never its side-table key.
+pub(crate) fn root_bridge_read_context(input: &rmpv::Value) -> Option<Vec<EntityId>> {
+    bridge::RootPayload::about(input)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Root {
@@ -487,5 +495,5 @@ pub(crate) fn erase_actor_in_txn(
             ROOTS.delete(&vault.store, txn, &id)?;
         }
     }
-    Ok(())
+    bridge::erase_owner_bridges_in_txn(&vault.store, txn, actor)
 }
