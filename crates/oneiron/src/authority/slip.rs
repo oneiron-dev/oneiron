@@ -444,6 +444,21 @@ impl CapabilitySlip {
         key.verify_strict(&self.binding_transcript(challenge)?, &signature)
             .map_err(|_| invalid_authority())
     }
+    /// Checks a just-logged mint under its own purpose, without proving a
+    /// holder presentation or returning a generally usable credential.
+    pub(super) fn verify_mint_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<()> {
+        if self.claims.trusted_contact.is_some() {
+            self.verify_trusted_contact_authority(host_public_key, fold, now)
+                .map(drop)
+        } else {
+            self.verify_authority(host_public_key, fold, now).map(drop)
+        }
+    }
     pub(super) fn verify_authority(
         &self,
         host_public_key: &super::AuthorityKey,

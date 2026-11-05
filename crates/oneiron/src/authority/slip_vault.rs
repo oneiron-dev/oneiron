@@ -627,7 +627,7 @@ impl Vault {
             )],
         )?;
         let fresh = self.authority_view_readonly_in_txn(txn)?;
-        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
+        slip.verify_mint_authority(&issuer.public_key(), &fresh, now)?;
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
