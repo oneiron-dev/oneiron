@@ -69,7 +69,7 @@ pub(crate) fn apply_calendar_source_feed(
     now: u64,
 ) -> Result<usize, CalendarError> {
     let feed = parse_ics_feed(ics)?;
-    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?;
+    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?.record;
     let mut admission = PollAdmission {
         vault,
         screener: None,
@@ -103,23 +103,44 @@ fn apply_upsert(
         .ok_or_else(|| parse_error("calendar resource carries no VEVENT"))?;
     // Archived before any semantic write: the admitted claims cite exactly
     // these bytes.
-    let record = archive_source_resource(vault, system, &uid, &object.ics, now)?;
-    super::preflight_connector_feed(vault, system, &record, &feed, now)?;
+    let archived = archive_source_resource(vault, system, &uid, &object.ics, now)?;
+    let record = archived.record.as_str();
+    super::preflight_connector_feed(vault, system, record, &feed, now)?;
     for parsed in &feed.events {
-        super::admit_connector_event(vault, system, record.as_str(), parsed, now)?;
+        super::admit_connector_event(vault, system, record, parsed, now)?;
     }
-    // Only a series can have dropped an instance this resource no longer
-    // carries; a single event has nothing to sweep, and the sweep reads
-    // every EVENT.
-    let series = feed.events.len() > 1
+    // Only a series, now or in the resource's version before, can have
+    // dropped an instance this resource no longer carries; a single event
+    // that was single has nothing to sweep, and the sweep reads every EVENT.
+    if is_series(&feed) || earlier_was_series(vault, &archived)? {
+        super::sweep_connector_resource(vault, system, record, &feed, &uid, now)?;
+    }
+    Ok(())
+}
+
+/// Whether a resource carries a series: a master with a rule, or detached
+/// instances.
+fn is_series(feed: &ParsedIcsFeed) -> bool {
+    feed.events.len() > 1
         || feed
             .events
             .first()
-            .is_some_and(|master| master.properties.rrule.is_some());
-    if series {
-        super::sweep_connector_resource(vault, system, &record, &feed, &uid, now)?;
-    }
-    Ok(())
+            .is_some_and(|master| master.properties.rrule.is_some())
+}
+
+/// Whether the version the archived one descends from carried a series. A
+/// version that no longer reads or parses counts as one.
+fn earlier_was_series(vault: &Vault, archived: &ArchivedResource) -> Result<bool, CalendarError> {
+    let Some(parent) = archived.parent_version else {
+        return Ok(false);
+    };
+    let Some(bytes) = vault.read_blob_artifact_version(&archived.artifact_id, parent)? else {
+        return Ok(true);
+    };
+    Ok(match parse_ics_feed(&bytes) {
+        Ok(feed) => is_series(&feed),
+        Err(_) => true,
+    })
 }
 
 /// One resource: one UID's master first, then its detached instances.
@@ -138,19 +159,29 @@ fn parse_resource(ics: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(feed)
 }
 
+/// One pulled resource as archived.
+struct ArchivedResource {
+    /// The `hex#vN` reference the admitted claims cite.
+    record: String,
+    artifact_id: EntityId,
+    /// The version this one descends from, when it is not the first.
+    parent_version: Option<u64>,
+}
+
 /// Archives one pulled resource of `(system, uid)`: one artifact per
 /// resource, bound to the source's audience in its birth commit, then one
-/// version per body. Returns the `hex#vN` reference the admitted claims
-/// cite.
+/// version per body.
 fn archive_source_resource(
     vault: &Vault,
     system: &str,
     uid: &str,
     ics: &[u8],
     now: u64,
-) -> Result<String, CalendarError> {
-    let artifact_id =
-        EntityId::derive(MAIL_CALENDAR_SOURCE_BLOB, &[system.as_bytes(), uid.as_bytes()])?;
+) -> Result<ArchivedResource, CalendarError> {
+    let artifact_id = EntityId::derive(
+        MAIL_CALENDAR_SOURCE_BLOB,
+        &[system.as_bytes(), uid.as_bytes()],
+    )?;
     let at = crate::TimeRange {
         start: now,
         end: now,
@@ -181,7 +212,11 @@ fn archive_source_resource(
         at,
         now,
     )?;
-    Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
+    Ok(ArchivedResource {
+        record: format!("{}#v{}", artifact_id.to_hex(), version.version),
+        artifact_id,
+        parent_version: version.parent_version,
+    })
 }
 
 fn parse_error(reason: &str) -> CalendarError {

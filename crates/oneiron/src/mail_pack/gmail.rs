@@ -320,7 +320,6 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
-        self.verify(source)?;
         let message_url = Self::message_url(provider_id)?;
         // An attachment Gmail keeps apart is fetched by its id; a small one
         // rides inline in its part of the whole message.

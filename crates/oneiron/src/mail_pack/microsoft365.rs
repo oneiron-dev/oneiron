@@ -686,13 +686,16 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
-        self.verify(source)?;
         let id = attachment
             .provider_attachment_id
             .as_deref()
             .unwrap_or(attachment.part_id.as_str());
         require_graph_id(id)?;
-        let url = format!("{}/attachments/{}", message_url(provider_id)?, path_segment(id));
+        let url = format!(
+            "{}/attachments/{}",
+            message_url(provider_id)?,
+            path_segment(id)
+        );
         let Some(answer) = self.found(source, &url, &[], PREFER_IMMUTABLE_IDS)? else {
             return Ok(None);
         };

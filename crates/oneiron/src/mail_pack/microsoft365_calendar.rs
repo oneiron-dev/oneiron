@@ -19,8 +19,6 @@
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
-use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use reqwest::header::AUTHORIZATION;
@@ -29,20 +27,19 @@ use serde_json::Value;
 
 use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire};
 use super::credential::WireReads;
-use super::rest::{self, RestAnswer, array, bearer_header, refused, text_of};
+use super::rest::{self, RestAnswer, VerifiedCredentials, array, bearer_header, refused, text_of};
 use super::source::MailProvider;
 use super::wire::MailSyncSource;
+use crate::Vault;
 use crate::calendar::{RemoteCalendarChange, RemoteCalendarObject};
 use crate::error::{Error, Result};
-use crate::{EntityId, Vault};
 
 /// The custody effector a Microsoft 365 calendar credential is bound to.
 pub const MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:microsoft365_calendar";
 
 const GRAPH_ORIGIN: &str = "https://graph.microsoft.com/";
 const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
-const PREFER: &str =
-    "IdType=\"ImmutableId\", outlook.timezone=\"UTC\", outlook.body-content-type=\"text\", odata.maxpagesize=100";
+const PREFER: &str = "IdType=\"ImmutableId\", outlook.timezone=\"UTC\", outlook.body-content-type=\"text\", odata.maxpagesize=100";
 /// How far before its opening a view starts.
 const VIEW_BEFORE_SECS: u64 = 31 * 24 * 3600;
 /// How far after its opening a view ends.
@@ -66,8 +63,8 @@ struct GraphCalendarCursor {
 pub struct HttpGraphCalendarWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
-    /// The sources whose credential this wire has seen be their person.
-    verified: RefCell<BTreeSet<EntityId>>,
+    /// The credentials this wire has seen be their source's person.
+    verified: VerifiedCredentials,
 }
 
 impl<'v> HttpGraphCalendarWire<'v> {
@@ -80,7 +77,7 @@ impl<'v> HttpGraphCalendarWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
-            verified: RefCell::new(BTreeSet::new()),
+            verified: VerifiedCredentials::new(),
         })
     }
 
@@ -91,7 +88,9 @@ impl<'v> HttpGraphCalendarWire<'v> {
         query: &[(&str, String)],
     ) -> Result<RestAnswer> {
         if source.provider != MailProvider::Microsoft365 {
-            return Err(refused("graph_calendar_wire_reads_microsoft365_calendars_only"));
+            return Err(refused(
+                "graph_calendar_wire_reads_microsoft365_calendars_only",
+            ));
         }
         if !url.starts_with(GRAPH_ORIGIN) {
             return Err(refused("graph_calendar_link_not_on_graph"));
@@ -103,6 +102,21 @@ impl<'v> HttpGraphCalendarWire<'v> {
             MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
+                // The credential presented here is the one checked: its user
+                // is the person the source names.
+                if !self.verified.holds(source.source_ref, token) {
+                    let request = self
+                        .client
+                        .get(GRAPH_ME_URL)
+                        .query(&[("$select", "mail,userPrincipalName")])
+                        .header(AUTHORIZATION, auth.clone())
+                        .header("Prefer", PREFER);
+                    let me = rest::send(request)?
+                        .found_or_gone("graph_calendar")?
+                        .ok_or_else(|| refused("graph_calendar_user_not_found"))?;
+                    is_source_person(&me, source)?;
+                    self.verified.insert(source.source_ref, token);
+                }
                 let request = self
                     .client
                     .get(url)
@@ -114,30 +128,6 @@ impl<'v> HttpGraphCalendarWire<'v> {
             },
         )?;
         answer.ok_or_else(|| refused("graph_calendar_credential_door_refused"))
-    }
-
-    fn verify(&self, source: &MailSyncSource) -> Result<()> {
-        if self.verified.borrow().contains(&source.source_ref) {
-            return Ok(());
-        }
-        let select = [("$select", "mail,userPrincipalName".to_owned())];
-        let me = self
-            .get(source, GRAPH_ME_URL, &select)?
-            .found_or_gone("graph_calendar")?
-            .ok_or_else(|| refused("graph_calendar_user_not_found"))?;
-        let wanted = source.address.trim();
-        let primary = wanted.eq_ignore_ascii_case("primary");
-        let reads = primary
-            || ["mail", "userPrincipalName"].iter().any(|field| {
-                me.get(*field)
-                    .and_then(Value::as_str)
-                    .is_some_and(|address| address.trim().eq_ignore_ascii_case(wanted))
-            });
-        if !reads {
-            return Err(refused("graph_calendar_credential_is_another_person"));
-        }
-        self.verified.borrow_mut().insert(source.source_ref);
-        Ok(())
     }
 
     /// The first link of a view opened at `now`.
@@ -152,7 +142,6 @@ impl<'v> HttpGraphCalendarWire<'v> {
 
 impl MailCalendarWire for HttpGraphCalendarWire<'_> {
     fn pull(&self, source: &MailSyncSource, cursor: Option<&str>) -> Result<MailCalendarRead> {
-        self.verify(source)?;
         let now = crate::unix_seconds_now();
         let cursor = match cursor {
             Some(cursor) => {
@@ -283,15 +272,26 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
     };
     line(&mut ics, "STATUS", status);
     let free = event.get("showAs").and_then(Value::as_str) == Some("free")
-        || event.pointer("/responseStatus/response").and_then(Value::as_str) == Some("declined");
-    line(&mut ics, "TRANSP", if free { "TRANSPARENT" } else { "OPAQUE" });
+        || event
+            .pointer("/responseStatus/response")
+            .and_then(Value::as_str)
+            == Some("declined");
+    line(
+        &mut ics,
+        "TRANSP",
+        if free { "TRANSPARENT" } else { "OPAQUE" },
+    );
     if let Some(email) = event
         .pointer("/organizer/emailAddress/address")
         .and_then(Value::as_str)
         .filter(|email| !email.is_empty())
     {
         let name = cn_param(event.pointer("/organizer/emailAddress/name"));
-        line(&mut ics, &format!("ORGANIZER{name}"), &format!("mailto:{}", text(email)));
+        line(
+            &mut ics,
+            &format!("ORGANIZER{name}"),
+            &format!("mailto:{}", text(email)),
+        );
     }
     for attendee in array(event, "attendees") {
         let Some(email) = attendee
@@ -407,4 +407,22 @@ fn graph_id(value: Option<&Value>) -> Result<String> {
         return Err(refused("graph_calendar_id_not_plain"));
     }
     Ok(id.to_owned())
+}
+
+/// The Graph user `me` is the person the source names (its `mail` or
+/// `userPrincipalName`), or the source names its credential's own primary
+/// calendar.
+fn is_source_person(me: &Value, source: &MailSyncSource) -> Result<()> {
+    let wanted = source.address.trim();
+    let reads = wanted.eq_ignore_ascii_case("primary")
+        || ["mail", "userPrincipalName"].iter().any(|field| {
+            me.get(*field)
+                .and_then(Value::as_str)
+                .is_some_and(|address| address.trim().eq_ignore_ascii_case(wanted))
+        });
+    if reads {
+        Ok(())
+    } else {
+        Err(refused("graph_calendar_credential_is_another_person"))
+    }
 }
