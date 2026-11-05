@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 140] = [
+    pub const ALL: [Self; 141] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -88,6 +88,7 @@ impl EngineLimit {
         Self::SealAnswerBytes,
         Self::SealMemoryAsks,
         Self::SealCrlBytes,
+        Self::SealOcspBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
@@ -233,6 +234,7 @@ impl EngineLimit {
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
             Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
+            Self::SealOcspBytes => "limits.seal_ocsp_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
@@ -421,6 +423,7 @@ impl EngineLimit {
             // worth of reservations.
             Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
+            Self::SealOcspBytes => 1 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,
