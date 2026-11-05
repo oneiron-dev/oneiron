@@ -58,6 +58,15 @@ impl<const N: usize> From<[EntityId; N]> for RelationshipSet {
     }
 }
 
+impl IntoIterator for RelationshipSet {
+    type Item = EntityId;
+    type IntoIter = std::vec::IntoIter<EntityId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ids.into_iter()
+    }
+}
+
 impl<'a> IntoIterator for &'a RelationshipSet {
     type Item = &'a EntityId;
     type IntoIter = std::slice::Iter<'a, EntityId>;
