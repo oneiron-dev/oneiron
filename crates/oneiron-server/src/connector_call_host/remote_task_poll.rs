@@ -114,24 +114,21 @@ impl ServedConnectorCallHost {
         self.run = None;
         self.credential = match task.poll.credential {
             RemoteTaskCredential::Record(custody) => Some(custody),
-            RemoteTaskCredential::Route | RemoteTaskCredential::Nothing => None,
+            RemoteTaskCredential::Route => None,
         };
-        let auth = if task.poll.credential == RemoteTaskCredential::Nothing {
-            None
-        } else {
-            let route = self
-                .vault
-                .route_connector_call(view.server())
-                .ok()
-                .flatten()
-                .ok_or("connector_route_gone")?;
-            let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
-            let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
-            self.presenting(route)
-                .present_again(&self.vault, row)
-                .ok_or("credential_not_presented")?
-                .auth
-        };
+        let route = self
+            .vault
+            .route_connector_call(view.server())
+            .ok()
+            .flatten()
+            .ok_or("connector_route_gone")?;
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
+        let auth = self
+            .presenting(route)
+            .present_again(&self.vault, row)
+            .ok_or("credential_not_presented")?
+            .auth;
         let live = LiveSession {
             client: self.client.clone(),
             endpoint: view.endpoint().to_owned(),
