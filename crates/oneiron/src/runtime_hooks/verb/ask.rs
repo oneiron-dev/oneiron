@@ -31,7 +31,9 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
+use super::{
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookStop, VerbResume, credential,
+};
 
 /// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
 /// settlement parses the rest, and an ask's Changed deliveries skip it.
@@ -61,7 +63,7 @@ struct VerbAsk {
     #[serde(with = "crate::serialize::entity_ref")]
     actor: EntityId,
     class: HookActorClass,
-    scope: Option<String>,
+    scope: Option<VerbCallScope>,
     domain: VerbDomain,
     /// The args the asking hook saw, re-validated, as JSON.
     args: String,

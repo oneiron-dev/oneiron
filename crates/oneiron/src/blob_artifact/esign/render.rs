@@ -199,6 +199,13 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         EngineLimit::EsignStreamDecodeBytes.default_bound(),
     )
 }
+/// The engine audit replay's checked output for `request`: its chain head
+/// and its trail lines. The seal task replays here before the isolated
+/// prepare, which takes them as given: one implementation
+/// ([`evidence`]), never a second replay.
+pub fn replay_esign_audit(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<String>)> {
+    evidence(request)
+}
 /// Rewrite immutable original bytes and flatten all recorded fields. The audit
 /// chain is checked and replayed; its projection must equal the supplied state.
 /// No I/O, clock, network, key custody or PAdES signing occurs here. Each
@@ -209,6 +216,27 @@ pub fn prepare_esign_pdf_within(
     original: &[u8],
     request: PdfPreparation<'_>,
     stream_decode_bytes: u64,
+) -> Result<PreparedEsignPdf> {
+    prepare_in(original, &request, stream_decode_bytes, None)
+}
+
+/// The same trusted preparation with the audit the seal task already
+/// replayed, so retaining engine-side preparation never replays it twice.
+pub fn prepare_esign_pdf_with_replayed_audit(
+    original: &[u8],
+    request: &PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+    chain: [u8; 32],
+    trail: Vec<String>,
+) -> Result<PreparedEsignPdf> {
+    prepare_in(original, request, stream_decode_bytes, Some((chain, trail)))
+}
+
+fn prepare_in(
+    original: &[u8],
+    request: &PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+    replayed: Option<([u8; 32], Vec<String>)>,
 ) -> Result<PreparedEsignPdf> {
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
@@ -246,7 +274,10 @@ pub fn prepare_esign_pdf_within(
     if input_pages.is_empty() {
         return Err(PdfPreparationError::MalformedPdf);
     }
-    let (audit_chain_sha256, trail) = evidence(&request)?;
+    let (audit_chain_sha256, trail) = match replayed {
+        Some(replayed) => replayed,
+        None => evidence(request)?,
+    };
     if request
         .state
         .document
