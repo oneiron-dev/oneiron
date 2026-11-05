@@ -61,11 +61,12 @@ pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, ReplyCheck,
-    StepOutcome, StepProgression, TrapRef, call_as_step, call_as_step_checked,
-    call_as_step_with_fallbacks, consume_trap_signal, open_trap, reconcile_peer_result_signals,
-    register_peer_result_wait, register_wait, send_peer_result_signal, send_trap_signal,
-    trap_for_durable_wait, trap_park_owner, validate_json_schema,
+    DurableStepContext, DurableStepError, DurableStepResult, MediaStepOutcome,
+    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, TrapRef, call_as_step,
+    call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step, consume_trap_signal,
+    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
+    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
+    validate_json_schema,
 };
 pub(crate) use step::{
     StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,

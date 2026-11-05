@@ -93,7 +93,7 @@ oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 # A device renews its paired owner credential at its home (FIX 3377), with
 # the device sync the mesh feature carries.
 oneiron-remote = { path = "../oneiron-remote", optional = true }
-loro = "1.10"
+loro = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
 # it can set the header deadline and hold a permit inside each socket. Both
