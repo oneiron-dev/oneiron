@@ -408,12 +408,17 @@ fn contact_claim_bodies_in_txn(
     memory: Option<ClaimScopeReadMemory<'_>>,
 ) -> std::result::Result<Vec<ContactClaim>, ClaimBodyReadError> {
     let mut bodies = Vec::new();
+    let mut retained_relationship_bytes = 0u64;
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
     // Keep the first duplicate for the fold, but read every claim so later
     // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        if let Some(body) = vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, memory)? {
+        let read_memory =
+            memory.map(|memory| memory.with_additional_pinned_bytes(retained_relationship_bytes));
+        if let Some(body) =
+            vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, read_memory)?
+        {
             if duplicate || !is_live_contact_head(&body) {
                 continue;
             }
@@ -424,6 +429,8 @@ fn contact_claim_bodies_in_txn(
                 continue;
             };
             duplicate = std::mem::replace(&mut seen[index], true);
+            retained_relationship_bytes =
+                retained_relationship_bytes.saturating_add(body.leased_relationship_bytes());
             bodies.push(body);
         }
     }
