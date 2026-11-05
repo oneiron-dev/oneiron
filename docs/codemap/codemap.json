@@ -12338,7 +12338,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -16836,9 +16836,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/session_verbs/hooks.rs",
-     "purpose": "The verb hooks of a read a run serves in its room (WILL L11-01 S01-2c): each of the four forwarded reads…",
+     "purpose": "The verb hooks of a call a run serves in its room (WILL L11-01 S01-2c): each of the four forwarded reads…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -17122,7 +17122,7 @@
      "path": "src/code_run/payload/session_hooks.rs",
      "purpose": "The replay codec of a `vault.search` outcome and what each verb hook bound to it did in a room (WILL L11-01…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -17532,7 +17532,7 @@
      "path": "src/code_run/shadow_runner/source.rs",
      "purpose": "The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 13,
       "struct": 1
      }
@@ -17647,7 +17647,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 6
      }
     },
@@ -17964,7 +17964,7 @@
      "path": "src/code_run/storage/session_write.rs",
      "purpose": "One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -18178,7 +18178,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentVerbAnswer",
@@ -18194,7 +18194,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 4,
       "trait": 2
      }
@@ -18217,14 +18217,16 @@
       "SelfSandboxProposalDiskFloor",
       "SelfSkillCallResult",
       "SelfSpeechResult",
+      "SelfStoredReply",
+      "SelfStoredReplyKind",
       "SelfTaskRefusalResult"
      ],
      "path": "src/code_run/types/outcome.rs",
      "purpose": "Answers and durable waits recorded for first-party calls",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 3,
-      "struct": 12
+      "struct": 13
      }
     },
     {
@@ -34548,7 +34550,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks/record_hooks.rs",
@@ -48464,7 +48466,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "re-export": 1,
       "struct": 5
@@ -62546,7 +62548,7 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -62609,7 +62611,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/chain.rs",
@@ -62813,6 +62815,16 @@
      "purpose": "A room's hook pause (FIX 5524; Engine 10-20, a widening of the 2c-3 call): a hook in an off-record room asks…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/room_tail.rs",
+     "purpose": "The Hook receipts a room staged itself, for a room chain's receipt tail (FIX 5429)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90469,7 +90481,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90896,9 +90908,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 153,
+   "over_bar": 155,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6383,
+   "source_files": 6384,
    "test_files": 895
   },
   "oneiron-android": {
@@ -101493,6 +101505,7 @@
      "path": "src/supervisor/inference_device.rs",
      "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency…",
      "surface": {
+      "crate-vis": 3,
       "enum": 2,
       "fn": 21,
       "struct": 6
@@ -101574,7 +101587,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -101608,6 +101621,20 @@
      "purpose": "What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601)",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionAllocation",
+      "SessionAllocationOwner"
+     ],
+     "path": "src/supervisor/session_allocations.rs",
+     "purpose": "Fact-only session ownership rows (FIX10370): which vault sessions hold bytes on a device's worker, as the…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -101843,7 +101870,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101873,7 +101900,7 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -109199,7 +109226,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -110941,7 +110968,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -119648,7 +119675,7 @@
      "path": "src/device_sync/dial.rs",
      "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -119669,6 +119696,16 @@
      "purpose": "The reap freeze a managed vault's device sync works under (WILL-PLAN L14 row 14, FIX 5127)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/host.rs",
+     "purpose": "The existing served host, or an app's already-open device vault",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -119725,6 +119762,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/url.rs",
+     "purpose": "A verified TLS carrier for the ordinary URL sync connection",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/document_memory.rs",
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
      "surface": {
@@ -119740,7 +119787,7 @@
      "surface": {
       "crate-vis": 7,
       "fn": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -119757,6 +119804,19 @@
      "surface": {
       "fn": 15,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EmbeddedDeviceSync"
+     ],
+     "path": "src/embedded/device.rs",
+     "purpose": "Device sync for an app that already opened and profiled its own vault",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -123980,6 +124040,7 @@
       "RungStatus",
       "SeatState",
       "SeatStatus",
+      "SessionAllocationStatus",
       "SnapshotReceipt",
       "SnapshotSkips",
       "SnapshotStatus",
@@ -123992,7 +124053,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 18
+      "struct": 19
      }
     },
     {
@@ -124066,7 +124127,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -124236,7 +124297,7 @@
      "path": "src/models/worker_host/session/registry.rs",
      "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 39
      }
     },
     {
@@ -127670,7 +127731,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 11,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -127684,7 +127745,7 @@
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)"
     },
     "embedded": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -128008,7 +128069,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1590,
+   "source_files": 1593,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
