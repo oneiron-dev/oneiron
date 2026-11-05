@@ -198,8 +198,10 @@ impl CanonicalSnapshot {
     /// at its current revision, in place of the artifact's whole family of
     /// it; one it does not hold, the artifact's revisions but each naming an
     /// actor this vault erased, the highest one's redaction filed under its
-    /// own next revision; and each binding as carried, unless this vault
-    /// binds the row otherwise, which refuses the restore.
+    /// own next revision; each binding as carried, unless this vault binds
+    /// the row otherwise, which refuses the restore; and each final row this
+    /// vault binds now with its binding and current closure, so a capture
+    /// taken after the restore answers the same.
     pub(in crate::recovery) fn settle_source_audiences_here(
         &mut self,
         vault: &crate::Vault,
@@ -255,6 +257,30 @@ impl CanonicalSnapshot {
                     rows.insert(
                         policy_key(&id, redacted.revision),
                         encode_policy(&redacted)?,
+                    );
+                }
+            }
+        }
+        // A final row this vault binds now rides with its binding and its
+        // current closure, as a capture here would take it.
+        for entity in &self.entity_blobs {
+            let row = id(entity.id)?;
+            let Some(policy) = source_audience::binding_in(vault, txn, &row)? else {
+                continue;
+            };
+            if !source_audience::publishable_in(vault, txn, &policy)? {
+                continue;
+            }
+            let Some(closure) = source_audience::policy_closure_in(vault, txn, &policy)? else {
+                continue;
+            };
+            rows.entry(record_key(&row))
+                .or_insert(encode_binding(&policy)?);
+            for (family, current) in closure {
+                if !rows.contains_key(&policy_key(&family, current.revision)) {
+                    rows.insert(
+                        policy_key(&family, current.revision),
+                        encode_policy(&current)?,
                     );
                 }
             }
