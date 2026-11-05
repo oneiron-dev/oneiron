@@ -5455,6 +5455,7 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
     let ran = execute_agent_verb_row(
         server,
         tool,
@@ -5464,6 +5465,7 @@ async fn execute_agent_verb_listing(
         surface,
         served,
         board_hooks,
+        pre_hooked_fold,
     )
     .await;
     // A row that fails after its pre chain ran keeps a session-only call's
@@ -5497,6 +5499,7 @@ async fn execute_agent_verb_row(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -5521,6 +5524,7 @@ async fn execute_agent_verb_row(
             surface,
             served,
             board_hooks,
+            pre_hooked_fold,
         ),
     )
     .await
@@ -5537,6 +5541,7 @@ async fn execute_agent_verb_row_on(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -26375,6 +26380,7 @@ async fn execute_agent_verb_row_on(
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
+                pre_hooked_fold,
             ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
