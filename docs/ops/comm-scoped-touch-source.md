@@ -1,8 +1,10 @@
-# Scoped touch source format: source-only foundation
+# Scoped, explicitly born touch sources
 
-The bound batch router still keeps noncanonical touches on its full native raw
-path. This foundation does not enable world-bearing touch routing or projection.
-It must not be released as a complete scope-aware communication feature.
+The bound batch router can project an explicitly born LastTouch whose only
+noncanonical context is a non-base world. The original Put, ClaimOf edge and
+native birth still land through their existing gates before its source is
+created in the same writer. Other noncanonical contexts and unsupported births
+keep their full native raw path.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events, gates and
 receipts encode `nil`. A scoped, explicitly born `TouchAsserted` can instead
@@ -42,7 +44,16 @@ unavailable recognized source is unresolved, not an ordinary event.
 
 The consumed-event rewrite preserves the bound key and tuple. No other native
 COMM tuple rewrite was found in the bounded source map; this is not a global
-erasure or runtime proof. The world-bearing producer, adopter and
-context-specific LastTouch matcher are not wired in this source-only
-foundation. No runtime or full privacy claim is made. The ordinary canonical
-source path still uses its existing identity and checks.
+erasure or runtime proof. The producer and adopter both bind the actual full
+original row and native base birth. A changed row cannot be adopted merely
+because it still states the same touch value. A source whose original is
+missing, closed or retracted never recreates that original.
+
+LastTouch winner selection compares the event's frozen context with every
+candidate's actual CLAIM context before supersession: normalized world,
+relationship, facet, project, opaque scope, native sensitivity and session tag.
+This applies to both scoped events and ordinary canonical events. A base event
+cannot close a world-bearing head, nor the reverse. Other communication rules
+keep their existing matching and admission. The ordinary canonical source path
+still uses its existing identity and checks. No runtime or full privacy claim
+is made.

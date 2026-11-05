@@ -209,3 +209,54 @@ pub(super) fn same_touch_context_except_world(left: &ClaimBody, right: &ClaimBod
         && crate::claim::claim_sensitivity_band(left) == crate::claim::claim_sensitivity_band(right)
         && left.session_tag == right.session_tag
 }
+
+pub(super) fn same_touch_context(left: &ClaimBody, right: &ClaimBody) -> bool {
+    left.world.unwrap_or_else(crate::claim::base_world_id)
+        == right.world.unwrap_or_else(crate::claim::base_world_id)
+        && same_touch_context_except_world(left, right)
+}
+
+pub(super) fn touch_slot_body(
+    value: &CommClaimValue,
+    source: Option<&ScopedTouchSource>,
+) -> super::claims::CommResult<ClaimBody> {
+    let mut body = value.claim_body()?;
+    if let Some(source) = source {
+        if source.world == crate::claim::base_world_id()
+            || source.facet != body.scope_facet
+            || source.project != body.scope_project
+            || Some(source.sensitivity) != crate::claim::claim_sensitivity_band(&body)
+        {
+            return Err(super::claims::CommError::InvalidRecord);
+        }
+        body.world = Some(source.world);
+    }
+    Ok(body)
+}
+
+pub(super) fn matching_touch_heads_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    party_ref: EntityId,
+    channel: &str,
+    expected: &ClaimBody,
+) -> super::claims::CommResult<Vec<(EntityId, CommClaim)>> {
+    let heads = super::projection_writes::matching_claims_in_txn(
+        vault,
+        txn,
+        party_ref,
+        super::claims::PREDICATE_COMM_LAST_TOUCH,
+        Some(channel),
+        None,
+        true,
+    )?;
+    let mut matches = Vec::new();
+    for (id, claim) in heads {
+        if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+            && same_touch_context(&body, expected)
+        {
+            matches.push((id, claim));
+        }
+    }
+    Ok(matches)
+}

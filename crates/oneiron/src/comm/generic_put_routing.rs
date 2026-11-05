@@ -303,15 +303,11 @@ fn take_batch_puts_in_txn(
             )?;
             if bound_births.is_some() {
                 let projected = CommClaim::from_claim_body(&body)?.value.claim_body()?;
-                if body.world.unwrap_or_else(crate::claim::base_world_id)
-                    != projected.world.unwrap_or_else(crate::claim::base_world_id)
-                    || body.rel != projected.rel
-                    || body.scope_facet != projected.scope_facet
-                    || body.scope_project != projected.scope_project
-                    || body.scope != projected.scope
-                    || crate::claim::claim_sensitivity_band(&body)
-                        != crate::claim::claim_sensitivity_band(&projected)
-                    || body.session_tag != projected.session_tag
+                let same_world = body.world.unwrap_or_else(crate::claim::base_world_id)
+                    == projected.world.unwrap_or_else(crate::claim::base_world_id);
+                let scoped_born_touch = birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH;
+                if (!same_world && !scoped_born_touch)
+                    || !super::scoped_touch::same_touch_context_except_world(&body, &projected)
                 {
                     continue;
                 }
