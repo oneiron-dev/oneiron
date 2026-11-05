@@ -131,7 +131,7 @@ fn scrub_carriers_in_txn(
         // revision (including pre-erasure versions). No core row is touched.
         // The marker goes too: its digest of the body could confirm a guess.
         crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
-        crate::batch::deindex_entity(&vault.store, wtxn, id)?;
+        crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, id)?;
         AUTHORED_HERE.delete(&vault.store, wtxn, &HexId(*id))?;
     }
     Ok(())
