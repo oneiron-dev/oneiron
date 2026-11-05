@@ -1,14 +1,14 @@
 //! ROOT TASKS layout over raw HTTP (FIX 12570, HTTP slice).
 //!
 //! `GET|POST /v1/core/context-board/layout/tasks`: one actor's durable ROOT
-//! TASKS-row token budget and kept task ids. GET reads the caller's own
+//! TASKS-row token budget, kept task ids and whole-section folding. GET reads the caller's own
 //! live default plus its one pending staged write; POST stages ONE pending batch for a later
 //! explicit TURN or native chat answer. This is parent 12570 PART: ROOT raw
 //! HTTP, native live/queued chat, fork snapshots and live-only run boards; no
-//! full-board shares, folds, filters, notes or owner defaults. See
+//! full-board shares, filters, notes or owner defaults. See
 //! `docs/ops/context-board-tasks-layout.md`.
 //!
-//! POST patches `budget_tok` and/or `keep` into ONE pending snapshot. Omission
+//! POST patches `budget_tok`, `keep` and/or `folded` into ONE pending snapshot. Omission
 //! preserves the latest pending value, else live. Budget `null` resets to
 //! 100-row behavior; `keep: []` clears kept ids. No authored text is stored.
 //! Hydration selection lives here too: explicit per-request `Some` wins with
@@ -50,6 +50,9 @@ pub(crate) struct ContextBoardTasksLayoutStageRequest {
     /// Native 32-hex task row ids; `[]` clears, omission preserves.
     #[serde(default)]
     pub(crate) keep: Option<Vec<String>>,
+    /// Whole TASKS view; omission preserves the pending snapshot, else live.
+    #[serde(default)]
+    pub(crate) folded: Option<bool>,
 }
 
 /// A field that is present, even as `null`; `#[serde(default)]` leaves an
@@ -73,6 +76,7 @@ pub(crate) struct ContextBoardTasksLayoutState {
     pub(crate) live_budget_tok: Option<usize>,
     /// Live task ids kept open when the current read admits them.
     pub(crate) live_keep: Vec<String>,
+    pub(crate) live_folded: bool,
     /// Staged write awaiting TURN activation; `None` is no pending.
     #[schema(nullable = true)]
     pub(crate) pending: Option<ContextBoardTasksLayoutPending>,
@@ -85,6 +89,7 @@ pub(crate) struct ContextBoardTasksLayoutPending {
     #[schema(nullable = true, example = 400)]
     pub(crate) budget_tok: Option<usize>,
     pub(crate) keep: Vec<String>,
+    pub(crate) folded: bool,
 }
 
 /// Reads the caller's own ROOT TASKS layout state. GET never mutates.
@@ -108,6 +113,7 @@ pub(crate) async fn context_board_tasks_layout(
         return Ok(Json(ContextBoardTasksLayoutState {
             live_budget_tok: None,
             live_keep: Vec::new(),
+            live_folded: false,
             pending: None,
         }));
     };
@@ -140,8 +146,8 @@ pub(crate) async fn context_board_tasks_layout_stage(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let req = json_payload(payload)?;
-    if req.budget_tok.is_none() && req.keep.is_none() {
-        return Err(ApiError::bad_request("budget_tok or keep is required", None).into());
+    if req.budget_tok.is_none() && req.keep.is_none() && req.folded.is_none() {
+        return Err(ApiError::bad_request("budget_tok, keep or folded is required", None).into());
     }
     let keep = req
         .keep
@@ -153,7 +159,7 @@ pub(crate) async fn context_board_tasks_layout_stage(
         .transpose()?;
     let memory = tasks_layout_memory(&server, &auth)?;
     let state = memory
-        .stage_tasks_layout_update(req.budget_tok, keep)
+        .stage_tasks_layout_patch(req.budget_tok, keep, req.folded)
         .map_err(tasks_layout_error)?;
     Ok(Json(tasks_layout_dto(state)?))
 }
@@ -176,14 +182,7 @@ pub(crate) fn hydrate_tasks_selection(
     has_turn: bool,
     cap_tok: usize,
     chat_layout_actor: Option<EntityId>,
-) -> Result<
-    (
-        Option<usize>,
-        Vec<EntityId>,
-        Option<oneiron::context_board::TasksLayoutCandidate>,
-    ),
-    ApiError,
-> {
+) -> Result<oneiron::context_board::TasksLayoutSelection, ApiError> {
     if let Some(actor) = chat_layout_actor {
         return server
             .vault
@@ -191,7 +190,7 @@ pub(crate) fn hydrate_tasks_selection(
             .map_err(|error| core_engine_error("tasks layout selection failed", error));
     }
     let Some(actor) = tasks_layout_actor(auth) else {
-        return Ok((None, Vec::new(), None));
+        return Ok(oneiron::context_board::TasksLayoutSelection::default());
     };
     server
         .vault
@@ -275,14 +274,43 @@ fn tasks_layout_dto(
             Ok::<_, ApiError>(ContextBoardTasksLayoutPending {
                 budget_tok: pending.value.map(stored_usize).transpose()?,
                 keep: pending.keep.iter().map(EntityId::to_hex).collect(),
+                folded: pending.folded,
             })
         })
         .transpose()?;
     Ok(ContextBoardTasksLayoutState {
         live_budget_tok,
         live_keep: state.live_keep.iter().map(EntityId::to_hex).collect(),
+        live_folded: state.live_folded,
         pending,
     })
+}
+
+/// Names the FULL admitted fold source without deriving authority from it.
+/// Replays re-admit its native TASKs; bare jobs remain source dependencies,
+/// as in the original board's distinct bare-job disclosure path.
+pub(super) fn fold_sources(
+    folded: bool,
+    source: &oneiron::context_board::TasksSectionRows,
+    named: &mut Vec<EntityId>,
+) -> Vec<EntityId> {
+    if !folded {
+        return Vec::new();
+    }
+    let mut sources: Vec<EntityId> = source
+        .intents
+        .iter()
+        .filter(|intent| !intent.is_acked_failure())
+        .filter_map(|intent| EntityId::from_hex(&intent.id).ok())
+        .collect();
+    named.extend_from_slice(&sources);
+    sources.extend(
+        source
+            .bare_jobs
+            .iter()
+            .filter_map(|job| EntityId::from_hex(&job.id).ok()),
+    );
+    sources
 }
 
 fn stored_usize(value: u64) -> Result<usize, ApiError> {

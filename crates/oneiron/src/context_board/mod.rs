@@ -154,7 +154,9 @@ pub use tasks::{
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
-pub use tasks_layout::{TasksLayoutCandidate, TasksLayoutPendingState, TasksLayoutState};
+pub use tasks_layout::{
+    TasksLayoutCandidate, TasksLayoutPendingState, TasksLayoutSelection, TasksLayoutState,
+};
 pub(crate) use tasks_layout::{erase_tasks_budget_actor_in_txn, inherit_tasks_layout_in_txn};
 
 /// Collapse control characters and the Unicode line and paragraph separators

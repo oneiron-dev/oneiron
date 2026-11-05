@@ -2,11 +2,12 @@
 
 Status: parent 12570 PART. Supports ROOT raw HTTP, live chat `start_turn`,
 admitted queued Continue/Retry boards, native attenuated-fork TASKS snapshots,
-live-only run-board sizing, and explicit kept TASKS ids, not full BOARD-LAYOUT.
+live-only run-board sizing, explicit kept TASKS ids and whole TASKS fold/unfold,
+not full BOARD-LAYOUT.
 
 ## Partial scope
 
-One authenticated actor's ROOT TASKS-row token budget and kept native task ids,
+One authenticated actor's ROOT TASKS-row token budget, kept native task ids and fold,
 durably staged and commit-linked to an explicit actual TURN or a live chat answer's TURN.
 New native attenuated forks also inherit that actor-keyed TASKS state once.
 Other sections and fork families remain outside this slice.
@@ -53,7 +54,7 @@ Explicitly OPEN (full 12570 PART):
 - Eager copies for other fork families, and fork pending-layout application
   beyond the supported HTTP/native chat paths. An inherited row alone does
   not prove that a particular pumped run projected it.
-- Full shares summed across all sections, folds, filters, authored note rows,
+- Full shares summed across all sections, other-section folds, filters, authored note rows,
   owner defaults/settings, prefix epoch handling, or full-board layout.
 - Any new numeric cap, default, timeout, row/byte/count cap, or speed/GPU/
   deploy/server/build claim.
@@ -77,7 +78,7 @@ rows ride outside the allotment.
 
 ## Staging
 
-- POST accepts `budget_tok` and/or `keep`. At least one must be present; `{}`
+- POST accepts `budget_tok`, `keep` and/or `folded`. At least one must be present; `{}`
   stays 400 and never resets anything. Budget `null` stages a reset, `0`
   literal zero, and unsigned stages that many tokens. `keep` is an array of
   native 32-hex row ids; `[]` clears it, while omission or `null` leaves it
@@ -86,9 +87,12 @@ rows ride outside the allotment.
   patch preserves kept ids; a keep-only patch preserves the budget. Repeated
   writes replace ONE pending batch and bump the monotonic stage counter;
   they never queue per turn. Duplicate kept ids collapse to one stored id.
-- GET reports `{live_budget_tok, live_keep, pending}` for the caller's own actor only.
+- `folded: true` stages a whole TASKS fold; `false` stages reopening. Omission
+  or `null` preserves the pending fold, else live. All three fields coalesce
+  into the same pending snapshot. A budget/keep patch never resets a fold baseline.
+- GET reports `{live_budget_tok, live_keep, live_folded, pending}` for the caller's own actor only.
   `pending: null` is no pending; `{"budget_tok": null}` is a staged reset;
-  `{"budget_tok": N, "keep": [...]}` is a staged full snapshot. Staged reset is never flattened with
+  `{"budget_tok": N, "keep": [...], "folded": true}` is a staged full snapshot. Staged reset is never flattened with
   no pending. GET never mutates. Revision numbers stay internal.
 - A hydration without TURN and without a chat layout actor reads LIVE only
   and never activates pending; a native chat turn projects its answering
@@ -104,7 +108,7 @@ rows ride outside the allotment.
 - Explicit per-request `tasks_budget_tok: Some` uses its exact requested
   budget for that render (validated against the SAME effective board cap
   before ANY retrieval, FIX 14248) and never selects or consumes pending.
-  This slice ignores the stored layout entirely then: no kept ids and no candidate. Newer staged
+  This slice ignores the stored layout entirely then: no kept ids, no fold and no candidate. Newer staged
   writes wait for a later actual TURN that uses the stored layout. Chat
   sends none today.
 - Explicit TURN with no per-request override projects the SELECTED pending
@@ -143,9 +147,60 @@ rows ride outside the allotment.
   Budget and keep activate together, never by reading current pending again.
   New native forks copy both live and pending keep sets in the same creation
   transaction. Supported run boards read live kept ids only, never pending.
-- Whole-section fold/unfold, live status/failed/changed/asking summaries and
-  authored fold notes remain separate unbuilt engineering. Keeping rows is not
-  evidence that those features are complete.
+- Whole TASKS fold/unfold is described below. Asking-agent markers and authored
+  fold notes remain separate unbuilt engineering. Keeping rows does not prove
+  those features complete.
+
+## Whole TASKS fold/unfold
+
+- POST `{"folded": true}` or `{"folded": false}` to the same authenticated
+  `/v1/core/context-board/layout/tasks` stage door. This is a real whole-section
+  setting, not `tasks.<id>` expansion. It projects and activates with the SAME
+  pending budget/keep candidate on a supported accepted TURN. No-turn HTTP and
+  native run boards use live fold state only, without consuming pending.
+- A fold renders one live structural summary line from the full SAME admitted
+  `TasksSectionRows`, before its 100-row/token projection. Acknowledged failed
+  intents stay out. Status counts count each visible intent and bare job once;
+  realizing jobs remain folded under their intent and are reported separately
+  in `jobs`. Project/fanout lead rows are folded too, counted as `context_rows`.
+  They remain in the original source/replay tracking. No model call is made.
+- `source=exact` means that source was exhausted. Otherwise every count is
+  a lower bound, labelled `source=at_least`; no omitted or withheld source is
+  counted. The original pre-frame row-budget meter still measures the normal
+  post-hook row projection, not the folded line or final delivered cost.
+- The summary reports live `failed`, `changed` and `new_to_fold` counts. Its
+  `attention` refs list failed rows first, then changed rows, deduplicated,
+  with at most `TASKS_FOLD_ATTENTION_REFS` (3) native ids and an additive `+N`.
+  That number is presentation only, not a source/admission limit. A real
+  pending-ask supplier is not wired yet: `asking=unknown` is explicit, never
+  inferred from Consult/assignee/nonterminal alone.
+- The first accepted open-to-folded transition stores ids plus semantic view
+  digests, not task text, in the same actor row and same history transaction.
+  The digest covers the native rendered row plus its whole label, kind,
+  result/counter/consult result, actual assignee, interruption, realizing jobs,
+  full child tokens and fit refs. It uses length-delimited native fields, not
+  lifecycle strings parsed as task membership or a last-poll timestamp.
+- Later summaries compare only CURRENT admitted rows. An unchanged baseline
+  digest contributes neither count; a different one is `changed`; a current id
+  absent from the baseline is `new_to_fold` (newly visible to this fold, not a
+  global birth claim). Removed/withheld baseline ids contribute nothing. Polls,
+  later accepted turns and budget/keep patches never replace the baseline.
+  Repeating `folded: true` while already folded also preserves it. An accepted
+  unfold clears it; a later accepted open-to-folded turn captures a fresh one.
+- A newer pending batch survives an older captured candidate exactly as before.
+  Actor/incarnation/live-revision/once-only history checks remain unchanged.
+  Erased/ABA rows never resurrect. The full admitted native TASK source ids,
+  not a rendered prefix, accompany folded replay/read tracking; chat TASKS
+  provenance also names that cohort with honest unversioned dependencies.
+- Actually rendered kept and hook-pinned rows remain in the existing always-open
+  floor. PINNED, the legend and other sections are untouched. Existing row-byte
+  fallback still applies before promoting any row. Optional discovery hints
+  remain only for the open rows and retain their old shed rank. Fold detail and
+  count fallback are identical, so SHED cannot grow the folded view.
+- The line's open command names the actual POST door with `folded:false`;
+  opening is still a next-accepted-turn setting, not an immediate mutation
+  hidden in a read. Explicit per-render budget overrides retain their existing
+  stored-layout bypass, including the stored fold.
 
 ## Concurrency
 
@@ -220,7 +275,7 @@ rows ride outside the allotment.
 - Side table `CONTEXT_BOARD_TASKS_BUDGET`
   (`b"context_board.tasks_budget.v1:"`, `Named` MessagePack, `Engine`
   payload, never `Authored`, no stored notes): ids, counts and token state
-  only.
+  only, now including fold baseline digests.
 - Actor scrub on erase: a live actor's row leaves with it. Activation
   requires an existing row; reads never create rows.
 - Restore class CONTENT: the image's rows come back as historical content.

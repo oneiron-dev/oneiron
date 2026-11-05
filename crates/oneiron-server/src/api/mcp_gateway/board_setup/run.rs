@@ -258,15 +258,15 @@ pub(super) fn run_board_sections(
     let budget = oneiron::context_board::resolve_board_budget(
         super::super::exec_board_verbs::run_board_budget_request(),
     );
-    let (tasks_budget_tok, tasks_keep, _) = server
+    let mut tasks_layout = server
         .vault
         .select_tasks_layout(actor.entity_ref(), false, budget.cap_tok)
         .map_err(|error| mcp_engine_error("board tasks layout failed", error))?;
-    let mut tasks = match tasks_budget_tok {
+    let mut tasks = match tasks_layout.budget {
         None => rows.render(),
         Some(budget) => rows.render_with_token_budget(budget),
     };
-    tasks.keep_rows_open(&rows, &tasks_keep);
+    tasks.keep_rows_open(&rows, &tasks_layout.keep);
     tasks.pin_hook_tasks(&rows.intents, pins);
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
@@ -304,10 +304,12 @@ pub(super) fn run_board_sections(
         .at(oneiron::claim::CallerLocality::OnDevice)
         .pending_task_fanout_launches()
         .map_err(mcp_facade_error)?;
-    let tasks_section = tasks
-        .board_section_keeping(
+    let tasks_section = tasks_layout
+        .board_section(
+            &tasks,
+            &rows,
             oneiron::context_board::fanout_action_rows(&launches),
-            &tasks_keep,
+            pins,
         )
         .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];

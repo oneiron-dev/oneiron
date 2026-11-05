@@ -6,6 +6,7 @@
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
 use super::tasks_budget::TasksRowBudget;
+use super::tasks_layout::fold_sources;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -202,6 +203,8 @@ pub(super) struct BoardParts {
     /// Concrete TASK-row projection budget, when the caller asked for one.
     /// Post hook/tag, pre whole-frame; the response carries it beside TASKS.
     pub(super) tasks_budget: Option<TasksRowBudget>,
+    /// The full admitted cohort that contributed to a folded summary.
+    pub(super) tasks_fold_sources: Vec<EntityId>,
     pub(super) room: Option<Vec<String>>,
     /// Where the ROOM rows sit in the room's whole stream.
     pub(super) room_page: Option<ContextBoardRoomPage>,
@@ -230,8 +233,7 @@ pub(super) fn board_parts(
     reads: &SessionReadSet,
     people: &PeopleView<'_>,
     hook_pins: &[oneiron::context_board::HookPin],
-    tasks_budget_tok: Option<usize>,
-    tasks_keep: &[EntityId],
+    tasks_layout: &mut oneiron::context_board::TasksLayoutSelection,
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -322,7 +324,7 @@ pub(super) fn board_parts(
     // TASKS: each task's `who` and `fits:` by handle, the caller's live
     // children on the task they realize, and the project view as its first
     // detail row. The `you:` line rides the frame, under the legend.
-    let (mut tasks, you) = match &memory {
+    let (mut tasks, you, tasks_source) = match &memory {
         Some(memory) => {
             let mut rows = readable_task_rows(auth, read, memory)?;
             let (children, forks) = match targets.actor() {
@@ -348,13 +350,13 @@ pub(super) fn board_parts(
             })
             .map_err(|error| core_engine_error("board children failed", error))?;
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
-            let mut tasks = match tasks_budget_tok {
+            let mut tasks = match tasks_layout.budget {
                 None => rows.render(),
                 Some(budget) => rows.render_with_token_budget(budget),
             };
-            tasks.keep_rows_open(&rows, tasks_keep);
+            tasks.keep_rows_open(&rows, &tasks_layout.keep);
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
-            (tasks, you)
+            (tasks, you, rows)
         }
         None => (
             oneiron::context_board::TasksSection {
@@ -362,10 +364,18 @@ pub(super) fn board_parts(
                 overflow: None,
             },
             None,
+            oneiron::context_board::TasksSectionRows {
+                intents: Vec::new(),
+                bare_jobs: Vec::new(),
+                source_exhausted: true,
+            },
         ),
     };
     let hook_blocks = tasks.tag_hook_pins(hook_pins);
-    let tasks_budget = tasks_budget_tok.map(|budget_tok| TasksRowBudget::of(&tasks, budget_tok));
+    let tasks_budget = tasks_layout
+        .budget
+        .map(|budget_tok| TasksRowBudget::of(&tasks, budget_tok));
+    let tasks_fold_sources = fold_sources(tasks_layout.folded, &tasks_source, &mut named);
     named.extend(
         tasks
             .rows
@@ -409,8 +419,8 @@ pub(super) fn board_parts(
             .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;
         lead.extend(oneiron::context_board::fanout_action_rows(&launches));
     }
-    let tasks_section = tasks
-        .board_section_keeping(lead, tasks_keep)
+    let tasks_section = tasks_layout
+        .board_section(&tasks, &tasks_source, lead, hook_pins)
         .map_err(board_frame_error)?;
 
     // SKILLS, with the learning view on each found skill row and the agent
@@ -505,6 +515,7 @@ pub(super) fn board_parts(
             .cloned()
             .collect(),
         tasks_budget,
+        tasks_fold_sources,
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),

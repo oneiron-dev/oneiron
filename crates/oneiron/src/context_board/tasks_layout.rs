@@ -7,15 +7,19 @@
 //!
 //! New native attenuated forks copy the source actor's live and pending
 //! TASKS state once, then diverge. Kept task ids share the budget
-//! snapshot. Other fork families, program turns, shares, folds and owner
+//! snapshot. Whole-section folds use the same accepted snapshot. Other fork
+//! families, program turns, shares and owner
 //! defaults stay open.
 //! Checkpoint rows remain unclassified. See
 //! `docs/ops/context-board-tasks-layout.md` for the supported scope.
+
+mod fold;
 
 use super::BoardHistoryError;
 use crate::memory::{Memory, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use fold::TaskFoldMark;
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +38,8 @@ pub(crate) struct TasksBudgetRow {
     pub(crate) live: Option<u64>,
     /// Native task ids kept open beyond the optional-row projection.
     pub(crate) live_keep: Vec<EntityId>,
+    pub(crate) live_folded: bool,
+    pub(crate) fold_baseline: Vec<TaskFoldMark>,
     /// The last applied pending revision (`0` before any activation).
     pub(crate) live_revision: u64,
     /// Monotonic stage counter, bumped on every staged write.
@@ -54,6 +60,7 @@ pub(crate) struct TasksBudgetPending {
     pub(crate) value: Option<u64>,
     /// Full keep snapshot, never a patch at activation time.
     pub(crate) keep: Vec<EntityId>,
+    pub(crate) folded: bool,
     /// The `total_revision` captured when this write staged.
     pub(crate) revision: u64,
 }
@@ -74,6 +81,8 @@ pub struct TasksLayoutCandidate {
     pending_revision: u64,
     value: Option<u64>,
     keep: Vec<EntityId>,
+    folded: bool,
+    fold_baseline: Option<Vec<TaskFoldMark>>,
 }
 
 /// One actor's ROOT TASKS layout state for GET/POST: live plus pending.
@@ -83,6 +92,7 @@ pub struct TasksLayoutCandidate {
 pub struct TasksLayoutState {
     pub live: Option<u64>,
     pub live_keep: Vec<EntityId>,
+    pub live_folded: bool,
     pub pending: Option<TasksLayoutPendingState>,
 }
 
@@ -91,6 +101,36 @@ pub struct TasksLayoutState {
 pub struct TasksLayoutPendingState {
     pub value: Option<u64>,
     pub keep: Vec<EntityId>,
+    pub folded: bool,
+}
+
+/// One exact render selection. Its baseline and accepted-history candidate
+/// stay private; the host carries the same owned value through assembly.
+#[derive(Debug, Clone, Default)]
+pub struct TasksLayoutSelection {
+    pub budget: Option<usize>,
+    pub keep: Vec<EntityId>,
+    pub folded: bool,
+    baseline: Vec<TaskFoldMark>,
+    capture_baseline: bool,
+    candidate: Option<TasksLayoutCandidate>,
+}
+
+impl TasksLayoutSelection {
+    /// Explicit per-render budgets keep the original stored-layout bypass.
+    #[must_use]
+    pub fn for_budget(budget: usize) -> Self {
+        Self {
+            budget: Some(budget),
+            ..Self::default()
+        }
+    }
+
+    /// The exact candidate after the full admitted fold source was captured.
+    #[must_use]
+    pub fn candidate(&self) -> Option<TasksLayoutCandidate> {
+        self.candidate.clone()
+    }
 }
 
 /// An actor's erase removes its TASKS-budget row (FIX 3520).
@@ -122,6 +162,8 @@ pub(crate) fn inherit_tasks_layout_in_txn(
         .unwrap_or(TasksBudgetRow {
             live: None,
             live_keep: Vec::new(),
+            live_folded: false,
+            fold_baseline: Vec::new(),
             live_revision: 0,
             total_revision: 0,
             pending: None,
@@ -149,6 +191,18 @@ impl Memory<'_> {
         budget: Option<Option<usize>>,
         keep: Option<Vec<EntityId>>,
     ) -> MemoryResult<TasksLayoutState> {
+        self.stage_tasks_layout_patch(budget, keep, None)
+    }
+
+    /// Patches budget, kept ids and whole-section fold in ONE pending batch.
+    /// The accepted open-to-folded transition captures its baseline. Setting
+    /// `folded: true` again preserves it; omitted fields preserve pending, else live.
+    pub fn stage_tasks_layout_patch(
+        &self,
+        budget: Option<Option<usize>>,
+        keep: Option<Vec<EntityId>>,
+        folded: Option<bool>,
+    ) -> MemoryResult<TasksLayoutState> {
         let budget = budget.map(|value| value.map(|v| v as u64));
         let keep = keep.map(|mut ids| {
             ids.sort_unstable();
@@ -172,6 +226,8 @@ impl Memory<'_> {
                     None => TasksBudgetRow {
                         live: None,
                         live_keep: Vec::new(),
+                        live_folded: false,
+                        fold_baseline: Vec::new(),
                         live_revision: 0,
                         total_revision: 0,
                         pending: None,
@@ -187,12 +243,14 @@ impl Memory<'_> {
                 let previous = row.pending.take().unwrap_or_else(|| TasksBudgetPending {
                     value: row.live,
                     keep: row.live_keep.clone(),
+                    folded: row.live_folded,
                     revision: row.live_revision,
                 });
                 row.total_revision = next;
                 row.pending = Some(TasksBudgetPending {
                     value: budget.unwrap_or(previous.value),
                     keep: keep.clone().unwrap_or(previous.keep),
+                    folded: folded.unwrap_or(previous.folded),
                     revision: next,
                 });
                 TASKS_BUDGET.put(store, txn, &actor, &row)?;
@@ -206,12 +264,14 @@ impl TasksBudgetRow {
         TasksLayoutState {
             live: self.live,
             live_keep: self.live_keep.clone(),
+            live_folded: self.live_folded,
             pending: self
                 .pending
                 .as_ref()
                 .map(|pending| TasksLayoutPendingState {
                     value: pending.value,
                     keep: pending.keep.clone(),
+                    folded: pending.folded,
                 }),
         }
     }
@@ -230,60 +290,57 @@ impl Vault {
             None => TasksLayoutState {
                 live: None,
                 live_keep: Vec::new(),
+                live_folded: false,
                 pending: None,
             },
         })
     }
 
-    /// Selects one actor's ROOT TASKS budget for hydration in one snapshot,
-    /// clamped to the actual global cap for projection only.
-    ///
-    /// Call only when the explicit per-request budget is `None` (explicit
-    /// `Some` wins with its exact budget and never consumes pending, so the
-    /// caller skips selection entirely in that case). `has_turn` is true
-    /// for an explicit HTTP TURN or the native chat turn whose answer
-    /// history will carry this selection. `cap_tok` is the same resolved
-    /// global board cap the final frame renders under.
-    ///
-    /// With `has_turn=false` this selects LIVE only and returns no candidate.
-    /// Otherwise it selects PENDING when present else LIVE, returning the
-    /// exact candidate the same accepted history commit must activate. Stored
-    /// `None` selects `None` (100-row path); stored values clamp with
-    /// `min(stored_u64, cap_as_u64)` before the `usize` cast, proven to fit.
-    /// The middle tuple holds the exact selected keep set; missing rows
-    /// select `(None, Vec::new(), None)`.
+    /// Selects one actor's exact ROOT TASKS snapshot. A no-turn read is
+    /// live-only. A TURN selects pending when present, and carries that
+    /// candidate to the SAME accepted history writer. Explicit per-request
+    /// budgets bypass this selection through `TasksLayoutSelection::for_budget`.
     pub fn select_tasks_layout(
         &self,
         actor: EntityId,
         has_turn: bool,
         cap_tok: usize,
-    ) -> Result<(Option<usize>, Vec<EntityId>, Option<TasksLayoutCandidate>)> {
+    ) -> Result<TasksLayoutSelection> {
         let rtxn = self.store.env.read_txn()?;
-        let row = TASKS_BUDGET.get(&self.store, &rtxn, &actor)?;
-        let Some(row) = row else {
-            return Ok((None, Vec::new(), None));
+        let Some(row) = TASKS_BUDGET.get(&self.store, &rtxn, &actor)? else {
+            return Ok(TasksLayoutSelection::default());
+        };
+        let mut selection = TasksLayoutSelection {
+            budget: clamp_stored(row.live, cap_tok)?,
+            keep: row.live_keep,
+            folded: row.live_folded,
+            baseline: row.fold_baseline,
+            capture_baseline: false,
+            candidate: None,
         };
         if !has_turn {
-            return Ok((clamp_stored(row.live, cap_tok)?, row.live_keep, None));
+            return Ok(selection);
         }
-        match row.pending {
-            Some(pending) => {
-                let effective = clamp_stored(pending.value, cap_tok)?;
-                let incarnation = EntityId::from_bytes(row.incarnation).map_err(|_| {
-                    Error::InvariantViolation("tasks layout row incarnation is invalid")
-                })?;
-                let candidate = TasksLayoutCandidate {
-                    actor,
-                    incarnation,
-                    live_revision: row.live_revision,
-                    pending_revision: pending.revision,
-                    value: pending.value,
-                    keep: pending.keep.clone(),
-                };
-                Ok((effective, pending.keep, Some(candidate)))
-            }
-            None => Ok((clamp_stored(row.live, cap_tok)?, row.live_keep, None)),
+        if let Some(pending) = row.pending {
+            selection.budget = clamp_stored(pending.value, cap_tok)?;
+            selection.keep = pending.keep.clone();
+            selection.folded = pending.folded;
+            selection.capture_baseline = pending.folded && !row.live_folded;
+            let incarnation = EntityId::from_bytes(row.incarnation).map_err(|_| {
+                Error::InvariantViolation("tasks layout row incarnation is invalid")
+            })?;
+            selection.candidate = Some(TasksLayoutCandidate {
+                actor,
+                incarnation,
+                live_revision: row.live_revision,
+                pending_revision: pending.revision,
+                value: pending.value,
+                keep: pending.keep,
+                folded: pending.folded,
+                fold_baseline: None,
+            });
         }
+        Ok(selection)
     }
 }
 
@@ -334,6 +391,12 @@ pub(crate) fn activate_tasks_layout_in_txn(
     }
     row.live = candidate.value;
     row.live_keep = candidate.keep.clone();
+    row.live_folded = candidate.folded;
+    if !candidate.folded {
+        row.fold_baseline.clear();
+    } else if let Some(baseline) = &candidate.fold_baseline {
+        row.fold_baseline = baseline.clone();
+    }
     row.live_revision = candidate.pending_revision;
     if row
         .pending
