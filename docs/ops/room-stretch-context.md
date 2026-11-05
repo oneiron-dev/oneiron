@@ -19,4 +19,4 @@ state hash includes the rendered stretch rows. This is a current-state
 projection, not a lifecycle event log or a mid-stream notification service.
 
 The room's scope, posture, roster, rules, offers and paging are unchanged.
-Unsaved scratch remains isolated in the stretch and is discarded on close.
+Unsaved scratch remains isolated in the stretch and is discarded on ordinary close.
