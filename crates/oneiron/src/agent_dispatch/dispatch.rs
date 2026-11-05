@@ -623,7 +623,7 @@ impl<'a> AgentDispatcher<'a> {
                 "task_type_ref node_id must not be empty",
             )));
         }
-        match &spawn.plan {
+        Ok(match &spawn.plan {
             Some(plan) => {
                 plan.validate()?;
                 if spawn
@@ -663,7 +663,7 @@ impl<'a> AgentDispatcher<'a> {
                 Some(project_ref),
                 None,
             ),
-        }
+        })
     }
 
     /// Loads a dispatch target's LIVE stored row and applies the dispatchability
