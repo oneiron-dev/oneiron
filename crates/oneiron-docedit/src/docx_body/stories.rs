@@ -103,6 +103,24 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
     })
 }
 
+/// Read the exact story's top-level blocks. An omitted scope is the existing
+/// body-only read; a missing story has no units, never a body fallback.
+pub fn read_docx_scoped_blocks(
+    bytes: &[u8],
+    limits: ArchiveLimits,
+    scope: Option<&DocxStoryScope>,
+) -> Result<Vec<DocxBlock>, DoceditError> {
+    let Some(scope) = scope else {
+        return super::read_docx_blocks(bytes, limits);
+    };
+    Ok(read_docx_body(bytes, limits)?
+        .stories
+        .into_iter()
+        .find(|story| &story.scope == scope)
+        .map(|story| story.blocks)
+        .unwrap_or_default())
+}
+
 /// The authored native stories, in the same order for reads and anchors.
 fn story_blocks(document: &Document) -> Vec<(DocxStoryScope, &[stemma::domain::TrackedBlock])> {
     let canonical = &document.snapshot().canonical;

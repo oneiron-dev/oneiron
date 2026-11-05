@@ -639,6 +639,8 @@ pub enum EditStep {
     CommentCreate {
         /// Paragraph hosting the anchored text.
         block_id: NodeId,
+        /// The exact native story; `None` keeps the main-body address space.
+        story: Option<verbs::story_cells::StoryCellAddress>,
         /// Substring that must appear in the paragraph; the comment range wraps
         /// exactly this span. Matched in a single contiguous Normal segment.
         expect: String,
@@ -2784,6 +2786,12 @@ pub enum EditError {
     /// defaulted.
     CommentEmptyBody { step_index: usize },
 
+    /// ISO/IEC 29500-1 §17.13.4 forbids range markers in comment content.
+    CommentAnchorInCommentStory {
+        comment_id: String,
+        step_index: usize,
+    },
+
     /// `CommentDelete` could not locate all three anchor markers
     /// (`commentRangeStart` / `commentRangeEnd` / `commentReference`) for the
     /// comment id. Carries the list of marker kinds that were missing — we
@@ -4125,6 +4133,10 @@ impl std::fmt::Display for EditError {
                  tracked ('{status}') — comment on a paragraph without a pending block-level \
                  change, or resolve the change first (commenting a paragraph that only carries \
                  tracked segments IS allowed)"
+            ),
+            EditError::CommentAnchorInCommentStory { comment_id, step_index } => write!(
+                f,
+                "step {step_index}: comment content story '{comment_id}' cannot contain a comment range"
             ),
             EditError::CommentEmptyBody { step_index } => write!(
                 f,
@@ -12080,6 +12092,7 @@ pub(crate) fn apply_transaction_with_notes(
             }
             EditStep::CommentCreate {
                 block_id,
+                story,
                 expect,
                 occurrence,
                 semantic_hash,
@@ -12090,6 +12103,7 @@ pub(crate) fn apply_transaction_with_notes(
                 notes.extend(verbs::comments::apply_create(
                     &mut doc,
                     block_id,
+                    story.as_ref(),
                     expect,
                     *occurrence,
                     semantic_hash.as_deref(),
