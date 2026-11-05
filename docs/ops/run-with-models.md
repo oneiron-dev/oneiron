@@ -2877,6 +2877,12 @@ The named tier's row sets `model_dir` and the identity keys. `oneiron init
 the first row. A vault whose manifest binds `extraction_encoder` at another
 tier's checkpoint stops tagging and names that tier in the log.
 
+`language` is optional: `language = "ja"` in `[oneironer]`, or
+`ONEIRON_ONEIRONER_LANGUAGE=ja` in the environment, names the vault turns'
+configured processing language as a lowercase ISO 639 code. It covers every
+vault turn the tagger reads. Leave it unset when the vault's language is
+unknown or mixed; unset sends no configured language.
+
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
 at startup (`oneironer engine candle/cuda does not run on this machine`).
@@ -3051,7 +3057,11 @@ added to. If `--platforms` selects a row the placed bundle lacks, the fetch
 fails and names the remedy: fetch into a fresh `--into` root and point
 `model_dir` at the bundle there.
 
-The command prints one JSON object:
+The command prints one JSON object on stdout. While files download, it
+reports each file's written and pinned bytes to stderr: one line per whole
+percent off a terminal, one redrawing line per file on a terminal. Stderr
+carries byte counts only, never the token, and a failed stderr write never
+fails the fetch.
 
 ```json
 {"outcome": "downloaded", "stack_sha16": "b8cf6fb2f5d71020",
