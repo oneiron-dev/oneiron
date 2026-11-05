@@ -18015,7 +18015,7 @@
     },
     {
       "name": "vault.artifacts.append",
-      "description": "Appends one version of bytes to a blob artifact's append-only chain.",
+      "description": "Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep.",
       "uniffi": {
         "args": {
           "artifact_ref": "String",
@@ -18024,10 +18024,10 @@
           "occurred_at": "Option<i64>",
           "learned_at": "Option<i64>"
         },
-        "output": "BlobVersionView"
+        "output": "BlobVersionAppendOutcome"
       },
       "input": "AppendBlobVersionRequest",
-      "output": "crate::memory::BlobVersionView",
+      "output": "crate::memory::BlobVersionAppendOutcome",
       "call": "memory_requests::append_blob(memory, input)?",
       "scope": "Write",
       "admission": {
