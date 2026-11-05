@@ -674,6 +674,7 @@ pub enum AgentVerb {
     VaultCodeOplog,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeCorrections,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -1931,6 +1932,7 @@ impl AgentVerb {
         Self::VaultCodeOplog,
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeCorrections,
         Self::VaultCodeTypeDiagnostics,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
@@ -3215,6 +3217,7 @@ impl AgentVerb {
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeCorrections => "vault.code.corrections",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
@@ -4484,6 +4487,7 @@ impl AgentVerb {
                 | Self::VaultCodeOplog
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -5770,6 +5774,7 @@ impl AgentVerb {
                 | Self::VaultCodeOplog
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -7189,6 +7194,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -9170,6 +9176,7 @@ impl AgentVerb {
             Self::VaultCodeOplog => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -10428,6 +10435,7 @@ impl AgentVerb {
             Self::VaultCodeOplog => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -12996,6 +13004,9 @@ impl AgentVerb {
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultCodeCorrections => {
+                "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."
             }
             Self::VaultCodeTypeDiagnostics => {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
