@@ -61,6 +61,32 @@ enum WindowSlotRun<'a> {
     Rung(Option<Result<DreamerAttemptExecution>>),
 }
 
+/// Runs one rung job with its own panic containment: a rung commits
+/// inside the window's side-by-side phase, so a sibling's panic must not
+/// unwind its decided outcome away. A panic becomes this slot's shared
+/// executor-panic error (the payload dropped unread), which stops the
+/// window as a slot panic does.
+async fn contained_rung<F: Future<Output = Result<DreamerAttemptExecution>>>(
+    job: F,
+    attempt: &DreamerAdmittedAttempt,
+) -> Result<DreamerAttemptExecution> {
+    let mut job = pin!(job);
+    poll_fn(|task_cx| {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| job.as_mut().poll(task_cx))) {
+            Ok(poll) => poll,
+            Err(_payload) => {
+                tracing::error!(
+                    attempt_id = %bytes_to_hex_lower(attempt.status.attempt.id.as_bytes()),
+                    kind = "executor_panic",
+                    "dreamer attempt executor panicked; parking the admitted attempt"
+                );
+                Poll::Ready(Err(crate::dreamer_wake::executor_panic_error()))
+            }
+        }
+    })
+    .await
+}
+
 /// Polls `first` and `second` together until both end.
 async fn both<A: Future, B: Future>(first: A, second: B) -> (A::Output, B::Output) {
     let mut first = pin!(first);
@@ -127,7 +153,10 @@ impl ConsolidationExecutor<'_> {
                         &mut started.charges,
                     ),
                 )),
-                WindowSlotRun::Rung(_) => rungs.push((index, self.run_sieve_rungs(attempt, ctx))),
+                WindowSlotRun::Rung(_) => rungs.push((
+                    index,
+                    contained_rung(self.run_sieve_rungs(attempt, ctx), attempt),
+                )),
                 WindowSlotRun::Settled(..) | WindowSlotRun::Serial => {}
             }
         }
@@ -188,6 +217,15 @@ impl ConsolidationExecutor<'_> {
                     Err(crate::dreamer_wake::executor_panic_error())
                 }
             };
+            // A rung job's contained panic stops the window as a finish's
+            // panic does.
+            if stopped.is_none()
+                && result
+                    .as_ref()
+                    .is_err_and(crate::dreamer_wake::is_executor_panic_error)
+            {
+                stopped = Some(WindowStopped::Panic);
+            }
             if stopped.is_none()
                 && result
                     .as_ref()
