@@ -137,4 +137,11 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `affect::processed_subjects`, using the caller's read lane.
+    fn processed_subjects(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        subjects: &[EntityId],
+    ) -> Result<BTreeSet<EntityId>>;
 }

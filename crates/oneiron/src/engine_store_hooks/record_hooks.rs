@@ -143,4 +143,12 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
+
+    fn processed_subjects(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        subjects: &[EntityId],
+    ) -> Result<BTreeSet<EntityId>> {
+        crate::affect::processed_subjects(read, subjects)
+    }
 }
