@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4483 declarations.
+Census: 1232 facade rows, 4488 declarations.
 Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -9127,10 +9127,149 @@ class OfferCheck(TypedDict):
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]
+SwitchOwner = str
+TrainingOwner = str
+ModelRole = Literal["retrieval_embedder", "media_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "decision_head", "decision_band", "decision_escalation", "policy_safeguard", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
+ModelTierRef = str
+ModelDisposition = Literal["offline", "served"]
+class ModelBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    tier: ModelTierRef
+    route_models: NotRequired[dict[str, ModelId]]
+    disposition: NotRequired[ModelDisposition | None]
+    reads_audio: NotRequired[bool]
+CheckpointFileKind = Literal["weights", "tokenizer", "config", "template", "adapter_config"]
+class SourcePin(TypedDict):
+    repository: str
+    revision: str
+class ArtifactPin(TypedDict):
+    artifact: EntityId
+    version: int
+    blake3: list[int]
+    bytes: int
+class CheckpointFilePin(TypedDict):
+    name: str
+    kind: CheckpointFileKind
+    source: SourcePin
+    content: ArtifactPin
+    declared_blake3: list[int]
+class PinnedCheckpoint(TypedDict):
+    model: ModelId
+    files: list[CheckpointFilePin]
+class CalibrationResult(TypedDict):
+    temperature: float
+    brier_score: float
+    calibration_error: float
+class HeldOutResult(TypedDict):
+    exposure: EntityId
+    checkpoint_blake3: list[int]
+    held_out_blake3: list[int]
+    harness: SourcePin
+    cases: int
+    metrics: dict[str, float]
+    calibration: NotRequired[CalibrationResult | None]
+    verifier_logs: list[ArtifactPin]
+    passed: bool
+class QuestionExportCheck(TypedDict):
+    finite: bool
+    tokens_match: bool
+    passed: bool
+class CandleParityCheck(TypedDict):
+    tokens_match: bool
+    token_mismatches: NotRequired[list[str]]
+    logits_match: NotRequired[bool | None]
+class ExportCheck(TypedDict):
+    hash_mismatches: list[str]
+    probe_coverage_matches: bool
+    probe_checkpoints_match: bool
+    settings_match: bool
+    harness_matches: bool
+    argmax_flips: int
+    max_logit_difference: float
+    tolerance: float
+    question_check: NotRequired[QuestionExportCheck | None]
+    candle_parity: NotRequired[CandleParityCheck | None]
+class SwapChoiceEvaluated(TypedDict):
+    kind: Literal["evaluated"]
+class SwapChoiceExplicitOverride(TypedDict):
+    kind: Literal["explicit_override"]
+    reason: str
+SwapChoice = SwapChoiceEvaluated | SwapChoiceExplicitOverride
+class RoleSwapReceipt(TypedDict):
+    id: EntityId
+    run: EntityId
+    owner: TrainingOwner
+    at: int
+    role: ModelRole
+    previous: NotRequired[ModelBinding | None]
+    binding: ModelBinding
+    checkpoint: PinnedCheckpoint
+    evaluation: NotRequired[HeldOutResult | None]
+    checks: ExportCheck
+    exact_hash_overlaps: int
+    promotion_exposure: NotRequired[EvalExposure | None]
+    choice: SwapChoice
+class BindingSourceOffer(TypedDict):
+    kind: Literal["offer"]
+    offer: EntityId
+    owner: SwitchOwner
+class BindingSourceTraining(TypedDict):
+    kind: Literal["training"]
+    receipt: RoleSwapReceipt
+BindingSource = BindingSourceOffer | BindingSourceTraining
+class SpaceRefDeclared(TypedDict):
+    declared: str
+SpaceRef = Literal["text_index"] | SpaceRefDeclared
+class BindingMoveLink(TypedDict):
+    candidate: str
+    incumbent: SpaceRef
+    started_at: int
+class VectorEvidenceFloors(TypedDict):
+    floor: float
+    strong: float
+class EmbeddingSpace(TypedDict):
+    id: str
+    dimensions: int
+    accepts: list[InputKind]
+    query_towers: list[InputKind]
+    evidence: NotRequired[VectorEvidenceFloors | None]
+NotWorse = Literal["not_worse", "worse", "unknown"]
+class BindingNotAppliedRefusedBody(TypedDict):
+    reason: str
+class BindingNotAppliedRefused(TypedDict):
+    refused: BindingNotAppliedRefusedBody
+BindingNotApplied = Literal["cancelled", "stale"] | BindingNotAppliedRefused
+class BindingMoveStateWaiting(TypedDict):
+    state: Literal["waiting"]
+class BindingMoveStateFilling(TypedDict):
+    state: Literal["filling"]
+class BindingMoveStateApplied(TypedDict):
+    state: Literal["applied"]
+    at: int
+    verdict: NotRequired[NotWorse | None]
+class BindingMoveStateNotApplied(TypedDict):
+    state: Literal["not_applied"]
+    at: int
+    why: BindingNotApplied
+class BindingMoveStateUndone(TypedDict):
+    state: Literal["undone"]
+    at: int
+    owner: SwitchOwner
+BindingMoveState = BindingMoveStateWaiting | BindingMoveStateFilling | BindingMoveStateApplied | BindingMoveStateNotApplied | BindingMoveStateUndone
+class PendingEmbedderBinding(TypedDict):
+    source: BindingSource
+    previous: NotRequired[ModelBinding | None]
+    binding: ModelBinding
+    staged_at: int
+    link: NotRequired[BindingMoveLink | None]
+    refill: NotRequired[EmbeddingSpace | None]
+    state: BindingMoveState
 class OfferView(TypedDict):
     offer: TrainingOffer
     answer: NotRequired[OfferAnswerRecord | None]
     checks: list[OfferCheck]
+    staged: NotRequired[PendingEmbedderBinding | None]
 class OfferRef(TypedDict):
     offer: EntityId
 class OfferPassRequest(TypedDict):
@@ -9146,6 +9285,9 @@ class OfferAnswerRequest(TypedDict):
     offer: EntityId
     digest: str
     answer: OfferAnswer
+class OfferAnswerReply(TypedDict):
+    answer: OfferAnswerRecord
+    staged: NotRequired[PendingEmbedderBinding | None]
 class OfferUndoReceipt(TypedDict):
     offer: EntityId
     at: int
@@ -10036,18 +10178,6 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     restriction_notice_given: NotRequired[list[str]]
     redact: NotRequired[list[CourtesyDeleteClaimValueRedaction]]
     reply_to: NotRequired[str | None]
-class VectorEvidenceFloors(TypedDict):
-    floor: float
-    strong: float
-class EmbeddingSpace(TypedDict):
-    id: str
-    dimensions: int
-    accepts: list[InputKind]
-    query_towers: list[InputKind]
-    evidence: NotRequired[VectorEvidenceFloors | None]
-class SpaceRefDeclared(TypedDict):
-    declared: str
-SpaceRef = Literal["text_index"] | SpaceRefDeclared
 class SpaceMoveStateSwappedInBody(TypedDict):
     at: int
     by_owner: bool
@@ -10067,7 +10197,6 @@ class PairedInterval(TypedDict):
     mean: float
     low: float
     high: float
-NotWorse = Literal["not_worse", "worse", "unknown"]
 CohortProbe = TypedDict("CohortProbe", {"probe": str, "source": EntityId, "from": int, "until": int})
 class KindProbeCheck(TypedDict):
     kind: InputKind
@@ -10096,131 +10225,6 @@ class SpaceMove(TypedDict):
     started_at: int
     state: SpaceMoveState
     last_check: NotRequired[SpaceMoveCheck | None]
-SwitchOwner = str
-TrainingOwner = str
-ModelRole = Literal["retrieval_embedder", "media_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "decision_head", "decision_band", "decision_escalation", "policy_safeguard", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
-ModelTierRef = str
-ModelDisposition = Literal["offline", "served"]
-class ModelBinding(TypedDict):
-    model: ModelId
-    slot: ModelSlot
-    tier: ModelTierRef
-    route_models: NotRequired[dict[str, ModelId]]
-    disposition: NotRequired[ModelDisposition | None]
-    reads_audio: NotRequired[bool]
-CheckpointFileKind = Literal["weights", "tokenizer", "config", "template", "adapter_config"]
-class SourcePin(TypedDict):
-    repository: str
-    revision: str
-class ArtifactPin(TypedDict):
-    artifact: EntityId
-    version: int
-    blake3: list[int]
-    bytes: int
-class CheckpointFilePin(TypedDict):
-    name: str
-    kind: CheckpointFileKind
-    source: SourcePin
-    content: ArtifactPin
-    declared_blake3: list[int]
-class PinnedCheckpoint(TypedDict):
-    model: ModelId
-    files: list[CheckpointFilePin]
-class CalibrationResult(TypedDict):
-    temperature: float
-    brier_score: float
-    calibration_error: float
-class HeldOutResult(TypedDict):
-    exposure: EntityId
-    checkpoint_blake3: list[int]
-    held_out_blake3: list[int]
-    harness: SourcePin
-    cases: int
-    metrics: dict[str, float]
-    calibration: NotRequired[CalibrationResult | None]
-    verifier_logs: list[ArtifactPin]
-    passed: bool
-class QuestionExportCheck(TypedDict):
-    finite: bool
-    tokens_match: bool
-    passed: bool
-class CandleParityCheck(TypedDict):
-    tokens_match: bool
-    token_mismatches: NotRequired[list[str]]
-    logits_match: NotRequired[bool | None]
-class ExportCheck(TypedDict):
-    hash_mismatches: list[str]
-    probe_coverage_matches: bool
-    probe_checkpoints_match: bool
-    settings_match: bool
-    harness_matches: bool
-    argmax_flips: int
-    max_logit_difference: float
-    tolerance: float
-    question_check: NotRequired[QuestionExportCheck | None]
-    candle_parity: NotRequired[CandleParityCheck | None]
-class SwapChoiceEvaluated(TypedDict):
-    kind: Literal["evaluated"]
-class SwapChoiceExplicitOverride(TypedDict):
-    kind: Literal["explicit_override"]
-    reason: str
-SwapChoice = SwapChoiceEvaluated | SwapChoiceExplicitOverride
-class RoleSwapReceipt(TypedDict):
-    id: EntityId
-    run: EntityId
-    owner: TrainingOwner
-    at: int
-    role: ModelRole
-    previous: NotRequired[ModelBinding | None]
-    binding: ModelBinding
-    checkpoint: PinnedCheckpoint
-    evaluation: NotRequired[HeldOutResult | None]
-    checks: ExportCheck
-    exact_hash_overlaps: int
-    promotion_exposure: NotRequired[EvalExposure | None]
-    choice: SwapChoice
-class BindingSourceOffer(TypedDict):
-    kind: Literal["offer"]
-    offer: EntityId
-    owner: SwitchOwner
-class BindingSourceTraining(TypedDict):
-    kind: Literal["training"]
-    receipt: RoleSwapReceipt
-BindingSource = BindingSourceOffer | BindingSourceTraining
-class BindingMoveLink(TypedDict):
-    candidate: str
-    incumbent: SpaceRef
-    started_at: int
-class BindingNotAppliedRefusedBody(TypedDict):
-    reason: str
-class BindingNotAppliedRefused(TypedDict):
-    refused: BindingNotAppliedRefusedBody
-BindingNotApplied = Literal["cancelled", "stale"] | BindingNotAppliedRefused
-class BindingMoveStateWaiting(TypedDict):
-    state: Literal["waiting"]
-class BindingMoveStateFilling(TypedDict):
-    state: Literal["filling"]
-class BindingMoveStateApplied(TypedDict):
-    state: Literal["applied"]
-    at: int
-    verdict: NotRequired[NotWorse | None]
-class BindingMoveStateNotApplied(TypedDict):
-    state: Literal["not_applied"]
-    at: int
-    why: BindingNotApplied
-class BindingMoveStateUndone(TypedDict):
-    state: Literal["undone"]
-    at: int
-    owner: SwitchOwner
-BindingMoveState = BindingMoveStateWaiting | BindingMoveStateFilling | BindingMoveStateApplied | BindingMoveStateNotApplied | BindingMoveStateUndone
-class PendingEmbedderBinding(TypedDict):
-    source: BindingSource
-    previous: NotRequired[ModelBinding | None]
-    binding: ModelBinding
-    staged_at: int
-    link: NotRequired[BindingMoveLink | None]
-    refill: NotRequired[EmbeddingSpace | None]
-    state: BindingMoveState
 class EmbeddingSpacesView(TypedDict):
     spaces: list[EmbeddingSpace]
     text_index: EmbeddingSpace
@@ -16882,7 +16886,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind
@@ -18830,6 +18834,16 @@ class EsignSigningEvidence(TypedDict):
     disclosure_version: NotRequired[str | None]
     consent: bool
     intent: EsignSigningIntent
+SealProfile = Literal["baseline_b", "baseline_t", "baseline_lt", "baseline_lta"]
+SealDegradeReason = Literal["timestamp_unavailable", "validation_material_unavailable", "document_timestamp_unavailable"]
+class SealDegrade(TypedDict):
+    requested: SealProfile
+    achieved: SealProfile
+    reason: SealDegradeReason
+class SealProfileEvidence(TypedDict):
+    requested: SealProfile
+    achieved: SealProfile
+    degraded: list[SealDegrade]
 class EsignEventDrafted(TypedDict):
     event: Literal["drafted"]
     document: EsignDocument
@@ -18868,6 +18882,7 @@ class EsignEventSealed(TypedDict):
     event: Literal["sealed"]
     rejected: bool
     item_sha256: list[list[int]]
+    item_profiles: list[SealProfileEvidence]
 class EsignEventResealRequested(TypedDict):
     event: Literal["reseal_requested"]
     owner: str
@@ -19100,6 +19115,7 @@ class EsignSealedItemView(TypedDict):
     sealed_artifact: str
     sealed_version: int
     sha256: str
+    profile: SealProfileEvidence
 class EsignSealedView(TypedDict):
     attempt_ref: str
     audit_chain_sha256: str
