@@ -45,19 +45,30 @@ a runtime no-hang result or a speed improvement.
 ## Trimmed question and probe custody
 
 Beyond the decoded body above, the semantic handler owns its trimmed question
-`String` and the embedded `Vec<f32>` on one process-memory empty lease, adopted
-after each allocates with `materialized(0, actual)`: the string's actual
-capacity, then the vector's actual capacity times `size_of::<f32>()`, the
-physical unit width. This is adoption only, not preadmission or an admission
-wait, refusal, grow, cap, or default; no dims, byte envelope, or model estimate
-enters the count. Native accounting still takes a mutex and may contend.
+`String` and the embedded `Vec<f32>` on one process-memory empty lease. The
+trimmed text is adopted after it allocates with `materialized(0, actual)` on
+its actual capacity. The known-ready non-deadline native embedding reserves
+its model-shaped logical minimum on that same lease before the model call,
+from the SAME snapshotted slot that then runs the query: the slot's configured
+`dimensions` times `size_of::<f32>()`, the physical unit width, not an
+allocator-capacity bound, tokenizer, tensor, GPU, input-copy, whole-question,
+or runtime count. The lease then reconciles the actual vector capacity after
+the call. Native physical-memory refusal logs privately and uses the existing
+generic query-failure response. Dropping the request stops the new wait at
+its native checkpoints, not an already-running native inference. No new cap,
+default, physical-floor constant, queue deadline, or timer is added. Deadline,
+space, and media
+adoption stays adoption-only via `finish`, with no dims, byte envelope, or
+model estimate entering that count. Native accounting still takes a mutex and
+may contend.
 
 `Question` holds its text before its lease, and `OwnedProbe` holds its
 embedding and question before its lease, so the payloads free before the guard
 on every drop path. The handler binds the probe guard before the owned buffers,
 so reverse-local order holds; under a deadline the whole question moves into
 the static read task, which adopts, guards, and drops its own probe past the
-request cut. Eliminating the untracked question clone is a custody
-simplification, not a speed win. Provider scratch, tokenizer and frame buffers,
-fair queueing, preemption, and whole-heap or runtime behavior remain not owned
-and unproved here.
+request cut. The non-deadline native task owns its question, stop flag, and
+lease, then transfers the owned probe and lease to the actual search consumer. Eliminating the untracked
+question clone is a custody simplification, not a speed win. Provider scratch,
+tokenizer and frame buffers, fair queueing, preemption, and whole-heap or
+runtime behavior remain not owned and unproved here.

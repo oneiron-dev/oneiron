@@ -1,18 +1,27 @@
-//! Route-local owned semantic probe: the trimmed question and its embedding with one lease.
+//! Route-local semantic question and probe custody on one memory lease.
 //!
-//! The trimmed question `String` and the embedded `Vec<f32>` are adopted after
-//! they allocate, on the process memory line's empty lease, with
-//! `materialized(0, actual)`. Nothing here preadmits, waits for memory admission,
-//! refuses, grows a reservation, or caps the probe; the byte counts name physical
-//! capacity only. The native accounting mutex can still contend.
+//! Text and returned vector storage are charged at their actual capacities.
+//! A ready native slot's non-deadline call first reserves its configured logical
+//! output footprint, then reconciles the actual capacity. Deadline and space
+//! calls remain adoption-only. Provider scratch and device memory are not covered.
 
 use std::mem::size_of;
 use std::sync::Arc;
 
 use oneiron::host_memory::{MachineMemory, MemoryLease};
+use oneiron::llm::WorkCancel;
 
 use crate::embedder::EmbedQueryRefusal;
 use crate::server::SyncServer;
+
+/// Request-drop cancellation for memory admission, not native inference.
+struct CancelOnDrop(WorkCancel);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
 
 /// The trimmed semantic question with the lease that names its text.
 ///
@@ -38,9 +47,16 @@ impl Question {
     }
 
     /// Adopts the actual embedding capacity on the same lease and bundles the probe.
-    pub(super) fn finish(mut self, embedding: Vec<f32>) -> OwnedProbe {
-        self.memory
-            .materialized(0, (embedding.capacity() as u64) * (size_of::<f32>() as u64));
+    pub(super) fn finish(self, embedding: Vec<f32>) -> OwnedProbe {
+        self.finish_reserved(embedding, 0)
+    }
+
+    /// Replaces pending logical output bytes with actual vector capacity.
+    fn finish_reserved(mut self, embedding: Vec<f32>, reserved: u64) -> OwnedProbe {
+        self.memory.materialized(
+            reserved,
+            (embedding.capacity() as u64).saturating_mul(size_of::<f32>() as u64),
+        );
         OwnedProbe {
             embedding,
             question: self.text,
@@ -48,19 +64,41 @@ impl Question {
         }
     }
 
-    /// Embeds the owned question on a blocking thread, adopting the result.
+    /// Reserves a ready slot's output before calling that same slot off-runtime.
     ///
-    /// The whole question moves into the task before the blocking embed call,
-    /// so no request, handle, or result drop frees the lease before the actual
-    /// text and vector. The join failure maps exactly as the server wrapper.
+    /// The worker retains the question and lease if the request drops. Request
+    /// drop stops memory admission at its native checkpoints, not an inference
+    /// already running. Native refusals keep the existing generic failure shape.
     pub(super) async fn embed_off_runtime(
         self,
         server: &Arc<SyncServer>,
     ) -> Result<OwnedProbe, EmbedQueryRefusal> {
+        let stopped = WorkCancel::new();
+        let worker_stopped = stopped.clone();
+        let _cancel = CancelOnDrop(stopped);
         let server = Arc::clone(server);
         tokio::task::spawn_blocking(move || {
-            let embedding = server.embed_query(self.as_str())?;
-            Ok(self.finish(embedding))
+            let mut this = self;
+            let Some(slot) = server.embedder_slot() else {
+                return Err(EmbedQueryRefusal::NotConfigured);
+            };
+            if slot.admitted_provider().is_none() {
+                return Err(EmbedQueryRefusal::NotReady);
+            }
+            let reserved =
+                (slot.config().dimensions as u64).saturating_mul(size_of::<f32>() as u64);
+            if let Err(refusal) = this
+                .memory
+                .grow_untimed(reserved, &|| worker_stopped.is_cancelled())
+            {
+                tracing::warn!(?refusal, "semantic query output reservation refused");
+                return Err(EmbedQueryRefusal::Failed);
+            }
+            if worker_stopped.is_cancelled() {
+                return Err(EmbedQueryRefusal::Failed);
+            }
+            let embedding = slot.embed_query(this.as_str())?;
+            Ok(this.finish_reserved(embedding, reserved))
         })
         .await
         .unwrap_or_else(|error| {
