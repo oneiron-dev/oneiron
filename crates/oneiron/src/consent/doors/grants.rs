@@ -80,6 +80,7 @@ impl Vault {
         };
         let attribution = policy.attribution();
         self.append_code_consent_holder_receipt_in_txn(txn, &attribution, &receipt)?;
+        crate::batch::queue_consent_answer(self, txn);
         Ok(Some(
             super::super::code_settlement::CodeConsentHolderDecision {
                 receipt,

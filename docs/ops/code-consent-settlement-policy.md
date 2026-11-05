@@ -84,7 +84,11 @@ schema, parked checkpoint, exact target, first-answer state, the person's
 actual word, opener lineage and original authority. Only then does it resolve
 the current policy and action power in that writer. An approve-once act claims
 the existing marker and writes the human Gate receipt in the same transaction;
-a denial writes its distinct holder receipt without a marker.
+a denial writes its distinct holder receipt without a marker. Both acts
+queue the existing transaction-owned consent-answer wake flag after the
+receipt. The wake fires only after committed group durability, never before
+commit; rollback drops it. An already-answered or refused-target result does
+not queue a new answer wake. This event is not permission to run the effect.
 
 The answer hook must still record the returned decision and actual identity
 in its native first-answer stamp in that same writer. Admission, once
