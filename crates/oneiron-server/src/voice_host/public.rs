@@ -231,7 +231,11 @@ impl PublicSession {
         &self,
         input: LiveVoiceEventsRequest,
     ) -> MemoryResult<super::public_events::ListedPage> {
-        self.journal.lock().map_err(|_| unavailable())?.page(input)
+        let mut journal = self.journal.lock().map_err(|_| unavailable())?;
+        match &self.phone {
+            Some(phone) => journal.phone_page(input, phone),
+            None => journal.page(input),
+        }
     }
 }
 
