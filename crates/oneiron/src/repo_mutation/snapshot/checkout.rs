@@ -1,7 +1,6 @@
-//! Recovery traversal and Git opacity inventory for current-folder capture.
+//! Git opacity inventory for current-folder capture.
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -13,38 +12,6 @@ use crate::scan_check::{EngineScan, ScanCount};
 use super::super::git::git_output_optional;
 use super::super::support::utf8_trimmed;
 use super::capture::{CaptureEntry, Directory, visit_capture_entries};
-use super::{nested_repository, repo_relative_path};
-
-pub(super) fn visit_checkout_entries(
-    repo_root: &Path,
-    dir: &Path,
-    indexed_paths: &BTreeSet<String>,
-    linked_paths: &BTreeSet<String>,
-    visit: &mut impl FnMut(&Path, String, &fs::Metadata) -> Result<()>,
-) -> Result<()> {
-    let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
-    for child in children {
-        if child.file_name() == OsStr::new(".git") {
-            continue;
-        }
-        let path = child.path();
-        let relative = repo_relative_path(repo_root, &path)?;
-        if indexed_paths.contains(&relative) {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_dir() {
-            if linked_paths.contains(&relative) || nested_repository(&path)? {
-                continue;
-            }
-            visit_checkout_entries(repo_root, &path, indexed_paths, linked_paths, visit)?;
-            continue;
-        }
-        visit(&path, relative, &metadata)?;
-    }
-    Ok(())
-}
 
 /// Current file entries, without interpreting an index OID as file bytes.
 /// Ordinary folders need no Git repository; a checkout's enclosing Git
