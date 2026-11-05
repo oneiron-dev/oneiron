@@ -54,6 +54,8 @@ pub struct TextStyle {
     pub first_line: Value<i64>,
     /// `a:defRPr/@b`.
     pub bold: Value<bool>,
+    /// `a:defRPr/@i`.
+    pub italic: Value<bool>,
     /// `a:defRPr/a:latin/@typeface`, theme references such as `+mn-lt` kept
     /// as written.
     pub typeface: Value<String>,
@@ -218,6 +220,15 @@ fn style(context: &SlideContext<'_>, layers: &[Layer<'_>], ph: Option<&Placehold
         bold: context.lookup(
             &defaults,
             attr("b", |v| match v {
+                "1" | "true" => Some(true),
+                "0" | "false" => Some(false),
+                _ => None,
+            }),
+            Some(false),
+        ),
+        italic: context.lookup(
+            &defaults,
+            attr("i", |v| match v {
                 "1" | "true" => Some(true),
                 "0" | "false" => Some(false),
                 _ => None,
