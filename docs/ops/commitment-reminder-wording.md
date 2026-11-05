@@ -73,6 +73,16 @@ replace that version's source contract. Source admission is separate from an
 artifact's own-row coverage; an artifact reference is not a grant on its inputs.
 The check does not introduce an input-visibility rule for unrelated artifacts.
 
+When this vault holds a native local wording version, scoped byte reads of
+its backing ASSET apply the source contract in the reader's own lane
+(FIX 4997 R2). The bytes read only through a complete local alternative: a
+protected version whose source and revision the caller admits, or a genuine
+body-owning default raw version at the same hash that the caller reads.
+Without a local protected version, existing ASSET behavior is unchanged.
+Replica-only claims prove no independent body-owning writer and cannot clear
+a locally protected read. Source admission for replica-only wording carriers
+remains unimplemented under FIX 13484 / 13260 (output-sync).
+
 The raw filing API still accepts privileged caller-owned text. It does not
 invent a source revision for that text and is not a fallback for model output
 whose source is withheld. The fixed-reminder/send paths remain available

@@ -43,30 +43,99 @@ impl ScopedRead<'_> {
             Ok(None) => return Ok(true),
             Err(_) => return Ok(false),
         };
-        if !self.proof_live_in(&txn)? {
+        self.reminder_wording_source_readable_in(&txn, &binding.source, &binding.revision)
+    }
+
+    /// Judges the persisted source in the caller's cut. The raw body is
+    /// used only for its type and fenced revision; the ordinary point read
+    /// still decides whether this lane may receive its projection.
+    pub(super) fn reminder_wording_source_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &EntityId,
+        revision: &[u8; 32],
+    ) -> Result<bool> {
+        if !self.proof_live_in(txn)? {
             return Ok(false);
         }
-        let mut parts = self
-            .get_entities_parts_in_txn(&txn, &[binding.source])?
-            .into_iter();
-        let Some((kind, _, _)) = parts.next().flatten() else {
+        let Some(row) = self
+            .entity_record_in(txn, source)?
+            .filter(|row| row.entity_type == ENTITY_TYPE_CLAIM)
+        else {
             return Ok(false);
         };
-        if kind != ENTITY_TYPE_CLAIM {
+        if blake3::hash(&row.body).as_bytes() != revision {
             return Ok(false);
         }
-        // Native admission passed: the fenced revision hashes the RAW stored
-        // body, so re-read this same row raw in this same snapshot for the
-        // consistency check alone. The admitted projection may mask, and a
-        // masked projection must never withhold a permitted read; raw bytes
-        // hash here and are never exposed.
-        let row = self
-            .vault
-            .port_entity_record(&txn, &binding.source)?
-            .filter(|row| row.entity_type == ENTITY_TYPE_CLAIM);
-        let Some(row) = row else {
-            return Ok(false);
+        Ok(matches!(
+            self.get_entities_parts_in_txn(txn, std::slice::from_ref(source))?
+                .pop()
+                .flatten(),
+            Some((ENTITY_TYPE_CLAIM, _, _))
+        ))
+    }
+
+    /// Whether the ASSET row `(id, raw)` reads under the wording source
+    /// contract (FIX 4997 R2): true for every non-wording row. A
+    /// content-addressed ASSET with no local protected version reads as
+    /// before; one with a local protected version reads only while some
+    /// complete local alternative does — a protected version whose source
+    /// and revision this same lane admits, or a genuine body-owning
+    /// default raw at the same hash this lane reads. Alternatives are OR,
+    /// malformed never authorizes, and replica-only holdings never clear.
+    pub(super) fn reminder_wording_asset_sources_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let Some(hash) =
+            crate::blob_artifact::carrier_content_hash(&self.vault.store, txn, id, raw)?
+        else {
+            return Ok(true);
         };
-        Ok(*blake3::hash(&row.body).as_bytes() == binding.revision)
+        let versions = crate::blob_artifact::local_hash_versions_in_txn(self.vault, txn, &hash)?;
+        let mut saw_protected = false;
+        for version in &versions {
+            match wording_source_binding(&version.record) {
+                Ok(Some(binding)) => {
+                    saw_protected = true;
+                    if self.reminder_wording_source_readable_in(
+                        txn,
+                        &binding.source,
+                        &binding.revision,
+                    )? {
+                        return Ok(true);
+                    }
+                }
+                Err(_) => {
+                    saw_protected = true;
+                }
+                Ok(None) => {}
+            }
+        }
+        if !saw_protected {
+            return Ok(true);
+        }
+        for version in &versions {
+            if !version.is_default_raw {
+                continue;
+            }
+            if !matches!(wording_source_binding(&version.record), Ok(None)) {
+                continue;
+            }
+            if !self
+                .vault
+                .blob_artifact_bytes_readable_in_txn(txn, &version.artifact)?
+            {
+                continue;
+            }
+            if self.entities_readable_in_txn(txn, &[version.artifact, version.record.claim_id])?
+                == [true, true]
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
