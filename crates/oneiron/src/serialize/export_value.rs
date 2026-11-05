@@ -232,10 +232,10 @@ impl ExportBody {
     /// small callers keep `to_bytes`, writers stream here. The transient
     /// Mp tree stays: a tree-free encoder would re-implement rmpv width
     /// framing and risk canonical-byte drift, explicitly out of scope.
-    /// Generic over a `?Sized` writer because `rmpv::encode::write_value`
-    /// needs a sized writer type: this keeps both `Vec<u8>` and trait
-    /// objects as callers.
-    pub(crate) fn write_bytes_to<W: Write + ?Sized>(&self, out: &mut W) -> Result<()> {
+    /// Generic over the writer type because `rmpv::encode::write_value`
+    /// needs a sized writer: callers pass their concrete writer (`Vec`,
+    /// file, buffered stream) and the frames stream into it.
+    pub(crate) fn write_bytes_to<W: Write>(&self, out: &mut W) -> Result<()> {
         match self {
             Self::MessagePack(value) => {
                 rmpv::encode::write_value(out, &value.to_msgpack()?)
