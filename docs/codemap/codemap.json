@@ -23868,7 +23868,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/body.rs",
@@ -31882,10 +31882,20 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/recipes/audit_erase.rs",
+     "purpose": "Candidate refs in retained audit decisions, scrubbed with their saved copies",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -33909,7 +33919,7 @@
      "path": "src/embed/repo_projection.rs",
      "purpose": "What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 1
      }
     },
@@ -92001,7 +92011,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93039,7 +93049,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6508,
+   "source_files": 6509,
    "test_files": 895
   },
   "oneiron-android": {
@@ -131560,7 +131570,7 @@
      "path": "src/write_envelope/communication.rs",
      "purpose": "Communication predicate, error, send-override and descriptor-row vocabulary",
      "surface": {
-      "const": 21,
+      "const": 25,
       "enum": 4,
       "fn": 5,
       "struct": 1,
