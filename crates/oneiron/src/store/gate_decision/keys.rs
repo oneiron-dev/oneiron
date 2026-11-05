@@ -1,69 +1,11 @@
-//! Gate-decision ledger key prefixes, key constructors, and the id successor.
+//! Core half of `store::gate_decision::keys`: its store-layer items live in `oneiron_store::gate_decision::keys` and are
+//! re-exported here; the items below stay in the engine.
 
-use crate::error::{Error, Result};
-use crate::store::{index_key_with_id, string_index_prefix};
+pub(crate) use oneiron_store::gate_decision::keys::*;
 
 use super::types::GateDecisionId;
-
-pub(in crate::store) const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
-
-// The `gate_delete_pending:v0:` crash-recovery sidecar and the
-// `gate_delete_required:v0:` durable-proof marker moved onto the typed
-// `PENDING_DELETION`/`DELETE_REQUIRED` side tables in `gate_decision/sidecar.rs`
-// (side_table::GATE_DELETE_PENDING_SIDECAR / GATE_DELETE_REQUIRED_MARKER); the
-// hand-spelled prefixes and key builders that used to live here are gone.
-
-pub(in crate::store) const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] =
-    b"gate_decision:grant_ref_index:v1:";
-
-/// ERASE-A (ONE-1637) claim-keyed secondary index over the Gate decision
-/// ledger: `prefix ‖ claim_id(16B) ‖ decision_id(16B)`, empty value.
-///
-/// ACCELERATION ONLY. Erase-completeness verification must never consult it —
-/// an index cannot vouch for the completeness of the erase it accelerated (see
-/// [`Store::verify_claim_erasure_by_scan_in_txn`]).
-///
-/// INVARIANT: every mutation of a `gate_decision:v0:` row MUST route through
-/// `append_gate_decision_in_txn` (the sole write route) or
-/// `delete_gate_decision_record_in_txn` (the sole primary-delete route, which
-/// drops this index row and the grant-ref index row in the same transaction).
-/// A future deleter loads/decodes the record and calls the latter; a raw
-/// `vault_meta.delete` of a primary key orphans both indexes. The
-/// `gate_delete_pending:v0:` recovery sidecar is a distinct keyspace and is not
-/// covered by this rule.
-pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim:v0:";
-
-/// Durable proof that every pre-existing ledger row is claim-indexed. While
-/// ABSENT, per-claim discovery falls back to a full keyspace scan; erase is
-/// never refused during backfill.
-pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8] =
-    b"gate_decision_by_claim_backfill_complete";
-
-/// Only accepted value byte for the backfill-complete flag row.
-pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
-
-pub(in crate::store) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
-
-/// The full raw key of one ledger row, for tests that plant rows directly;
-/// production reads and writes go through the typed ledger table.
-#[cfg(test)]
-pub(in crate::store) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
-    key.extend_from_slice(&decision_id.as_bytes());
-    key
-}
-
-pub(in crate::store) fn gate_decision_upper_bound() -> Vec<u8> {
-    let mut key = Vec::from(GATE_DECISION_KEY_PREFIX);
-    let last = key
-        .last_mut()
-        .expect("gate decision key prefix must be non-empty");
-    *last = last
-        .checked_add(1)
-        .expect("gate decision key prefix upper bound must not overflow");
-    key
-}
+use crate::error::{Error, Result};
+use crate::store::{hashed_string_index_prefix, index_key_with_id, string_index_prefix};
 
 /// Returns the next lexicographic UUIDv7 while retaining RFC version and
 /// variant bits. Exhausting random bits carries into the logical timestamp.
@@ -106,8 +48,14 @@ pub(super) fn logical_uuid_v7_successor(id: GateDecisionId) -> Result<GateDecisi
     ))
 }
 
-pub(super) fn gate_decision_grant_ref_index_prefix(grant_ref: &str) -> Vec<u8> {
-    string_index_prefix(GATE_DECISION_GRANT_REF_INDEX_PREFIX, grant_ref)
+/// The full raw key of one ledger row, for tests that plant rows directly;
+/// production reads and writes go through the typed ledger table.
+#[cfg(test)]
+pub(crate) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
+    key.extend_from_slice(&decision_id.as_bytes());
+    key
 }
 
 pub(in crate::store) fn gate_decision_grant_ref_index_key(
@@ -120,12 +68,6 @@ pub(in crate::store) fn gate_decision_grant_ref_index_key(
     )
 }
 
-/// Both key components are fixed 16-byte ids, so the index needs no
-/// `string_index_prefix` length header to stay unambiguous.
-pub(in crate::store) fn gate_decision_claim_index_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
-    index_key_with_id(GATE_DECISION_CLAIM_INDEX_PREFIX, claim_id)
-}
-
 pub(in crate::store) fn gate_decision_claim_index_key(
     claim_id: &[u8; 16],
     decision_id: GateDecisionId,
@@ -134,12 +76,4 @@ pub(in crate::store) fn gate_decision_claim_index_key(
         &gate_decision_claim_index_prefix(claim_id),
         &decision_id.as_bytes(),
     )
-}
-
-pub(super) fn attempt_run_index_prefix(run_id: &str) -> Vec<u8> {
-    string_index_prefix(ATTEMPT_RUN_INDEX_PREFIX, run_id)
-}
-
-pub(super) fn attempt_run_index_key(run_id: &str, attempt_id: &[u8; 16]) -> Vec<u8> {
-    index_key_with_id(&attempt_run_index_prefix(run_id), attempt_id)
 }

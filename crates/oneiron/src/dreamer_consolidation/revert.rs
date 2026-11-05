@@ -238,7 +238,8 @@ pub(crate) fn revert_dreamer_change_in_txn(
 
 /// The same inverse for an explicitly recorded author's change. The caller
 /// validates run membership, currency and owner authority in this transaction.
-/// The Dreamer door above supplies only the Dreamer's identity.
+/// The Dreamer door above supplies only the Dreamer's identity. `now` stays in
+/// milliseconds; only native claim lifecycle arguments use Unix seconds.
 pub(crate) fn revert_authored_change_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -286,7 +287,7 @@ pub(crate) fn revert_authored_change_in_txn(
                     .get_claim_in_txn(txn, &header)?
                     .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
                 {
-                    vault.retract_claim_in_txn_as(txn, &header, now, Some(reverter))?;
+                    vault.retract_claim_in_txn_as(txn, &header, now / 1_000, Some(reverter))?;
                     reverted.retracted.push(header);
                 }
             }
@@ -341,13 +342,13 @@ fn revert_claim_in_txn(
         return Ok(reverted);
     }
     if claim_kind(body) == DreamerChangeKind::Evidence {
-        vault.retract_edge_provenance_in_txn(txn, &claim, now)?;
+        vault.retract_edge_provenance_in_txn(txn, &claim, now, false)?;
         let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Evidence);
         reverted.retracted.push(claim);
         return Ok(reverted);
     }
     let superseded = superseded_by_in_txn(vault, txn, claim)?;
-    vault.retract_claim_in_txn_as(txn, &claim, now, Some(reverter))?;
+    vault.retract_claim_in_txn_as(txn, &claim, now / 1_000, Some(reverter))?;
     let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Claim);
     reverted.retracted.push(claim);
     if body.predicate == PREDICATE_CONFLICT_RESOLVED {
@@ -367,7 +368,7 @@ fn revert_claim_in_txn(
                     marker_ids(resolution, "superseded_by").any(|by| by == claim)
                 })
             {
-                vault.retract_claim_in_txn_as(txn, &id, now, Some(reverter))?;
+                vault.retract_claim_in_txn_as(txn, &id, now / 1_000, Some(reverter))?;
                 reverted.retracted.push(id);
                 reverted
                     .reopened
@@ -380,7 +381,7 @@ fn revert_claim_in_txn(
             record.predicate == SUPERSESSION_PROVENANCE
                 && record.lifecycle == ClaimLifecycleStatus::Active
         }) {
-            vault.retract_claim_in_txn_as(txn, &id, now, Some(reverter))?;
+            vault.retract_claim_in_txn_as(txn, &id, now / 1_000, Some(reverter))?;
             reverted.retracted.push(id);
         }
     }

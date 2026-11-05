@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod broker_responses;
 mod cache_usage;
 mod catalog;
 mod cooldown;
@@ -41,6 +42,7 @@ mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
 mod driven;
+mod exl3_evidence;
 #[cfg(test)]
 mod fallback_tests;
 mod family;
@@ -73,6 +75,7 @@ mod router;
 mod run_backend;
 mod runtime;
 mod served;
+mod siwc_responses;
 pub(crate) mod soniox;
 mod source_admission;
 mod sse;
@@ -116,16 +119,17 @@ pub use run_backend::RunBackend;
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
-    DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
-    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerRuntimeStatus, TaggerStatus,
+    DeviceStatus, DiscoveredStatus, ModelsStatus, PreparedTailStatus, ProviderStatus, RungStatus,
+    SeatState, SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerRuntimeStatus,
+    TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, turn_admitted,
 };
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
@@ -225,6 +229,7 @@ fn build_provider(
     keys: Option<&Arc<dyn KeyDoor>>,
     identities: &Arc<llama_identity::LlamaIdentityResolver>,
     responses: &ResponsesContext,
+    posture: oneiron::HostingPrivacyPosture,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -238,11 +243,43 @@ fn build_provider(
             .workers
             .iter()
             .any(|row| row.kind == WorkerKind::Exl3 && row.binding.provider == name);
+    if let Some(siwc) = &provider.siwc {
+        oneiron::dispatch_byoa::check_seat_placement(
+            oneiron::dispatch_byoa::OfficialSeatRoute::SignInWithChatGpt,
+            posture,
+            oneiron::dispatch_byoa::SeatPlacementApproval {
+                openai_hosted_plan: siwc.openai_hosted_plan_approved,
+                ..Default::default()
+            },
+            true,
+        )?;
+        return Ok(Some(Arc::new(siwc_responses::SiwcResponses::new(
+            provider, catalog,
+        )?)));
+    }
     if provider.key_secret.is_some() && provider.kind.generates() {
         let site = site
             .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))?;
+        if provider.kind == ProviderKind::OpenaiCompat && provider.responses_socket.is_some() {
+            let config = OpenAiCompatConfig::from_catalog(catalog.clone());
+            let original_catalog = catalog
+                .iter()
+                .map(|entry| (entry.model.clone(), entry.clone()))
+                .collect();
+            return Ok(Some(Arc::new(broker_responses::BrokerResponses::new(
+                broker::broker_backend(provider, catalog, output_cap(provider), solo, site, keys)?,
+                config,
+                original_catalog,
+                responses.clone(),
+                OutputCap {
+                    field: "max_output_tokens",
+                    ..output_cap(provider)
+                },
+                provider.response_format,
+            ))));
+        }
         return Ok(Some(Arc::new(broker::broker_backend(
             provider,
             catalog,
@@ -352,6 +389,10 @@ fn build_reranker(
     provider: &ProviderConfig,
     models: &[ModelRef],
 ) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
+    anyhow::ensure!(
+        provider.siwc.is_none(),
+        "SIWC credentials serve Responses, not reranking"
+    );
     // The credential broker sends chat calls only. A rerank call sent without
     // it would carry no key, while its offer says the broker holds one.
     if provider.key_secret.is_some() {

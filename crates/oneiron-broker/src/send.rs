@@ -120,7 +120,14 @@ impl Sender {
                             empty,
                         );
                     }
-                    push_wiped(&mut raw, &chunk);
+                    if push_wiped(&mut raw, &chunk).is_err() {
+                        return (
+                            Outcome::Failed {
+                                reason: Failure::Send,
+                            },
+                            empty,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(error) => return (failed(&error), empty),
@@ -146,12 +153,13 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, secret, writer, deadline)
+            .stream_to(call, checked, body, whole, secret, writer, deadline)
             .await;
     }
 
@@ -160,10 +168,17 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) -> io::Result<()> {
+        if call.shape == crate::Shape::OpenAiResponses {
+            return crate::responses::responses_to(
+                call, checked, body, whole, secret, writer, deadline,
+            )
+            .await;
+        }
         let reached = match checked {
             Ok(url) => self.reach(call, url, body, secret, deadline).await,
             Err(reason) => Err(Outcome::Refused { reason }),
@@ -193,7 +208,9 @@ impl Sender {
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
             };
-            push_wiped(&mut cleared, &passed);
+            if push_wiped(&mut cleared, &passed).is_err() {
+                break Some(Failure::Send);
+            }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
             while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
@@ -205,7 +222,11 @@ impl Sender {
                 break None;
             }
             if sent > 0 {
-                cleared = Zeroizing::new(cleared[sent..].to_vec());
+                let mut remainder = Zeroizing::new(Vec::new());
+                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                    break Some(Failure::Send);
+                }
+                cleared = remainder;
             }
         };
         within(deadline, write_stream_end(writer, cut)).await
@@ -416,12 +437,10 @@ impl Sender {
         {
             return None;
         }
-        let mut encoder = flate2::write::GzEncoder::new(
-            Vec::with_capacity(body.len() / 2),
-            flate2::Compression::new(1),
-        );
+        let sink = crate::body::FallibleBody::with_capacity(body.len() / 2).ok()?;
+        let mut encoder = flate2::write::GzEncoder::new(sink, flate2::Compression::new(1));
         io::Write::write_all(&mut encoder, body).ok()?;
-        let encoded = encoder.finish().ok()?;
+        let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
 }
@@ -432,7 +451,7 @@ const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
 /// The shape's key header value for `secret`, marked sensitive.
-fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
+pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
     if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
@@ -507,19 +526,29 @@ pub(crate) async fn answer<W: AsyncWrite + Unpin>(
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is
 /// wiped as it drops instead of freed with reply bytes in it.
-pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
-    let needed = buffer.len() + chunk.len();
+pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) -> io::Result<()> {
+    let needed = buffer
+        .len()
+        .checked_add(chunk.len())
+        .ok_or(io::ErrorKind::OutOfMemory)?;
     if needed > buffer.capacity() {
-        let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));
+        let mut grown = Zeroizing::new(Vec::new());
+        grown
+            .try_reserve_exact(needed.max(buffer.capacity().saturating_mul(2)))
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
         grown.extend_from_slice(buffer);
         *buffer = grown;
     }
     buffer.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// The reply's headers, each value stripped. A header whose name holds the
 /// key is dropped whole, and so is any past the bounds.
-fn reply_headers(headers: &reqwest::header::HeaderMap, secret: &[u8]) -> Vec<(String, String)> {
+pub(crate) fn reply_headers(
+    headers: &reqwest::header::HeaderMap,
+    secret: &[u8],
+) -> Vec<(String, String)> {
     let mut kept = Vec::new();
     let mut size = 0;
     for (name, value) in headers {

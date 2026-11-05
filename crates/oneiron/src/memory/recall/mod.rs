@@ -465,7 +465,6 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
 }
 
 impl Memory<'_> {
-
     /// The one recall body. `session` is `None` for every canonical caller,
     /// which therefore takes byte-identical base paths. `pin` is a paid
     /// recall's one selection, shared by its passes (FIX 5006).
@@ -967,7 +966,6 @@ impl Memory<'_> {
         }
         Ok(pack)
     }
-
 
     /// The worlds one recall reads (ARCH-0022). A named world reads with base
     /// reality; no name reads the actor's default, base plus its active world.
