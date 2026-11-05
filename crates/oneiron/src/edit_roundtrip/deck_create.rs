@@ -82,9 +82,9 @@ pub(crate) fn erase_in_txn(
 }
 
 pub use crate::blob_artifact::deck_creation::record::{
-    ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedSlide, DeckCreateError,
-    DeckCreateOutcome, DeckCreateRequest, DeckCreationRecord, DesignDirection, DesignSpec,
-    DirectionOutcome, DirectionSlide, EvidenceChange, EvidenceObservation, KeptOutline,
+    ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedInput, CreatedSlide,
+    DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DeckCreationRecord, DesignDirection,
+    DesignSpec, DirectionOutcome, DirectionSlide, EvidenceChange, EvidenceObservation, KeptOutline,
     OutlineFreshness,
 };
 
@@ -362,7 +362,7 @@ impl crate::Vault {
         let txn = &*wtxn;
         let kept = self.fresh_outline_in_txn(txn, request.outline)?;
         let limits = self.docedit_package_limits_in_txn(txn)?;
-        let book = self.font_book_in_txn(txn, request.fonts)?;
+        let (book, font_inputs) = self.font_book_with_inputs_in_txn(txn, request.fonts)?;
         let bindings = self.asset_bindings_in_txn(txn, request.assets)?;
         let template_bytes = self.version_bytes_in_txn(txn, &request.template)?;
         let template = Package::open(
@@ -389,7 +389,7 @@ impl crate::Vault {
             }
             Outcome::Plan(plan) => plan,
         };
-        let records = self.asset_records_in_txn(txn, request.assets, &kept)?;
+        let (records, asset_inputs) = self.asset_records_in_txn(txn, request.assets, &kept)?;
         let stored: BTreeMap<String, StoredAsset<'_>> = records
             .iter()
             .map(|(asset, (record, bytes))| {
@@ -484,6 +484,8 @@ impl crate::Vault {
                 outline_hash: kept.content_hash,
                 template: request.template,
                 template_hash,
+                asset_inputs,
+                font_inputs,
                 run_ref: request.run_ref.to_owned(),
                 made_by: request.made_by,
                 slides: candidate

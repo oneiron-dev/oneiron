@@ -1,7 +1,5 @@
 //! Checked file and directory shape; reservations compose before execution.
-use super::{
-    MAX_FILE_BYTES, MAX_WORKSPACE_DIRECTORIES, MAX_WORKSPACE_FILES, Result, WorkspacePath, refused,
-};
+use super::{MAX_FILE_BYTES, Result, WorkspacePath, refused};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,9 +36,6 @@ impl WorkspaceShape {
     /// A file's bytes are counted, never capped: a proposed file streams in
     /// frames, so its size is the codec's concern, not the tree's (Rule 5).
     pub fn add_file(&mut self, path: &WorkspacePath, bytes: usize) -> Result<()> {
-        if self.files.len() >= MAX_WORKSPACE_FILES {
-            return Err(refused("workspace file limit"));
-        }
         if self.files.contains_key(path.as_str()) || self.directories.contains(path.as_str()) {
             return Err(refused("workspace path collision"));
         }
@@ -114,13 +109,6 @@ impl WorkspaceShape {
     fn insert_directories(&mut self, additions: BTreeSet<String>) -> Result<()> {
         if additions.iter().any(|dir| self.files.contains_key(dir)) {
             return Err(refused("workspace file/directory collision"));
-        }
-        let new_count = additions
-            .iter()
-            .filter(|dir| !self.directories.contains(*dir))
-            .count();
-        if self.directories.len() + new_count > MAX_WORKSPACE_DIRECTORIES {
-            return Err(refused("workspace directory limit"));
         }
         self.directories.extend(additions);
         Ok(())

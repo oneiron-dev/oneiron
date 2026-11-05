@@ -299,7 +299,7 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 /// to, read in place, so the coverage rule can match them against the
 /// covered chain. The response's own certificates are held on `memory`
 /// as responder candidates (FIX 12260); memory refused is `Err`.
-pub(super) fn ocsp_entry_valid<'a>(
+pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],

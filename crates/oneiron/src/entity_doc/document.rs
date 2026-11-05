@@ -300,7 +300,7 @@ impl EntityDoc {
         self.fork(frontier).map(|doc| doc.text())
     }
 
-    pub(super) fn fork(&self, frontier: &[u8]) -> Result<Self> {
+    pub(crate) fn fork(&self, frontier: &[u8]) -> Result<Self> {
         let f = decode_frontier(frontier)?;
         if self.doc.is_shallow() {
             let vv = self
