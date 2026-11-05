@@ -171,6 +171,12 @@ fn measure_with_owner(
             JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
         )
     };
+    if bandit
+        .goal_revision()
+        .is_some_and(|measured| measured != goal_revision.as_str())
+    {
+        return Err(retry("the goal moved while its axes were measured"));
+    }
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
     vault.with_write_txn_grouped(|txn| {
         if let Some(owner) = owner {
