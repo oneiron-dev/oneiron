@@ -66,7 +66,12 @@ impl StagedBodyKey {
     }
 }
 
-fn write_sealed_lines(dir: &BodyDir, digest: &[u8; 32], key: &Arc<FileKey>, index: &[u64]) {
+pub(super) fn write_sealed_lines(
+    dir: &BodyDir,
+    digest: &[u8; 32],
+    key: &Arc<FileKey>,
+    index: &[u64],
+) {
     let Ok((file, temp)) = dir.create_temp() else {
         return;
     };

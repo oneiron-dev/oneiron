@@ -253,6 +253,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.rules.set", post(facade_route))
         .route("/vault.skills.code_auto_install.set", post(facade_route))
         .route("/vault.skills.fit.set", post(facade_route))
+        .route("/vault.skills.advisory_ask.set", post(facade_route))
         .route("/vault.skills.permissions.approve", post(facade_route))
         .route("/vault.skills.optimize.start", post(facade_route))
         .route("/vault.skills.optimize.result", post(facade_route))

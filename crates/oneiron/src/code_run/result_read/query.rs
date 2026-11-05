@@ -11,7 +11,9 @@
 //! A selection past one reply streams into the spill sink when the caller
 //! gave one (a code run binds it as a result); without one it pages. One
 //! picked document value past one reply, with no sink, is answered as a
-//! range ref over its own bytes in the body, with its first page.
+//! range ref over its own bytes in the body, with its first page. A
+//! re-encoded value pages through the same query with a byte cursor within
+//! that value; its offsets never address the original body.
 
 use super::{
     READ_PIECE_BYTES, ReadBounds, Reply, ResultBody, SHAPE_HEAD_BYTES, Scan, decode, invalid_input,
@@ -49,7 +51,8 @@ struct QueryInput {
 }
 
 /// Where a query goes on: a table's next row by its byte offset and number,
-/// or the picked values of a document to pass over.
+/// or the picked values of a document to pass over. Within a table row,
+/// `skip` passes over values the row's path already picked.
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QueryCursor {
@@ -59,6 +62,9 @@ struct QueryCursor {
     row: Option<u64>,
     #[serde(default)]
     skip: Option<u64>,
+    /// A byte offset in the one selected value re-derived by this query.
+    #[serde(default)]
+    within: Option<u64>,
 }
 
 /// One step of a JSON path.
@@ -124,9 +130,15 @@ fn parse_path(path: &str) -> std::result::Result<Vec<Step>, String> {
 }
 
 /// The fields of one line of a delimited table (RFC 4180): a quoted field
-/// keeps its delimiters, and `""` in it is one quote. A quoted field that
-/// runs past its line is not joined to the next.
+/// keeps its delimiters, and `""` in it is one quote. Whether the line ends
+/// inside an open quoted field is reported too, so the table reader can join
+/// the physical lines of one logical row.
 pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
+    split_fields_open(line, delimiter).0
+}
+
+/// [`split_fields`] with whether the line ends inside an open quoted field.
+pub(super) fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool) {
     let delimiter = char::from(delimiter);
     let mut fields = Vec::new();
     let mut field = String::new();
@@ -155,7 +167,81 @@ pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
         }
     }
     fields.push(field);
-    fields
+    (fields, quoted)
+}
+
+/// Byte-wise open-quote state for a delimited row, matching
+/// [`split_fields_open`]: `quoted` whether inside a quoted field, `fresh`
+/// whether at a field start, `pending` whether a `"` while quoted still
+/// waits for its next byte to tell an escaped `""` from a close. Fed on raw
+/// bytes: `"`, `,`/`\t` and `\n` are ASCII, so open detection equals the
+/// lossy `chars` scan; field values still decode through [`split_fields`]
+/// once on the completed row.
+#[derive(Clone, Copy)]
+pub(super) struct CsvOpen {
+    quoted: bool,
+    fresh: bool,
+    pending: bool,
+}
+
+impl CsvOpen {
+    pub(super) fn new() -> Self {
+        Self {
+            quoted: false,
+            fresh: true,
+            pending: false,
+        }
+    }
+
+    pub(super) fn feed(&mut self, bytes: &[u8], delimiter: u8) {
+        for &byte in bytes {
+            self.feed_byte(byte, delimiter);
+        }
+    }
+
+    pub(super) fn feed_byte(&mut self, byte: u8, delimiter: u8) {
+        if self.pending {
+            if byte == b'"' {
+                self.pending = false;
+                return;
+            }
+            self.pending = false;
+            self.quoted = false;
+            if byte == delimiter {
+                self.fresh = true;
+            } else {
+                self.fresh = false;
+            }
+            return;
+        }
+        if self.quoted {
+            if byte == b'"' {
+                self.pending = true;
+            }
+            return;
+        }
+        if byte == b'"' && self.fresh {
+            self.quoted = true;
+            self.fresh = false;
+        } else if byte == delimiter {
+            self.fresh = true;
+        } else {
+            self.fresh = false;
+        }
+    }
+
+    /// Resolves a trailing `"` at a physical-line end as a close: the next
+    /// logical byte is the joined `\n` or the end, never `"`.
+    pub(super) fn end_physical(&mut self) {
+        if self.pending {
+            self.pending = false;
+            self.quoted = false;
+        }
+    }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.quoted || self.pending
+    }
 }
 
 /// A `where` comparison.
@@ -322,9 +408,10 @@ struct Picked<'s> {
     seen: u64,
     stop: Option<Stop>,
     failed: Option<Error>,
-    /// The one document value that did not fit an empty reply, with no
-    /// sink to stream it into.
+    /// The one selected value that did not fit an empty reply, with no
+    /// sink to stream it into, or whose byte page is being resumed.
     oversized: Option<Box<RawValue>>,
+    within: Option<u64>,
     /// The bytes the parser had taken from the body when the last picked
     /// value ended.
     value_end: u64,
@@ -359,10 +446,12 @@ impl Picked<'_> {
     }
 
     fn emit(&mut self, item: Box<RawValue>) -> Result<bool> {
-        if !self.spilling && self.held_bytes + item.get().len() + 1 > self.budget {
+        if !self.spilling
+            && (self.within.is_some() || self.held_bytes + item.get().len() + 1 > self.budget)
+        {
             let (rows, many) = (self.rows(), self.many);
             let Some(sink) = self.spill.as_deref_mut() else {
-                if self.held.is_empty() && self.filter.is_none() {
+                if self.held.is_empty() {
                     self.oversized = Some(item);
                 }
                 self.stop = Some(Stop::Budget);
@@ -498,7 +587,7 @@ pub(super) fn query(
         None => Vec::new(),
     };
     let head = body.read(0, SHAPE_HEAD_BYTES)?;
-    let shape = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+    let shape = shape::shape_of(body, head)?;
     let table = match shape["format"].as_str() {
         Some("json") => None,
         Some("jsonl") => Some(None),
@@ -517,6 +606,9 @@ pub(super) fn query(
         steps
     };
     let cursor = input.cursor.unwrap_or_default();
+    // A byte-page continuation stays a page even when this caller has a
+    // spill sink; the cursor names part of one selection, not a new store.
+    let spill = if cursor.within.is_some() { None } else { spill };
     let picked = Picked {
         many: filter.is_some() || steps.contains(&Step::All),
         filter,
@@ -532,6 +624,7 @@ pub(super) fn query(
         stop: None,
         failed: None,
         oversized: None,
+        within: cursor.within,
         value_end: 0,
     };
     match table {
@@ -583,18 +676,32 @@ fn document(
     };
     if picked.stop == Some(Stop::Budget)
         && let Some(raw) = picked.oversized.take()
-        && let Some(paged) = page_value(body, parent, &raw, picked.value_end, bounds)?
     {
-        let mut reply = json!({
-            "ref": reference,
-            "count": 1,
-            "done": !picked.many,
-            "paged": paged,
-        });
-        if picked.many {
-            reply["next"] = json!({"skip": picked.seen});
+        if picked.filter.is_none()
+            && picked.within.is_none()
+            && let Some(paged) = page_value(body, parent, &raw, picked.value_end, bounds)?
+        {
+            let mut reply = json!({
+                "ref": reference,
+                "count": 1,
+                "done": !picked.many,
+                "paged": paged,
+            });
+            if picked.many {
+                reply["next"] = json!({"skip": picked.seen});
+            }
+            return Ok(Reply::Output(reply));
         }
-        return Ok(Reply::Output(reply));
+        let resume = json!({"skip": picked.seen.saturating_sub(1)});
+        let after = picked.many.then(|| json!({"skip": picked.seen}));
+        return page_selection(
+            reference,
+            &raw,
+            picked.within.unwrap_or(0),
+            resume,
+            after,
+            bounds,
+        );
     }
     let next = match picked.stop {
         Some(Stop::Limit) => Some(json!({"skip": picked.seen})),
@@ -648,6 +755,85 @@ fn page_value(
             Ok(Some(page))
         }
         Reply::Denied(_) | Reply::Spilled { .. } => Ok(None),
+    }
+}
+
+/// Pages one re-derived selection, not a range of the source body. The
+/// continuation must re-run the same query, so its normal occurrence and
+/// release checks apply again before any bytes are read.
+fn page_selection(
+    reference: &str,
+    raw: &RawValue,
+    within: u64,
+    mut resume: Value,
+    after: Option<Value>,
+    bounds: &ReadBounds<'_>,
+) -> Result<Reply> {
+    let body = SelectionBody(raw.get().as_bytes());
+    let page_bounds = ReadBounds {
+        reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
+        watch: bounds.watch,
+    };
+    let Reply::Output(mut page) =
+        super::slice::slice(&body, reference, json!({"bytes": [within]}), &page_bounds)?
+    else {
+        return Err(Error::CorruptedIndex("query selected value page"));
+    };
+    let end = page["end"]
+        .as_u64()
+        .ok_or(Error::CorruptedIndex("query selected value page end"))?;
+    if let Value::Object(fields) = &mut page {
+        // These source-range fields would promise that slice(parent) can
+        // reproduce re-encoded bytes. Only the query cursor can do that.
+        fields.remove("ref");
+        fields.remove("next");
+        fields.remove("lines");
+    }
+    page["bytes"] = json!(body.len());
+    let next = if end < body.len() {
+        resume["within"] = json!(end);
+        Some(resume)
+    } else {
+        after
+    };
+    let mut reply = json!({
+        "ref": reference,
+        "count": 1,
+        "done": next.is_none(),
+        "paged": page,
+    });
+    if let Some(next) = next {
+        reply["next"] = next;
+    }
+    Ok(Reply::Output(reply))
+}
+
+/// One serialized selection, borrowed only for the current read.
+struct SelectionBody<'b>(&'b [u8]);
+
+impl ResultBody for SelectionBody<'_> {
+    fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn kind(&self) -> CodeRunOutputKind {
+        CodeRunOutputKind::Text
+    }
+
+    fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let start = usize::try_from(offset)
+            .unwrap_or(self.0.len())
+            .min(self.0.len());
+        let end = start.saturating_add(len).min(self.0.len());
+        Ok(self.0[start..end].to_vec())
+    }
+
+    fn line_index(&self) -> Option<Vec<u64>> {
+        None
+    }
+
+    fn base(&self) -> u64 {
+        0
     }
 }
 
@@ -930,6 +1116,19 @@ impl<'b> LineReader<'b> {
             self.held.extend_from_slice(&piece);
         }
     }
+
+    /// Bytes already buffered for the current row (FIX 1188).
+    fn partial(&self) -> usize {
+        let from = usize::try_from(self.at.saturating_sub(self.held_at)).unwrap_or(usize::MAX);
+        self.held.len().saturating_sub(from)
+    }
+
+    /// Marks the row ending at `end` completed past the scan bound (FIX 1188).
+    fn completed_to(&mut self, end: u64) {
+        self.at = end;
+        self.held_at = end;
+        self.held.clear();
+    }
 }
 
 /// A line less a carriage return before its newline.
@@ -937,8 +1136,99 @@ fn line_text(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\r").unwrap_or(bytes)
 }
 
+/// The logical row starting at `start`, read past the scan bound (FIX 1188):
+/// one physical line for JSON lines, or the quoted-field join for CSV/TSV.
+/// Its bytes, less the final newline, and the offset past it (`len` at EOF),
+/// or `None` when the row runs past `cap` physical bytes. Reads directly,
+/// outside the scan; the caller measures the unit once on success, never on
+/// capped. Newline and EOF rules match [`LineReader`]: physical bytes keep a
+/// CR, joined with `\n`, so interior CRLFs stay and only the final terminator
+/// goes (stripped by [`line_text`] at the caller's side). Open-quote state is
+/// carried incrementally ([`CsvOpen`]), never by reparsing the prefix.
+fn complete_row(
+    body: &dyn ResultBody,
+    start: u64,
+    delimiter: Option<u8>,
+    cap: u64,
+) -> Result<Option<(Vec<u8>, u64)>> {
+    let len = body.len();
+    let mut at = start;
+    let mut logical = Vec::new();
+    let mut first = true;
+    let mut open = CsvOpen::new();
+    loop {
+        let mut physical = Vec::new();
+        let mut physical_len = 0_u64;
+        let mut offset = at;
+        let phys_end = loop {
+            if offset >= len {
+                break len;
+            }
+            let piece = body.read(offset, READ_PIECE_BYTES)?;
+            if piece.is_empty() {
+                break len;
+            }
+            let prefix_len = match piece.iter().position(|byte| *byte == b'\n') {
+                Some(newline) => newline,
+                None => piece.len(),
+            };
+            let prefix = &piece[..prefix_len];
+            if at
+                .saturating_sub(start)
+                .saturating_add(physical_len)
+                .saturating_add(prefix.len() as u64)
+                > cap
+            {
+                return Ok(None);
+            }
+            if let Some(d) = delimiter {
+                open.feed(prefix, d);
+            }
+            physical.extend_from_slice(prefix);
+            physical_len += prefix.len() as u64;
+            if prefix_len < piece.len() {
+                break offset + prefix_len as u64 + 1;
+            }
+            offset += piece.len() as u64;
+        };
+        if first {
+            logical = physical;
+            first = false;
+        } else {
+            if (logical.len() as u64)
+                .saturating_add(1)
+                .saturating_add(physical_len)
+                > cap
+            {
+                return Ok(None);
+            }
+            logical.push(b'\n');
+            logical.extend_from_slice(&physical);
+        }
+        at = phys_end;
+        if at.saturating_sub(start) > cap {
+            return Ok(None);
+        }
+        match delimiter {
+            None => break,
+            Some(d) => {
+                open.end_physical();
+                if !open.is_open() {
+                    break;
+                }
+                if at >= len {
+                    break;
+                }
+                open.feed_byte(b'\n', d);
+            }
+        }
+    }
+    Ok(Some((logical, at)))
+}
+
 /// Picks rows out of a line table: JSON lines (`delimiter` `None`) or a
-/// CSV/TSV table whose first line names its columns. A row of JSON lines
+/// CSV/TSV table whose first row names its columns. A quoted CSV/TSV field
+/// may span physical lines, joined into one logical row. A row of JSON lines
 /// that does not parse is passed over and counted.
 fn table_rows(
     body: &dyn ResultBody,
@@ -950,6 +1240,9 @@ fn table_rows(
     bounds: &ReadBounds<'_>,
 ) -> Result<Reply> {
     let mut scan = Scan::new(bounds.scan_bytes());
+    let cap = bounds
+        .scan_bytes()
+        .saturating_add(bounds.reply_bytes as u64);
     let Some((first, rest)) = steps.split_first() else {
         return picked.finish(reference, true, None);
     };
@@ -958,41 +1251,179 @@ fn table_rows(
         Step::Index(index) => Some(*index),
         Step::Key(_) => return picked.finish(reference, true, None),
     };
+    let mut limited = false;
     let mut header = Vec::new();
     let mut body_start = 0;
+    // The header reader stays live for the data phase (FIX 1188 round 2):
+    // its buffer holds read-ahead past the header already charged to the
+    // scan. A fresh data reader would discard it and spend the bound twice,
+    // and a bound the header spent leaves a zero-partial Limit that repeats
+    // the same cursor forever without reaching complete_row.
+    let mut lines = LineReader::new(body, 0);
     if let Some(delimiter) = delimiter {
-        let mut lines = LineReader::new(body, 0);
-        match lines.next(&mut scan)? {
+        let header_bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => {
-                header = split_fields(&String::from_utf8_lossy(line_text(&bytes)), delimiter);
+                // A quoted header field may span physical lines: join them into one
+                // logical row through the same scan. A limit cut mid-row reads it
+                // past the bound (FIX 1188).
+                let mut header_bytes = bytes;
+                let mut open = CsvOpen::new();
+                open.feed(&header_bytes, delimiter);
+                open.end_physical();
+                let mut joined_done = false;
+                while !joined_done && open.is_open() {
+                    match lines.next(&mut scan)? {
+                        Line::Row(more) => {
+                            header_bytes.push(b'\n');
+                            open.feed_byte(b'\n', delimiter);
+                            header_bytes.extend_from_slice(&more);
+                            open.feed(&more, delimiter);
+                            open.end_physical();
+                        }
+                        Line::End => break,
+                        Line::Limit => {
+                            let Some((completed, end)) =
+                                complete_row(body, 0, Some(delimiter), cap)?
+                            else {
+                                let mut reply = picked.finish(
+                                    reference,
+                                    false,
+                                    Some(json!({"offset": 0, "row": 0})),
+                                )?;
+                                if let Reply::Output(reply) = &mut reply {
+                                    reply["limit"] = scan_limit();
+                                }
+                                return Ok(reply);
+                            };
+                            bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
+                            lines.completed_to(end);
+                            limited = true;
+                            header_bytes = completed;
+                            joined_done = true;
+                        }
+                    }
+                }
+                header_bytes
             }
             Line::End => return picked.finish(reference, true, None),
             Line::Limit => {
-                let mut reply =
-                    picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
-                if let Reply::Output(reply) = &mut reply {
-                    reply["limit"] = scan_limit();
+                if lines.partial() == 0 {
+                    let mut reply =
+                        picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                    if let Reply::Output(reply) = &mut reply {
+                        reply["limit"] = scan_limit();
+                    }
+                    return Ok(reply);
                 }
-                return Ok(reply);
+                let Some((completed, end)) = complete_row(body, 0, Some(delimiter), cap)? else {
+                    let mut reply =
+                        picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                    if let Reply::Output(reply) = &mut reply {
+                        reply["limit"] = scan_limit();
+                    }
+                    return Ok(reply);
+                };
+                bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
+                lines.completed_to(end);
+                limited = true;
+                completed
             }
-        }
+        };
+        header = split_fields(
+            &String::from_utf8_lossy(line_text(&header_bytes)),
+            delimiter,
+        );
         body_start = lines.at;
+        if limited {
+            scan = Scan::new(bounds.scan_bytes());
+        }
+    }
+    // A continuation re-reads the header above with a fresh scan: the data
+    // phase gets its own full allowance, so a header-spent bound cannot leave
+    // a zero-partial Limit that repeats the same cursor (FIX 1188 round 3).
+    // The allowance still covers only new bytes from the cursor.
+    if cursor.offset.is_some() {
+        scan = Scan::new(bounds.scan_bytes());
     }
     let mut row = cursor.row.unwrap_or(0);
-    let mut lines = LineReader::new(body, cursor.offset.unwrap_or(body_start).max(body_start));
+    let data_start = cursor.offset.unwrap_or(body_start).max(body_start);
+    if data_start != lines.at {
+        lines = LineReader::new(body, data_start);
+    }
     let mut skipped = 0_u64;
-    let mut limited = false;
-    let (done, next) = loop {
+    let mut selection_page = None;
+    let (done, next) = 'rows: loop {
         let start = lines.at;
-        let bytes = match lines.next(&mut scan)? {
+        let mut completed: Option<Vec<u8>> = None;
+        let mut bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => bytes,
             Line::End => break (true, None),
             Line::Limit => {
+                if lines.partial() == 0 {
+                    limited = true;
+                    break (false, Some(json!({"offset": start, "row": row})));
+                }
+                let Some((logical, end)) = complete_row(body, start, delimiter, cap)? else {
+                    limited = true;
+                    break (false, Some(json!({"offset": start, "row": row})));
+                };
+                bounds
+                    .watch
+                    .measure(EngineLimit::CodeResultScanBytes, end - start);
+                lines.completed_to(end);
                 limited = true;
-                break (false, Some(json!({"offset": start, "row": row})));
+                completed = Some(logical);
+                Vec::new()
             }
         };
-        let text = line_text(&bytes);
+        // A quoted CSV/TSV field may span physical lines: join them into one
+        // logical row through the same scan. Blank physical lines and CRLFs
+        // inside the quotes are content; only a logical row outside quotes is
+        // skipped, and only its final row terminator loses its CR.
+        // A limit cut mid-row reads it past the bound (FIX 1188); a limit at a
+        // row start stops there. JSON lines stay per line.
+        let mut joined: Option<Vec<u8>> = None;
+        if let Some(logical) = completed {
+            if delimiter.is_some() {
+                joined = Some(logical);
+            } else {
+                bytes = logical;
+            }
+        } else if let Some(d) = delimiter {
+            let mut logical = bytes.clone();
+            let mut open = CsvOpen::new();
+            open.feed(&logical, d);
+            open.end_physical();
+            let mut joined_done = false;
+            while !joined_done && open.is_open() {
+                match lines.next(&mut scan)? {
+                    Line::Row(more) => {
+                        logical.push(b'\n');
+                        open.feed_byte(b'\n', d);
+                        logical.extend_from_slice(&more);
+                        open.feed(&more, d);
+                        open.end_physical();
+                    }
+                    Line::End => break,
+                    Line::Limit => {
+                        let Some((done_logical, end)) = complete_row(body, start, Some(d), cap)?
+                        else {
+                            limited = true;
+                            break 'rows (false, Some(json!({"offset": start, "row": row})));
+                        };
+                        bounds
+                            .watch
+                            .measure(EngineLimit::CodeResultScanBytes, end - start);
+                        lines.completed_to(end);
+                        limited = true;
+                        logical = done_logical;
+                        joined_done = true;
+                    }
+                }
+            }
+            joined = Some(logical);
+        }
+        let text = line_text(joined.as_deref().unwrap_or(&bytes));
         if text.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
@@ -1026,25 +1457,49 @@ fn table_rows(
         };
         let mut values = Vec::new();
         select(value, rest, &mut values);
-        let mut going = true;
-        for value in values {
-            if !picked.offer(value)? {
-                going = false;
-                break;
+        let value_count = values.len();
+        for (index, value) in values.into_iter().enumerate() {
+            if start == data_start && (index as u64) < cursor.skip.unwrap_or(0) {
+                continue;
             }
-        }
-        if !going {
-            break match picked.stop {
-                Some(Stop::Budget) => (false, Some(json!({"offset": start, "row": this}))),
-                Some(Stop::Limit) => (false, Some(json!({"offset": lines.at, "row": row}))),
-                _ => (true, None),
-            };
+            if !picked.offer(value)? {
+                let after = if index + 1 < value_count {
+                    Some(json!({"offset": start, "row": this, "skip": index + 1}))
+                } else if only.is_none() && lines.at < body.len() {
+                    Some(json!({"offset": lines.at, "row": row}))
+                } else {
+                    None
+                };
+                break 'rows match picked.stop {
+                    Some(Stop::Budget) => {
+                        let resume = json!({"offset": start, "row": this, "skip": index});
+                        if picked.oversized.is_some() {
+                            selection_page = Some((resume.clone(), after));
+                        }
+                        (false, Some(resume))
+                    }
+                    Some(Stop::Limit) => (after.is_none(), after),
+                    _ => (true, None),
+                };
+            }
         }
         if only.is_some() {
             break (true, None);
         }
     };
-    let mut reply = picked.finish(reference, done, next)?;
+    let mut reply =
+        if let (Some(raw), Some((resume, after))) = (picked.oversized.take(), selection_page) {
+            page_selection(
+                reference,
+                &raw,
+                picked.within.unwrap_or(0),
+                resume,
+                after,
+                bounds,
+            )?
+        } else {
+            picked.finish(reference, done, next)?
+        };
     if let Reply::Output(reply) = &mut reply {
         if limited {
             reply["limit"] = scan_limit();

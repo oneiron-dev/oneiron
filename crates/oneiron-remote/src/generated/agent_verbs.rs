@@ -786,6 +786,9 @@ impl OneironClient {
                 "vault.skills.fit.set" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
+                "vault.skills.advisory_ask.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
@@ -1447,7 +1450,7 @@ impl OneironClient {
                     Option<oneiron::skill_optimize::offer_doors::OfferPassResult>,
                 >(client, verb, &input),
                 "vault.coach.training_offers.answer" => remote_agent_verb_output::<
-                    oneiron::skill_optimize::OfferAnswerRecord,
+                    oneiron::skill_optimize::offer_doors::OfferAnswerReply,
                 >(client, verb, &input),
                 "vault.coach.training_offers.undo" => remote_agent_verb_output::<
                     oneiron::skill_optimize::offer_doors::OfferUndoReceipt,
@@ -6933,6 +6936,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.skills.fit.set", value)
     }
+    pub fn vault_skills_advisory_ask_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillAdvisoryAskRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.advisory_ask.set", value)
+    }
     pub fn vault_skills_permissions_approve(
         &self,
         input: &oneiron::task_verb::sdk::HubSkillPermissionRequest,
@@ -9537,7 +9552,7 @@ impl OneironClient {
     pub fn vault_coach_training_offers_answer(
         &self,
         input: &oneiron::skill_optimize::offer_doors::OfferAnswerRequest,
-    ) -> Result<oneiron::skill_optimize::OfferAnswerRecord, MemoryError> {
+    ) -> Result<oneiron::skill_optimize::offer_doors::OfferAnswerReply, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

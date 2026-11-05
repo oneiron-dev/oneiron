@@ -128,6 +128,7 @@ pub(super) fn erase_slot_in_txn(
     vault.fence_credential_in_txn(wtxn, slot);
     crate::batch::deindex_entity(&vault.store, wtxn, slot)?;
     crate::secret_custody::erase_secret_handle_label_in_txn(&vault.store, wtxn, slot)?;
+    crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(vault, wtxn, slot)?;
     let name = slot_name(slot);
     if NAME_INDEX
         .get(&vault.store, &*wtxn, &name)?

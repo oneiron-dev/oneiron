@@ -81,6 +81,40 @@ issuer when no pins name one, and the revoke tried after. The local
 result and the revoke's own result are reported apart. A delete keeps
 the tokens. Switching the feature off does nothing to them.
 
+A running server also ends a pending login whose owner was hard-erased
+(FIX 10947 S1): after each hold or put-back, finalization re-probes the
+committed delete marker, and a background watch re-checks held flows on
+local delete wakes; a proven erase ends only that owner's exact pending
+flow as `cancelled`, leaving other owners' flows untouched with no
+global cancel. A setup failure still answers `failed` while cleaning up
+the same way. Revoking provider-side tokens already issued (S2) stays a
+separate concern.
+
+A running server also attaches one volatile revoke worker to its vault.
+An accepted local hard erase of a PERSON copies that target's usable
+cloud-registration token sets in the erasing transaction, before its
+slots shred. It captures every matching `linked` or `in_flight` slot at
+its actual generation, under the existing T0 binding and custody floor.
+Only slots whose issuer and audience match this server's operator pins
+are captured. The erase does not invent a live owner proof or trust
+historical issuer labels.
+
+A failed or aborted erase drops and wipes those copies without sending.
+After the exact transaction commits, a nonblocking handoff lets the
+worker try RFC 7009 on a blocking thread, one token family at a time.
+Capture, discovery and revoke failures never fail or hold up the local
+erase. The worker's shutdown detaches its queue and wipes pending copies;
+a send already running keeps the existing HTTP transport's lifetime.
+Tokens, provider response text and token-derived payloads are never
+logged or stored in a receipt or outbox by this worker.
+
+This is best effort, not proof of provider-side revocation. A crash
+between commit and sending loses the volatile work. No matching pinned
+worker means no token capture and no refusal of the erase. Stopped-vault
+callers, replay and checkpoint restore do not attach this worker. This
+local target-only path does not capture redirect-shell owners' slots or
+prove every live-window rematerialization path is covered.
+
 ## Key rollover
 
 Rollover is a new pins file plus a restart. The client reads the pins
