@@ -1549,6 +1549,10 @@ hashes the view showed; a result that moved since is refused as changed. `{"kind
 "explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
 on its receipt. Either answer closes the run's other open questions.
 
+An evaluated swap needs a present, non-retired cohort and records a Promotion exposure. An
+explicit override records no Promotion exposure, so a missing or retired cohort does not by
+itself block it. Owner, viewed-result, checkpoint and manifest checks still apply.
+
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
 
