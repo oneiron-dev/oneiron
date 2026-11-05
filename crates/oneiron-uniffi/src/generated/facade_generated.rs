@@ -3116,6 +3116,11 @@ export_facade! {
     let output = client.vault_hooks_regen_revert(&input)?;
     crate::codec::lift_record("vault.hooks.regen.revert", &output)
 };
+"vault.hooks.regen.run" => fn vault_hooks_regen_run(&self, input: HookRegenBindingRequest) -> Option<HookRegenView> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest = crate::codec::lower_record("vault.hooks.regen.run", input)?;
+    let output = client.vault_hooks_regen_run(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.run", &output)
+};
 "vault.hooks.regen.adopt" => fn vault_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
     let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("vault.hooks.regen.adopt", input)?;
     let output = client.vault_hooks_regen_adopt(&input)?;
@@ -5895,6 +5900,16 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
+};
+"self.hooks.regen.adopt" => fn self_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("self.hooks.regen.adopt", input)?;
+    let output = client.self_hooks_regen_adopt(&input)?;
+    crate::codec::lift_record("self.hooks.regen.adopt", &output)
+};
+"self.hooks.regen.get" => fn self_hooks_regen_get(&self, input: HookRegenBindingRequest) -> Option<HookRegenView> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest = crate::codec::lower_record("self.hooks.regen.get", input)?;
+    let output = client.self_hooks_regen_get(&input)?;
+    crate::codec::lift_record("self.hooks.regen.get", &output)
 };
 "vault.runs.review" => fn vault_runs_review(&self, input: RunReviewRequest) -> RunReview = |client| {
     let input: oneiron::memory::run_review::RunReviewRequest = crate::codec::lower_record("vault.runs.review", input)?;

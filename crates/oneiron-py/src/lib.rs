@@ -6017,6 +6017,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_hooks_regen_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.hooks.regen.run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.hooks.regen.run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_regen_adopt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.regen.adopt")?;
         let output = py
@@ -10763,6 +10770,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_hooks_regen_adopt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.hooks.regen.adopt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.hooks.regen.adopt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_hooks_regen_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.hooks.regen.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.hooks.regen.get", input))
             .map_err(raise)?;
         encode(&output)
     }

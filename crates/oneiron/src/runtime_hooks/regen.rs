@@ -13,16 +13,24 @@
 //! bodies' fingerprints), and every decision and enactment lands one
 //! regen receipt in the hook's history ([`history`]). The owner may
 //! cancel a waiting decision or roll an adopted body back to the one it
-//! replaced ([`enact`]).
+//! replaced, and a hook an agent authored takes every new body through
+//! that agent's own put ([`enact`]). The regenerator reads the contract as
+//! text ([`contract`]), and the engine's own pass runs due regens after a
+//! contract change ([`pass`]).
 
+mod contract;
 mod enact;
 mod history;
+mod pass;
 
+pub use contract::{HookContractText, MAX_HOOK_CONTRACT_DECLARATIONS};
+pub(crate) use enact::HookPut;
 pub use enact::HookRegenCancel;
 pub(crate) use history::hooks_regen_receipt_accepts_masked;
 pub use history::{
     HookRegenActor, HookRegenDecision, HookRegenEvent, HookRegenReceipt, MAX_HOOK_REGEN_HISTORY,
 };
+pub use pass::HookRegenPassReport;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,7 +42,7 @@ use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
     HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
 };
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 use super::body::HookBodyRuntime;
 use super::replay::{self, HookReplayEntry, HookReplayResult};
@@ -67,10 +75,10 @@ impl HookContractStamp {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            verb_table: blake3::hash(include_bytes!("../verbs/generated/code-mode.d.ts"))
+            verb_table: blake3::hash(contract::VERB_TABLE.as_bytes())
                 .to_hex()
                 .to_string(),
-            sandbox: blake3::hash(include_bytes!("../../wit/hook/hook.wit"))
+            sandbox: blake3::hash(contract::HOOK_WORLD.as_bytes())
                 .to_hex()
                 .to_string(),
         }
@@ -107,6 +115,9 @@ impl HookRegenFailure {
     }
 }
 
+/// The call purpose a served regenerator meters its model calls under.
+pub const HOOK_REGEN_CALL_PURPOSE_NAME: &str = "coach_hook_regen";
+
 /// One regen's ask: the hook, the live contract it targets, and the intent
 /// read from the hook's own pack, never a cached prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +128,9 @@ pub struct HookRegenRequest {
     pub selector: HookSelector,
     pub intent: String,
     pub target: HookContractStamp,
+    /// The contract `target` hashes, as text: the hook world and the
+    /// declarations of the verbs the selector names (FIX 4688).
+    pub contract: HookContractText,
     /// The last good body, for the regenerator to read.
     pub last_good: String,
 }
@@ -627,6 +641,7 @@ impl Vault {
             selector: row.selector.clone(),
             intent,
             target: target.clone(),
+            contract: HookContractText::for_selector(&row.selector),
             last_good,
         };
         let candidate = match regenerator.regenerate(&request) {
@@ -689,15 +704,17 @@ impl Vault {
         })
     }
 
-    /// Enacts `binding`'s pending regen: the candidate replaces the hook's
-    /// body in its pack, through the owner's own put. `candidate_hash` names
-    /// the candidate its caller read ([`HookRegenRecord::candidate_hash`]);
-    /// only that pending candidate enacts. An AutoAdopt needs no question; a
-    /// NeedsHumanStamp adopts only with `stamped`, the owner's stamp. Only a
-    /// put that installs the candidate advances the record, to the new body
-    /// under the target contract. A Candidate or Blocked put leaves the last
-    /// good body and the pending decision as they were, and is answered as
-    /// it is.
+    /// Enacts `binding`'s pending regen as the owner: the candidate replaces
+    /// the hook's body in its pack, through the owner's own put, or, for a
+    /// hook an agent authored, through that agent's own put of the `local`
+    /// pack, so the hook stays the agent's, at its ceiling, its grant carried
+    /// (FIX 4692). `candidate_hash` names the candidate its caller read
+    /// ([`HookRegenRecord::candidate_hash`]); only that pending candidate
+    /// enacts. An AutoAdopt needs no question; a NeedsHumanStamp adopts only
+    /// with `stamped`, the owner's stamp. Only a put that installs the
+    /// candidate advances the record, to the new body under the target
+    /// contract. A Candidate or Blocked put leaves the last good body and the
+    /// pending decision as they were, and is answered as it is.
     ///
     /// # Errors
     ///
@@ -710,11 +727,64 @@ impl Vault {
         candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
+        self.enact_hook_regen(
+            HookPut::Owner(owner),
+            &HookRegenActor::Owner {
+                actor: owner.actor(),
+            },
+            binding,
+            candidate_hash,
+            stamped,
+        )
+    }
+
+    /// Enacts the regen pending on a hook `agent` authored, as that agent,
+    /// through its own put of the `local` pack (FIX 4692): the hook stays the
+    /// agent's, at its ceiling, its grant carried. An agent carries no
+    /// owner's stamp, so only an AutoAdopt enacts; a candidate whose golden
+    /// replay differs waits for the owner.
+    ///
+    /// # Errors
+    ///
+    /// A hook the agent did not author, no AutoAdopt pending or not the one
+    /// named, and the put's own refusals.
+    pub fn adopt_hook_regen_as_agent(
+        &self,
+        agent: &WriteActor,
+        binding: EntityId,
+        candidate_hash: &str,
+    ) -> Result<PackInstallDisposition> {
+        self.enact_hook_regen(
+            HookPut::Agent {
+                agent: *agent,
+                owner: None,
+            },
+            &HookRegenActor::Agent {
+                agent: agent.entity_ref(),
+            },
+            binding,
+            candidate_hash,
+            false,
+        )
+    }
+
+    /// The one enactment of a pending regen, through `put` as
+    /// [`HookPut::for_hook`] resolves it for the hook, with its receipt
+    /// naming `by`.
+    pub(super) fn enact_hook_regen(
+        &self,
+        put: HookPut<'_>,
+        by: &HookRegenActor,
+        binding: EntityId,
+        candidate_hash: &str,
+        stamped: bool,
+    ) -> Result<PackInstallDisposition> {
         let (_, row) = self
             .pack_hook_bindings()?
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
+        let put = put.for_hook(&row)?;
         let record = self.hook_regen_record(binding)?;
         let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
         let source = self
@@ -723,7 +793,7 @@ impl Vault {
         let (files, replaced) = files_with_hook_body(&source, &row.hook, candidate.as_bytes());
         // The body this adoption replaces, kept for a revert (FIX 4690).
         let replaced = replaced.and_then(|bytes| String::from_utf8(bytes).ok());
-        let prepared = self.prepare_owner_pack_put(files)?;
+        let prepared = put.prepare(self, files)?;
         let disposition = self.with_write_txn_grouped(|txn| {
             let (_, current) = self
                 .pack_hook_bindings_in_txn(txn)?
@@ -736,7 +806,7 @@ impl Vault {
                 record.as_ref().and_then(|record| record.pending.as_ref()),
                 Some(HookRegenOutcome::NeedsHumanStamp { .. })
             );
-            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
+            let disposition = put.put_in_txn(self, txn, &prepared)?;
             // A Candidate or Blocked put keeps the pending decision and the
             // native proposal records, without advancing the last good body.
             if !matches!(disposition, PackInstallDisposition::Installed(_)) {
@@ -770,9 +840,7 @@ impl Vault {
                 binding,
                 &current,
                 candidate_hash,
-                &HookRegenActor::Owner {
-                    actor: owner.actor(),
-                },
+                by,
                 HookRegenEvent::Adopted {
                     candidate_hash: candidate_hash.to_owned(),
                     target,

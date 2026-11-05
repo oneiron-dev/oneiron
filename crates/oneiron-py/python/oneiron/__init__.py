@@ -3757,6 +3757,9 @@ class Oneiron:
         def revert(self, spec):
             """Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt."""
             return json.loads(_translate(lambda: self._client.vault_hooks_regen_revert(json.dumps(spec))))
+        def run(self, spec):
+            """Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_run(json.dumps(spec))))
         def adopt(self, spec):
             """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
             return json.loads(_translate(lambda: self._client.vault_hooks_regen_adopt(json.dumps(spec))))
@@ -5816,6 +5819,9 @@ class Oneiron:
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
             return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
         @property
+        def hooks(self) -> "Oneiron._SelfHooksVerbs":
+            return Oneiron._SelfHooksVerbs(self._client)
+        @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs":
             return Oneiron._SelfBrowserVerbs(self._client)
         def fold(self, spec):
@@ -6114,6 +6120,21 @@ class Oneiron:
         def describe(self, spec):
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
             return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
+    class _SelfHooksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def regen(self) -> "Oneiron._SelfHooksRegenVerbs":
+            return Oneiron._SelfHooksRegenVerbs(self._client)
+    class _SelfHooksRegenVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def adopt(self, spec):
+            """Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner."""
+            return json.loads(_translate(lambda: self._client.self_hooks_regen_adopt(json.dumps(spec))))
+        def get(self, spec):
+            """Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing."""
+            return json.loads(_translate(lambda: self._client.self_hooks_regen_get(json.dumps(spec))))
     class _SelfBrowserVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

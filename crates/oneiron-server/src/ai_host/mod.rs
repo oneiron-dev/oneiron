@@ -52,6 +52,7 @@ pub(crate) mod failure_signals;
 mod feedback_report_delivery;
 mod feedback_triage;
 mod harness;
+pub(crate) mod hook_regen;
 pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;

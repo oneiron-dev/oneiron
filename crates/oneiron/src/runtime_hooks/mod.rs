@@ -47,10 +47,11 @@ pub use outcome::{
 pub use read::grant_view::hook_evidence_views;
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
-    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookGoldenManifest, HookRegenActor,
-    HookRegenCancel, HookRegenDecision, HookRegenEvent, HookRegenFailure, HookRegenFailurePhase,
-    HookRegenOutcome, HookRegenPrior, HookRegenReceipt, HookRegenRecord, HookRegenRequest,
-    HookRegenerator, MAX_HOOK_REGEN_HISTORY,
+    HOOK_REGEN_CALL_PURPOSE_NAME, HookContractStamp, HookContractText, HookGoldenDiff,
+    HookGoldenFingerprint, HookGoldenManifest, HookRegenActor, HookRegenCancel, HookRegenDecision,
+    HookRegenEvent, HookRegenFailure, HookRegenFailurePhase, HookRegenOutcome, HookRegenPassReport,
+    HookRegenPrior, HookRegenReceipt, HookRegenRecord, HookRegenRequest, HookRegenerator,
+    MAX_HOOK_CONTRACT_DECLARATIONS, MAX_HOOK_REGEN_HISTORY,
 };
 pub use replay::{
     HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,

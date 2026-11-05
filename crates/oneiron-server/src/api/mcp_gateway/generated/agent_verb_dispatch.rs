@@ -771,6 +771,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.hooks.regen.get" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.history" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.revert" => a.spec.clone().ok_or_else(invalid),
+        "vault.hooks.regen.run" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.adopt" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.publish_approval" => a.spec.clone().ok_or_else(invalid),
@@ -1439,6 +1440,8 @@ pub(crate) fn mcp_agent_verb_input(
         "self.run.attach" => a.spec.clone().ok_or_else(invalid),
         "self.folds.describe" => a.spec.clone().ok_or_else(invalid),
         "self.history" => a.spec.clone().ok_or_else(invalid),
+        "self.hooks.regen.adopt" => a.spec.clone().ok_or_else(invalid),
+        "self.hooks.regen.get" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.review" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.settle" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.settlement" => a.spec.clone().ok_or_else(invalid),
@@ -3424,6 +3427,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.hooks.regen.revert" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.hooks.regen.run" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.hooks.regen.adopt" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5130,6 +5136,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.hooks.regen.adopt" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.hooks.regen.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.review" => {
@@ -16464,6 +16476,24 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.hooks.regen.run" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.hooks.regen.run", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_hooks_regen_run(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.hooks.regen.adopt" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.hooks.regen.adopt", &input)
@@ -25177,6 +25207,22 @@ async fn execute_agent_verb_row_on(
                 listed,
             ));
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.hooks.regen.adopt" => {
+            let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_hooks_regen_adopt(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.hooks.regen.get" => {
+            let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_hooks_regen_get(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

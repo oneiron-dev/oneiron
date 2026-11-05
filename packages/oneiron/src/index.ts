@@ -2078,6 +2078,8 @@ export class Oneiron {
         history: (input: Facade.HookRegenHistoryRequest): Facade.HookRegenReceipt[] => this.#call(() => this.#client.vaultHooksRegenHistory(input) as Facade.HookRegenReceipt[]),
         /** Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt. */
         revert: (input: Facade.HookRegenRevertRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultHooksRegenRevert(input) as Facade.PackPutReceipt),
+        /** Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing. */
+        run: (input: Facade.HookRegenBindingRequest): Facade.HookRegenView | null => this.#call(() => this.#client.vaultHooksRegenRun(input) as Facade.HookRegenView | null),
         /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
         adopt: (input: Facade.HookRegenAdoptRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultHooksRegenAdopt(input) as Facade.PackPutReceipt),
         /** Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again. */
@@ -3400,6 +3402,14 @@ export class Oneiron {
     }),
     /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
     history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
+    hooks: {
+      regen: {
+        /** Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner. */
+        adopt: (input: Facade.HookRegenAdoptRequest): Facade.PackPutReceipt => this.#call(() => this.#client.selfHooksRegenAdopt(input) as Facade.PackPutReceipt),
+        /** Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing. */
+        get: (input: Facade.HookRegenBindingRequest): Facade.HookRegenView | null => this.#call(() => this.#client.selfHooksRegenGet(input) as Facade.HookRegenView | null),
+      },
+    },
     browser: {
       /** Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded. */
       open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.BrowserObservationPage),
