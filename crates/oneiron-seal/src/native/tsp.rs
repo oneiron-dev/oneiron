@@ -5,7 +5,7 @@ use x509_tsp::{TspVersion, TstInfo};
 
 use crate::api::{Sha256Digest, VerifyCheckStatus};
 use crate::error::{FatalCode, SealError, SealStage};
-use crate::memory::{Held, MemoryLedger, SealMemoryRefusal};
+use crate::memory::{Held, MemoryLedger};
 
 use super::cms::{self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256};
 use super::held_bytes;
@@ -43,27 +43,7 @@ pub(crate) fn build_request(
     Ok(cms::tlv(0x30, &body))
 }
 
-/// Why a timestamp token was not validated: the token itself, or memory
-/// its copies and decodes were refused, which ends the operation as the
-/// seal's memory error, never as an invalid token (FIX 12260).
-#[derive(Debug)]
-pub(crate) enum TokenError {
-    /// The token fails a check; every caller treats each check alike.
-    Invalid,
-    Memory(SealMemoryRefusal),
-}
-
-impl From<SealError> for TokenError {
-    fn from(_: SealError) -> Self {
-        Self::Invalid
-    }
-}
-
-impl From<SealMemoryRefusal> for TokenError {
-    fn from(refusal: SealMemoryRefusal) -> Self {
-        Self::Memory(refusal)
-    }
-}
+pub(crate) use super::cms::TokenError;
 
 /// Parsed + policy-checked timestamp response. Its copies are held on the
 /// seal's ledger until it drops (FIX 12260).
@@ -200,7 +180,7 @@ pub(crate) fn validate_response(
     memory: &MemoryLedger,
 ) -> Result<ValidatedToken, TokenError> {
     let token_ci = extract_token(resp_der)?;
-    let parsed = cms::parse_cms(token_ci)?.held(memory)?;
+    let parsed = cms::parse_cms(token_ci, memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err().into());
     }
@@ -223,7 +203,7 @@ pub(crate) fn validate_response(
     if !cms::sig_alg_permitted(tsa_alg, &signer.signature_alg_oid) {
         return Err(ts_err().into());
     }
-    let signing_input = cms::signed_attrs_signature_input(signer);
+    let signing_input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, tsa_idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
@@ -347,7 +327,7 @@ pub(crate) fn validate_token_for_verify(
     anchors: &[pkix_chain::TrustAnchor],
     memory: &MemoryLedger,
 ) -> Result<VerifiedToken, TokenError> {
-    let parsed = cms::parse_cms(token_der)?.held(memory)?;
+    let parsed = cms::parse_cms(token_der, memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err().into());
     }
@@ -382,7 +362,7 @@ pub(crate) fn validate_token_for_verify(
     if !cms::sig_alg_permitted(alg, &signer.signature_alg_oid) {
         return Err(ts_err().into());
     }
-    let input = cms::signed_attrs_signature_input(signer);
+    let input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);

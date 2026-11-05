@@ -18,6 +18,25 @@ fn layout_bytes<T>(len: usize) -> Option<usize> {
         .filter(|bytes| *bytes <= isize::MAX as usize)
 }
 
+/// Growth target `reserve` grows to (elements): double, or what is needed.
+pub(crate) fn growth_target(len: usize, capacity: usize, additional: usize) -> usize {
+    capacity
+        .saturating_mul(2)
+        .max(len.saturating_add(additional))
+}
+
+/// Net new bytes `reserve` takes from spare for this growth (0 when it
+/// fits): the target's bytes minus the old capacity's, exactly the take
+/// minus the release `reserve` performs on success (FIX 14217).
+pub(crate) fn growth_charge<T>(len: usize, capacity: usize, additional: usize) -> usize {
+    if len.saturating_add(additional) <= capacity {
+        return 0;
+    }
+    growth_target(len, capacity, additional)
+        .saturating_sub(capacity)
+        .saturating_mul(size_of::<T>())
+}
+
 /// Fallibly grow one native vector under the operation's existing ledger.
 pub(crate) fn reserve<T>(
     limits: &SealResourceLimits,
@@ -32,7 +51,7 @@ pub(crate) fn reserve<T>(
         return Ok(());
     }
     let old_capacity = output.capacity();
-    let target = old_capacity.saturating_mul(2).max(needed);
+    let target = growth_target(output.len(), old_capacity, additional);
     let bytes = layout_bytes::<T>(target).ok_or_else(|| floor(usize::MAX))?;
     limits.memory.admit::<T>(target)?;
     output
@@ -62,6 +81,18 @@ const fn btree_node_bytes<K, V>() -> usize {
 
 const fn btree_entry_bytes<K, V>() -> usize {
     btree_node_bytes::<K, V>().div_ceil(5)
+}
+
+/// Total bytes `btree_insert` charges for a set grown from empty to
+/// `entries` (root once + one share per entry); 0 when empty (FIX 14217).
+pub(crate) fn btree_charged<K, V>(entries: usize) -> usize {
+    if entries == 0 {
+        0
+    } else {
+        btree_entry_bytes::<K, V>()
+            .saturating_mul(entries)
+            .saturating_add(btree_node_bytes::<K, V>())
+    }
 }
 
 /// Admit the nodes of a native BTreeMap/BTreeSet before insertion.

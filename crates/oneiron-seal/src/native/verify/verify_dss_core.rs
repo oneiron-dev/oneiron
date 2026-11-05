@@ -38,9 +38,19 @@ pub(super) fn verify_dss(
     at_unix: u64,
     memory: &MemoryLedger,
     checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
-    check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
+    check_dss(
+        doc,
+        anchors,
+        covered,
+        at_unix,
+        memory,
+        &mut decoded,
+        checks,
+        limits,
+    )?;
     Ok(decoded)
 }
 
@@ -53,8 +63,9 @@ fn check_dss(
     memory: &MemoryLedger,
     decoded: &mut usize,
     checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<(), SealMemoryRefusal> {
-    let catalog = match pdf::catalog(doc) {
+    let catalog = match pdf::catalog(doc, limits)? {
         Some(c) => c,
         None => {
             if doc.trailer.has(b"Root") {
@@ -73,7 +84,7 @@ fn check_dss(
         checks.absent(VerifyCheckKind::ValidationMaterial)?;
         return Ok(());
     };
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
+    let dss = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok());
     let Some(dss) = dss else {
         checks.record(
             VerifyCheckKind::ValidationMaterial,
@@ -90,7 +101,7 @@ fn check_dss(
         )?;
         return Ok(());
     }
-    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)?;
+    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded, limits)?;
     checks.record(
         VerifyCheckKind::ValidationMaterial,
         ok,
@@ -107,13 +118,14 @@ fn dss_material_valid(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
+    limits: &SealResourceLimits,
 ) -> Result<bool, SealMemoryRefusal> {
     // Each entry decodes whole, its memory reserved first; the total across
     // all three arrays is counted, never capped, so material past the old
     // shared budget is read whole rather than called malformed.
-    let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
-    let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
-    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
+    let certs = dss_array(doc, dss, b"Certs", memory, decoded, limits)?;
+    let crls = dss_array(doc, dss, b"CRLs", memory, decoded, limits)?;
+    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded, limits)?;
     material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
@@ -221,14 +233,20 @@ fn material_valid(
     // cert-only DSS, evidence about an irrelevant issuer, or evidence
     // authenticated by a same-subject/different-key shadow fails here —
     // never AbsentAllowed.
-    let covered_ok = covered.iter().all(|c| {
-        if anchors.iter().any(|a| a.der == c.der) {
-            return true;
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der) {
+            continue;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
-    });
-    if !covered_ok {
-        return Ok(false);
+        let mut crl_covered = false;
+        for issuer in &crl_issuers {
+            if issued_by(cert, issuer, memory)? {
+                crl_covered = true;
+                break;
+            }
+        }
+        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
@@ -356,17 +374,18 @@ pub(super) fn dss_array(
     key: &[u8],
     memory: &MemoryLedger,
     decoded: &mut usize,
+    limits: &SealResourceLimits,
 ) -> Result<DssArray, SealMemoryRefusal> {
     let Ok(arr_obj) = dss.get(key) else {
         return Ok(DssArray::Absent);
     };
-    let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+    let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
         return Ok(DssArray::Malformed);
     };
     memory.admit_len::<Vec<u8>>(arr.len())?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let Some(stream) = pdf::resolve(doc, item).and_then(|o| o.as_stream().ok()) else {
+        let Some(stream) = pdf::resolve(doc, item, limits)?.and_then(|o| o.as_stream().ok()) else {
             return Ok(DssArray::Malformed);
         };
         let data = match stream.decompressed_content_admitted(memory) {
@@ -496,7 +515,7 @@ fn dss_object_ids(
     work: &mut usize,
     limits: &SealResourceLimits,
 ) -> Result<Option<std::collections::BTreeSet<lopdf::ObjectId>>, SealMemoryRefusal> {
-    let Some(catalog) = pdf::catalog(doc) else {
+    let Some(catalog) = pdf::catalog(doc, limits)? else {
         return Ok(None);
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
@@ -513,7 +532,7 @@ fn dss_object_ids(
             return Ok(None);
         }
     }
-    let Some(dss) = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok()) else {
+    let Some(dss) = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok()) else {
         return Ok(None);
     };
     for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
@@ -525,7 +544,7 @@ fn dss_object_ids(
                 return Ok(None);
             }
         }
-        let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+        let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
             continue;
         };
         for item in arr {

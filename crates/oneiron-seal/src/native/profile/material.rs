@@ -186,7 +186,7 @@ pub(super) fn key_bound_issuer<'a>(
     };
     for cand_der in chain.iter().chain(anchors.iter()) {
         if let Some(cand) = verify::EmbeddedCert::admitted(cand_der, memory)?
-            && verify::issued_by(&cert, &cand)
+            && verify::issued_by(&cert, &cand, memory)?
         {
             return Ok(Some(cand_der.as_slice()));
         }

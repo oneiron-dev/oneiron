@@ -74,7 +74,8 @@ use crate::api::{
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::memory::{
-    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider,
+    SealMemoryRefusal,
 };
 use crate::native::NativeSealEngine;
 use crate::native::pdf::{
@@ -814,7 +815,7 @@ fn engine(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
-            identity: Mutex::new(None),
+            algorithm: Mutex::new(None),
         }),
         Arc::new(AskedFetcher { asks, memory }),
         Arc::new(CallClock { now_ms, began }),
@@ -908,8 +909,8 @@ impl SealMemory for AskedMemory {
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
     asks: Arc<CallAsks>,
-    /// The identity the engine gave, asked once per call.
-    identity: Mutex<Option<SigningIdentity>>,
+    /// Assembly owns the identity; signing retries need only its algorithm.
+    algorithm: Mutex<Option<SignatureAlgorithm>>,
 }
 
 #[derive(Deserialize)]
@@ -947,14 +948,21 @@ fn backend_error(refusal: &AskRefusal, rejected: BackendRejectCode) -> BackendEr
 #[async_trait]
 impl SealBackend for AskedBackend {
     fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
-        let mut held = lock(&self.identity);
-        if let Some(identity) = held.as_ref() {
-            return Ok(identity.clone());
-        }
+        let mut held = lock(&self.algorithm);
         let reply = self
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
+        let decode_cost = read_cost(&reply.value).map_err(|_| BackendError::Rejected {
+            code: BackendRejectCode::InvalidResponse,
+        })?;
+        let memory = AskedMemory {
+            asks: Arc::clone(&self.asks),
+        };
+        match memory.grow(decode_cost) {
+            Ok(()) | Err(SealMemoryRefusal::Unavailable) => {}
+            Err(refusal) => return Err(BackendError::Memory(refusal)),
+        }
         let answer: IdentityAnswer =
             from_value(&reply.value, "identity").map_err(|_| BackendError::Rejected {
                 code: BackendRejectCode::InvalidResponse,
@@ -964,7 +972,7 @@ impl SealBackend for AskedBackend {
             signer_certificate_der: answer.signer_certificate.into_vec(),
             certificate_chain_der: answer.chain.into_iter().map(ByteBuf::into_vec).collect(),
         };
-        *held = Some(identity.clone());
+        *held = Some(identity.algorithm);
         Ok(identity)
     }
 
@@ -982,7 +990,14 @@ impl SealBackend for AskedBackend {
         &self,
         request: SignRevisionRequest,
     ) -> Result<BackendSignature, BackendError> {
-        let algorithm = self.signing_identity()?.algorithm;
+        let cached_algorithm = {
+            let algorithm = lock(&self.algorithm);
+            *algorithm
+        };
+        let algorithm = match cached_algorithm {
+            Some(algorithm) => algorithm,
+            None => self.signing_identity()?.algorithm,
+        };
         let revision_id = request.revision_id.ok_or(BackendError::Rejected {
             code: BackendRejectCode::Unauthorized,
         })?;
