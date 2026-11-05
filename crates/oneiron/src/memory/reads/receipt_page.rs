@@ -1,7 +1,7 @@
 //! `vault.receipts`: the gate decision ledger, or the unified family's
 //! receipts of the named kinds, newest first, a page at a time (FIX 10186).
-//! A limit past [`VAULT_RECEIPTS_PAGE_MAX`] is served that many a page, and
-//! `next_after` continues to the rest in the same order: the gate ledger
+//! Gate-ledger pages use the requested limit; unified-family pages use at most
+//! [`VAULT_RECEIPTS_PAGE_MAX`]. `next_after` continues in the same order: the gate ledger
 //! newest decision first (its cursor is the last receipt's `gate:<hex>`
 //! ref), the family newest first, then by kind and id (its cursor is
 //! `<occurred_at>:<kind>:<receipt id>`). A cursor is a position, not a
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::family_receipt;
 use crate::entity_id::EntityId;
+use crate::limit_ask::EngineLimit;
 use crate::memory::support::hex_string;
 use crate::memory::{Memory, MemoryError, MemoryReceipt, MemoryResult};
 use crate::receipt::{
@@ -20,8 +21,8 @@ use crate::receipt::{
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
-/// The most receipts one `vault.receipts` page holds: a larger limit is
-/// served a page at a time through `next_after`.
+/// The most receipts one unified-family page holds. Gate-ledger pages use
+/// the caller's whole requested limit.
 pub const VAULT_RECEIPTS_PAGE_MAX: usize = crate::memory::caps::MAX_SEARCH_LIMIT;
 
 /// One page of `vault.receipts`, newest first.
@@ -31,11 +32,10 @@ pub struct VaultReceiptsPage {
     /// The next page's `after`; absent once no older receipt is left.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_after: Option<String>,
-    /// The receipts this page could hold: the request's limit, or
-    /// [`VAULT_RECEIPTS_PAGE_MAX`] when it asked for more.
+    /// The receipts this page could hold: the request's limit on the gate
+    /// ledger, otherwise at most [`VAULT_RECEIPTS_PAGE_MAX`].
     pub effective_limit: usize,
-    /// The request's limit was past [`VAULT_RECEIPTS_PAGE_MAX`] and this
-    /// page was served at it; `next_after` continues to the rest.
+    /// A unified-family page lowered the request to [`VAULT_RECEIPTS_PAGE_MAX`].
     #[serde(default)]
     pub limit_clamped: bool,
     /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
@@ -206,8 +206,8 @@ impl Memory<'_> {
     }
 
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
-    /// receipts after `after`, at most `limit` (at most
-    /// [`VAULT_RECEIPTS_PAGE_MAX`] a page), and the `next_after` of the rest.
+    /// receipts after `after`, at most `limit` on the gate ledger and at most
+    /// [`VAULT_RECEIPTS_PAGE_MAX`] on the unified family.
     ///
     /// # Errors
     ///
@@ -225,8 +225,12 @@ impl Memory<'_> {
                 &["Request one receipt or more and continue from next_after."],
             ));
         }
-        let limit_clamped = limit > VAULT_RECEIPTS_PAGE_MAX;
-        let page = limit.min(VAULT_RECEIPTS_PAGE_MAX);
+        let page = if kinds.is_empty() {
+            limit
+        } else {
+            limit.min(VAULT_RECEIPTS_PAGE_MAX)
+        };
+        let limit_clamped = page < limit;
         let (receipts, next_after) = if kinds.is_empty() {
             self.gate_page(after, page)?
         } else {
@@ -255,6 +259,10 @@ impl Memory<'_> {
                     .ok_or_else(foreign_cursor)
             })
             .transpose()?;
+        let _ = self.vault.measure_limit(
+            EngineLimit::RequestedResultRows,
+            u64::try_from(page).unwrap_or(u64::MAX),
+        );
         let mut records = self.gate_records_before(before, page.saturating_add(1))?;
         let more = records.len() > page;
         records.truncate(page);

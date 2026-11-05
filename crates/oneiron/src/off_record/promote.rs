@@ -12,7 +12,7 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{BatchBuilder, BatchOp};
+use crate::batch::BatchOp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
@@ -400,9 +400,9 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
+        let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
-        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
-            .apply_recording_gate_decisions(wtxn)?;
+        crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
         // base text now, so it owes the vault's tagger a pass and its embedder
@@ -417,6 +417,7 @@ impl FloorWrites<'_> {
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         // A result MESSAGE lands with its hold on the body (FIX 365).
         self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops))?;
+        self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {
@@ -641,9 +642,10 @@ impl FloorWrites<'_> {
             })
             .collect();
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
+        let stream_messages =
+            self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
-        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
-            .apply_recording_gate_decisions(wtxn)?;
+        crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
             vault,
@@ -655,6 +657,7 @@ impl FloorWrites<'_> {
         let mut results = message_results(&plan.ops);
         results.retain(|(id, _)| fresh.contains(id));
         self.keep_message_results_in_txn(vault, wtxn, &results)?;
+        self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let replayed: Vec<EntityId> = plan
             .replayed
