@@ -184,6 +184,47 @@ pub(crate) fn wait_delivered_in_txn(
         || SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?)
 }
 
+/// Wakes the trap bound to `key`'s wait (FIX 1503): `Proceed` runs the
+/// existing wake; `Skip` logs, retires this wait key's `TRAPS` row and this
+/// trap's peer binding, and succeeds so the delivery commits.
+fn wake_bound_trap_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &WaitKey,
+    trap: &TrapRef,
+    now_ms: u64,
+) -> Result<()> {
+    match crate::llm::trap_consume_precheck_in_txn(vault, txn, trap)? {
+        crate::llm::TrapConsumePrecheck::Proceed => {
+            crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+            Ok(())
+        }
+        crate::llm::TrapConsumePrecheck::Skip {
+            reason,
+            attempt_id,
+            park_owner,
+        } => {
+            let reason_str = match reason {
+                crate::llm::TrapBrokenPark::OtherOwner => "other-owner-park",
+                crate::llm::TrapBrokenPark::OrphanPark => "orphan-park",
+            };
+            tracing::warn!(
+                run = %key.run.to_hex(),
+                wait = %key.wait_id.to_hex(),
+                generation = key.generation,
+                trap = %trap.trap_claim_id.to_hex(),
+                attempt = %crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes()),
+                owner = %park_owner,
+                reason = reason_str,
+                "a broken wait trap is skipped; its delivery commits and its binding retires"
+            );
+            TRAPS.delete(&vault.store, txn, &key.row())?;
+            crate::llm::retire_peer_wait_binding_for_trap_in_txn(vault, txn, &trap.trap_claim_id)?;
+            Ok(())
+        }
+    }
+}
+
 /// Writes one waiter's delivery unless it has one, and wakes the trap bound
 /// to it in the same transaction; `true` when this call delivered. The run
 /// joins the wait's holders (FIX 5718); one an erase of its actor took the
@@ -204,7 +245,7 @@ fn deliver_in_txn(
         DELIVERIES.put(&vault.store, txn, &key.row(), settled)?;
     }
     if let Some(trap) = TRAPS.get(&vault.store, txn, &key.row())? {
-        crate::llm::wake_trap_in_txn(vault, txn, &trap, settled.delivered_at_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, &trap, settled.delivered_at_ms)?;
     }
     Ok(true)
 }
@@ -219,7 +260,7 @@ pub fn bind_wait_trap(vault: &Vault, key: &WaitKey, trap: &TrapRef, now_ms: u64)
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
             return Ok(false);
         }
-        crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
 }
@@ -241,7 +282,7 @@ pub fn park_and_bind_wait_trap(
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
             return Ok(false);
         }
-        crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
 }
@@ -399,9 +440,8 @@ impl ExecutorStorage<'_> {
     /// Retires `key`'s waiter, delivery and trap rows once the resumed record
     /// committed; idempotent. It is cleanup, never a consumer: a code
     /// consent wait's consumption was committed with the record, in its own
-    /// row, which this never touches. A room's rows stay until the room goes:
-    /// its route writes and never deletes, and the resumed record already
-    /// names the next generation, so nothing reads them again.
+    /// row, which this never touches. A room's rows retire along the run's
+    /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
@@ -412,7 +452,18 @@ impl ExecutorStorage<'_> {
                 TRAPS.delete(&vault.store, txn, &key.row())?;
                 Ok(())
             }),
-            Self::Session(_) => Ok(()),
+            Self::Session(binding) => binding.answered(|| {
+                binding
+                    .session
+                    .routed_side_txn(&binding.route, |txn, read, write| {
+                        if WAITERS.get(&read, txn, &key.waiter())? == Some(key.generation) {
+                            WAITERS.delete(&write, txn, &key.waiter())?;
+                        }
+                        DELIVERIES.delete(&write, txn, &key.row())?;
+                        TRAPS.delete(&write, txn, &key.row())?;
+                        Ok(())
+                    })
+            }),
         }
     }
 }

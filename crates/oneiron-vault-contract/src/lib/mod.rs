@@ -97,11 +97,12 @@ pub use self::ctl::{
     LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
     ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
+    VmOutboxCompanionState,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
-    LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
-    LedgerReportHead,
+    ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport,
+    LedgerReportAssembly, LedgerReportHead,
 };
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_PAGE_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
@@ -123,6 +124,9 @@ pub use self::managed_holder::{
 pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,
     OwnerSigningRecoveryAck, valid_owner_signing_challenge,
+};
+pub use self::preview::{
+    PREVIEW_ROUTE_OPEN_OP, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest,
 };
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,

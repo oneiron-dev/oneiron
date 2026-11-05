@@ -117,7 +117,7 @@ pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
     DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
-    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerStatus,
+    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerRuntimeStatus, TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
@@ -276,6 +276,10 @@ fn build_provider(
                         .map(|wire| (wire.to_owned(), entry.model.clone()))
                 })
                 .collect();
+            // The external chat workers bound at construction (FIX 9200): exact
+            // row-and-provider matches only, so a later reconfiguration never
+            // retargets this transport's captured workers.
+            let external_workers = worker_host::external_workers(name, provider, &config.workers);
             let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
             let transport = openai::OpenAiHttp {
                 http,
@@ -283,6 +287,7 @@ fn build_provider(
                 response_format: provider.response_format,
                 identities: Arc::clone(identities),
                 engine_models,
+                external_workers,
             };
             // A provider a managed EXL3 worker of this process is bound to
             // calls that worker over its native socket (DESIGN-V2 §8); every
@@ -324,8 +329,10 @@ fn build_provider(
             ))
         }
         // A gemini provider's chat rungs send the Gemini API's own wire
-        // (FIX 1816); one that serves media seats only gets none.
-        ProviderKind::Gemini => return gemini_chat::chat_backend(provider, catalog),
+        // (FIX 1816); one with no chat rung gets none.
+        ProviderKind::Gemini => {
+            return gemini_chat::chat_backend(provider, catalog, output_cap(provider));
+        }
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
         // media-only provider's only client is its media rung's.
@@ -367,6 +374,11 @@ fn output_cap(provider: &ProviderConfig) -> OutputCap {
             field: "max_tokens",
             ceiling: provider.max_output_tokens,
             fallback: Some(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
+        },
+        ProviderKind::Gemini => OutputCap {
+            field: "maxOutputTokens",
+            ceiling: provider.max_output_tokens,
+            fallback: None,
         },
         _ => OutputCap {
             field: provider.output_limit_field.key(),

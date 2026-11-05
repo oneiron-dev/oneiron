@@ -42,7 +42,7 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
-The server's status also carries `link_bytes`: what every sync link moved since the process
+The server's status also carries `link_bytes`: what every sync and LLM mesh link moved since the process
 started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
 `out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
 `in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
@@ -1051,6 +1051,15 @@ archived until you accept, and the engine refuses the automatic posture.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
+The per-item `vault.cleanup.review` answer reads each record through the owner's native
+`vault.get` admission and projection in the same snapshot as its eligibility, evidence and
+revision. Completed-attempt content and native NOTE document reads also share that snapshot.
+A bound room's NOTE reads use one overlay view captured before the snapshot, with their own
+native NOTE versions; the cleanup revision still binds the base bytes the decision changes.
+Native diary completion runs after the snapshot closes. The review keeps its three-read bound
+and marks a slot that continues changing; its content remains from the snapshot beside its
+facts, not a newer read. The snapshot change does not add an archive or delete action.
+
 ## Review NOTE tombstones
 
 Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
@@ -1341,7 +1350,11 @@ proposals in your run tray. It never closes, moderates or deletes a note. Bind t
 is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
-already going is joined. The sweep reads every note past its cursor, keeps each note revision as
+already going is joined. If that sweep is already running, the request also retains one later
+ordinary sweep, so notes arriving after its last read need not wait for the nightly. Several such
+requests coalesce into that one follow-up. A queued, paused or scheduled sweep already covers the
+request and queues no extra sweep. The returned attempt still names the joined sweep, not its
+later follow-up. The sweep reads every note past its cursor, keeps each note revision as
 evidence and triages it as its own job. A note too long for the Coach model's context window is
 triaged in parts: the whole note is split into parts that each fit, every part is its own job,
 synthesis jobs combine the part answers in order, and the note's own job files the findings once
@@ -1519,6 +1532,23 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Answer a Coach training offer
+
+`POST /v1/owner/coach/training-offers/answer` takes the shown `offer`, its `digest`,
+and an `answer`: `keep_baseline`, `approve_switch`, `approve_train`, `decline` or
+`postpone`. A train approval may also name its prepared `training` choice. The SDK
+verb `vault.coach.training_offers.answer` takes the same offer, digest and answer;
+its training run is authorized separately.
+
+Both replies contain `answer` (the immutable answer record) and `staged` (the
+current embedder binding for that offer). The binding is read after the answer
+commits, not copied into its stored record. `staged` is `null` when no binding row
+exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
+`undone`, including settled moves. The SDK's `vault.coach.training_offers` and
+`.get` views also include `staged`, read anew on each request. An embedder approval
+can therefore be shown as waiting or filling while the old index still serves;
+answering the offer does not mean that its new binding is already applied.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
@@ -1539,6 +1569,10 @@ export checks and overlaps, every swap receipt, every swap question and `serving
 hashes the view showed; a result that moved since is refused as changed. `{"kind":
 "explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
 on its receipt. Either answer closes the run's other open questions.
+
+An evaluated swap needs a present, non-retired cohort and records a Promotion exposure. An
+explicit override records no Promotion exposure, so a missing or retired cohort does not by
+itself block it. Owner, viewed-result, checkpoint and manifest checks still apply.
 
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
@@ -2001,6 +2035,11 @@ clearance (the `vault.disclosure.offer` verb, under an agent credential that car
 `propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
 contact offer.
 
+- `GET /v1/owner/disclosure/offers?limit=20` lists your open offers, unresolved and
+  unexpired, in proposal-reference order. The reply holds `offers` (the same frozen views as
+  the singular read) and `next_after`. Pass that reference as `after` for the next page;
+  `next_after: null` means done. Choose `limit` on every request; zero returns an empty page.
+  The list grants nothing and never includes another owner's offers.
 - `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
   the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
 - `POST /v1/owner/disclosure/confirm` with
@@ -2531,6 +2570,15 @@ It prints `{"name", "signed"}`. `signed` is false for a record that stays on its
 and tells you to rewrap the secret as its holder instead. No SDK verb takes the kit. A running
 server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
 ([owner-custody.md](owner-custody.md)).
+
+## Pack lens slot decisions
+
+Selecting or clearing a pack lens slot records one decision in the shared Gate ledger in the
+same transaction as the slot change. The returned `LensActivationReceipt.decision_ref` is that
+ledger decision's id; it also names the selected slot's decision while the slot is active.
+The ledger records the authenticated owner and a digest of the returned receipt. Clearing a
+slot deletes its active selection but keeps this audit record. These records grant no standing
+consent and change no revision, installation or expected-active checks.
 
 ## Calling the owner routes
 
