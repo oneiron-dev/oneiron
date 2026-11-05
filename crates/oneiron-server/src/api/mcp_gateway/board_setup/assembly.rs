@@ -44,9 +44,9 @@ pub(in crate::api::mcp_gateway) async fn mcp_current_board(
         registry.board_snapshot_epoch(&actor.stream_connection, state_hash)
     };
     let packs = mcp_visible_pack_inventory(server, actor)?;
-    super::board_observations::read_set(server, actor)
-        .await
-        .observe_pack_inventory(&packs);
+    if let Some(mut reads) = super::board_observations::read_set(server, actor).await {
+        reads.observe_pack_inventory(&packs);
+    }
     Ok(McpBoardState {
         sections,
         scope_label,
