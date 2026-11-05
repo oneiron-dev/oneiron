@@ -81610,7 +81610,7 @@
      "path": "src/task_verb/symbol_lease.rs",
      "purpose": "Node-local time-held symbol declarations and atomic queue ordering",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
