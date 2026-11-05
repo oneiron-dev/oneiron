@@ -9,7 +9,7 @@ use crate::api::{
     Anomaly, Counter, ModificationLevel, Modifications, RevisionKind, RevisionReport,
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
-use crate::memory::{MemoryLedger, SealMemoryRefusal};
+use crate::memory::SealMemoryRefusal;
 use lopdf::xref::XrefEntry;
 use lopdf::{Document, Object, ObjectId};
 
@@ -41,7 +41,7 @@ fn same_entry(before: Option<&XrefEntry>, after: Option<&XrefEntry>) -> bool {
 fn changed(
     before: &Document,
     after: &Document,
-    ledger: &MemoryLedger,
+    limits: &SealResourceLimits,
 ) -> Result<Option<BTreeSet<ObjectId>>, SealMemoryRefusal> {
     if before
         .objects
@@ -50,12 +50,13 @@ fn changed(
     {
         return Ok(None);
     }
+    let ledger = limits.memory.ledger()?;
     let mut out = BTreeSet::new();
     for (id, old) in &before.objects {
         let Some(current) = after.objects.get(id) else {
             return Ok(None);
         };
-        let equal = current.eq_admitted(old, ledger).map_err(|error| {
+        let equal = current.eq_admitted(old, ledger.as_ref()).map_err(|error| {
             ledger
                 .refusal_of(&lopdf::Error::DecodeAdmission(error))
                 .expect("a DecodeAdmission error always carries a memory refusal")
@@ -67,12 +68,12 @@ fn changed(
                 after.reference_table.get(id.0),
             )
         {
-            out.insert(*id);
+            pdf::admitted::btree_insert(limits, &mut out, *id)?;
         }
     }
     for id in after.objects.keys() {
         if !before.objects.contains_key(id) {
-            out.insert(*id);
+            pdf::admitted::btree_insert(limits, &mut out, *id)?;
         }
     }
     Ok(Some(out))
@@ -358,9 +359,8 @@ pub(super) fn classify(
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
     if dup {
-        anomalies.push(Anomaly::DuplicateObjectNumber);
+        pdf::admitted::push(limits, &mut anomalies, Anomaly::DuplicateObjectNumber)?;
     }
-    let ledger = limits.memory.ledger()?;
     let mut previous: Option<Document> = None;
     let mut first_signer = None;
     let mut modification = ModificationLevel::None;
@@ -393,11 +393,11 @@ pub(super) fn classify(
             RevisionKind::Other
         };
         if let Some(before) = &previous {
-            let Some(ids) = changed(before, &doc, &ledger)? else {
+            let Some(ids) = changed(before, &doc, limits)? else {
                 return Ok((revisions, Modifications::NotRun, anomalies));
             };
             if ids.is_empty() {
-                anomalies.push(Anomaly::PointerOnlyRevision);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::PointerOnlyRevision)?;
             }
             if ids.iter().any(|id| {
                 before
@@ -408,7 +408,7 @@ pub(super) fn classify(
                         std::mem::discriminant(old) != std::mem::discriminant(new)
                     })
             }) {
-                anomalies.push(Anomaly::RetypedObject);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::RetypedObject)?;
             }
             if first_signer.is_some() {
                 let allowed = facts.accounts_for(limits, index, &ids).unwrap_or(false)
@@ -430,18 +430,25 @@ pub(super) fn classify(
             // signed/archival revision. Flag only unexpected rewrites, not
             // every lawful incremental update as a duplicate anomaly.
             if kind == RevisionKind::Other && ids.iter().any(|id| before.objects.contains_key(id)) {
-                anomalies.push(Anomaly::DuplicateObjectNumber);
+                pdf::admitted::push(limits, &mut anomalies, Anomaly::DuplicateObjectNumber)?;
             }
         }
         if signed.is_some_and(|s| s.kind == SignatureKind::Signature) && first_signer.is_none() {
             first_signer = Some(index);
         }
-        revisions.push(RevisionReport {
-            index,
-            kind,
-            byte_end: end as u64,
-            signed_by: signed.map(|s| s.id.clone()),
-        });
+        if let Some(sig) = signed {
+            limits.memory.admit::<u8>(sig.id.len())?;
+        }
+        pdf::admitted::push(
+            limits,
+            &mut revisions,
+            RevisionReport {
+                index,
+                kind,
+                byte_end: end as u64,
+                signed_by: signed.map(|s| s.id.clone()),
+            },
+        )?;
         previous = Some(doc);
     }
     // Missing ownership cannot mean "no modifications". A valid discovered
