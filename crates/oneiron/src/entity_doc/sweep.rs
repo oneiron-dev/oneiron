@@ -29,8 +29,9 @@ pub(crate) fn entity_doc_slots_in(
         if head.entity != entity.to_hex() {
             continue;
         }
-        if slots.insert(head.document.clone(), entity).is_some() {
-            shared.insert(head.document);
+        let document = storage::document_slot(&head)?.to_hex();
+        if slots.insert(document.clone(), entity).is_some() {
+            shared.insert(document);
         }
     }
     slots.retain(|slot, _| !shared.contains(slot));
@@ -97,7 +98,7 @@ fn compact_in_txn(
     // A live document keeps its whole history: its pending updates fold
     // into one full snapshot, which holds every one of them.
     let doc = storage::load(store, txn, &head)?;
-    let slot = DocumentSlot::from_hex(&head.document)?;
+    let slot = storage::document_slot(&head)?;
     store.port_document_snapshot_put(txn, slot, &doc.export_snapshot()?)?;
     store.port_document_updates_delete(txn, slot)?;
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;

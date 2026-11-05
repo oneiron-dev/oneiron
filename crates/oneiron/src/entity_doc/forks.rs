@@ -30,6 +30,7 @@ pub(super) struct SwitchedDocument<'vault> {
     fork_key: String,
     fork: ForkRecord,
     fork_snapshot: Vec<u8>,
+    storage_document: Option<String>,
     document: EntityDoc,
     frontier: Vec<u8>,
     inventory: super::native_skill_state::NativeMapInventory,
@@ -55,6 +56,8 @@ impl SwitchedDocument<'_> {
         if *entity != self.entity
             || head.entity != self.source_head.entity
             || head.document != self.fork.fork
+            || head.storage_document != self.storage_document
+            || head.sequence_document != self.source_head.sequence_document
             || head.incarnation != self.source_head.incarnation
             || head.field != self.source_head.field
             || head.generation != self.source_head.generation
@@ -756,7 +759,7 @@ fn settle_one(
             // The retained fork is shallow at its base. Import only its ops into
             // a full live scratch doc before switching, retaining pinned history.
             merge_into(&live, &fork, &record.base)?;
-            let old_document = h.document.clone();
+            let old_document = storage::document_slot(&h)?.to_hex();
             // The live history keeps the old document's purge floor, so the new
             // slot carries it too; drop_document removes the old slot's row.
             let floor = vault.store.port_document_row(
@@ -764,6 +767,7 @@ fn settle_one(
                 DocumentSlot::from_hex(&old_document)?,
                 DocumentRow::ShallowSince,
             )?;
+            h.storage_document = storage::free_document_storage(&vault.store, txn, &record.fork)?;
             h.document = record.fork.clone();
             storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
             let switched = SwitchedDocument {
@@ -776,6 +780,7 @@ fn settle_one(
                 fork_key: fork_id.to_owned(),
                 fork: record.clone(),
                 fork_snapshot,
+                storage_document: h.storage_document.clone(),
                 frontier: live.frontier(),
                 inventory: super::native_skill_state::inspect_inventory(&live)?,
                 document: live,
@@ -784,7 +789,7 @@ fn settle_one(
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
                     txn,
-                    DocumentSlot::from_hex(&h.document)?,
+                    storage::document_slot(&h)?,
                     &floor,
                 )?;
             }

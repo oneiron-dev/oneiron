@@ -97,7 +97,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
-        slots.insert(row.value.document.clone(), entity);
+        slots.insert(storage::document_slot(&row.value)?.to_hex(), entity);
         out.exact(OwnerRef::entity(&entity), row.at, row.bytes);
     }
     documents::capture(dbs, txn, slots, &mut out)?;

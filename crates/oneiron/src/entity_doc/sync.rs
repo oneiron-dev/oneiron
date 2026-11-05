@@ -108,7 +108,7 @@ pub(crate) fn sync_text_in(
     Ok(match plane_in(vault, txn, entity)? {
         Plane::Document(head) => Some(SyncText {
             doc: storage::load(&vault.store, txn, &head)?.doc,
-            slot: DocumentSlot::from_hex(&head.document)?,
+            slot: storage::document_slot(&head)?,
         }),
         Plane::SequenceRows => Some(SyncText {
             doc: sequence_rows::load(vault, txn, *entity)?,
@@ -267,7 +267,7 @@ pub(crate) fn replace_sync_text_in_txn(
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(
             txn,
-            DocumentSlot::from_hex(&h.document)?,
+            storage::document_slot(&h)?,
             &doc.doc.shallow_since_vv().encode(),
         )?;
     }
@@ -299,7 +299,11 @@ enum Plane {
 /// document, and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
-        return Ok(Plane::Document(head));
+        return Ok(if storage::has_sequence_text(&head)? {
+            Plane::SequenceRows
+        } else {
+            Plane::Document(head)
+        });
     }
     let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
         Some(ENTITY_TYPE_MESSAGE) => true,
@@ -556,6 +560,8 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
+        storage_document: None,
+        sequence_document: None,
         field: born.field,
         generation: 0,
         pending: 0,
@@ -591,6 +597,8 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document,
+        storage_document: None,
+        sequence_document: None,
         field,
         generation: 0,
         pending: 0,

@@ -450,16 +450,30 @@ pub(crate) fn restore_with_source(
     ENTITY_DOC_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PIN.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
+    let skill =
+        vault.get_entity_type_in_txn(txn, &entity)? == Some(crate::registry::ENTITY_TYPE_SKILL);
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
+        storage_document: match &existing {
+            Some(old) => old.storage_document.clone(),
+            None if skill => storage::free_document_storage(store, txn, &document)?,
+            None => None,
+        },
+        sequence_document: match &existing {
+            Some(old) => old.sequence_document.clone(),
+            None if skill => store
+                .port_document_present(txn, DocumentSlot::of(entity))?
+                .then(|| entity.to_hex()),
+            None => None,
+        },
         document,
         field: field_of(row),
         generation: 0,
         pending: 0,
         birth_frontier: None,
     };
-    let slot = DocumentSlot::from_hex(&head.document)?;
+    let slot = storage::document_slot(&head)?;
     let canonical = native.map(|source| source.rebuild()).transpose()?;
     let ordinary;
     let (doc, frontiers) = if let Some(rebuilt) = &canonical {
