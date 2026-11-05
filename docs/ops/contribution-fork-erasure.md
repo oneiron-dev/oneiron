@@ -23,6 +23,14 @@ Provider and scorer work can finish after an erase. Their original subjects
 are checked in the publishing writer. Scoring also requires the exact receipt
 to still exist at the original pair key; it never inserts a missing row. A
 previously erased capsule cannot recreate its old unavailable-reason row.
+When no captured step exposed a used edge, the reason still records the actual
+actors of the attempt's latest captured generation. Erasing those actors moves
+the reason too, and their erased capsules fence a later reason write. Older
+erased generations do not hide a newer live generation.
+
+Two scorers racing on the same unchanged fork reuse the first committed score,
+even if their judgments differ. A losing scorer does not turn a valid scored
+pair into a permanent unavailable reason.
 
 This is the current stored format only. There is no legacy reader or migration.
 The public receipt fields and scoring protocol are unchanged. This repair does

@@ -578,10 +578,10 @@ impl Runner<'_> {
             return Ok(Err(ContributionReplayUnavailable::Unfinished));
         };
         fork.passed = Some(passed);
-        if !put_fork(self.vault, &self.pair, &fork)? {
+        let Some(kept) = put_fork(self.vault, &self.pair, &fork)? else {
             return Ok(Err(ContributionReplayUnavailable::Unreadable));
-        }
-        Ok(Ok(fork))
+        };
+        Ok(Ok(kept))
     }
 }
 
@@ -592,11 +592,22 @@ pub(super) fn target_capsule_in_txn(
     txn: &heed::RoTxn<'_>,
     candidate: &ContributionCandidate,
 ) -> Result<std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>> {
-    let capsules = match receipt_attempt(&candidate.attempt_receipt) {
-        Some(attempt) => step_replay_capsules_in_txn(vault, txn, attempt)?,
-        None => Vec::new(),
-    };
-    Ok(target_step(capsules, candidate.target))
+    Ok(target_step(
+        attempt_capsules_in_txn(vault, txn, candidate)?,
+        candidate.target,
+    ))
+}
+
+/// The attempt's captures even when none exposed the selected target.
+pub(super) fn attempt_capsules_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    candidate: &ContributionCandidate,
+) -> Result<Vec<StepReplayCapsule>> {
+    match receipt_attempt(&candidate.attempt_receipt) {
+        Some(attempt) => step_replay_capsules_in_txn(vault, txn, attempt),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// The attempt a terminal pack receipt names, when it is one.

@@ -319,32 +319,33 @@ pub(crate) fn fork_rows_in_txn(
     Ok(rows)
 }
 
-/// Scores the exact fork still kept at its live pair. An erase that moved
-/// it, or ran while the scorer answered, can never recreate its old row.
+/// Scores the exact fork still kept at its live pair, or reuses its first
+/// committed score. An erase that moved it, or ran while the scorer
+/// answered, can never recreate its old row.
 pub(crate) fn put_fork(
     vault: &Vault,
     pair: &[u8; 32],
     receipt: &ContributionForkReceipt,
-) -> Result<bool> {
+) -> Result<Option<ContributionForkReceipt>> {
     let key = (*pair, fork_row_name(receipt.treatment).to_owned());
     vault.with_write_txn_grouped(|txn| {
         let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
-            return Ok(false);
+            return Ok(None);
         };
         let ForkValue::Fork(kept) = &row.value else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut expected = receipt.clone();
         expected.passed = kept.passed;
         if *kept != expected || !row.provenance.live_in_txn(vault, txn) {
-            return Ok(false);
+            return Ok(None);
         }
-        if let Some(passed) = kept.passed {
-            return Ok(receipt.passed == Some(passed));
+        if kept.passed.is_some() {
+            return Ok(Some(kept.clone()));
         }
         row.value = ForkValue::Fork(receipt.clone());
         FORKS.put(vault, txn, &key, &row)?;
-        Ok(true)
+        Ok(Some(receipt.clone()))
     })
 }
 

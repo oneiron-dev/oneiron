@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::super::contribution::{FORK_RECEIPT_PREFIX, target_capsule_in_txn};
+use super::super::super::contribution::{
+    FORK_RECEIPT_PREFIX, attempt_capsules_in_txn, target_capsule_in_txn,
+};
 use super::{FORKS, ForkValue, actor_gone_in_txn};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
@@ -32,13 +34,32 @@ impl ForkProvenance {
             ContributionTarget::LoadedSkill(skill) => subjects.push(skill),
             ContributionTarget::UsedEdge { derived, source } => subjects.extend([derived, source]),
         }
-        if let Ok(capsule) = target_capsule_in_txn(vault, txn, candidate)? {
-            let Some(actor) = capsule.content.actor() else {
-                // A previously erased capsule cannot mint a new reason
-                // row at its former deterministic pair key.
-                return Ok(None);
-            };
-            subjects.push(actor);
+        match target_capsule_in_txn(vault, txn, candidate)? {
+            Ok(capsule) => {
+                let Some(actor) = capsule.content.actor() else {
+                    return Ok(None);
+                };
+                subjects.push(actor);
+            }
+            Err(_) => {
+                // No exposure still belongs to the attempt's captured actors.
+                // Only its latest generation owns this reason; an older
+                // erased generation must not hide a newer live attempt.
+                let capsules = attempt_capsules_in_txn(vault, txn, candidate)?;
+                let latest = capsules
+                    .iter()
+                    .map(|capsule| capsule.lease_generation)
+                    .max();
+                for capsule in capsules
+                    .iter()
+                    .filter(|capsule| Some(capsule.lease_generation) == latest)
+                {
+                    let Some(actor) = capsule.content.actor() else {
+                        return Ok(None);
+                    };
+                    subjects.push(actor);
+                }
+            }
         }
         subjects.sort_unstable();
         subjects.dedup();
