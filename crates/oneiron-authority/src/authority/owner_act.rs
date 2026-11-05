@@ -150,6 +150,11 @@ pub enum OwnerActKind {
     /// 15740). Its `target` is the repository's portable id and its `seen`
     /// is over that repository's live cuts. No Grant line names it.
     OriginCut,
+    /// The owner names a device key's successor (`DeviceSuccession`; FIX
+    /// 11135). Its `target` is derived from the predecessor's client id and
+    /// device key, and its `seen` is over that pair's live successions. No
+    /// Grant line names it.
+    DeviceSuccession,
 }
 
 impl OwnerActKind {
@@ -177,6 +182,7 @@ impl OwnerActKind {
             Self::FreeTimePolicy => "free_time_policy",
             Self::AccessGrant => "access_grant",
             Self::OriginCut => "origin_cut",
+            Self::DeviceSuccession => "device_succession",
         }
     }
 
@@ -204,6 +210,7 @@ impl OwnerActKind {
             "free_time_policy" => Self::FreeTimePolicy,
             "access_grant" => Self::AccessGrant,
             "origin_cut" => Self::OriginCut,
+            "device_succession" => Self::DeviceSuccession,
             _ => return None,
         })
     }
