@@ -95,8 +95,11 @@ way and land as Normal annotation text with exactly the requested six marks,
 later comment paragraphs included; one op serves both comment text and runs.
 Author/date, paragraph `para_id`, threading/resolve metadata, all other blocks,
 and body anchors stay intact; the edited comment's full content hash is recomputed.
-Story move/insert/delete/table ops do not exist. Story structure ops and shared-Loro
-story import/edit/export remain unbuilt engineering scope. Filling an
+Story move/insert/delete/table ops do not exist. Shared-Loro story paragraph
+import, scoped text/splice/mark ops, read, fork review and export (each changed
+paragraph as its full runs) are implemented on this chain and work once it
+integrates; story structure/table ops and story ask pinning remain unbuilt
+engineering scope. Filling an
 empty header/footer paragraph supplies its actual semantic guard with an empty
 `expect`. Native expectations are substring matches; a blank expectation without
 a guard retains its prior refusal.

@@ -61,7 +61,7 @@ pub use consent::{
 };
 pub(crate) use consent::{DiscardAdmission, LiveEditAdmission, MergeAdmission};
 use consent::{admit_live_edit_in_txn, live_edit_admission_in_txn};
-pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
+pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp, DocxStoryBody, StoryParagraph};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub(crate) use holder_ask::{
     LiveEditAskOutcome, guard_live_edit_word, is_live_edit_ask, may_cut_live_edit,
@@ -114,7 +114,7 @@ use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use loro::LoroDoc;
 use oneiron_docedit::ArchiveLimits;
-use oneiron_docedit::docx_body::{DocxRevision, project_docx, read_docx_blocks};
+use oneiron_docedit::docx_body::{DocxRevision, project_docx, read_docx_body};
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{mark_full_calc, project_xlsx, read_xlsx_cells};
 use oneiron_xlsx_formula::RecalcClock;
