@@ -1,6 +1,9 @@
 //! Host-only landing or decline of a frozen widen proposal. A transport login is not a holder action.
+
+mod streamed;
+
 use crate::{
-    api::body_spool::OwnerJsonBody,
+    api::body_spool::{OwnerJsonBody, TransferBody},
     auth::{CoreAuth, CoreScope},
     error::{ApiError, ApiErrorEnvelope, EnvelopedApiError},
     managed::ManagedWidenHolder,
@@ -178,7 +181,22 @@ pub(crate) async fn core_accept_widen(
     payload: OwnerJsonBody<CoreAcceptWidenRequest>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     let holder = widen_holder(&parts, &server, managed_holder).await?;
-    let req = payload.read_for_transfer(&server).await?;
+    match payload
+        .read_for_transfer_with(&server, streamed::bulk_decoder(&server))
+        .await?
+    {
+        TransferBody::Whole(req) => answer_small(&server, &holder, req),
+        TransferBody::Bulk(decoded) => streamed::answer_bulk(server, holder, decoded).await,
+    }
+}
+
+/// Answers an accept whose body decoded whole: the small path exactly as
+/// before, hex string and delta vector both bounded by the in-memory line.
+fn answer_small(
+    server: &SyncServer,
+    holder: &WidenHolder,
+    req: CoreAcceptWidenRequest,
+) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     let delta = req.expected_delta.as_bytes().chunks_exact(2);
     if !delta.remainder().is_empty() {
         return Err(ApiError::bad_request("invalid expected_delta", Some("expected_delta")).into());
@@ -195,7 +213,7 @@ pub(crate) async fn core_accept_widen(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| ApiError::bad_request("invalid expected_delta", Some("expected_delta")))?;
-    let (owner, credential) = holder.owner(&server)?;
+    let (owner, credential) = holder.owner(server)?;
     let result = match credential {
         Some(credential) => {
             server
