@@ -529,9 +529,6 @@ pub(in crate::api::ai::chat) async fn start_turn(
             refused(StatusCode::PAYMENT_REQUIRED, "turn_not_admitted", reason)
         }
     })?;
-    if recalled && let Some(rider_ack) = rider_ack {
-        rider_ack.commit(server).await;
-    }
     let answering = after_turn(hooks_vault, generating, answering);
     // FIX 6921: the answer's context records, kept once it is handed on.
     let answering = crate::api::context_board::record_chat_answer(
@@ -553,6 +550,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         turn,
         answering,
     );
+    if recalled && let Some(rider_ack) = rider_ack {
+        rider_ack.commit(server).await;
+    }
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,
