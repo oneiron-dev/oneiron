@@ -21,7 +21,7 @@
 use serde_json::{Value, json};
 
 use super::super::payload::{decode_self_dispatch_outcome, self_call_request_value};
-use super::source::PreparedShadowStep;
+use super::source::{FrozenReply, PreparedShadowStep};
 use super::store::ShadowBodyStore;
 use super::types::{
     ShadowBodyRef, ShadowTraceEntry, ShadowTraceKind, ShadowUnavailable,
@@ -159,6 +159,7 @@ impl ArmStreams {
 pub(crate) struct ShadowBridgeHost<'a> {
     cursor: CodeRunReplayCursor<'a>,
     window: &'a CodeRunReplayRecord,
+    replies: &'a [FrozenReply],
     store: &'a ShadowBodyStore,
     run_id: EntityId,
     determinism: CodeRunDeterminism,
@@ -221,6 +222,7 @@ impl<'a> ShadowBridgeHost<'a> {
         Ok(Self {
             cursor: CodeRunReplayCursor::from_position(&prepared.window, prepared.bridge_start)?,
             window: &prepared.window,
+            replies: &prepared.replies,
             store,
             run_id: prepared.step.run,
             determinism: prepared.determinism,
@@ -719,6 +721,30 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         // A FIX449 StoredReply carrier spilled pre-record via `store_reply`
         // (no later `fit_reply` store to count), so it counts here, once.
         let window = self.window;
+        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_)) {
+            let Some(reply) = self.replies.iter().find(|reply| {
+                window
+                    .bridge_calls
+                    .get(at)
+                    .is_some_and(|row| row.seq == reply.seq)
+            }) else {
+                let missing = ShadowUnavailable::new(Reason::SourceMissing, "stored_reply_body");
+                return Err(self.stop(missing));
+            };
+            if let Some(bytes) = &reply.body.bytes {
+                self.store.import(reply.body.output.output_ref(), bytes)?;
+            }
+            let output = reply.body.output.clone();
+            self.results.push(ArmResult {
+                output: output.clone(),
+                state: reply.body.state,
+                secret: reply.body.secret.clone(),
+                own: false,
+            });
+            if let Some(name) = reply.name.clone() {
+                self.bind(name, output.handle, output.path);
+            }
+        }
         if matches!(&outcome, SelfDispatchOutcome::StoredReply(_))
             || window.bridge_calls.get(at).is_some_and(|row| {
                 window
