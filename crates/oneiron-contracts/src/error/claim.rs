@@ -51,6 +51,10 @@ pub enum ClaimError {
         /// Which standing was missing, as the checking door words it.
         reason: &'static str,
     },
+    /// A guest's machine-signed claim or history was withheld because this
+    /// vault is not a reader of the sender's world.
+    #[error("actor lacks authority over this claim: {reason}")]
+    GuestClaimWithheld { reason: &'static str },
     /// `edge.provenance` may only attach to SEMANTIC edge kinds; structural
     /// kinds (12-byte layout) never carry the two hot flags.
     #[error("edge.provenance subject kind {kind} is structural, not semantic")]
@@ -225,6 +229,7 @@ impl ClaimError {
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::ActorLacksClaimAuthority { .. } => ErrorKind::ActorLacksClaimAuthority,
+            Self::GuestClaimWithheld { .. } => ErrorKind::GuestClaimWithheld,
             Self::ScopedReadOwnerNotLive(_) => ErrorKind::ScopedReadOwnerNotLive,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
