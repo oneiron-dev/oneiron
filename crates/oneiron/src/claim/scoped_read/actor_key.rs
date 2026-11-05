@@ -576,6 +576,9 @@ impl ScopedReadActorKey {
         for ceiling in ceilings {
             self = self.within_phone_line(ceiling.clone());
         }
+        if let Some(worlds) = &original.worlds {
+            self = self.within_worlds(worlds.clone());
+        }
         Ok(self)
     }
 

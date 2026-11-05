@@ -85,7 +85,8 @@ checked against the original prepared scope, not re-stamped with current consent
 
 The speculative Memory carrier retains the original phone key and verified credential.
 Each reconstructed identity key must still carry that same proof, then conjoins every
-frozen call ceiling and the off-device bound. Changing the Memory proof or adding a host
+frozen call ceiling, the original definition's native world bound and the off-device
+bound. Changing the Memory proof or adding a host
 action cannot replace the captured phone credential. Clones and the room/thread
 rebinders retain it. Agent-class verification and the normal recall world defaults
 still use the existing Memory path; no actor label or new all-world default replaces it.
@@ -104,12 +105,14 @@ both the turn's sources and the additional row named by the notice. Ordinary ses
 still deliver their notices as before. This is the immediate notice-body send check,
 not a claim that every control event or saved journal page is phone-bound.
 
-`ScopedRead::phone_line_agent_definition` admits the actual receiving agent's live
-AGENT_DEF body under that same phone key. The current credential, line consent, row
-scope and facets share one read transaction. The admitted body is decoded and checked
-with the native lifecycle, approval and enabled predicate before its instructions or
-actual model list leave the read lane. There is no default-agent or empty-list substitute.
-This getter does not activate an answering session.
+`ScopedRead::phone_line_agent_read` admits the actual receiving agent's live AGENT_DEF
+body and returns a reader conjoined with that definition's native world scope. The
+current credential, line consent, row scope and facets share one read transaction.
+`All` keeps the key's existing bounds; `Base` restricts it to base reality; `World(w)`
+keeps that world plus base reality, meeting any world bound already held. The same
+admitted body supplies instructions and models after the native lifecycle, approval
+and enabled checks. There is no default-agent or empty-list substitute. This getter
+does not activate an answering session.
 
 The call freezes instructions and the native model list from one admitted definition
 body. The phone-bound chat brain and host-call backend attach B as the actual caller on

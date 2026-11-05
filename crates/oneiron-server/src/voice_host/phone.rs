@@ -50,10 +50,8 @@ impl PhoneCallRead {
         if auth.principal_entity() != Some(agent) {
             return Err(HostError::InvalidRequest);
         }
-        // Freeze instructions and the model list from the same admitted body.
-        let definition = vault
-            .scoped_read(key.clone())
-            .phone_line_agent_definition()?;
+        // Freeze instructions, models and the read scope from one admitted body.
+        let (key, definition) = vault.scoped_read(key).phone_line_agent_read()?;
         // The native factory proved this principal is the line's live
         // AGENT_DEF, not a class inferred from provider or caller text.
         let read = Arc::new(Self {
