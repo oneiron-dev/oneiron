@@ -308,8 +308,7 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{
-    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VAULT_RECEIPTS_PAGE_MAX,
-    VaultReceiptsPage,
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
