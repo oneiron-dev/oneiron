@@ -33,10 +33,10 @@ pub enum ProviderKind {
     /// carries, so it is reached over loopback HTTP only. A
     /// `[models.media.speech]` rung only.
     Voxcpm2,
-    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: a
-    /// `[models.media.image]` rung (`models/{model}:generateContent`, asked
-    /// for image output) or a `[models.media.video]` rung (a Veo
-    /// `predictLongRunning` job) only.
+    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: chat
+    /// rungs (`models/{model}:generateContent`), a `[models.media.image]`
+    /// rung (asked for image output) or a `[models.media.video]` rung (a Veo
+    /// `predictLongRunning` job).
     Gemini,
     /// Soniox's real-time speech-to-text WebSocket
     /// (`wss://stt-rt.soniox.com/transcribe-websocket`, the key as a bearer
@@ -61,7 +61,7 @@ impl ProviderKind {
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
-        self.speech_only() || matches!(self, Self::Gemini | Self::Soniox)
+        self.speech_only() || matches!(self, Self::Soniox)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
@@ -319,8 +319,8 @@ pub struct ProviderConfig {
     /// Host-supplied token conversions for the allocation's named unit.
     pub rates: Vec<UnitRate>,
     /// The Responses socket an OpenAI-compatible provider's calls hold, or
-    /// `None` for the chat HTTP path alone. A broker-held key always takes
-    /// HTTP: the broker runs no socket yet.
+    /// `None` for the chat HTTP path alone. A broker-held OpenAI key uses the
+    /// broker's per-call Responses socket when set, else HTTP.
     pub responses_socket: Option<ResponsesSocket>,
     /// How this provider's JSON request bodies are compressed, or `None` to
     /// send them plain. A broker-held key has none here: the broker
@@ -559,13 +559,13 @@ fn request_compression(
 }
 
 /// The Responses socket an entry holds: what it wrote, else the default its
-/// origin has. Only a hosted OpenAI-compatible provider whose key is not the
-/// broker's holds one.
+/// origin has. An OpenAI-compatible provider may hold one whether its key is
+/// direct or broker-held; other kinds never do.
 fn responses_socket(
     name: &str,
     kind: ProviderKind,
     base_url: &str,
-    brokered: bool,
+    _brokered: bool,
     file: Option<ResponsesSocketFile>,
 ) -> anyhow::Result<Option<ResponsesSocket>> {
     let known = RESPONSES_SOCKET_ORIGINS
@@ -587,10 +587,10 @@ fn responses_socket(
     let Some(max_age_secs) = max_age_secs else {
         return Ok(None);
     };
-    if kind != ProviderKind::OpenaiCompat || brokered {
+    if kind != ProviderKind::OpenaiCompat {
         if file.is_some() {
             anyhow::bail!(
-                "models.providers.{name}.responses_socket applies to an openai-compat provider whose key is not key_secret"
+                "models.providers.{name}.responses_socket applies to an openai-compat provider"
             );
         }
         return Ok(None);
