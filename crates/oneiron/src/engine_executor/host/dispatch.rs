@@ -232,7 +232,10 @@ impl RecordingJsHost<'_, '_> {
                 SelfDispatchOutcome::Failed(SelfFailedResult {
                     effect: SelfEffect::SkillsCall,
                     error: error.to_string(),
-                    code: Some(crate::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR.to_owned()),
+                    code: Some(
+                        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
+                            .to_owned(),
+                    ),
                 })
             }
             Err(error) => failed(error.to_string()).0,
