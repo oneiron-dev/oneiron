@@ -659,6 +659,18 @@ impl SyncConnection {
         client.search_resident(query, limit).await
     }
 
+    /// One page of a home search, the first with no `cursor` (FIX 9258):
+    /// [`crate::sync::SyncClient::search_resident_page`].
+    pub async fn search_resident_page(
+        &self,
+        query: &str,
+        limit: usize,
+        cursor: Option<&crate::sync::residence::ResidenceSearchCursor>,
+    ) -> Result<crate::sync::ResidenceSearchPage, crate::sync::TransportError> {
+        let client = self.client()?;
+        client.search_resident_page(query, limit, cursor).await
+    }
+
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
