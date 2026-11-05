@@ -14,7 +14,7 @@ use crate::federation::{FederationGrant, Scope, ScopeAxis, ScopeId};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::{RowBirth, row_birth_in_txn};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_FEDERATION_GRANT};
-use crate::store::asset_body::asset_file_in_txn;
+use crate::store::asset_file_in_txn;
 use crate::store::loro_document::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
 use crate::sync::SyncSelector;
 use crate::sync::client::VerifiedConnectOrigin;
