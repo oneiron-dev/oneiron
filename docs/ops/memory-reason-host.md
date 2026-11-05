@@ -100,6 +100,19 @@ all requested pins in order. The body budget still admits the same stored-body
 lengths in that order; missing or bodiless rows remain absent. Each frame's raw
 bodies and decoded field maps drop before its callback returns.
 
+A private frame owner records the actual frame-vector backing capacity and
+owned body-vector capacities once on a separate lease from the same supplied
+machine-memory line. The callback drains that same vector. Per-row raw bodies,
+field maps and the drain iterator drop before the owner, and its remaining rows
+and vector backing drop before its lease, including on early return or unwind.
+The charge ends before the post-read citation and omission lookups. Derived
+retained evidence strings remain distinct allocations on their existing owner;
+the raw-body charge does not count those strings again.
+
+This is accounting after the native frame was allocated, not admission before
+growth. Deletion request strings, decoded field-map storage and other transient
+allocations are not measured by the raw frame owner.
+
 The callback decodes in-hand bodies, hashes omitted bodies, spends down the
 body budget and records retained capacities. The unchanged undecoded-body
 credential scan can sample host memory telemetry inside the held read; no vault
