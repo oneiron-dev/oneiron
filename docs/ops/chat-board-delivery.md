@@ -22,8 +22,10 @@ path for chat keys would need to preserve the entry identity across this interva
 or bind delivery to the exact state instance.
 
 The standalone context-board handler and the board used by turn actions keep
-their immediate rider acknowledgement. There is no new request field, stored
-format, configuration setting or delivery limit.
+their immediate rider acknowledgement. A live turn keeps the split board order:
+state before the user's message, query after it. Its deferred acknowledgement
+travels with that same board; it does not join or render the parts again. There
+is no new request field, stored format, configuration setting or delivery limit.
 
 This is not full board rollback. MEMORIES cursor advancement, read observations,
 pack inventory, once-disclosure consumption, hook deliveries and standing-use
