@@ -1,5 +1,7 @@
 //! Exact read bindings for activated SKILL state changes.
 
+#[cfg(feature = "sync")]
+mod admission;
 mod canonical;
 mod checkpoint;
 mod codec;

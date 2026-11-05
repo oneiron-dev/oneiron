@@ -13,11 +13,13 @@ use crate::error::{Error, Result};
 
 /// These are observed operations, not admitted operations. A delete must also
 /// reach source validation; a later insert cannot hide it from the validator.
+#[derive(PartialEq, Eq)]
 pub(super) enum NativeMapWrite {
     Insert(SkillStateFact),
     Delete,
 }
 
+#[derive(PartialEq, Eq)]
 pub(super) struct NativeMapMutation {
     pub(super) id: ID,
     pub(super) change: ID,
@@ -25,6 +27,7 @@ pub(super) struct NativeMapMutation {
     pub(super) write: NativeMapWrite,
 }
 
+#[derive(PartialEq, Eq)]
 pub(super) struct NativeMapFloor {
     pub(super) frontier: Vec<u8>,
     /// Explicit absence at this retained floor is distinct from no floor.
@@ -33,6 +36,7 @@ pub(super) struct NativeMapFloor {
 
 /// An ephemeral inventory, never stored as a second native operation ledger.
 /// Decoded witnesses here have no source, carrier-standing or ACK authority.
+#[derive(PartialEq, Eq)]
 pub(super) struct NativeMapInventory {
     pub(super) current: Option<SkillStateFact>,
     pub(super) floor: Option<NativeMapFloor>,
