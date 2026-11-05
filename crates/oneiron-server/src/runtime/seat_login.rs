@@ -51,7 +51,7 @@ pub use surface::{
 /// Env names that would hand the official CLI a credential from OUR process
 /// instead of the login the person made in the CLI's own store. The seat
 /// runs on the person's sign-in, so these never cross into the child.
-const SEAT_ENV_REMOVED: [&str; 5] = [
+pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
