@@ -6,20 +6,22 @@ still reconciles a preauthorized spend estimate through the existing path.
 
 A definite non-delivery or provider rate/quota refusal now releases the budget
 while that send waits for retry, only when its ledger has no earlier delivery
-uncertainty and its reservation contains only key-budget rows. Mixed and
-charter-backed reservations retain their existing behavior: re-stamping a
-charter resets positional usage, which a retry must not revive. The ledger
+uncertainty. Key, charter, and mixed reservations use the same release path.
+Each charter debit must still name its original approval before it can touch
+current usage. Re-stamping a charter resets positional usage; an obsolete
+approval cannot release or restore into a newly approved counter. The ledger
 stays Pending and keeps the same frozen request,
 provider wait and retry rules. Its budget receipt reads `released` during this
 interval.
 
-The actual retry claim first checks every still-live debit against its current
-owning key row's budget in the same writer. Repeated debits of one row are
-counted together, including co-actor and shared-pool usage. Only if all rows fit
+The actual retry claim first checks each original charter approval against the
+same key in its writer, before grouping any still-current debits. It then checks
+every still-live debit against its current owning key row's budget in that writer.
+Repeated debits of one row are counted together, including co-actor and shared-pool usage. Only if all rows fit
 does it restore the original debit multiplicity, mark the reservation `reserved`
-and clear the retry permit and provider wait. It uses the original charge
-timestamps, not a new window or a fresh admission charge. Missing usage rows
-stay gone, expired debits are not restored, and no new ladder event is emitted.
+and clear the retry permit and provider wait. It uses the original native debit
+IDs and charge timestamps, not a new window or a fresh admission charge. Missing
+usage rows stay gone, expired debits are not restored, and no new ladder event is emitted.
 
 If another send has used the released capacity, a count-bound `refuse` row waits
 for the existing window to have room. This includes the original retry debits'
@@ -36,8 +38,14 @@ handling. An owner stop, erase or dedupe takeover does not release an already
 released reservation a second time, and an abandoned retry never restores it.
 All of these changes commit with the existing ledger outcome transaction.
 
-This slice does not split `EffectorBudgetRead` into reserved and settled usage
-or move the ladder's warning time. Charter-backed release also needs a real
-charter-generation binding before restoration is safe. These remain follow-up
-work. Budget limits,
-defaults, authority, transport, provider clocks and window geometry are unchanged.
+The native row read now separates reserved and settled amounts while keeping
+combined used capacity, percentages, pacing, suspension, and ladder thresholds.
+Zero estimates and unpriced spend targets keep their original approval for
+Done-time actual-cost reconciliation without inventing an estimate debit. The
+ladder's warning time remains separate work. Budget limits, defaults, authority,
+transport, provider clocks and window geometry are unchanged.
+
+See [usage lifecycle](effector-usage-lifecycle.md) and
+[charter approvals](charter-budget-reservations.md) for the strict entry-ID and
+approval bindings. This document states the source contract, not a compile,
+runtime, delivery, or timing result.
