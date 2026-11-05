@@ -88,6 +88,17 @@ pub struct WindowPadPayload<'a> {
 }
 
 impl<'a> WindowPadPayload<'a> {
+    /// Transfers owned bytes together with their existing memory admission.
+    pub(crate) fn try_into_owned(self) -> Result<(Vec<u8>, MemoryLease), Self> {
+        match self {
+            Self {
+                bytes: Cow::Owned(bytes),
+                memory: Some(memory),
+            } => Ok((bytes, memory)),
+            other => Err(other),
+        }
+    }
+
     pub(crate) fn borrowed(bytes: &'a [u8]) -> Self {
         Self {
             bytes: Cow::Borrowed(bytes),

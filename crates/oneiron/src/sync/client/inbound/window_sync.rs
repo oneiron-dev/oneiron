@@ -88,11 +88,11 @@ impl SyncClient {
             ));
         }
         // A window's bytes come in their envelope, its pads installed here first (FIX 7107).
-        let (sub_tag, payload) = match self.accept_window_pad_frame(&key, sub_tag, payload)? {
+        let (sub_tag, payload_owner) = match self.accept_window_pad_frame(&key, sub_tag, payload)? {
             std::ops::ControlFlow::Continue(frame) => frame,
             std::ops::ControlFlow::Break(answer) => return Ok(answer),
         };
-        let payload: &[u8] = &payload;
+        let payload: &[u8] = &payload_owner;
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
@@ -211,11 +211,19 @@ impl SyncClient {
                 // the floor and checked whole against the header's digest: a
                 // catch-up past one frame comes so (FIX 8247).
                 if self.config.federation_peer.is_some() {
-                    self.import_federated_window_update(
-                        window_key,
-                        payload,
-                        self.config.federation_admission_role,
-                    )?;
+                    match payload_owner.try_into_owned() {
+                        Ok((bytes, memory)) => self.import_received_federated_window_update(
+                            window_key,
+                            bytes,
+                            memory,
+                            self.config.federation_admission_role,
+                        )?,
+                        Err(payload) => self.import_federated_window_update(
+                            window_key,
+                            &payload,
+                            self.config.federation_admission_role,
+                        )?,
+                    }
                     return Ok(Vec::new());
                 }
                 // The home this connection proved, if it proved one, sent these bytes.

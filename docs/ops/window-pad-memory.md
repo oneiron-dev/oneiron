@@ -25,7 +25,15 @@ cannot be allocated, the existing transport storage-error path reports it.
 Nothing from that incomplete delivery imports or earns a receipt. No new
 memory cap, retry timer, protocol tag, cursor or durability state is introduced.
 
-This accounting covers the received wire buffer and owned decoded fields.
-Source-projection and Loro internals, outbound frames, and deferred federation
-or review copies have their own lifetimes and are not covered by this lease.
-The separate federation logical-update size checks are unchanged.
+For a federated UPDATE, native owned payload bytes and their existing lease move
+into retained work together. Retained-work clones share that same byte buffer
+and lease. The ordinary borrowed federation import door still admits and copies
+its input. Control frames and non-federated window imports keep their existing
+borrowed path.
+
+This accounting covers the received wire buffer and owned decoded fields, plus
+the same original payload when it moves into retained federation work.
+Source-projection and Loro internals, outbound frames, separate admitted-part
+buffers, encoded queue rows and review copies have their own lifetimes. Moving
+the original payload does not account for their internal allocations. The
+separate federation logical-update size checks are unchanged.
