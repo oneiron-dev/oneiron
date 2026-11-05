@@ -82,6 +82,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod disclosure_doors;
+mod drafter_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
 mod embedding_space_doors;

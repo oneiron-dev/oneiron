@@ -474,6 +474,12 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersListAs,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
+    VaultDraftersRevertAs,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -1731,6 +1737,12 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
         Self::VaultCoachTrainingOffersSources,
+        Self::VaultDraftersList,
+        Self::VaultDraftersListAs,
+        Self::VaultDraftersStatus,
+        Self::VaultDraftersPolicySet,
+        Self::VaultDraftersRevert,
+        Self::VaultDraftersRevertAs,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -3007,6 +3019,12 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
             Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
+            Self::VaultDraftersList => "vault.drafters.list",
+            Self::VaultDraftersListAs => "vault.drafters.list_as",
+            Self::VaultDraftersStatus => "vault.drafters.status",
+            Self::VaultDraftersPolicySet => "vault.drafters.policy.set",
+            Self::VaultDraftersRevert => "vault.drafters.revert",
+            Self::VaultDraftersRevertAs => "vault.drafters.revert_as",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -4284,6 +4302,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -5570,6 +5594,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -6396,6 +6426,8 @@ impl AgentVerb {
                 | Self::VaultEvalsLabelsBlocked
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersCandidates
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultRootsRequestsList
                 | Self::VaultLegalHoldsList
@@ -7000,6 +7032,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -7990,6 +8028,9 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersCandidatesPrepare
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -8970,6 +9011,12 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultDraftersList => &["spec"],
+            Self::VaultDraftersListAs => &["spec"],
+            Self::VaultDraftersStatus => &["spec"],
+            Self::VaultDraftersPolicySet => &["spec"],
+            Self::VaultDraftersRevert => &["spec"],
+            Self::VaultDraftersRevertAs => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -10228,6 +10275,12 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultDraftersList => &["spec"],
+            Self::VaultDraftersListAs => &["spec"],
+            Self::VaultDraftersStatus => &["spec"],
+            Self::VaultDraftersPolicySet => &["spec"],
+            Self::VaultDraftersRevert => &["spec"],
+            Self::VaultDraftersRevertAs => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -12410,6 +12463,24 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersSources => {
                 "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
+            }
+            Self::VaultDraftersList => {
+                "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."
+            }
+            Self::VaultDraftersListAs => {
+                "An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."
+            }
+            Self::VaultDraftersStatus => {
+                "The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."
+            }
+            Self::VaultDraftersPolicySet => {
+                "The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."
+            }
+            Self::VaultDraftersRevert => {
+                "The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."
+            }
+            Self::VaultDraftersRevertAs => {
+                "An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."
             }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."

@@ -27,6 +27,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::INGEST_DOCS_DEEP_RECEIPT, CONTENT),
     (&t::INGEST_DOCS_EXTRACTION, CONTENT),
     (&t::INGEST_DOCS_MEMBERSHIP, CONTENT),
+    // FIX 12569: the drafter's pointers, events, policy and versions stand as
+    // the live vault holds them: no image brings back an erased version, an
+    // older pointer or a policy the owner changed since.
+    (&t::DRAFTER_BINDING, LIVE),
+    (&t::DRAFTER_EVENT, LIVE),
+    (&t::DRAFTER_POLICY, LIVE),
+    (&t::DRAFTER_VERSION, LIVE),
     (&t::DREAMER_DETACHED_STEP, CONTENT),
     (&t::DREAMER_AUTHORITY_ACTOR, MACHINE_IDENTITIES),
     (&t::DREAMER_AUTHORITY_ATTEMPT, CONTENT),
