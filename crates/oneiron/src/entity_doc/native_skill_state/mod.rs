@@ -21,6 +21,7 @@ pub(super) use checkpoint::{
     validate_image_history,
 };
 pub(super) use inherited::reconcile_for_persist;
+pub(super) use inspect::{NativeMapInventory, inspect as inspect_inventory};
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
 pub(crate) use request::SkillStateSnapshot;
