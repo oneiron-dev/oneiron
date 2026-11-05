@@ -294,7 +294,22 @@ pub(super) fn from_doc(
     birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, title, mut authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    if live {
+        let author = birth_actor.map(id).transpose()?.map_or(
+            crate::note::NoteActor::Erased,
+            crate::note::NoteActor::Actor,
+        );
+        // Canonical values bind only an existing birth to this actual core.
+        // Rebuilding native history removes its author literal again.
+        for record in &mut authorship {
+            if record.operation.as_bytes() == &entity_id
+                && record.actor == crate::note::NoteActor::Erased
+            {
+                record.actor = author;
+            }
+        }
+    }
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
