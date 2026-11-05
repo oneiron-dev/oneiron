@@ -77,8 +77,8 @@ pub use delete::{
 pub use erase::CorruptClaimRepair;
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
-    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
-    LEGAL_HOLD_SELF_HOSTED_NOTE, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
+    LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
+    LIFT_AND_ERASE_TITLE, LegalHold,
     LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance,
     LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit, LiftAndEraseOutcome,
     LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
