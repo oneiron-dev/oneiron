@@ -7201,6 +7201,8 @@ pub enum ForceCancelGrounds {
     LeaseExpiry,
     #[serde(rename = "criticality")]
     Criticality,
+    #[serde(rename = "erased_payload")]
+    ErasedPayload,
 }
 
 /// `oneiron::store::attempt_cancel::AttemptResumePoint`.
