@@ -76,8 +76,8 @@ pub use self::family::{
     ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,
 };
 pub(crate) use self::holders::{
-    artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
-    held_content_hashes_in_txn,
+    LocalHashVersion, artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
+    held_content_hashes_in_txn, local_hash_versions_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
