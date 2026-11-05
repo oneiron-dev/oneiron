@@ -182,9 +182,10 @@ impl SessionBinding<'_> {
     /// the body's row is written all the same. On an on-record stretch the
     /// same transaction publishes the body in base as run `owner`'s
     /// occurrence, as a canonical raw put does: the row takes no hold of its
-    /// own and a hold it kept before stays (FIX 7363). Off record, and where
-    /// `raw_put_publishes_descriptor` keeps the put as it was, no descriptor
-    /// holds the body, so its row holds it on its own (FIX 5399b).
+    /// own and a hold it kept before stays (FIX 7363). Off record the same
+    /// occurrence is published only in the room's overlay (FIX 15865).
+    /// Where `raw_put_publishes_descriptor` keeps the put as it was, no
+    /// descriptor holds the body, so its row holds it on its own (FIX 5399b).
     pub(super) fn put_output_row(
         &self,
         finished: &super::super::records::FinishedOutput,
@@ -225,8 +226,8 @@ impl SessionBinding<'_> {
                     }
                     // On an on-record stretch the run's descriptor is published
                     // in base beside the row, with no second body key, custody
-                    // pin or secret mark (FIX 7363). An overlay row carries
-                    // none: a room save takes no overlay descriptor to base.
+                    // pin or secret mark (FIX 7363). An off-record descriptor
+                    // stays in the overlay; a saved MESSAGE owns its own copy.
                     let published = match write {
                         RoutedDbs::Base(vault) => {
                             let body = owned_body(owner, output, &finished.body)?;
@@ -236,9 +237,22 @@ impl SessionBinding<'_> {
                         }
                         RoutedDbs::Session(_) => None,
                     };
-                    let held = published.is_none()
+                    let session_body = match write {
+                        RoutedDbs::Session(view) => owned_body(owner, output, &finished.body)
+                            .ok()
+                            .filter(|body| {
+                                let prior = owned_body_in_txn(view, txn, &owner, &body.occurrence);
+                                raw_put_publishes_descriptor(&prior, body)
+                            })
+                            .map(|body| (view, body)),
+                        RoutedDbs::Base(_) => None,
+                    };
+                    let held = (published.is_none() && session_body.is_none())
                         || code_run_body_held_in_txn(&write, txn, &output.raw_blake3)?;
                     RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
+                    if let Some((view, body)) = session_body {
+                        publish_body_in_txn(view, txn, &body)?;
+                    }
                     match published {
                         Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),
                         None => Ok(()),
