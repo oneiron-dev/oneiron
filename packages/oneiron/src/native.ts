@@ -1240,6 +1240,7 @@ vaultMailThreadsUnshare(input: unknown): unknown
 vaultMailComplianceSetting(input: unknown): unknown
 vaultMailComplianceSet(input: unknown): unknown
 vaultMailComplianceLog(input: unknown): unknown
+vaultMailSourcesSyncStatus(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

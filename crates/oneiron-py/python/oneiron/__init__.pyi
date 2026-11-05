@@ -3605,6 +3605,8 @@ class Oneiron:
         def members(self) -> "Oneiron._VaultMailSourcesMembersVerbs": ...
         def audience_events(self, spec: Facade.MailSourceRef) -> list[Facade.SourceAudienceEventView]:
             """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
+        def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
+            """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""

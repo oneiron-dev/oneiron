@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1243 facade rows, 4509 declarations.
-Inputs: 1174 of 1243 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1078 of 1243 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1244 facade rows, 4510 declarations.
+Inputs: 1175 of 1244 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1079 of 1244 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -22478,6 +22478,16 @@ class MailComplianceEventView(TypedDict):
     purpose: str
     query_digest: NotRequired[str | None]
     result_count: NotRequired[int | None]
+class MailSyncStatusView(TypedDict):
+    source_ref: str
+    live: bool
+    copy_done: bool
+    landed: int
+    bodies: int
+    bodies_waiting: int
+    deleted_at_provider: int
+    last_step_at: NotRequired[int | None]
+    last_error: NotRequired[str | None]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

@@ -22,26 +22,37 @@
 //!
 //! Each source keeps the owner's "Keep a copy of my mail" setting (all mail,
 //! the default; recent months; search only) and "When I delete at the
-//! provider" setting (keep in memory, the default; forget too). Provider
-//! adapters land per provider row, Google Workspace first.
+//! provider" setting (keep in memory, the default; forget too). The importer
+//! ([`importer`]) copies a mailbox through a host's provider wire ([`wire`]),
+//! newest first, headers before bodies, live through the provider's change
+//! feed; each message lands as imported evidence bound to its thread's
+//! audience ([`landing`]), and a provider delete applies the source's setting
+//! ([`provider_delete`]). Provider wires land per provider row, Google
+//! Workspace first.
 
 mod compliance;
 mod doors;
+mod importer;
+mod landing;
 mod pack;
+mod provider_delete;
 mod share;
 mod source;
+mod state;
+mod wire;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
+pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceSetRequest,
     MailComplianceSettingView,
 };
-pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub(crate) use doors::erase_source_actor_in_txn;
 pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub use importer::{MailSyncBudget, MailSyncReport};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
@@ -49,4 +60,9 @@ pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
     MailSourceKind, MailSourceStatus, MailSourceView,
+};
+pub use state::{MailPresence, MailStage, MailSyncStatusView};
+pub use wire::{
+    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
+    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
 };

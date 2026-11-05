@@ -6753,6 +6753,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.mail.sources.sync_status",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -19153,6 +19157,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.sources.sync_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23490,6 +23501,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.compliance.log" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.mail.sources.sync_status" => {
+            let _input: crate::mail_pack::MailSourceRef = decode(value.clone())?;
+        }
         "connector.answer" => {
             let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
         }
@@ -26059,6 +26073,9 @@ pub fn invoke(
         }
         "vault.mail.compliance.set" => encode(vault_mail_compliance_set(memory, decode(value)?)?),
         "vault.mail.compliance.log" => encode(vault_mail_compliance_log(memory, decode(value)?)?),
+        "vault.mail.sources.sync_status" => {
+            encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
+        }
         "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
         "self.browser.observe" => encode(self_browser_observe(memory, decode(value)?)?),
@@ -36577,6 +36594,12 @@ pub fn vault_mail_compliance_log(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::mail_pack::MailComplianceEventView>> {
     memory.mail_compliance_log()
+}
+pub fn vault_mail_sources_sync_status(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceRef,
+) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
+    memory.mail_sources_sync_status(&input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,

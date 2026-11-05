@@ -1323,6 +1323,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.compliance.setting", post(facade_route))
         .route("/vault.mail.compliance.set", post(facade_route))
         .route("/vault.mail.compliance.log", post(facade_route))
+        .route("/vault.mail.sources.sync_status", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

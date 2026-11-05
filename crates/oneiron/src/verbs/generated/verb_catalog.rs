@@ -1231,6 +1231,7 @@ pub enum AgentVerb {
     VaultMailComplianceSetting,
     VaultMailComplianceSet,
     VaultMailComplianceLog,
+    VaultMailSourcesSyncStatus,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2499,6 +2500,7 @@ impl AgentVerb {
         Self::VaultMailComplianceSetting,
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
+        Self::VaultMailSourcesSyncStatus,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3804,6 +3806,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => "vault.mail.compliance.setting",
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
+            Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -5052,6 +5055,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6349,6 +6353,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7738,6 +7743,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -9803,6 +9809,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
+            Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11072,6 +11079,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
+            Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14711,6 +14719,9 @@ impl AgentVerb {
             }
             Self::VaultMailComplianceLog => {
                 "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."
+            }
+            Self::VaultMailSourcesSyncStatus => {
+                "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

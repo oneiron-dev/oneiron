@@ -5780,6 +5780,9 @@ class Oneiron:
         def audience_events(self, spec):
             """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_audience_events(json.dumps(spec))))
+        def sync_status(self, spec):
+            """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

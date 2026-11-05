@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1243 facade rows, 4508 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1195.
+// UniFFI census: 1244 facade rows, 4509 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1196.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -69736,6 +69736,38 @@ pub struct MailComplianceEventView {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_count: Option<u64>,
+}
+
+/// `oneiron::mail_pack::state::MailSyncStatusView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailSyncStatusView {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "live")]
+    pub live: bool,
+    #[serde(rename = "copy_done")]
+    pub copy_done: bool,
+    #[serde(rename = "landed")]
+    pub landed: u64,
+    #[serde(rename = "bodies")]
+    pub bodies: u64,
+    #[serde(rename = "bodies_waiting")]
+    pub bodies_waiting: u64,
+    #[serde(rename = "deleted_at_provider")]
+    pub deleted_at_provider: u64,
+    #[serde(
+        rename = "last_step_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_step_at: Option<u64>,
+    #[serde(
+        rename = "last_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_error: Option<String>,
 }
 
 /// `oneiron::code_run::dispatcher::connector_answer::ConnectorAnswerAction`.
