@@ -26,7 +26,7 @@ struct ReadWait {
 enum Credential {
     Slip {
         vault: Arc<oneiron::Vault>,
-        slip_id: [u8; 32],
+        slip: Arc<oneiron::authority::VerifiedSlip>,
     },
     AccountKey(Arc<AtomicBool>),
 }
@@ -44,8 +44,11 @@ pub(super) fn with_body_revocation<F: Future>(
 
 /// Attaches only the native identity from the request's admitted holder proof
 /// and the owned vault that verified it. Outside a TCP body this does nothing.
-pub(crate) fn attach_body_slip(vault: Arc<oneiron::Vault>, slip_id: [u8; 32]) {
-    attach(Credential::Slip { vault, slip_id });
+pub(crate) fn attach_body_slip(
+    vault: Arc<oneiron::Vault>,
+    slip: Arc<oneiron::authority::VerifiedSlip>,
+) {
+    attach(Credential::Slip { vault, slip });
 }
 
 /// The latch was registered by the exact verifier that accepted this key.
@@ -100,21 +103,18 @@ impl BodyRevocation {
     /// One current fold read for a frame already received. A fault is unknown,
     /// not a revocation; the caller keeps the frame in that case.
     pub(super) fn check_slip(&self) -> Option<JoinHandle<bool>> {
-        let Credential::Slip { vault, slip_id } = self.0.credential.get()? else {
+        let Credential::Slip { vault, slip } = self.0.credential.get()? else {
             return None;
         };
         let vault = Arc::clone(vault);
-        let slip_id = *slip_id;
+        let slip = Arc::clone(slip);
         self.0
             .read_wait
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .started = Some(Instant::now());
         Some(tokio::task::spawn_blocking(move || {
-            matches!(
-                vault.capability_slip_is_explicitly_revoked(&slip_id),
-                Ok(true)
-            )
+            matches!(vault.capability_slip_is_explicitly_revoked(&slip), Ok(true))
         }))
     }
 }

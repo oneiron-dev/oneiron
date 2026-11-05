@@ -231,7 +231,7 @@ fn admit_binding(
                 if let Some(slip) = auth.verified_slip() {
                     crate::http_listener::attach_body_slip(
                         Arc::clone(server.vault()),
-                        slip.claims().slip_id,
+                        Arc::new(slip.clone()),
                     );
                 }
                 machine =
