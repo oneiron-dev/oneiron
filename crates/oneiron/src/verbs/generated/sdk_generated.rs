@@ -9012,7 +9012,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Option<crate::skill_optimize::offer_doors::OfferPassResult>,
         >(),
         "vault.coach.training_offers.answer" => crate::code_run::vault_read::request_schema::<
-            crate::skill_optimize::OfferAnswerRecord,
+            crate::skill_optimize::offer_doors::OfferAnswerReply,
         >(),
         "vault.coach.training_offers.undo" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::offer_doors::OfferUndoReceipt,
@@ -30080,7 +30080,7 @@ pub fn vault_coach_training_offers_result(
 pub fn vault_coach_training_offers_answer(
     memory: &Memory<'_>,
     input: crate::skill_optimize::offer_doors::OfferAnswerRequest,
-) -> MemoryResult<crate::skill_optimize::OfferAnswerRecord> {
+) -> MemoryResult<crate::skill_optimize::offer_doors::OfferAnswerReply> {
     crate::skill_optimize::offer_doors::answer(
         memory.vault(),
         &memory.embedded_owner("vault.coach.training_offers.answer")?,
