@@ -54,6 +54,18 @@ const GUEST_ACTOR_KEYS: [&str; 4] = ["schema_version", "kind", "name", "origin_v
 /// reached in practice; the mint refuses past it.
 const GUEST_ACTOR_GENERATIONS: u64 = 1024;
 
+/// A person's authenticated choice to release this local Connect grant when
+/// they leave one shared vault. The mint's Owner still authorizes the grant;
+/// this separate proof chooses its member-leave binding, not its scope or peer.
+/// Both proofs must belong to this vault and hold in the minting writer.
+pub struct ConnectMemberLeaveConsent<'proof> {
+    /// The shared vault whose genuine member departure releases the grant.
+    pub shared_vault_id: u64,
+    /// The member making the local release choice. This can be the minting
+    /// Owner, as on the served Owner door, or a distinct authenticated person.
+    pub member: &'proof AuthenticatedOwner,
+}
+
 /// What [`Vault::mint_connect_grant`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectGrantMinted {
@@ -65,8 +77,8 @@ pub struct ConnectGrantMinted {
     pub resolved_scope: Scope,
     /// The second the grant stops conferring; `None` until revoked.
     pub expires_at: Option<u64>,
-    /// The detach-on-member-leave binding actually persisted, when the
-    /// minting owner chose one (FIX 12555).
+    /// The authenticated member's detach-on-member-leave binding actually
+    /// persisted by this Owner-authorized mint (FIX 12555).
     pub detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
 }
 
@@ -337,16 +349,18 @@ impl Vault {
     /// clamp); an expiry, when given, in the future. The grant names the
     /// peer's vault-resident guest actor, resolved or created here. It is
     /// inert until both owners' Connect makes its pact Active. With
-    /// `detach_vault`, the owner's local detach-on-member-leave setting for
-    /// one shared vault: the same writer proves the actor's live Owner
-    /// standing there and stores it (FIX 12555).
+    /// `detach`, the authenticated member's local detach-on-member-leave
+    /// setting for one shared vault: the same writer revalidates that person
+    /// and their membership before storing the binding (FIX 12555). A
+    /// distinct member consents to the release, never to minting authority;
+    /// the original Owner check and grant ceiling still apply.
     pub fn mint_connect_grant(
         &self,
         owner: &AuthenticatedOwner,
         peer_vault_id: AuthorityVaultId,
         authority_scope: Scope,
         expires_at: Option<u64>,
-        detach_vault: Option<u64>,
+        detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
         self.with_write_txn_grouped(|txn| {
             self.mint_connect_grant_in_txn(
@@ -355,7 +369,7 @@ impl Vault {
                 peer_vault_id,
                 authority_scope,
                 expires_at,
-                detach_vault,
+                detach,
             )
         })
     }
@@ -367,7 +381,7 @@ impl Vault {
         peer_vault_id: AuthorityVaultId,
         requested: Scope,
         expires_at: Option<u64>,
-        detach_vault: Option<u64>,
+        detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
         let actor = owner.revalidate_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
@@ -394,9 +408,9 @@ impl Vault {
         if expires_at.is_some_and(|expires| expires <= now) {
             return Err(refused("a Connect grant's expiry must be in the future"));
         }
-        let detach_on_member_leave = match detach_vault {
+        let detach_on_member_leave = match detach {
             None => None,
-            Some(vault_id) => Some(self.require_detach_binding_in_txn(txn, vault_id, actor)?),
+            Some(consent) => Some(self.require_detach_binding_in_txn(txn, consent, actor)?),
         };
         let resolved = requested.meet(&ceiling);
         let guest_actor = self.connect_guest_actor_in_txn(txn, &local, &peer_vault_id, now)?;
@@ -430,16 +444,17 @@ impl Vault {
         })
     }
 
-    /// The detach binding `actor`'s setting stores (FIX 12555): the shared
-    /// vault's creation names `vault_id`, and `actor` — this same writer's
-    /// revalidated owner — holds a live Owner grant there now. The setting
-    /// selects a later release; only this proof stores it.
+    /// Stores the person's own release setting in the Owner-authorized mint
+    /// (FIX 12555). The shared vault must be this vault's creation. The
+    /// original Owner-self choice keeps its roster check; a distinct person
+    /// must have actual current membership, not just a stored roster row.
     fn require_detach_binding_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        vault_id: u64,
-        actor: EntityId,
+        consent: ConnectMemberLeaveConsent<'_>,
+        minting_owner: EntityId,
     ) -> Result<ConnectMemberLeaveBinding> {
+        let vault_id = consent.shared_vault_id;
         if vault_id == 0 {
             return Err(refused("a detach setting names its shared vault"));
         }
@@ -447,13 +462,23 @@ impl Vault {
         if creation.as_ref().is_none_or(|row| row.vault_id != vault_id) {
             return Err(refused("a detach setting names this vault's shared vault"));
         }
-        let owner_here = self
-            .shared_members_in_txn(txn, vault_id)?
-            .into_iter()
-            .any(|(member, role)| member == actor && role == FederationGrantRole::Owner);
-        if !owner_here {
+        let actor = consent.member.revalidate_person_in_txn(self, txn)?;
+        if actor == minting_owner {
+            let owner_here = self
+                .shared_members_in_txn(txn, vault_id)?
+                .into_iter()
+                .any(|(member, role)| member == actor && role == FederationGrantRole::Owner);
+            if !owner_here {
+                return Err(refused(
+                    "a detach setting is the shared vault's live owner's choice",
+                ));
+            }
+        } else if !matches!(
+            self.membership_standing_in_txn(txn, vault_id, &actor)?,
+            Some(super::MembershipStanding::Member { .. })
+        ) {
             return Err(refused(
-                "a detach setting is the shared vault's live owner's choice",
+                "a detach setting is the shared vault's live member's choice",
             ));
         }
         Ok(ConnectMemberLeaveBinding {

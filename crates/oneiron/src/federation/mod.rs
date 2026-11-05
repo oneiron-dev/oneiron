@@ -24,7 +24,7 @@ pub(crate) use archive_delete::{
 #[allow(unused_imports)]
 pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::ConnectGrantMinted;
+pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent};
 pub(crate) use connect_grant::{
     grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
     require_one_connect_per_peer,
