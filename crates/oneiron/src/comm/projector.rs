@@ -608,7 +608,7 @@ fn apply_projector_rule_in_txn(
             };
             let new_id = if let Some(id) = original_head {
                 let Some(id) = super::born_touch::adopt_born_touch_head_in_txn(
-                    vault, wtxn, id, &value, admission,
+                    vault, wtxn, id, &value,
                 )? else {
                     return Ok(ProjectorIndexDelta::default());
                 };
