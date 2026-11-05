@@ -436,6 +436,7 @@ pub(super) fn fold_authority_log_once(
             checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy::default(),
             home_pick: super::home_pick::FoldedHomePick::default(),
             origin_cuts: super::origin_cut::FoldedOriginCuts::default(),
+            device_successions: super::device_succession::FoldedDeviceSuccessions::default(),
             conversation_training:
                 super::conversation_training::FoldedConversationTraining::default(),
             conversation_training_vault:
