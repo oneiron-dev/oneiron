@@ -149,10 +149,17 @@ fn table_prev(
     xref: usize,
     marker: usize,
     limits: &SealResourceLimits,
-) -> Option<Option<usize>> {
-    let (prev, work) = super::lex::table_prev_work(bytes.get(xref..marker)?).ok()?;
+) -> Result<Option<Option<usize>>, SealMemoryRefusal> {
+    let Some(section) = bytes.get(xref..marker) else {
+        return Ok(None);
+    };
+    let (prev, work) = match super::lex::table_prev_work(section, limits) {
+        Ok(value) => value,
+        Err(super::lex::LexError::Malformed) => return Ok(None),
+        Err(super::lex::LexError::Memory(refusal)) => return Err(refusal),
+    };
     limits.observed.note(Counter::StructuralWork, work);
-    Some(prev)
+    Ok(Some(prev))
 }
 
 fn section_prev(
@@ -161,12 +168,12 @@ fn section_prev(
     xref: usize,
     marker: usize,
     limits: &SealResourceLimits,
-) -> Option<Option<usize>> {
+) -> Result<Option<Option<usize>>, SealMemoryRefusal> {
     if bytes.get(xref..xref + 4) == Some(b"xref".as_slice()) {
         return table_prev(bytes, xref, marker, limits);
     }
     // For an xref stream the /Prev is in that stream object's parsed dict.
-    let stream = doc
+    let Some(stream) = doc
         .reference_table
         .entries
         .iter()
@@ -177,15 +184,18 @@ fn section_prev(
                     .and_then(|o| o.as_stream().ok())
             }
             _ => None,
-        })?;
+        })
+    else {
+        return Ok(None);
+    };
     if !matches!(stream.dict.get(b"Type"), Ok(Object::Name(n)) if n == b"XRef") {
-        return None;
+        return Ok(None);
     }
-    match stream.dict.get(b"Prev") {
-        Ok(Object::Integer(n)) => Some(Some(usize::try_from(*n).ok()?)),
+    Ok(match stream.dict.get(b"Prev") {
+        Ok(Object::Integer(n)) => usize::try_from(*n).ok().map(Some),
         Err(_) => Some(None),
         _ => None,
-    }
+    })
 }
 
 /// Return exact EOF ends in revision order, or no proof (`Ok(None)`). A
@@ -222,7 +232,7 @@ pub(crate) fn revision_ends(
         charged = charged.saturating_add(charge);
         limits.observed.note(Counter::Revisions, ends.len());
         limits.observed.note(Counter::PrefixBytes, work);
-        let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits) else {
+        let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits)? else {
             drop(ends);
             limits
                 .memory

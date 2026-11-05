@@ -39,6 +39,7 @@ impl From<LexError> for RevisionAnalysisError {
     fn from(err: LexError) -> Self {
         match err {
             LexError::Malformed => Self::Framing,
+            LexError::Memory(refusal) => Self::Memory(refusal),
         }
     }
 }
