@@ -235,6 +235,13 @@ impl AiMediaDoor for MediaDoor {
 }
 
 impl VoiceStreamDoor for MediaDoor {
+    fn release_stream(&self) -> LlmResult<()> {
+        match &self.phone {
+            Some(phone) => phone.agent(&self.vault).map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
     fn open_stream<'a>(
         &'a self,
         request: MediaRequest,
