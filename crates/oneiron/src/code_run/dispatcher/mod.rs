@@ -139,6 +139,8 @@ pub struct HostSelfDispatcher<'a> {
     /// start the host reads through it on its route (FIX 2594, FIX 7507);
     /// `None` until a host binds one. No guest call reaches it.
     bound_run: Option<EntityId>,
+    /// Actual host-bound write placement, never a requested read-world set.
+    birth_world: Option<EntityId>,
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
