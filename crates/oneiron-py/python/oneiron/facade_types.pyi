@@ -11910,12 +11910,37 @@ class ArtifactView(TypedDict):
 class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
     range: str
 class AnnotationLocatorDocx(TypedDict):
     format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorDocxStory(TypedDict):
+    format: Literal["docx_story"]
+    scope: DocxStoryScope
     para_path: str
     char_start: int
     char_end: int
@@ -11928,7 +11953,7 @@ class AnnotationLocatorHtml(TypedDict):
     part_id: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorDocxStory | AnnotationLocatorPptx | AnnotationLocatorHtml
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -19251,25 +19276,6 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
-DocxHeaderFooterBand = Literal["default", "first", "even"]
-class DocxStoryScopeHeader(TypedDict):
-    kind: Literal["header"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFooter(TypedDict):
-    kind: Literal["footer"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFootnote(TypedDict):
-    kind: Literal["footnote"]
-    id: str
-class DocxStoryScopeEndnote(TypedDict):
-    kind: Literal["endnote"]
-    id: str
-class DocxStoryScopeComment(TypedDict):
-    kind: Literal["comment"]
-    id: str
-DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class DocxStoryParagraphView(TypedDict):
     id: str
     locked: bool

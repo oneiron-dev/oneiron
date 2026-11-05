@@ -631,9 +631,10 @@ fn plan_reanchored_head(
         Locator::Pptx { .. } => {
             pptx.map_or(ReanchorOutcome::Drifted, |context| context.rebind(thread))
         }
-        Locator::Docx { .. } => docx.map_or(ReanchorOutcome::Drifted, |context| {
-            context.rebind(&thread.anchor.locator)
-        }),
+        Locator::Docx { .. } | Locator::DocxStory { .. } => docx
+            .map_or(ReanchorOutcome::Drifted, |context| {
+                context.rebind(&thread.anchor.locator)
+            }),
         Locator::Html { .. } => html.map_or(ReanchorOutcome::Drifted, |context| {
             context.rebind(&thread.anchor.locator)
         }),

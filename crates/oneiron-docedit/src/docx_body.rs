@@ -19,7 +19,9 @@ use projection::{apply_built, group_ops, native};
 use std::collections::HashMap;
 use stemma::edit::EditTransaction;
 use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TextMark, TrackStatus};
-pub use stories::{DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body};
+pub use stories::{
+    DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body, story_anchor_blocks,
+};
 
 /// One top-level block of the imported document, in document order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

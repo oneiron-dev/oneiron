@@ -118,8 +118,10 @@ impl Memory<'_> {
         })?;
         let matches = matches!(
             (format, &locator),
-            (UnitFormat::Docx, Locator::Docx { .. })
-                | (UnitFormat::Xlsx, Locator::Xlsx { .. })
+            (
+                UnitFormat::Docx,
+                Locator::Docx { .. } | Locator::DocxStory { .. }
+            ) | (UnitFormat::Xlsx, Locator::Xlsx { .. })
                 | (UnitFormat::Pptx, Locator::Pptx { .. })
                 | (UnitFormat::Html, Locator::Html { .. })
         );
