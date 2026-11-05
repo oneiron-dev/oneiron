@@ -76,6 +76,7 @@ pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+mod skill_default;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;

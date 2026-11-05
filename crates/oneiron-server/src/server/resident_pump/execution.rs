@@ -7,14 +7,14 @@ use super::{
     AttemptQueue, AttemptRecord, BoundRun, Claimed, DecisionHost, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorStatus, EngineRunError, EntityId, HostPlannerBinding,
     HostPlannerDecisions, HostSelfDispatcher, LeaderStarterSkills, McpCodeModeProvider, ModelId,
-    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills,
-    ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
-    SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
-    TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
-    ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
-    note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
-    run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
+    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills, ReadSetProducer,
+    ReaderSeats, RunCompaction, RunHostDoor, SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask,
+    SpawnHostSeat, SpendScopeId, SyncServer, TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE,
+    Vault, WINDOW_FULL_TRIES, WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor,
+    browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
+    finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
+    pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
+    task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
 
@@ -208,12 +208,10 @@ pub(super) fn run_bound(
     // it marked for a contribution check (FIX 3028). A continued run loads
     // it too, and its task already holds the body: it is tagged where its
     // source's append put it.
-    let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     let mut exposures: Vec<TaskExposure> = leader.into_iter().collect();
     if let Some(skill) = AgentDispatcher::new(vault)
-        .prepare_project_conversation_run(
+        .prepare_default_project_conversation_run(
             &status.attempt,
-            &skills,
             config.model.as_str(),
             unix_now(),
         )
