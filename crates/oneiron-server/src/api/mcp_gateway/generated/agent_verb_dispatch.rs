@@ -350,6 +350,11 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.owner.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.item.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.item.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.report" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.lens" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.digest" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.link.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.item.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.list" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.put" => a.spec.clone().ok_or_else(invalid),
@@ -2196,6 +2201,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.owner.item.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.report" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.lens" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.digest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.link.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.item.wrong" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.enqueue" => {
@@ -8756,6 +8776,100 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.admin.report" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.admin.report", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::WeaveAdminReportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_admin_report(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.admin.lens" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.admin.lens", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::WeaveAdminLensRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_weave_admin_lens(
+                    server,
+                    auth,
+                    actor.client_surface.clone(),
+                    input,
+                ))
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.admin.digest" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.admin.digest", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::WeaveAdminDigestRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_admin_digest(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.admin.link.wrong" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.admin.link.wrong", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::WeaveAdminLinkWrongRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_admin_link_wrong(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.admin.item.wrong" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.admin.item.wrong", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::WeaveAdminItemWrongRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_admin_item_wrong(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

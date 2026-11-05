@@ -6,9 +6,9 @@
 //! grant over this shared vault, and to the [`AdminStepUp`] witness that
 //! person's step-up left. Canon: an Admin cannot skip MFA, because any one
 //! admin can act alone (ARCH-0043, MFA-1 A, 2026-10-09). Only real step-up
-//! ingress may mint the witness, and none exists yet: the witness has no
-//! public constructor, so no served route can present an Admin proof until
-//! that ingress lands (FIX-LIST `[→L13]`).
+//! ingress may mint the witness: it has no public constructor, and its one
+//! producer is the passkey step-up verifier, [`Vault::admin_step_up`]
+//! (`authority::step_up`, FIX 11694).
 //!
 //! The proof only ADDS a path. A Person, Owner or Agent read never asks for
 //! it, and a live vault Owner, co-Owners included, never needs it: an
@@ -55,8 +55,8 @@ const WEAVE_ADMIN_READ_VERB: &str = "read";
 /// The witness one person's MFA step-up leaves: whose step-up, over which
 /// request instrument, and when. Opaque: no caller JSON, flag or field
 /// builds one. The only constructor is the crate-internal seam
-/// [`AdminStepUp::after_step_up`], which real step-up ingress fills once it
-/// exists (FIX-LIST `[→L13]`); until then nothing mints one.
+/// [`AdminStepUp::after_step_up`], which only the passkey step-up verifier
+/// calls ([`Vault::admin_step_up`], FIX 11694).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminStepUp {
     holder: EntityId,

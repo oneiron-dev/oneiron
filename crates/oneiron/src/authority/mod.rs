@@ -369,6 +369,8 @@ pub use step_up::{
     EnrolledPasskey, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
     STEP_UP_REFUSED, STEP_UP_REQUIRED, StepUpCeremony, StepUpChallenge, StepUpDone, StepUpFactor,
+    WeaveAdminDigestRequest, WeaveAdminItemWrongRequest, WeaveAdminLensRequest,
+    WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
 };
 pub(crate) use step_up::{
     erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
