@@ -14,8 +14,8 @@ use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::Result;
 use crate::llm::{
-    BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
-    LabelSet, LlmResult, LlmUsage, joint_marginals,
+    BudgetGuard, BudgetLease, LabelReadDistribution, LabelReadModel, LabelReadRequest, LabelReadResponse,
+    LabelReadout, LabelSet, LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use std::time::Instant;
@@ -237,10 +237,10 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             }
         };
         let unit = |p: &f64| p.is_finite() && (0.0..=1.0).contains(p);
-        let distribution = |(readout, question): (&Vec<f64>, &LabelReadout<'_>)| {
-            readout.len() == question.width()
-                && readout.iter().all(unit)
-                && (readout.iter().sum::<f64>() - 1.0).abs() <= DISTRIBUTION_TOLERANCE
+        let distribution = |(readout, question): (&LabelReadDistribution, &LabelReadout<'_>)| {
+            readout.probabilities.len() == question.width()
+                && readout.probabilities.iter().all(unit)
+                && (readout.probabilities.iter().sum::<f64>() - 1.0).abs() <= DISTRIBUTION_TOLERANCE
         };
         if read.readouts.len() != questions.len()
             || !read.readouts.iter().zip(&questions).all(distribution)
@@ -255,7 +255,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 // A joint readout's marginals: the labels', then this answer's paired P(yes).
                 let (labels, paired) = match question.paired {
                     Some(_) => {
-                        let (labels, paired) = joint_marginals(readout);
+                        let (labels, paired) = joint_marginals(&readout.probabilities);
                         let paired = PairedAnswer {
                             question: self.paired.id,
                             question_version: self.paired.version,
@@ -263,7 +263,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                         };
                         (labels, Some(paired))
                     }
-                    None => (readout.clone(), None),
+                    None => (readout.probabilities.clone(), None),
                 };
                 // The first label wins a tie, so a tied noul reads yes.
                 let mut top = 0;
@@ -293,7 +293,11 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     paired,
                     person: None,
                     served: None,
-                    cost_per_thousand: None,
+                    cost_per_thousand: Some(
+                        readout
+                            .cost_per_thousand
+                            .filter(|cost| cost.is_finite() && *cost >= 0.0),
+                    ),
                 }
             })
             .collect();

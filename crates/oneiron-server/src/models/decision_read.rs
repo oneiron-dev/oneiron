@@ -33,9 +33,9 @@ use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, WorkPhysical};
 use oneiron::llm::{
-    BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    BudgetLease, CacheDigest, FatalLlmError, LabelReadDistribution, LabelReadFailure, LabelReadModel,
+    LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage,
+    LlmResult, LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -477,17 +477,31 @@ impl DecisionReader {
             let mut readout = normalized(&logprobs?);
             // A plain readout reports yes, then no, whichever the prompt lists
             // first; a joint one lists yes first already.
-            if question.labels == LabelSet::Noul && question.paired.is_none() && self.recipe.no_first()
+            if question.labels == LabelSet::Noul
+                && question.paired.is_none()
+                && self.recipe.no_first()
             {
                 readout.reverse();
             }
-            readouts.push(readout);
             let answering = self.answering(&reply).await;
             let usage = usage(&reply, answering.as_ref(), mode.as_ref(), physical)?;
-            reads.push(match spent {
-                Some(first) => retried(first, usage),
-                None => usage,
+            let measured = usage.measured && spent.as_ref().is_none_or(|first| first.measured);
+            let usage = match spent {
+                Some(first) => retried(first.usage, usage.usage),
+                None => usage.usage,
+            };
+            let cost_per_thousand = if self.leaves && measured {
+                self.host
+                    .get()
+                    .and_then(|host| host.cost_per_thousand(&self.engine, &usage))
+            } else {
+                None
+            };
+            readouts.push(LabelReadDistribution {
+                probabilities: readout,
+                cost_per_thousand,
             });
+            reads.push(usage);
         }
         Ok(LabelReadResponse {
             readouts,
@@ -529,15 +543,6 @@ impl LabelReadModel for DecisionReader {
     /// One label, or one joint label, per recipe token.
     fn max_labels(&self) -> usize {
         self.recipe.tokens().len()
-    }
-
-    /// A third-party rung's catalog price, from the served vault's registry row (FIX
-    /// 11408); none for a rung this host serves, or before a server binds the vault.
-    fn cost_per_thousand(&self) -> Option<f64> {
-        if !self.leaves {
-            return None;
-        }
-        self.host.get()?.cost_per_thousand(&self.engine)
     }
 
     /// Blocks on the server's runtime until the model answers, so it runs on
@@ -711,6 +716,11 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
     weights.iter().map(|weight| weight / total).collect()
 }
 
+struct ReadUsage {
+    usage: LlmUsage,
+    measured: bool,
+}
+
 /// Prompt tokens in, and at least the one position read out: a read that
 /// generates no text still costs its forward pass. An answer without both
 /// counts is refused, so its caller charges the read's reservation. Its
@@ -722,26 +732,31 @@ fn usage(
     answering: Option<&AnsweringIdentity>,
     execution: Option<&CacheDigest>,
     physical: Option<WorkPhysical>,
-) -> LlmResult<LlmUsage> {
+) -> LlmResult<ReadUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
     let (cache_read, raw_provider) = label_read(body, answering, execution, physical);
-    Ok(LlmUsage {
-        input: LlmInputUsage {
-            total: count("tokens_evaluated")?,
-            cache_read,
-            ..LlmInputUsage::default()
+    let input = count("tokens_evaluated")?;
+    let output = count("tokens_predicted")?;
+    Ok(ReadUsage {
+        measured: cache_read.is_some() && input > 0 && output > 0,
+        usage: LlmUsage {
+            input: LlmInputUsage {
+                total: input,
+                cache_read: cache_read.unwrap_or(0),
+                ..LlmInputUsage::default()
+            },
+            output: LlmOutputUsage {
+                total: output.max(1),
+                text: 0,
+                reasoning: 0,
+            },
+            raw_provider,
+            call_metadata: None,
         },
-        output: LlmOutputUsage {
-            total: count("tokens_predicted")?.max(1),
-            text: 0,
-            reasoning: 0,
-        },
-        raw_provider,
-        call_metadata: None,
     })
 }
 
