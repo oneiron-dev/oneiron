@@ -318,12 +318,18 @@ async fn memory_read_media(
         }
         Err(error) => return Err(media_error(error)),
     };
+    let (mut seed_memory, mut seeds) = (server.memory.empty_lease(), seeds);
+    seed_memory.materialized(
+        0,
+        (seeds.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+    );
     if seeds.is_empty() {
         return Ok(None);
     }
     Ok(Some(
         seeds
-            .into_iter()
+            .drain(..)
             .map(|seed| EmbeddedMediaSeed {
                 space: seed.space,
                 kind: seed.kind,
