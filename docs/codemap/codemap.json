@@ -41020,7 +41020,7 @@
      "path": "src/inference_snapshot/seal.rs",
      "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -49105,7 +49105,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
