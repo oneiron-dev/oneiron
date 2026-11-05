@@ -434,6 +434,8 @@ side_tables! {
     PORTS_CHANGE_BY_ACTOR: VaultMeta b"ports:change_actor:v1:" Raw;
     /// Change-log by entity index. Key: id16 + u64be + id16.
     PORTS_CHANGE_BY_ENTITY: VaultMeta b"ports:change_entity:v1:" Raw;
+    /// Highest observed CLAIM origin-write version, big-endian u64. Key: ().
+    PORTS_CLAIM_ROW_FLOOR: VaultMeta b"ports:claim_row_floor:v1" Raw;
     /// Recorded-at clock floor. Key: ().
     PORTS_CLOCK_FLOOR: VaultMeta b"ports:clock_floor:v1" Raw;
     /// Derived entity dependency. Key: id16 + u64be + id16.

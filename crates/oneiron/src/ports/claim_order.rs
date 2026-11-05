@@ -6,7 +6,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{ManifestDbs, Store, StoreRead};
 use crate::{EntityId, Error, Result, TimeRange};
 
-pub(crate) const CLAIM_ROW_FLOOR: &[u8] = b"ports:claim_row_floor:v1";
+pub(crate) const CLAIM_ROW_FLOOR: &[u8] = crate::side_table::PORTS_CLAIM_ROW_FLOOR.prefix;
 
 pub(crate) fn decode_floor(bytes: Option<&[u8]>) -> Result<u64> {
     bytes.map_or(Ok(0), |bytes| {
