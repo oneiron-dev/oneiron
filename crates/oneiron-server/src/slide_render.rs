@@ -111,11 +111,12 @@ impl LibreOfficeSlides {
         let pdftoppm = on_path("pdftoppm")?;
         let scratch = Scratch::new(source).ok()?;
         let out = scratch.path.join("version");
+        let child_path = scratch.child_path();
         let mut version = scratch.command(&soffice).ok()?;
         version
-            .arg(profile_arg(&scratch.path))
+            .arg(profile_arg(&child_path))
             .arg("--version")
-            .env("TMPDIR", &scratch.path)
+            .env("TMPDIR", &child_path)
             .stdout(std::fs::File::create(&out).ok()?);
         // The one look keeps its own timeout: no caller's deadline or
         // leaving ends it, as its answer stands for every later render.
@@ -421,13 +422,15 @@ impl AdmittedRenderer {
         };
         let scratch = Scratch::new(&self.source)?;
         let input = scratch.path.join("deck.pptx");
+        let child_path = scratch.child_path();
+        let child_input = child_path.join("deck.pptx");
         let deck_bytes = u64::try_from(deck.len()).unwrap_or(u64::MAX);
         let writing = self.claim(deck_bytes)?;
         std::fs::write(&input, deck)?;
         drop(writing);
         let mut convert = scratch.command(&self.host.soffice)?;
         convert
-            .arg(profile_arg(&scratch.path))
+            .arg(profile_arg(&child_path))
             .args([
                 "--headless",
                 "--invisible",
@@ -439,10 +442,10 @@ impl AdmittedRenderer {
                 PDF_FILTER,
                 "--outdir",
             ])
-            .arg(&scratch.path)
-            .arg(&input)
+            .arg(&child_path)
+            .arg(&child_input)
             // LibreOffice's own temp files use the selected scratch filesystem.
-            .env("TMPDIR", &scratch.path)
+            .env("TMPDIR", &child_path)
             .stdout(Stdio::null());
         let exporting = self.claim(
             deck_bytes
@@ -454,18 +457,19 @@ impl AdmittedRenderer {
         self.ran(cut)?;
         self.floor_holds()?;
         let pdf = scratch.path.join("deck.pdf");
+        let child_pdf = child_path.join("deck.pdf");
         non_empty(&pdf)?;
         slides
             .iter()
             .map(|slide| {
-                let stem = scratch.path.join(format!("slide-{slide}"));
+                let stem = child_path.join(format!("slide-{slide}"));
                 let page = slide.to_string();
                 let mut raster = scratch.command(&self.host.pdftoppm)?;
                 raster
                     .args(["-png", "-singlefile", "-r"])
                     .arg(PAGE_DPI.to_string())
                     .args(["-f", &page, "-l", &page])
-                    .arg(&pdf)
+                    .arg(&child_pdf)
                     .arg(&stem)
                     .stdout(Stdio::null());
                 let rasterizing = self.claim(PAGE_DISK_BYTES)?;

@@ -103,10 +103,18 @@ impl Scratch {
         Ok(scratch)
     }
 
+    pub(super) fn child_path(&self) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = &self._directory {
+            return bounded::child_path(directory);
+        }
+        self.path.clone()
+    }
+
     pub(super) fn command(&self, program: &Path) -> io::Result<Command> {
         #[cfg(target_os = "linux")]
-        if self._directory.is_some() {
-            return bounded::command(program, &self.path);
+        if let Some(directory) = &self._directory {
+            return bounded::command(program, directory);
         }
         Ok(Command::new(program))
     }

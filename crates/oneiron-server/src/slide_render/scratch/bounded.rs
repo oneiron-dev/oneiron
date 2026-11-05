@@ -19,13 +19,19 @@ pub(super) fn directory(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// The engine retains the descriptor; an exec'd renderer need not retain it.
+/// The engine's I/O path; a confined child uses its own inherited descriptor.
 pub(super) fn pinned_path(directory: &File) -> PathBuf {
     PathBuf::from(format!(
         "/proc/{}/fd/{}",
         std::process::id(),
         directory.as_raw_fd()
     ))
+}
+
+/// Landlock permits a child to dereference its own descriptor, not its
+/// unconfined parent's descriptor through a ptrace-protected procfs link.
+pub(super) fn child_path(directory: &File) -> PathBuf {
+    PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()))
 }
 
 pub(super) fn source(path: &Path, disk: &DiskFloor) -> io::Result<Source> {
@@ -91,22 +97,26 @@ fn mount_id(directory: &File) -> io::Result<u64> {
         .ok_or_else(|| io::Error::other("renderer scratch descriptor has no mount identity"))
 }
 
-pub(super) fn command(program: &Path, scratch: &Path) -> io::Result<Command> {
-    // Keep the renderer's existing system/font/config reads. Only file-content
-    // writes are fenced; unmediated metadata operations are not a quota proof.
-    let ruleset =
-        oneiron_container::landlock_ruleset(&[Path::new("/")], &[scratch, Path::new("/dev/null")])?;
+pub(super) fn command(program: &Path, directory: &File) -> io::Result<Command> {
+    // Build against the engine's pinned directory before restricting the child.
+    let engine_path = pinned_path(directory);
+    let ruleset = oneiron_container::landlock_ruleset(
+        &[Path::new("/")],
+        &[engine_path.as_path(), Path::new("/dev/null")],
+    )?;
     let program = std::fs::canonicalize(program)?;
-    let mut command = oneiron_spawn::command(&program);
+    let fd = directory.as_raw_fd();
+    let mut command = oneiron_spawn::command_with_fds(&program, &[(fd, fd)]);
+    let scratch = child_path(directory);
     command
-        .current_dir(scratch)
-        .env("TMPDIR", scratch)
-        .env("TMP", scratch)
-        .env("TEMP", scratch)
-        .env("XDG_CACHE_HOME", scratch);
+        .current_dir(&scratch)
+        .env("TMPDIR", &scratch)
+        .env("TMP", &scratch)
+        .env("TEMP", &scratch)
+        .env("XDG_CACHE_HOME", &scratch);
     // SAFETY: the native restrict helper makes only prctl/restrict_self calls
-    // on the prebuilt descriptor. The earlier spawn hook marks inherited
-    // nonstdio descriptors CLOEXEC; restriction happens before exec closes them.
+    // on the prebuilt descriptor. The earlier spawn hook keeps only stdio and
+    // this scratch directory; restriction runs before exec closes the ruleset.
     unsafe {
         command.pre_exec(move || oneiron_container::landlock_restrict(ruleset.as_fd()));
     }

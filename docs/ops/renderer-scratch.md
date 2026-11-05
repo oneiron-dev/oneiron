@@ -36,13 +36,16 @@ configuration stable while the service runs.
 ## What the source path does
 
 The engine pins the root and each private scratch directory with open directory
-handles. Its I/O paths use `/proc/<engine-pid>/fd/<fd>` rather than re-opening a
+handles. Engine I/O uses `/proc/<engine-pid>/fd/<fd>` rather than re-opening a
 replaceable mount path. The handles live through child teardown and scratch
-cleanup. Every probe, deck, profile, PDF, PNG and temporary-file path uses the
-selected scratch. The version probe is included.
+cleanup. Each child inherits only its scratch-directory descriptor in addition
+to stdio. Every child argument, profile, cwd and temporary-file environment uses
+`/proc/self/fd/<fd>`: Landlock does not permit dereferencing its unconfined
+parent's descriptor links. Engine deck/PDF/PNG I/O keeps the parent-pinned path.
+The version probe is included.
 
 Opted-in children start through the existing descriptor-isolating spawn helper.
-They receive no engine nonstdio descriptors. An already-built native Landlock
+They receive no vault, call or credential descriptors. An already-built native Landlock
 ruleset is applied before exec and inherited by descendants. It permits the
 existing filesystem reads, but permits file-content writes only in the actual
 scratch directory and to `/dev/null`. Cwd, temporary directories and the XDG
