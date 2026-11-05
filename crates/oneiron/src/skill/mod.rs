@@ -18,6 +18,7 @@ pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
 mod pack_load;
+mod read;
 mod record;
 pub(crate) mod resident;
 mod role;
@@ -49,6 +50,7 @@ pub(crate) use self::loaded_revision::{
 };
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
+pub(crate) use self::read::{get_skill_record_on, read_skill_record_on};
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS,
     SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,

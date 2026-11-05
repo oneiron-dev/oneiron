@@ -4,7 +4,7 @@ use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::temporal::TimeRange;
 
-use super::codec::{decode_skill_record, encode_skill_record};
+use super::codec::encode_skill_record;
 use super::lifecycle::SkillLifecycle;
 use super::record::SkillRecord;
 use super::validate::validate_skill_update;
@@ -514,25 +514,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SkillRecord>> {
-        // A user delete may leave a type-7 tombstone shell whose erased body
-        // is not MessagePack. Return absence rather than decoding that shell.
-        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, id)?.deleted {
-            return Ok(None);
-        }
-        let Some(raw) = self.get_raw_in(txn, id)? else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "entity is not a type-7 SKILL",
-            )));
-        }
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        #[cfg(feature = "sync")]
-        let body = crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?;
-        decode_skill_record(&body).map(Some)
+        super::get_skill_record_on(&self.store, txn, id)
     }
 
     pub(crate) fn read_skill_record_in_txn(
@@ -540,22 +522,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<SkillRecord> {
-        let raw = self
-            .store
-            .port_entity_record(txn, id)?
-            .map(|row| row.encode())
-            .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "entity is not a type-7 SKILL",
-            )));
-        }
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        #[cfg(feature = "sync")]
-        let body = crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?;
-        decode_skill_record(&body)
+        super::read_skill_record_on(&self.store, txn, id)
     }
 
     /// Crate-private, and the ONE way an engine-authored state flip reaches a
