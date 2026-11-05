@@ -300,7 +300,7 @@ impl PipelineBuilder<'_> {
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
-        let mut _replay_inputs_memory = attempt.replay_inputs_memory;
+        let mut replay_inputs_memory = attempt.replay_inputs_memory;
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
@@ -383,7 +383,7 @@ impl PipelineBuilder<'_> {
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
-                _replay_inputs_memory = retry.replay_inputs_memory;
+                replay_inputs_memory = retry.replay_inputs_memory;
                 critical = retry.critical;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
@@ -446,6 +446,9 @@ impl PipelineBuilder<'_> {
             if let Some(inputs) = replay_inputs.as_mut() {
                 inputs.config["retrieval_policy"] = serde_json::to_value(&*policy)
                     .map_err(|_| Error::InvariantViolation("retrieval policy replay encode"))?;
+                if let Some(memory) = replay_inputs_memory.as_mut() {
+                    memory.track_config(&inputs.config);
+                }
             }
             if let Some(trace) = retrieval_trace.as_mut() {
                 use sha2::{Digest, Sha256};
