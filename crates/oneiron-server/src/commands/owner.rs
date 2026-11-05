@@ -34,6 +34,7 @@ mod doctor;
 mod pack_commands;
 mod recovery_commands;
 mod recovery_kit;
+mod reminder_route;
 mod secret_commands;
 mod secret_input;
 mod transfer_commands;
@@ -45,6 +46,7 @@ use self::doctor::doctor_report;
 pub use self::pack_commands::{packs, subscriptions};
 pub use self::recovery_commands::{backup, recover_clock, recover_window, restore};
 pub use self::recovery_kit::recovery_kit;
+pub use self::reminder_route::reminder_route;
 #[cfg(test)]
 use self::secret_commands::{read_secret_value, register_secret, rotate_secret};
 pub use self::secret_commands::{reveal_secret, revoke_secret, secret_scan, secrets};

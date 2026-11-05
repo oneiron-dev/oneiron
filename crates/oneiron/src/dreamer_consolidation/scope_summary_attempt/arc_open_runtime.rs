@@ -142,7 +142,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         readable: evidence.readable.clone(),
                         ..Scope::default()
                     },
-                    purpose: CallPurpose::Consolidation,
+                    purpose: CallPurpose::Extraction,
                     class: CallClass::Durable {
                         fallback: DeterministicFallback {
                             name: "json_rules_v1".into(),
@@ -150,7 +150,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         },
                     },
                     tier: TierPrecedence::for_purpose(
-                        &CallPurpose::Consolidation,
+                        &CallPurpose::Extraction,
                         ModelTierRef("consolidation".into()),
                     ),
                     response_format: ResponseFormat::Text,
