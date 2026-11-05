@@ -164,6 +164,18 @@ pub fn browser_approve_once_digest(facts: &BrowserConsentFacts) -> Result<Effect
     )
 }
 
+impl Vault {
+    /// Freezes the real browser send's policy beside its held code wait,
+    /// using the same pinned input builder as the effect's approval digest.
+    pub(crate) fn freeze_browser_code_consent_settlement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        facts: &BrowserConsentFacts,
+    ) -> Result<Option<super::code_settlement::FrozenCodeConsentSettlement>> {
+        self.freeze_code_consent_settlement_in_txn(txn, &browser_pinned_gate_input(facts))
+    }
+}
+
 /// The Gate input of one browser send of `facts`: its actor sending on the
 /// browser channel under its effect class, with the send's typed target
 /// beside it. The one place a browser send's pinned input is built.
