@@ -22,8 +22,9 @@ use crate::store::Store;
 /// a world it erased or of a pad row it erased, an erased credential's
 /// value and carrier keys (KS-6 part 2), matched by the credential's id as
 /// their items' first 16 bytes, and an erased actor's erasable keys (FIX
-/// 8875), matched by the actor as their parent.
-const ERASE_KINDS: [CustodyKind; 8] = [
+/// 8875), matched by the actor as their parent, and the checkpoint payload
+/// leaves of the entities and attachment occurrences it erased.
+const ERASE_KINDS: [CustodyKind; 9] = [
     CustodyKind::ClaimDecision,
     CustodyKind::KnownValueEntry,
     CustodyKind::BodyInstance,
@@ -32,6 +33,7 @@ const ERASE_KINDS: [CustodyKind; 8] = [
     CustodyKind::CustodyTransition,
     CustodyKind::CustodyRequestInput,
     CustodyKind::ErasableKey,
+    CustodyKind::CheckpointPayload,
 ];
 
 /// Whether `kind` is one an erased credential's id names (KS-6 part 2):
@@ -99,7 +101,8 @@ impl Store {
     /// record's claim key or known-value history, or for a pad of a world or
     /// pad row it erased, and each body instance the erase retired or owes
     /// (one another holder keeps waits on that holder, KS-2A), through the
-    /// newest generation it retires, and each erasable key of an actor it
+    /// newest generation it retires, the checkpoint leaves of its entity and
+    /// attachment occurrence compartments, and each erasable key of an actor it
     /// erased (FIX 8875). Each credential it fenced owes its whole erase
     /// too, under its value's name, even with no key found yet (KS-6 part
     /// 2): its discovery and every key its id names, as late as they are
@@ -133,6 +136,15 @@ impl Store {
                 let ours = match kind {
                     CustodyKind::BodyInstance => owed.contains_key(&intent.subject),
                     CustodyKind::WorldPad => pad_of(&records, intent.subject.item()),
+                    CustodyKind::CheckpointPayload => {
+                        use crate::store::checkpoint_payload::{PayloadItem, Subtype};
+                        PayloadItem::decode(intent.subject.item()).is_some_and(|item| {
+                            matches!(
+                                item.subtype(),
+                                Subtype::EntityTree | Subtype::AttachmentOccurrence
+                            ) && records.contains(&item.owner()[..16])
+                        })
+                    }
                     CustodyKind::ErasableKey => ErasableItem::parent_of(&intent.subject)
                         .is_some_and(|parent| records.contains(parent.as_slice())),
                     kind if credential_parent_kind(kind) => intent
