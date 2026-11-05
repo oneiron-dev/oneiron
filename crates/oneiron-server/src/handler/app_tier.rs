@@ -472,7 +472,9 @@ fn answer_app_message(
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
-            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?.queued(conn)
+            let own_machine_only = request.method == "residence.claim.vector";
+            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?
+                .queued_for_machine(conn, own_machine_only)
             {
                 direct_tx
                     .send(frame)

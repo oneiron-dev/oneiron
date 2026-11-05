@@ -655,7 +655,9 @@ impl Connection {
             }
             return None;
         }
-        if !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame) {
+        if self.own_machine_reply_stands(peer, routed)
+            && !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
+        {
             return Some(routed.frame.to_vec());
         }
         if !last {
@@ -734,6 +736,26 @@ impl Connection {
             })
             .collect();
         self.frames(pushes)
+    }
+}
+
+impl Connection {
+    fn own_machine_reply_stands(
+        &self,
+        peer: oneiron::authority::PeerMachine,
+        routed: &super::routing::Routed<'_>,
+    ) -> bool {
+        if routed.frame.first() != Some(&crate::protocol::TAG_RPC)
+            || routed.incarnation != super::routing::OWN_MACHINE_RPC_INCARNATION
+        {
+            return true;
+        }
+        self.hub.server.upgrade().is_some_and(|server| {
+            server
+                .vault()
+                .home_claim_vector_peer_stands(peer)
+                .unwrap_or(false)
+        })
     }
 }
 
