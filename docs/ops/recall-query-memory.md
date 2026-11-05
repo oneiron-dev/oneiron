@@ -1,4 +1,4 @@
-# Recall query-vector memory
+# Recall query-vector and text-slot input memory
 
 Server recalls record the backing storage of returned query vectors on the same
 machine-memory line used by the server's other work. The charge uses actual
@@ -23,9 +23,17 @@ This is post-allocation accounting. It does not reserve output space before a
 provider runs, wait for memory, change embedding admission or create a new sparse
 fallback. Light recalls and existing provider failures behave as before.
 
-This slice covers retained returned storage only. Input copies, temporary seed
-vectors, the borrowed `media_seeds` view vector, model weights, GPU memory,
-provider scratch, other recall allocations and a full working-set bound remain
-outside it. It does not establish queue fairness, pre-growth admission,
-cancellation, runtime performance or a machine-derived embedding-width floor.
-The separate semantic search request/probe owners are unchanged.
+The text-slot embedding call also records its original query-byte buffer. Its
+local lease starts before the copy, records the actual `Vec<u8>` capacity before
+embedding, and stays through the blocking runtime call. The bytes move into the
+provider request's text string without another allocation. The original buffer
+drops inside that call, including width retries, errors and unwinding. The
+provider receives deep copies; those copies are separate allocations, not part
+of this input charge. The input buffer and returned vectors have separate leases.
+
+Decoded-media input storage, other input copies, temporary seed vectors, the
+borrowed `media_seeds` view vector, model weights, GPU memory, provider scratch,
+other recall allocations and a full working-set bound remain outside this slice.
+It does not establish queue fairness, pre-growth admission, cancellation, runtime
+performance or a machine-derived embedding-width floor. The separate semantic
+search request/probe owners are unchanged.

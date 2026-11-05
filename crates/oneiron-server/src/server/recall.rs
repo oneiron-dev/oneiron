@@ -240,10 +240,13 @@ impl SyncServer {
             }
         };
         let embedded = self.media_embedder(space).and_then(|embedder| {
+            let mut input_memory = self.memory.empty_lease();
+            let bytes = query.as_bytes().to_vec();
+            input_memory.materialized(0, bytes.capacity() as u64);
             runtime.block_on(embedder.funded_by(payer.cloned()).embed_query(
                 InputKind::Text,
                 "text/plain",
-                query.as_bytes().to_vec(),
+                bytes,
             ))
         });
         match embedded {
