@@ -62,6 +62,7 @@ mod conflict_settle;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod core_write_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
@@ -175,7 +176,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, land_asset_blob_in_txn,
+    release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -296,6 +298,8 @@ pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
 pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,
@@ -349,6 +353,7 @@ pub use shape_card_doors::{
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
+pub(crate) use structural::append_dissent_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode,

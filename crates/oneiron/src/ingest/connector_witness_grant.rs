@@ -15,9 +15,10 @@
 
 use crate::Vault;
 use crate::access_grant::{
-    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-    decode_live_access_grant_body,
+    AccessGrant, AccessGrantActChange, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    decode_live_access_grant_body, record_access_grant_owner_act_in_txn,
 };
+use crate::authority::ActSurface;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
     AuthenticatedOwner, ConsentDomain, ConsentGrantStatus, ConsentRegistryRow, ConsentRevokeAction,
@@ -75,6 +76,63 @@ impl Vault {
         }
     }
 
+    /// Automatic issuance composed with a witness landing. Existing terminal
+    /// rows stand unchanged, just as through the self-contained issuer.
+    pub(crate) fn issue_connector_witness_read_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        if !CONNECTOR_WITNESS_READ_GRANT {
+            return Ok(());
+        }
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if self.get_access_grant_in_txn(txn, &id)?.is_some() {
+            return Ok(());
+        }
+        match self.create_access_grant_in_txn(
+            txn,
+            &id,
+            &witness_read_grant(agent, conversation, now),
+        ) {
+            Err(Error::Record(RecordError::AccessGrantAlreadyExists)) => Ok(()),
+            issued => issued,
+        }
+    }
+
+    /// The existing read-grant predicate at this record's actual scope.
+    /// This is not a claim that every other message read check has passed.
+    pub(crate) fn connector_witness_read_grant_allows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        record: &oneiron_authority::federation::Scope,
+    ) -> Result<bool> {
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                ..
+            }
+        ) {
+            return Ok(false);
+        }
+        let Some(grant) = self.get_access_grant_in_txn(txn, &id)? else {
+            return Ok(false);
+        };
+        Ok(witness_read_conversation(&id, &grant) == Some(conversation)
+            && grant.allows_conversation_message_read(
+                agent,
+                conversation,
+                record,
+                self.instant_in_txn(txn)?.secs(),
+            ))
+    }
+
     /// Revokes the witness-read grant at `grant_ref` on `owner`'s word. It
     /// stays revoked: its revoked row is what keeps a later witness from
     /// issuing it again, and only the owner's own grant
@@ -89,20 +147,48 @@ impl Vault {
     pub(crate) fn revoke_connector_witness_read_grant(
         &self,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         grant_ref: &EntityId,
         revoked_at: u64,
     ) -> Result<WitnessReadGrantChange> {
-        let (grant, changed) =
-            self.put_admitted_access_grant(grant_ref, revoked_at, |txn, standing| {
-                owner.revalidate_in_txn(self, txn)?;
+        let admitted = std::cell::Cell::new(None);
+        let (grant, changed) = self.put_admitted_access_grant(
+            grant_ref,
+            revoked_at,
+            |txn, standing| {
+                let actor = owner.revalidate_in_txn(self, txn)?;
                 let grant = standing
                     .filter(|grant| witness_read_conversation(grant_ref, grant).is_some())
                     .ok_or(Error::EntityNotFound)?;
+                let conversation =
+                    witness_read_conversation(grant_ref, &grant).ok_or(Error::EntityNotFound)?;
+                admitted.set(Some((actor, grant.principal_ref, conversation)));
                 if grant.status == AccessGrantStatus::Revoked {
                     return Ok((grant, false));
                 }
                 Ok((grant.revoked(revoked_at)?, true))
-            })?;
+            },
+            |txn, grant| {
+                let (actor, principal, conversation) = admitted.get().ok_or(
+                    Error::InvariantViolation("witness grant owner act admission"),
+                )?;
+                if grant.principal_ref != principal
+                    || !matches!(grant.scope, AccessGrantScope::ConversationMessages {
+                        conversation_ref
+                    } if conversation_ref == conversation)
+                {
+                    return Err(Error::InvariantViolation("witness grant owner act binding"));
+                }
+                record_access_grant_owner_act_in_txn(
+                    self,
+                    txn,
+                    actor,
+                    *grant_ref,
+                    surface,
+                    AccessGrantActChange::Revoke,
+                )
+            },
+        )?;
         let conversation =
             witness_read_conversation(grant_ref, &grant).ok_or(Error::EntityNotFound)?;
         Ok(WitnessReadGrantChange {
@@ -128,17 +214,22 @@ impl Vault {
     pub(crate) fn grant_connector_witness_read_grant(
         &self,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         agent: EntityId,
         conversation: EntityId,
         granted_at: u64,
     ) -> Result<WitnessReadGrantChange> {
         let id = connector_witness_read_grant_id(agent, conversation)?;
-        let (grant, changed) =
-            self.put_admitted_access_grant(&id, granted_at, |txn, standing| {
-                owner.revalidate_in_txn(self, txn)?;
+        let admitted = std::cell::Cell::new(None);
+        let (grant, changed) = self.put_admitted_access_grant(
+            &id,
+            granted_at,
+            |txn, standing| {
+                let actor = owner.revalidate_in_txn(self, txn)?;
                 if !self.witness_read_parties_live_in(txn, agent, conversation)? {
                     return Err(Error::EntityNotFound);
                 }
+                admitted.set(Some(actor));
                 match standing {
                     Some(grant) if witness_read_conversation(&id, &grant).is_none() => {
                         Err(Error::EntityNotFound)
@@ -150,7 +241,28 @@ impl Vault {
                     }
                     _ => Ok((witness_read_grant(agent, conversation, granted_at), true)),
                 }
-            })?;
+            },
+            |txn, grant| {
+                let actor = admitted.get().ok_or(Error::InvariantViolation(
+                    "witness grant owner act admission",
+                ))?;
+                if grant.principal_ref != agent
+                    || !matches!(grant.scope, AccessGrantScope::ConversationMessages {
+                        conversation_ref
+                    } if conversation_ref == conversation)
+                {
+                    return Err(Error::InvariantViolation("witness grant owner act binding"));
+                }
+                record_access_grant_owner_act_in_txn(
+                    self,
+                    txn,
+                    actor,
+                    id,
+                    surface,
+                    AccessGrantActChange::Grant,
+                )
+            },
+        )?;
         Ok(WitnessReadGrantChange {
             grant_ref: id,
             grant,

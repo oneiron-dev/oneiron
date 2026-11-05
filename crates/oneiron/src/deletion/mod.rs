@@ -39,14 +39,16 @@ mod withdrawn;
 #[cfg(test)]
 mod tests;
 
+pub use crate::vault::entity_revision::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub use coop_delivery::{
     COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
-    COOP_DELETION_REPLY_PEER_PATH, CooperativeDeleteOperation, CooperativeDeleteRecord,
-    CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
-    CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
+    COOP_DELETION_REPLY_PEER_PATH, CooperativeClaimValueRedaction, CooperativeDeleteOperation,
+    CooperativeDeleteRecord, CooperativeDeleteRecordState, CooperativeDeletionAnswer,
+    CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
-    CooperativeDeletionTry, IncomingCooperativeDeletion, cooperative_deletion_recipient_id,
-    parse_hex,
+    CooperativeDeletionRetention, CooperativeDeletionTry, CooperativeLocalRedaction,
+    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
+    cooperative_deletion_recipient_id, parse_hex,
 };
 pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
 pub use coop_reply::{
@@ -105,7 +107,7 @@ pub use actor_fields::{
 
 // Whether an id is no actor: the one header check every lane's actor scrub
 // asks (FIX 8908).
-pub(crate) use actor_fields::names_no_actor;
+pub(crate) use actor_fields::{ActorErasureWriter, names_no_actor};
 
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
 pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
@@ -199,3 +201,6 @@ use crate::entity_id::EntityId;
 
 #[cfg(test)]
 pub(crate) use receipt::receipt_envelope_header;
+
+#[cfg(feature = "sync")]
+pub(crate) mod owed_window_compaction;

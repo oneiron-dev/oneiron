@@ -57,6 +57,14 @@ impl HostSelfDispatcher<'_> {
             }));
         }
 
+        if matches!(&self.storage, ExecutorStorage::Session(_)) {
+            return Ok(self.durable_wait(
+                SelfEffect::Ask,
+                SelfDurableWaitReason::HumanInput,
+                Some(call.prompt),
+            ));
+        }
+
         // Unit fixtures exercise generic replay/wait encoding without creating a
         // TASK. Production dispatch fails closed unless the host supplied the
         // real task and trap through `for_human_task`.

@@ -259,8 +259,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -373,8 +373,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -591,7 +591,7 @@ impl Vault {
                 config
                     .page_seal
                     .as_ref()
-                    .map(crate::world_keys::VaultPageSeal::vault_id),
+                    .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
             )?,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
@@ -602,6 +602,7 @@ impl Vault {
                 config.vector_evidence,
             )),
             config,
+            tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
             page_seal_mirror_carry: Default::default(),
@@ -713,9 +714,9 @@ impl Vault {
             }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
-            crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
             crate::comm::seed_claim_class_descriptors(&vault)?;
-            crate::workspace_roster::seed_root_project(&vault)?;
+            vault.store.project_writes.seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
@@ -893,7 +894,7 @@ impl Vault {
                 Ok(false)
             }
             None => {
-                crate::sync::documents::compact(self, id, erased)?;
+                self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
         }

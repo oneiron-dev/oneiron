@@ -230,8 +230,10 @@ pub(super) fn apply_delete_edge(
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
     crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
-    crate::task_authority::reject_fact_link_delete(store, wtxn, &src, kind)?;
-    crate::workspace_roster::reject_audience_edit_unlink(store, wtxn, &src, kind, &tgt)?;
+    crate::store::task_authority_guard::reject_fact_link_delete(store, wtxn, &src, kind)?;
+    store
+        .record_hooks
+        .reject_audience_edit_unlink(store, wtxn, &src, kind, &tgt)?;
     crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
     if matches!(
         kind,

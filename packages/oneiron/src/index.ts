@@ -368,6 +368,20 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle whose every read runs under the credential a
+   * delegated reader presented (FIX 647): the paired credential `pair`
+   * returned, verified once against this vault as the server's door verifies
+   * a served request's. Reads refuse when the slip's holder is not this
+   * handle's actor; rebindings keep the same proof, so every read still
+   * checks it against the bound actor. A handle without one reads as before.
+   * On a connected handle this fails with `FORBIDDEN`: it already reads
+   * under the credential it connected with.
+   */
+  withReadCredential(credential: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.withReadCredential(credential)))
+  }
+
+  /**
    * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
    * whether it answered or refused; `vault.receipts.get` resolves it for the
    * same actor or the vault's owner.
@@ -1052,6 +1066,10 @@ export class Oneiron {
         /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
         set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
       },
+      fit: {
+        /** The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert. */
+        set: (input: Facade.SkillFitSetRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsFitSet(input) as Facade.HubConsentReceipt),
+      },
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
@@ -1504,6 +1522,14 @@ export class Oneiron {
         },
       },
     },
+    sync: {
+      retained_work: {
+        wait: {
+          /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
+          set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
+        },
+      },
+    },
     trusted_contacts: {
       /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
@@ -1624,6 +1650,12 @@ export class Oneiron {
       erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.ActAnswer<Facade.RecordEraseOutcome> => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.ActAnswer<Facade.RecordEraseOutcome>),
       /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
       erase_sweep: (input: Facade.RecordEraseSweepRequest): Facade.RecordEraseSweep | null => this.#call(() => this.#client.vaultRecordsEraseSweep(input) as Facade.RecordEraseSweep | null),
+    },
+    outbound_calls: {
+      request: {
+        /** The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting. */
+        erase: (input: Facade.OutboundCallRequestEraseRequest): Facade.OutboundCallRequestErased => this.#call(() => this.#client.vaultOutboundCallsRequestErase(input) as Facade.OutboundCallRequestErased),
+      },
     },
     research: {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
@@ -1942,6 +1974,8 @@ export class Oneiron {
       }),
     },
     secrets: {
+      /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
+      code_run_lifts: (input: Facade.CodeRunSecretLiftRequest): Facade.CodeRunSecretLiftStatus => this.#call(() => this.#client.vaultSecretsCodeRunLifts(input) as Facade.CodeRunSecretLiftStatus),
       /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
       /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */

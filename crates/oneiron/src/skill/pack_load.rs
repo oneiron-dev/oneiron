@@ -93,6 +93,29 @@ impl Vault {
         executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
+        self.load_attempt_skill_pack_sourced(
+            attempt,
+            skill,
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )
+        .map(|(loaded, _)| loaded)
+    }
+
+    /// Loads the pack and returns the instruction source rows witnessed in
+    /// the same transaction: the loaded SKILL or proposal and any replicated
+    /// package carrier. The ordinary load's checks and attempt stamps stand.
+    pub fn load_attempt_skill_pack_sourced(
+        &self,
+        attempt: AttemptId,
+        skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
+        at: u64,
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
         self.load_skill_pack_bound(
             attempt,
             skill,
@@ -129,6 +152,7 @@ impl Vault {
             Some(executor_model),
             at,
         )
+        .map(|(loaded, _)| loaded)
     }
 
     #[expect(
@@ -144,7 +168,7 @@ impl Vault {
         attempt_count: u32,
         executor_model: Option<&str>,
         at: u64,
-    ) -> Result<LoadedSkillPack> {
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
         let (loaded, ask) = self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
@@ -204,14 +228,17 @@ impl Vault {
                 txn,
                 attempt,
                 ReadSetProducer::SKILL_PACK,
-                Some(read),
+                Some(read.clone()),
             );
             Ok((
-                LoadedSkillPack {
-                    entity,
-                    record,
-                    source_files,
-                },
+                (
+                    LoadedSkillPack {
+                        entity,
+                        record,
+                        source_files,
+                    },
+                    read,
+                ),
                 routed.ask,
             ))
         })?;
@@ -257,6 +284,7 @@ impl Vault {
             (!stamped).then_some(executor),
             at,
         )
+        .map(|(loaded, _)| loaded)
     }
 
     /// Loads the exact revision a frozen plan names, in the caller's own
@@ -684,13 +712,24 @@ impl Vault {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;
-            if body.predicate.starts_with("actor.")
-                && !matches!(&body.subject,
-                    crate::claim::ClaimSubject::Entity(actor) if Some(*actor) == resident)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "actor self-model belongs to a different resident",
-                ));
+            if body.predicate.starts_with("actor.") {
+                let allowed = match resident {
+                    Some(resident) => {
+                        // A resident's shells merged into it read as its own
+                        // (FIX 9073): the redirect authority names them.
+                        crate::skill_reliability::redirect_equivalent_subjects_in_txn(
+                            self, &*txn, &resident,
+                        )?
+                    }
+                    None => Vec::new(),
+                };
+                if !matches!(&body.subject,
+                    crate::claim::ClaimSubject::Entity(actor) if allowed.contains(actor))
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "actor self-model belongs to a different resident",
+                    ));
+                }
             }
             // A claim whose every cited TURN is erased has no live support,
             // however late it replicated (FIX 8643): it is not loaded.

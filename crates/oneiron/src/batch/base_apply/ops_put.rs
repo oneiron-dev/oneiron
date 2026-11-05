@@ -3,7 +3,7 @@
 use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use zeroize::Zeroizing;
 
@@ -28,7 +28,7 @@ pub(super) fn apply_put_arm(
     mut put_options: PutOptions,
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
-    authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);

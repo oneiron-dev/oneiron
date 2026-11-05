@@ -838,6 +838,7 @@ rung and a prompt package for the executor is named:
 prompt_package = "prompts"   # holds blocks/engine-executor-wire.md; relative to this file
 budget_units = 10000000      # optional; process-lifetime meter for its model calls
 max_runs = 32                # optional; runs at once, each its own thread (default: from cores and memory)
+step_wall_secs = 30           # optional; one step's time allowance in seconds (default: 5)
 ```
 
 A run holds its place until its worker ends, whether or not its caller is
@@ -857,6 +858,11 @@ reservation for each provider call it made: every rung of the seat, or the one
 model the vault's manifest pins. A browser subgoal's step may run on
 `browser_planner` instead, on the same meter ("Browser subgoals", below).
 An omitted `models.code_mode.budget_units` is uncapped.
+`step_wall_secs` is optional; unset keeps the runtime's 5-second default step
+wall. A set value replaces only the wall: once a step's allowance is spent
+the step stops at its next safe point with the typed `step_deadline` stop,
+not done and not failed, and its finished host calls keep their answers, so
+the next step continues without repeating a finished write.
 A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
@@ -1838,7 +1844,10 @@ weights, builds the worker's environment from the row's `env_lock`, starts
 it on the provider's `base_url`, counts it ready after one real render,
 restarts it after a crash and, when `idle_stop_secs` asks, stops it when
 idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
-same for the local Whisper worker, from an operator's weights manifest. A
+same for the local Whisper worker, from the house `whisper-large-v3` pin or
+an operator's weights manifest; its `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12 on x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified). A
 call to a managed worker's rung waits while it starts and holds it through
 its renders or its transcription; the worker runs one inference at a time.
 `deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
@@ -2868,6 +2877,12 @@ The named tier's row sets `model_dir` and the identity keys. `oneiron init
 the first row. A vault whose manifest binds `extraction_encoder` at another
 tier's checkpoint stops tagging and names that tier in the log.
 
+`language` is optional: `language = "ja"` in `[oneironer]`, or
+`ONEIRON_ONEIRONER_LANGUAGE=ja` in the environment, names the vault turns'
+configured processing language as a lowercase ISO 639 code. It covers every
+vault turn the tagger reads. Leave it unset when the vault's language is
+unknown or mixed; unset sends no configured language.
+
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
 at startup (`oneironer engine candle/cuda does not run on this machine`).
@@ -3042,7 +3057,11 @@ added to. If `--platforms` selects a row the placed bundle lacks, the fetch
 fails and names the remedy: fetch into a fresh `--into` root and point
 `model_dir` at the bundle there.
 
-The command prints one JSON object:
+The command prints one JSON object on stdout. While files download, it
+reports each file's written and pinned bytes to stderr: one line per whole
+percent off a terminal, one redrawing line per file on a terminal. Stderr
+carries byte counts only, never the token, and a failed stderr write never
+fails the fetch.
 
 ```json
 {"outcome": "downloaded", "stack_sha16": "b8cf6fb2f5d71020",

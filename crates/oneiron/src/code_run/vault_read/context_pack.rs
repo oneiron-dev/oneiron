@@ -10,16 +10,8 @@ pub use oneiron_contracts::code_run::vault_read::{
     ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest, MediaQueryKind,
 };
 
-/// A media query's kind is the engine's input kind of the same name.
-impl From<MediaQueryKind> for crate::embed::InputKind {
-    fn from(kind: MediaQueryKind) -> Self {
-        match kind {
-            MediaQueryKind::Text => Self::Text,
-            MediaQueryKind::Image => Self::Image,
-            MediaQueryKind::Audio => Self::Audio,
-        }
-    }
-}
+// `From<MediaQueryKind> for InputKind` lives with `InputKind` in
+// `oneiron_store::embedding_vocabulary` (orphan rule).
 
 /// Local serialization of every public `ContextEntity` field.
 ///
@@ -240,7 +232,7 @@ pub struct CoreContextPackProjection {
     /// Empty-context record when the pack surfaced nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub empty: Option<CoreContextPackEmpty>,
-    /// The request's `limit` was past 1,000 and was served at 1,000.
+    /// Whether this door lowered the requested result count; always false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub limit_clamped: bool,
 }
