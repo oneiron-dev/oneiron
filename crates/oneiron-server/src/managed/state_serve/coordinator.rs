@@ -676,23 +676,25 @@ async fn serve_with_handles(
     // finding the vault quiescent; a frozen vault takes no call, and a
     // deleted vault takes none either (FIX 12039).
     #[cfg(unix)]
-    handles.voice = crate::voice_host::VoiceBoot::start(
-        &sync_server,
-        config.models.as_ref().map(|models| &models.voice),
-        Some({
-            let state = Arc::clone(&state);
-            Arc::new(
-                move |action: &oneiron_vault_contract::ManagedOwnerAction,
-                      room: &str,
-                      roster: &str,
-                      issued_at: UnixTs,
-                      nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES]| {
-                    state.verify_voice_owner(action, room, roster, issued_at, nonce)
-                },
-            )
-        }),
-        state.voice_admission(),
-    );
+    {
+        handles.voice = crate::voice_host::VoiceBoot::start(
+            &sync_server,
+            config.models.as_ref().map(|models| &models.voice),
+            Some({
+                let state = Arc::clone(&state);
+                Arc::new(
+                    move |action: &oneiron_vault_contract::ManagedOwnerAction,
+                          room: &str,
+                          roster: &str,
+                          issued_at: UnixTs,
+                          nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES]| {
+                        state.verify_voice_owner(action, room, roster, issued_at, nonce)
+                    },
+                )
+            }),
+            state.voice_admission(),
+        );
+    }
     // The supervisor reaches the loop on the vault VM's voice port.
     #[cfg(unix)]
     if handles.voice.is_some()
