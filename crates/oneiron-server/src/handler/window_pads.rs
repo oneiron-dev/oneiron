@@ -75,14 +75,16 @@ pub(super) fn accept(
 }
 
 /// What this home did with the pads of `envelope`, an update of `key` that
-/// passed its admission: installed into custody here, committed and read
-/// back, before anything of it persists.
+/// passed its admission over `doc`: installed into custody here, committed
+/// and read back, before anything of it persists. The pads it owes are read
+/// from its payload over `doc` as well as from its list (FIX 10480).
 pub(super) fn admit(
     server: &SyncServer,
     key: &WindowKey,
     envelope: &WindowPadEnvelope,
+    doc: &loro::LoroDoc,
 ) -> WindowPadReceipt {
-    oneiron::sync::window::admit_window_pads(server.vault(), key, envelope)
+    oneiron::sync::window::admit_window_pads(server.vault(), key, envelope, Some(doc))
 }
 
 /// The receipt frame for an envelope a device sent under `sub_tag`: a

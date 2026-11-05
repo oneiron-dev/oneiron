@@ -152,11 +152,7 @@ fn catch_up_step(
 ) -> Option<Option<EntityId>> {
     let after = step?;
     let vault = server.vault();
-    let pinned: Vec<&str> = publisher
-        .iter()
-        .map(|candidate| candidate.id.as_str())
-        .collect();
-    match vault.queue_code_fix_top_ups(after, &pinned, vault.now_recorded_at()) {
+    match vault.queue_code_fix_top_ups(after, publisher, vault.now_recorded_at()) {
         Ok(next) => next.map(Some),
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "past code-fix work waits for the next round");

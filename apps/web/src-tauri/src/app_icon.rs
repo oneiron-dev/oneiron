@@ -2,7 +2,7 @@
 
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSImage};
-use objc2_foundation::{ns_string, NSArray, NSBundle, NSData, NSProcessInfo, NSString};
+use objc2_foundation::{NSArray, NSBundle, NSData, NSProcessInfo, NSString, ns_string};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
