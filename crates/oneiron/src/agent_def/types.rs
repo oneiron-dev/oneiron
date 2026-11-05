@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::{ModelId, ModelTierRef};
 use crate::pipeline::WorldScope;
-use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
+use crate::skill::SkillDependency;
 use rmpv::Value;
 
 pub use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
@@ -19,19 +19,14 @@ pub use crate::store::agent_record::AGENT_MODEL_KEYS;
 
 pub use crate::store::agent_record::MEMORY_PROFILE_KEYS;
 
+pub(super) use crate::store::agent_definition_codec::keys::MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES;
+
 /// The `memory_profile.compaction_backend` value that makes an agent its own
 /// compaction writer (FIX 4465): each epoch and fold summary is written AS
 /// the agent, wearing its home, under its byline. It names WHO writes, never
 /// a model: the model and context come per wake from the purpose-default
 /// table's self-compaction row. Every other key keeps its backend unchanged.
 pub(crate) const SELF_COMPACTION_BACKEND: &str = "self";
-
-/// The pinned sub-map keys for a profile's `output_decay`, in encode order.
-pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
-
-/// Bytes of one verbatim pin past which a put asks (the length it once
-/// refused past); a pin of any length is kept, as any number of pins is.
-pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
 
 pub use crate::store::agent_record::CONTEXT_BUDGET_SPLIT_KEYS;
 
@@ -49,115 +44,9 @@ pub use crate::store::agent_record::AGENT_REF_KEY_MAX_BYTES;
 
 pub use crate::store::agent_record::AGENT_MAX_LIST_ENTRIES;
 
-pub(super) const KEY_AGENT_ID: &str = AGENT_DEF_BODY_KEYS[0];
-
-pub(super) const KEY_DESC: &str = AGENT_DEF_BODY_KEYS[1];
-
-pub(super) const KEY_VERSION: &str = AGENT_DEF_BODY_KEYS[2];
-
-pub(super) const KEY_INSTRUCTIONS: &str = AGENT_DEF_BODY_KEYS[3];
-
-pub(super) const KEY_SKILLS: &str = AGENT_DEF_BODY_KEYS[4];
-
-pub(super) const KEY_CONNECTORS: &str = AGENT_DEF_BODY_KEYS[5];
-
-pub(super) const KEY_CODE_MODE_MCPS: &str = AGENT_DEF_BODY_KEYS[6];
-
-pub(super) const KEY_MODEL_TIER: &str = AGENT_DEF_BODY_KEYS[7];
-
-pub(super) const KEY_SCOPE: &str = AGENT_DEF_BODY_KEYS[8];
-
-pub(super) const KEY_WORLD: &str = AGENT_DEF_BODY_KEYS[9];
-
-pub(super) const KEY_CEILING: &str = AGENT_DEF_BODY_KEYS[10];
-
-pub(super) const KEY_FORKED_FROM: &str = AGENT_DEF_BODY_KEYS[11];
-
-pub(super) const KEY_APPROVAL_STATUS: &str = AGENT_DEF_BODY_KEYS[12];
-
-pub(super) const KEY_LIFECYCLE_STATUS: &str = AGENT_DEF_BODY_KEYS[13];
-
-pub(super) const KEY_SOURCE: &str = AGENT_DEF_BODY_KEYS[14];
-
-pub(super) const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[15];
-
-pub(super) const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[16];
-
-pub(super) const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[17];
-
-pub(super) const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[18];
-
-pub(super) const KEY_LOGICAL_ID: &str = AGENT_DEF_BODY_KEYS[19];
-
-pub(super) const KEY_ENABLED: &str = AGENT_DEF_BODY_KEYS[20];
-
-pub(super) const KEY_DISPLAY_NAME: &str = AGENT_DEF_BODY_KEYS[21];
-
-pub(super) const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
-
-pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
-
-pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
-pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
-
-pub(super) const KEY_REFUSAL: &str = AGENT_DEF_BODY_KEYS[26];
-
-pub(super) const KEY_MODELS: &str = AGENT_DEF_BODY_KEYS[27];
-
-pub(super) const KEY_COMPACTION_MODEL: &str = AGENT_DEF_BODY_KEYS[28];
-
-pub(super) const KEY_MODEL_REF: &str = AGENT_MODEL_KEYS[0];
-
-pub(super) const KEY_MODEL_WHEN: &str = AGENT_MODEL_KEYS[1];
-
-pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
-
-pub(super) const KEY_PROFILE_BUDGET_SPLIT: &str = MEMORY_PROFILE_KEYS[1];
-
-pub(super) const KEY_PROFILE_COMPACTION_BACKEND: &str = MEMORY_PROFILE_KEYS[2];
-
-pub(super) const KEY_PROFILE_COMPACTION: &str = MEMORY_PROFILE_KEYS[3];
-
-pub(super) const KEY_PROFILE_HOT_STEPS: &str = MEMORY_PROFILE_KEYS[4];
-
-pub(super) const KEY_PROFILE_OUTPUT_DECAY: &str = MEMORY_PROFILE_KEYS[5];
-
-pub(super) const KEY_PROFILE_VERBATIM_PINS: &str = MEMORY_PROFILE_KEYS[6];
-
-pub(super) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[7];
-
-pub(super) const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
-
-pub(super) const KEY_SPLIT_TURNS: &str = CONTEXT_BUDGET_SPLIT_KEYS[1];
-
-pub(super) const KEY_SPLIT_SUMMARIES: &str = CONTEXT_BUDGET_SPLIT_KEYS[2];
-
-pub(super) const KEY_SPLIT_OTHER: &str = CONTEXT_BUDGET_SPLIT_KEYS[3];
-
-pub(super) const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
-
-pub(super) const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
-
-pub(super) const KEY_MCP_KEY: &str = MCP_REF_KEYS[0];
-
-pub(super) const KEY_MCP_MIN_VERSION: &str = MCP_REF_KEYS[1];
-
-pub(super) const SCOPE_ALL: &str = "all";
-
-pub(super) const SCOPE_BASE: &str = "base";
-
-pub(super) const SCOPE_WORLD: &str = "world";
-
-/// Reserved logical-id prefix for seeded system rows. Enforced at the
-/// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
-/// place that holds both the body and the row id it is being stored at.
-pub(super) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
-
-/// Bytes of a `logical_id` past which a put asks; any length is kept.
-pub(super) const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;
-
-/// Bytes of the runtime-editable `display_name` past which a put asks.
-pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
+pub(super) use crate::store::agent_manifest::{
+    AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, SYSTEM_AGENT_DEFINITIONS_V1_JSON,
+};
 
 pub use crate::store::agent_record::McpRef;
 
@@ -171,14 +60,6 @@ impl AgentScope {
             Self::All => WorldScope::All,
             Self::Base => WorldScope::Base,
             Self::World(world) => WorldScope::World(*world),
-        }
-    }
-
-    pub(super) fn discriminant(&self) -> &'static str {
-        match self {
-            Self::All => SCOPE_ALL,
-            Self::Base => SCOPE_BASE,
-            Self::World(_) => SCOPE_WORLD,
         }
     }
 }
@@ -386,13 +267,6 @@ impl AgentDefinition {
         self
     }
 }
-
-/// The canonical seeded system-agent roster (OF-334 / ONE-1890): data, not a
-/// compiled enum. Every baseline row is an ordinary byte-17 `AGENT_DEF` entity
-/// with a pinned row id, a pinned actor id equal to it, and a stable `sys.*`
-/// logical id. ONE-1709 appends `sys.team_lead` to this same file.
-pub(super) const SYSTEM_AGENT_DEFINITIONS_V1_JSON: &str =
-    include_str!("data/system_agent_definitions.v1.json");
 
 /// Seam shim (SEAM-GATE-PRESET-NEUTRALIZATION): gate.rs resolves a fork parent
 /// through ONE call. Post-ONE-1890 `forked_from` already IS the parent row id,

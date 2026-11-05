@@ -460,6 +460,9 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
+                if action == GateConsentBundleAction::Approve {
+                    self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;
+                }
                 if machine {
                     let approve = action == GateConsentBundleAction::Approve;
                     resolved = crate::claim::transition::stage_consent_transition(
