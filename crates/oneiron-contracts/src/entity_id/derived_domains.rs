@@ -323,6 +323,10 @@ pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
 /// FIX 12000). Parts: the reminder's content ref.
 pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
+/// The target of an owner's origin cut act (`authority::origin_cut_target`,
+/// FIX 15740). Parts: the repository's 32-byte portable id.
+pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 63] = [

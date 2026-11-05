@@ -71,7 +71,6 @@ pub use compliance::{
     MailComplianceSearchRequest, MailComplianceSetRequest, MailComplianceSettingView,
 };
 pub(crate) use doors::erase_source_actor_in_txn;
-pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
@@ -96,6 +95,7 @@ pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
     MailSourceKind, MailSourceStatus, MailSourceView,
 };
+pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
