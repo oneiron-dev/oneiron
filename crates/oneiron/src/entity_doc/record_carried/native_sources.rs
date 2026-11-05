@@ -32,6 +32,7 @@ pub(super) enum NativeSourcePosition {
     Mutation(ID),
 }
 
+#[derive(Clone)]
 pub(super) struct NativeSourcePlace {
     pub(super) document: NativeDocumentSource,
     pub(super) position: NativeSourcePosition,
@@ -40,7 +41,8 @@ pub(super) struct NativeSourcePlace {
 /// These requirements cannot be discharged by inspecting this collection or
 /// by a decoded fact's signature, row hash, token or operation id.
 pub(super) enum NativeSourceRequirement {
-    /// Selection and every raw write still need the actual native owner door.
+    /// Selection and every raw write still need the complete recipient owner.
+    /// A separately checked original door law does not discharge this grant.
     NativeDoor {
         place: NativeSourcePlace,
         fact: Option<[u8; 32]>,
@@ -75,6 +77,7 @@ pub(super) struct NativeSourceReview {
     requirements: Vec<NativeSourceRequirement>,
     /// Actual signed-head and removal-race results in this same writer.
     origins: BTreeMap<NativeSkillCarrier, NativeSkillOrigin>,
+    native_doors: Vec<super::native_doors::NativeDoorCheck>,
 }
 
 impl NativeSourceReview {
@@ -86,11 +89,23 @@ impl NativeSourceReview {
         &self.origins
     }
 
+    pub(super) fn native_doors(&self) -> &[super::native_doors::NativeDoorCheck] {
+        &self.native_doors
+    }
+
     /// A later operation in the same writer may have changed signed-head
     /// availability or the removal race without touching document storage.
     pub(super) fn recheck_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
         let carriers = self.origins.keys().cloned().collect();
-        Ok(origins_in_txn(vault, txn, &carriers)? == self.origins)
+        if origins_in_txn(vault, txn, &carriers)? != self.origins {
+            return Ok(false);
+        }
+        for checked in &self.native_doors {
+            if !checked.recheck_in_txn(vault, txn)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -118,12 +133,15 @@ pub(super) fn review_in_txn(
         physical.push(local_raw);
     }
     let mut review = Review {
+        vault,
+        txn,
         entity: record.entity()?,
         field: record.field(),
         physical: &physical,
         requirements: Vec::new(),
         carriers: BTreeSet::new(),
         unsigned: BTreeSet::new(),
+        native_doors: Vec::new(),
     };
     review.document(
         NativeDocumentSource::Incoming,
@@ -156,6 +174,7 @@ pub(super) fn review_in_txn(
     Ok(NativeSourceReview {
         requirements: review.requirements,
         origins,
+        native_doors: review.native_doors,
     })
 }
 
@@ -176,16 +195,19 @@ fn origins_in_txn(
     crate::authority::native_skill_origins_in_txn(store, txn, carriers, &fold)
 }
 
-struct Review<'source> {
+struct Review<'source, 'txn, 'env> {
+    vault: &'source Vault,
+    txn: &'txn RoTxn<'env>,
     entity: EntityId,
     field: &'source TextField,
     physical: &'source [&'source [u8]],
     requirements: Vec<NativeSourceRequirement>,
     carriers: BTreeSet<NativeSkillCarrier>,
     unsigned: BTreeSet<[u8; 32]>,
+    native_doors: Vec<super::native_doors::NativeDoorCheck>,
 }
 
-impl Review<'_> {
+impl Review<'_, '_, '_> {
     fn document(
         &mut self,
         source: NativeDocumentSource,
@@ -201,6 +223,7 @@ impl Review<'_> {
                 logical_document,
                 document,
                 current,
+                None,
             )?;
         }
         if let Some(floor) = inventory.floor() {
@@ -213,6 +236,7 @@ impl Review<'_> {
                         logical_document,
                         &at_floor,
                         fact,
+                        None,
                     )?;
                 }
                 None => self.requirements.push(NativeSourceRequirement::NativeDoor {
@@ -234,7 +258,7 @@ impl Review<'_> {
                 }
                 NativeMapWriteView::Delete => true,
             };
-            if same_document {
+            let replay = if same_document {
                 let replay = mutation.retained_inputs(document)?;
                 if replay.before().is_none() {
                     self.requirements
@@ -245,7 +269,10 @@ impl Review<'_> {
                             },
                         });
                 }
-            }
+                Some(replay)
+            } else {
+                None
+            };
             match mutation.write {
                 NativeMapWriteView::Insert(fact) => self.fact(
                     source,
@@ -253,6 +280,7 @@ impl Review<'_> {
                     logical_document,
                     document,
                     fact,
+                    replay.as_ref().and_then(|replay| replay.before()),
                 )?,
                 NativeMapWriteView::Delete => {
                     self.requirements.push(NativeSourceRequirement::NativeDoor {
@@ -275,6 +303,7 @@ impl Review<'_> {
         logical_document: EntityId,
         document: &EntityDoc,
         fact: SkillStateFactView<'_>,
+        before: Option<&EntityDoc>,
     ) -> Result<()> {
         let operation = fact.operation()?;
         let token = fact.token()?;
@@ -373,6 +402,29 @@ impl Review<'_> {
             let record = crate::skill::decode_skill_record(&body)?;
             if (record.lifecycle_status, record.approval_status) != operation.prior {
                 return Err(invalid("record native source prior"));
+            }
+            if let Some(before) = before {
+                match super::native_doors::check_original_in_txn(
+                    self.vault,
+                    self.txn,
+                    NativeSourcePlace {
+                        document: source,
+                        position: position.clone(),
+                    },
+                    fact,
+                    raw,
+                    self.field,
+                    &original,
+                    before,
+                )? {
+                    super::native_doors::NativeDoorReview::Checked(checked) => {
+                        self.native_doors.push(checked);
+                    }
+                    // These need their actual continuation or retained successor.
+                    // The original NativeDoor obligation remains in every case.
+                    super::native_doors::NativeDoorReview::OtherContinuation
+                    | super::native_doors::NativeDoorReview::SuccessorUnavailable => {}
+                }
             }
         } else {
             self.requirements

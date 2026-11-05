@@ -5,6 +5,7 @@
 //! record admission before installing either view in its parent writer.
 
 mod candidate;
+mod native_doors;
 mod native_sources;
 mod refinement;
 mod retained;

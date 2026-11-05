@@ -605,7 +605,7 @@ pub(super) fn validate_skill_successor(old: &SkillRecord, new: &SkillRecord) -> 
     Ok(())
 }
 
-pub(super) fn validate_skill_update_door(
+pub(crate) fn validate_skill_update_door(
     existing: &SkillRecord,
     record: &SkillRecord,
 ) -> Result<()> {

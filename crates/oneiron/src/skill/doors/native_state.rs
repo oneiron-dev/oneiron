@@ -69,6 +69,60 @@ impl SkillSupersessionRead {
         decode_skill_record(&self.body)
     }
 
+    /// Read a carried successor only when this writer holds the exact full
+    /// physical source, logical body and document pin named by the operation.
+    /// A different current revision is unavailable, never a historical fallback.
+    /// This is a source read, not supersession or recipient admission.
+    pub(crate) fn capture_replay_in_txn(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        entity: EntityId,
+        source_core: &[u8; 32],
+        logical_body: &[u8; 32],
+        document_pin: Option<(&[u8; 16], &[u8])>,
+    ) -> Result<Option<Self>> {
+        let Some(raw) = store.port_entity_raw(txn, &entity)? else {
+            return Ok(None);
+        };
+        if blake3::hash(&raw).as_bytes() != source_core {
+            return Ok(None);
+        }
+        let source = Self::capture(store, txn, entity)?;
+        if source.logical_body_fingerprint() != *logical_body
+            || source.document_pin().map(|(id, at)| (id.as_bytes(), at)) != document_pin
+        {
+            return Ok(None);
+        }
+        Ok(Some(source))
+    }
+
+    /// Run the original native supersession law on this exact read source.
+    /// The returned source still confers no actor, hub or write permission.
+    pub(crate) fn validate_replay_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        prior: &SkillRecord,
+    ) -> Result<()> {
+        super::validate_skill_successor(prior, &self.recheck(store, txn)?)
+    }
+
+    pub(crate) fn replay_source_matches_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+    ) -> Result<bool> {
+        Ok(Self::capture_replay_in_txn(
+            store,
+            txn,
+            self.entity,
+            &self.source_fingerprint(),
+            &self.logical_body_fingerprint(),
+            self.document_pin().map(|(id, at)| (id.as_bytes(), at)),
+        )?
+        .is_some())
+    }
+
     pub(crate) fn entity(&self) -> EntityId {
         self.entity
     }
