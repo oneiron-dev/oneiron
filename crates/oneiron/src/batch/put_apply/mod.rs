@@ -33,6 +33,8 @@ use super::{
 
 #[cfg(feature = "sync")]
 pub(crate) use self::apply::NativeSkillPostGate;
+#[cfg(feature = "sync")]
+pub(super) use self::apply::PendingNativeSkillPut;
 pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
@@ -68,6 +70,8 @@ pub(super) enum EffectiveEntity {
 }
 
 pub(super) struct AppliedPut {
+    #[cfg(feature = "sync")]
+    pub(super) pending_native_skill_put: Option<PendingNativeSkillPut>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
     /// Revision companions a PROJECT put captured, for the batch to write next.
     pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,

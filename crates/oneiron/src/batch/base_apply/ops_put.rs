@@ -179,6 +179,10 @@ pub(super) fn apply_put_arm(
         authority_beside,
         own_device,
     )?;
+    #[cfg(feature = "sync")]
+    if let Some(pending) = applied.pending_native_skill_put {
+        state.pending_native_skill_puts.push(pending);
+    }
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {
         crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;

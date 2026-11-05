@@ -150,6 +150,8 @@ pub(super) fn stage_put_projections(
         crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
+        #[cfg(feature = "sync")]
+        pending_native_skill_put: None,
         portable_agent_source,
         project_revisions,
         touched_projects,
