@@ -158,9 +158,9 @@ pub fn erased_id() -> Error {
 /// fenced whose fact goes to key custody once its writer commits (FIX
 /// 11211).
 struct Staged {
-    pub count: u64,
-    pub unfenced: BTreeSet<EntityId>,
-    pub fences_to_journal: BTreeSet<EntityId>,
+    count: u64,
+    unfenced: BTreeSet<EntityId>,
+    fences_to_journal: BTreeSet<EntityId>,
 }
 
 thread_local! {

@@ -1,7 +1,7 @@
 //! Core half of `blob_artifact::born_from`: its store-layer items live in `oneiron_store::blob_artifact::born_from` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::blob_artifact::born_from::*;
+pub(crate) use oneiron_store::blob_artifact::born_from::*;
 
 use super::versions::{BlobArtifactVersion, VERSIONS};
 use crate::Vault;

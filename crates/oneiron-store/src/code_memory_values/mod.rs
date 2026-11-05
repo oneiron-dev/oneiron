@@ -298,7 +298,7 @@ impl CodeMemorySlotValue {
 
 /// Internal dedupe index only. It is NOT value identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct ActorScopedContentKey {
+pub struct ActorScopedContentKey {
     pub actor_id: EntityId,
     pub content_hash: [u8; CODE_MEMORY_CONTENT_HASH_LEN],
 }

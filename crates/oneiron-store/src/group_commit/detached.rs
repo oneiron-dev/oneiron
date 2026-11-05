@@ -80,9 +80,9 @@ pub struct DetachedWrites {
 }
 
 #[derive(Default)]
-struct DetachedCounts {
-    pub queued: u64,
-    pub settled: u64,
+pub struct DetachedCounts {
+    queued: u64,
+    settled: u64,
 }
 
 impl DetachedWrites {

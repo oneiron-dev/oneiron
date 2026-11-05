@@ -29,7 +29,7 @@ pub struct RepoLayout {
 /// outlive an add into the new registration. Keys are enum variants, never
 /// arbitrary repository-supplied strings.
 #[derive(Debug, Clone, Copy)]
-enum WorktreeSetting {
+pub enum WorktreeSetting {
     Filemode(bool),
     Symlinks(bool),
     IgnoreCase(bool),
