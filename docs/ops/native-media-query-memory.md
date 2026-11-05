@@ -44,6 +44,13 @@ lease. These charges use the same supplied line and leave an unbound capture
 usable. They cover vector slots only, not the temporary objects' inner storage
 or the retained replay JSON.
 
+The shared replay identity also holds the actual backing capacity of its
+media-space vector on that line until the native attempt releases the identity.
+Its buffers are declared before the private lease. The space declarations'
+inner strings, sets and maps and the identity's hash buffers remain outside
+that charge. Native declaration checks, floors, hashes and capture gates stay
+unchanged.
+
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
 working-set bound remain open.
