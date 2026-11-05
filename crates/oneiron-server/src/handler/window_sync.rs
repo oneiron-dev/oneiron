@@ -186,6 +186,7 @@ pub(super) async fn handle_window_sync(
     if matches!(
         sub_tag,
         window_sub_tags::RESIDENCE_ACK
+            | window_sub_tags::RESIDENCE_HELD
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
             | window_sub_tags::WINDOW_INVALIDATE
@@ -406,7 +407,7 @@ pub(super) async fn handle_window_sync(
             // FIX 7608 slice 4: a copy edit lands on its source before anything
             // persists, and is admitted again as the source edit it is. A ruled
             // hold persists, imports and relays nothing: its held record is
-            // kept and acknowledged, and it is never applied (FIX 10598).
+            // kept and answered, and it is never applied (FIX 10598).
             let admitted = oneiron::sync::selector::admit_repo_sync_frame(
                 server.vault.as_ref(),
                 window_key,

@@ -5,15 +5,21 @@ use oneiron_contracts::memory::MemoryError;
 /// Maximum query string, in bytes: 8 KiB.
 pub const MAX_QUERY_BYTES: usize = 8 * 1024;
 
-/// Maximum rows any list/search verb may be asked for: 1,000.
+/// The shared 1,000-row window: the floor a narrowed read fetches,
+/// and the ceiling a clamped door serves at.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
 /// How many candidates a read that narrows its rows after ranking fetches
-/// for `requested`: the whole [`MAX_SEARCH_LIMIT`] window, never the index's
-/// population, so its cost does not grow with the vault. Zero stays zero.
-/// The page is short when the window holds fewer rows the narrowing keeps.
+/// for `requested`: `requested` over the [`MAX_SEARCH_LIMIT`] floor, never
+/// the index's population, so its cost follows the caller's page and not
+/// the vault. Zero stays zero. The page is short when the window holds
+/// fewer rows the narrowing keeps.
 pub fn narrowed_candidate_window(requested: usize) -> usize {
-    if requested == 0 { 0 } else { MAX_SEARCH_LIMIT }
+    if requested == 0 {
+        0
+    } else {
+        requested.max(MAX_SEARCH_LIMIT)
+    }
 }
 
 /// Maximum serialized body of one entity, claim, or message: 64 KiB.
@@ -114,27 +120,15 @@ pub fn check_as_of(as_of: Option<u64>) -> Result<(), MemoryError> {
     Ok(())
 }
 
-/// Rejects a non-positive or over-large row count.
+/// Rejects a zero row count.
 ///
 /// Zero is refused rather than silently defaulted: a caller who asks for no
 /// rows has a bug the SDK must not paper over by inventing a page size.
-pub fn check_limit(limit: usize) -> Result<(), MemoryError> {
-    if limit == 0 || limit > MAX_SEARCH_LIMIT {
-        return Err(MemoryError::bad_request_with(
-            format!("limit must be between 1 and {MAX_SEARCH_LIMIT}"),
-            &["Request a smaller page and paginate."],
-        ));
-    }
-    Ok(())
-}
-
-/// Rejects a zero row count on a door that serves an over-large one at
-/// [`MAX_SEARCH_LIMIT`] ([`clamp_search_limit`]).
 pub fn check_limit_nonzero(limit: usize) -> Result<(), MemoryError> {
     if limit == 0 {
         return Err(MemoryError::bad_request_with(
             "limit must be at least 1",
-            &["Request at least one row; past 1000 rows the limit is served at 1000."],
+            &["Request at least one row."],
         ));
     }
     Ok(())

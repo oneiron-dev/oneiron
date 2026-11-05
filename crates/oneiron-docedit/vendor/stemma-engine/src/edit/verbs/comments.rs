@@ -238,8 +238,8 @@ pub(crate) fn apply_create(
         unreachable!("checked paragraph above");
     };
 
-    // Copies of the quote in the visible text. Without `occurrence` the anchor
-    // goes where it always went; `occurrence` picks the n-th copy instead.
+    // Copies of the quote in the visible text. Without `occurrence` the copy
+    // selection stays as before; `occurrence` picks the n-th copy instead.
     // The per-char map is built only when a copy is chosen or the fast path
     // misses; the copies are counted as they stream past.
     let fast = find_span(&para.segments, expect);
@@ -1068,8 +1068,8 @@ struct CrossPlan {
     start: Placement,
     end: Placement,
     /// Open a `Split` start on the text node holding the copy's first char,
-    /// past any non-text inline (a break, a bookmark) before it. A chosen
-    /// `occurrence` sets it; the default keeps its old placement.
+    /// past any non-text inline (a break, a bookmark) before it. Both default
+    /// and chosen-occurrence anchors start at their resolved copy.
     start_at_copy: bool,
 }
 
@@ -1118,7 +1118,10 @@ fn resolve_cross_segment_anchor(
             step_index,
         });
     };
-    Ok(cross_plan(segments, map, start_k, end_k))
+    Ok(CrossPlan {
+        start_at_copy: true,
+        ..cross_plan(segments, map, start_k, end_k)
+    })
 }
 
 /// The paragraph's visible text + a per-visible-char map to (segment index,
