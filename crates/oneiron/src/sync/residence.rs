@@ -12,6 +12,8 @@ mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
+pub(crate) mod cache_worlds;
+pub use cache_worlds::CachedItemWorlds;
 mod custody;
 mod directives;
 mod discover;
