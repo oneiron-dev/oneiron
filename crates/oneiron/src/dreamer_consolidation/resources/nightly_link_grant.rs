@@ -46,8 +46,11 @@ pub(in crate::dreamer_consolidation) fn require_nightly_link_write(
         let Some(row) = vault.consent_grant_in_txn(txn, &grant_ref)? else {
             continue;
         };
+        let Some(stamp) = row.issuer.owner_stamp() else {
+            continue;
+        };
         if row.is_active()
-            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &row.owner_stamp.actor)?
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &stamp.actor)?
         {
             return Ok(Some(grant_ref));
         }

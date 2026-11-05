@@ -11,8 +11,8 @@ use super::effect::{
     ConsentDecision, EffectDigest,
 };
 use super::grant::{
-    CONSENT_CONTENT_KIND, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp,
-    ConsentReceipt, StandingConsentGrant,
+    CONSENT_CONTENT_KIND, ConsentGrant, ConsentGrantIssuer, ConsentGrantRow, ConsentGrantStatus,
+    ConsentOwnerStamp, ConsentReceipt, StandingConsentGrant,
 };
 use super::registry::{ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow};
 use super::support::{
@@ -484,9 +484,11 @@ impl Vault {
             effect_digest,
         };
         let rule_id = GateDecisionId::from_bytes(rule_decision_id).to_hex();
+        let stamp = row.issuer.owner_stamp()
+            .ok_or(Error::Gate(GateError::ConsentGrantNotFound))?;
         self.append_consent_gate_decision_in_txn(
             txn,
-            &row.owner_stamp,
+            stamp,
             &receipt,
             Some((&rule_id, reason)),
         )?;

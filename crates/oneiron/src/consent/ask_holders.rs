@@ -59,7 +59,9 @@ impl Vault {
                     }
                 }
             }
-            owners.insert(row.owner_stamp.actor);
+            if let Some(stamp) = row.issuer.owner_stamp() {
+                owners.insert(stamp.actor);
+            }
         }
         let mut holders: Vec<_> = delegates.iter().copied().collect();
         holders.extend(

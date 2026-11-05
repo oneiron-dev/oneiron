@@ -225,8 +225,11 @@ pub(in crate::office_body) fn revoke_office_edit_grants_naming_in_txn(
             BoundEnvelope::Disclosure(_) => false,
         };
         let grant_ref = bound.digest().to_hex();
-        let issuer = standing_grant_row_in_txn(store, wtxn, &grant_ref)?
-            .is_some_and(|row| row.owner_stamp.actor == *entity);
+        let issuer = standing_grant_row_in_txn(store, wtxn, &grant_ref)?.is_some_and(|row| {
+            row.issuer
+                .owner_stamp()
+                .is_some_and(|stamp| stamp.actor == *entity)
+        });
         if editor || artifact || issuer {
             revoke_standing_grant_in_txn(store, wtxn, &grant_ref)?;
         }

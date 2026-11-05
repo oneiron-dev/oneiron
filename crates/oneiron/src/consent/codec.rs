@@ -11,7 +11,10 @@ use super::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
 };
-use super::grant::{ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp, StandingConsentGrant};
+use super::grant::{
+    ConsentGrantIssuer, ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp,
+    StandingConsentGrant,
+};
 use super::support::{
     SUBJECT_KIND_ACTOR, SUBJECT_KIND_AUDIENCE, hex_to_16_bytes, invalid_row, normalized_ref,
     required_value, validate_keys,
@@ -40,7 +43,7 @@ impl crate::side_table::RawValue for ConsentGrantRow {
 }
 
 /// Body schema version of a persisted standing consent-grant row.
-pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 1;
+pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for standing consent-grant rows.
 ///
@@ -53,7 +56,7 @@ pub const CONSENT_GRANT_BODY_KEYS: [&str; 8] = [
     "class",
     "envelope",
     "status",
-    "owner_stamp",
+    "issuer",
     "created_at",
 ];
 
@@ -63,11 +66,11 @@ pub(super) const KEY_SUBJECT: &str = CONSENT_GRANT_BODY_KEYS[2];
 pub(super) const KEY_CLASS: &str = CONSENT_GRANT_BODY_KEYS[3];
 pub(super) const KEY_ENVELOPE: &str = CONSENT_GRANT_BODY_KEYS[4];
 pub(super) const KEY_STATUS: &str = CONSENT_GRANT_BODY_KEYS[5];
-pub(super) const KEY_OWNER_STAMP: &str = CONSENT_GRANT_BODY_KEYS[6];
+pub(super) const KEY_ISSUER: &str = CONSENT_GRANT_BODY_KEYS[6];
 pub(super) const KEY_CREATED_AT: &str = CONSENT_GRANT_BODY_KEYS[7];
 
 /// A bypass grant row carries every standing-grant key plus `bypass`. An
-/// ordinary row never has it, so its bytes are unchanged.
+/// ordinary row never has it.
 const CONSENT_BYPASS_GRANT_BODY_KEYS: [&str; 9] = [
     "schema_version",
     "domain",
@@ -75,7 +78,7 @@ const CONSENT_BYPASS_GRANT_BODY_KEYS: [&str; 9] = [
     "class",
     "envelope",
     "status",
-    "owner_stamp",
+    "issuer",
     "created_at",
     "bypass",
 ];
@@ -109,10 +112,7 @@ pub fn encode_consent_grant_row(row: &ConsentGrantRow) -> Result<Vec<u8>> {
             encode_envelope(bound.envelope())?,
         ),
         (Value::from(KEY_STATUS), Value::from(row.status.as_str())),
-        (
-            Value::from(KEY_OWNER_STAMP),
-            encode_owner_stamp(&row.owner_stamp),
-        ),
+        (Value::from(KEY_ISSUER), encode_issuer(&row.issuer)),
         (Value::from(KEY_CREATED_AT), Value::from(row.created_at)),
     ];
     if let Some(extent) = &row.bypass {
@@ -175,17 +175,27 @@ pub fn decode_consent_grant_row(bytes: &[u8]) -> Result<ConsentGrantRow> {
         .as_str()
         .and_then(ConsentGrantStatus::parse)
         .ok_or_else(invalid_row)?;
-    let owner_stamp = decode_owner_stamp(required_value(entries, KEY_OWNER_STAMP)?)?;
+    let issuer = decode_issuer(required_value(entries, KEY_ISSUER)?)?;
     let created_at = required_value(entries, KEY_CREATED_AT)?
         .as_u64()
         .ok_or_else(invalid_row)?;
 
     let bound = GrantBound::new(subject, class, envelope).map_err(|_| invalid_row())?;
+    if let ConsentGrantIssuer::System { principal_ref, .. } = &issuer {
+        let origin =
+            super::DerivedGrantOrigin::from_principal_ref(principal_ref).ok_or_else(invalid_row)?;
+        if bypass.is_some()
+            || super::bound_catastrophe_class(&bound).is_some()
+            || !origin.admits(&bound).map_err(|_| invalid_row())?
+        {
+            return Err(invalid_row());
+        }
+    }
     let grant = StandingConsentGrant::from_bound(bound).map_err(|_| invalid_row())?;
     Ok(ConsentGrantRow {
         grant,
         status,
-        owner_stamp,
+        issuer,
         created_at,
         bypass,
     })
@@ -362,6 +372,102 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
                 envelope.with_receipt_required(receipt_required),
             ))
         }
+    }
+}
+
+const OWNER_ISSUER_KEYS: [&str; 2] = ["kind", "stamp"];
+const SYSTEM_ISSUER_KEYS: [&str; 5] = [
+    "kind",
+    "principal_ref",
+    "decision_id",
+    "setting_ref",
+    "setting_owner",
+];
+
+fn encode_issuer(issuer: &ConsentGrantIssuer) -> Value {
+    match issuer {
+        ConsentGrantIssuer::Owner(stamp) => Value::Map(vec![
+            (Value::from("kind"), Value::from("owner")),
+            (Value::from("stamp"), encode_owner_stamp(stamp)),
+        ]),
+        ConsentGrantIssuer::System {
+            principal_ref,
+            decision_id,
+            setting_ref,
+            setting_owner,
+        } => Value::Map(vec![
+            (Value::from("kind"), Value::from("system")),
+            (
+                Value::from("principal_ref"),
+                Value::from(principal_ref.as_str()),
+            ),
+            (
+                Value::from("decision_id"),
+                Value::from(decision_id.to_hex()),
+            ),
+            (
+                Value::from("setting_ref"),
+                Value::from(setting_ref.as_str()),
+            ),
+            (
+                Value::from("setting_owner"),
+                setting_owner.map_or(Value::Nil, |id| Value::from(id.to_hex())),
+            ),
+        ]),
+    }
+}
+
+fn decode_issuer(value: &Value) -> Result<ConsentGrantIssuer> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_row());
+    };
+    match required_value(entries, "kind")?.as_str() {
+        Some("owner") => {
+            validate_keys(entries, &OWNER_ISSUER_KEYS)?;
+            Ok(ConsentGrantIssuer::Owner(decode_owner_stamp(
+                required_value(entries, "stamp")?,
+            )?))
+        }
+        Some("system") => {
+            validate_keys(entries, &SYSTEM_ISSUER_KEYS)?;
+            let principal_ref = required_value(entries, "principal_ref")?
+                .as_str()
+                .ok_or_else(invalid_row)?
+                .to_owned();
+            if super::DerivedGrantOrigin::from_principal_ref(&principal_ref).is_none() {
+                return Err(invalid_row());
+            }
+            let decision_id = GateDecisionId::from_bytes(
+                hex_to_16_bytes(
+                    required_value(entries, "decision_id")?
+                        .as_str()
+                        .ok_or_else(invalid_row)?,
+                )
+                .ok_or_else(invalid_row)?,
+            );
+            let setting_ref = normalized_ref(
+                "setting_ref",
+                required_value(entries, "setting_ref")?
+                    .as_str()
+                    .ok_or_else(invalid_row)?
+                    .to_owned(),
+            )
+            .map_err(|_| invalid_row())?;
+            let setting_owner = match required_value(entries, "setting_owner")? {
+                Value::Nil => None,
+                value => Some(
+                    EntityId::from_hex(value.as_str().ok_or_else(invalid_row)?)
+                        .map_err(|_| invalid_row())?,
+                ),
+            };
+            Ok(ConsentGrantIssuer::System {
+                principal_ref,
+                decision_id,
+                setting_ref,
+                setting_owner,
+            })
+        }
+        _ => Err(invalid_row()),
     }
 }
 

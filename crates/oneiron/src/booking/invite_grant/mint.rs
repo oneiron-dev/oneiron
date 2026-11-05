@@ -1,6 +1,6 @@
 //! Mints the one standing page invite grant and finds the live one for a page.
 
-use super::codec::{engine_failure, refused};
+use super::codec::engine_failure;
 use super::types::PublishBookingPageGrantRequest;
 use crate::Vault;
 use crate::booking::constraint::BookingError;
@@ -28,9 +28,7 @@ pub(super) const PAGE_INVITE_GRANT_ID_DOMAIN: &[u8] = b"oneiron.booking.page_inv
 ///
 /// # Errors
 ///
-/// [`BookingError::SlotOracle`] when the grant cannot be read or written;
-/// [`BookingError::InvalidConstraint`] when the vault records no owner to
-/// stamp it.
+/// [`BookingError::SlotOracle`] when the grant cannot be read or written.
 pub fn mint_publish_page_invite_grant(
     vault: &Vault,
     request: &PublishBookingPageGrantRequest,
@@ -43,7 +41,7 @@ pub fn mint_publish_page_invite_grant(
     vault
         .with_write_txn_grouped(|txn| {
             if let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &id)? {
-                return Ok(Some(grant));
+                return Ok(grant);
             }
             let setting = crate::booking::publication::publication_setting_in_txn(
                 vault,
@@ -63,8 +61,7 @@ pub fn mint_publish_page_invite_grant(
                 &setting,
             )
         })
-        .map_err(|error| engine_failure("page invite grant mint", error))?
-        .ok_or_else(|| refused("the vault records no owner to stamp the page invite grant"))
+        .map_err(|error| engine_failure("page invite grant mint", error))
 }
 
 /// Mints the page's invite grant inside the owner's publication write (FIX
@@ -93,7 +90,7 @@ pub(crate) fn mint_page_invite_grant_in_txn(
 }
 
 /// The page's invite grant under `id`, minted through the derived consent
-/// door for the publisher. `None`: the vault records no owner to stamp it.
+/// door for the publisher, carrying out the recorded publication.
 fn mint_derived_page_invite_grant_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -101,7 +98,7 @@ fn mint_derived_page_invite_grant_in_txn(
     page_ref: EntityId,
     publisher_principal: EntityId,
     setting: &DerivedGrantSetting,
-) -> crate::Result<Option<StandingOutboundGrant>> {
+) -> crate::Result<StandingOutboundGrant> {
     vault.mint_derived_outbound_grant_in_txn(
         txn,
         DerivedGrantOrigin::BookingInvite,

@@ -217,9 +217,10 @@ pub(super) fn live_bypasses_in_txn(
         .into_iter()
         .filter_map(|(grant_ref, row)| {
             let extent = row.bypass?;
+            let owner_stamp = row.issuer.owner_stamp()?.clone();
             row.is_active().then(|| LiveBypass {
                 grant_ref,
-                owner_stamp: row.owner_stamp,
+                owner_stamp,
                 bound: row.grant.bound().clone(),
                 extent,
             })
@@ -318,7 +319,7 @@ impl Vault {
         let row = ConsentGrantRow {
             grant: StandingConsentGrant::from_bound(warning.bound.clone())?,
             status: ConsentGrantStatus::Active,
-            owner_stamp: owner.stamp(),
+            issuer: super::grant::ConsentGrantIssuer::Owner(owner.stamp()),
             created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
             bypass: Some(extent),
         };

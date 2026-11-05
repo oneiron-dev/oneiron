@@ -479,9 +479,10 @@ impl Memory<'_> {
             };
             // A minter that no longer reads as a live owner delegates nothing:
             // the gate's own check refuses it too.
-            if !row.is_active()
-                || !is_root_owner(self.vault, &txn, row.owner_stamp.actor).unwrap_or(false)
-            {
+            let Some(stamp) = row.issuer.owner_stamp() else {
+                continue;
+            };
+            if !row.is_active() || !is_root_owner(self.vault, &txn, stamp.actor).unwrap_or(false) {
                 continue;
             }
             let key = (

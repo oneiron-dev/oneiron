@@ -218,8 +218,10 @@ impl Vault {
                 check(&key, &rule)?;
                 if !rule.retired
                     && rule.actor == *actor.as_bytes()
-                    && rule.actor == *grant.owner_stamp.actor.as_bytes()
-                    && rule.authentication_id == grant.owner_stamp.decision_id.as_bytes()
+                    && grant.issuer.owner_stamp().is_some_and(|stamp| {
+                        rule.actor == *stamp.actor.as_bytes()
+                            && rule.authentication_id == stamp.decision_id.as_bytes()
+                    })
                     && grant.grant.bound() == bound
                 {
                     derived = true;
@@ -287,9 +289,10 @@ impl Vault {
             let grant = self
                 .consent_grant_in_txn(&*txn, &row.grant_ref)?
                 .ok_or(Error::Gate(GateError::ConsentGrantNotFound))?;
-            if grant.owner_stamp.decision_id.as_bytes() != row.authentication_id
-                || *grant.owner_stamp.actor.as_bytes() != row.actor
-            {
+            if !grant.issuer.owner_stamp().is_some_and(|stamp| {
+                stamp.decision_id.as_bytes() == row.authentication_id
+                    && *stamp.actor.as_bytes() == row.actor
+            }) {
                 return Err(Error::Gate(GateError::ConsentGrantNotFound));
             }
             if !super::doors::revoke_standing_grant_in_txn(&self.store, txn, &row.grant_ref)? {
@@ -323,8 +326,10 @@ impl Vault {
                 };
                 if rule.retired
                     || !grant.is_active()
-                    || *grant.owner_stamp.actor.as_bytes() != rule.actor
-                    || grant.owner_stamp.decision_id.as_bytes() != rule.authentication_id
+                    || !grant.issuer.owner_stamp().is_some_and(|stamp| {
+                        *stamp.actor.as_bytes() == rule.actor
+                            && stamp.decision_id.as_bytes() == rule.authentication_id
+                    })
                 {
                     continue;
                 }
