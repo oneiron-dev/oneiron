@@ -263,6 +263,21 @@ def launch_identity(manifest_path):
     return cache_usage.sha256_hex(data), runtime
 
 
+def launch_draft_identity(manifest_path):
+    """The identity of the draft the supervisor's launch manifest names
+    (`draft_weights_digest`, FIX 14976): what every answer's identity echoes
+    while a draft is loaded. None without a manifest or without the field;
+    a manifest that cannot be read is already warned of by
+    `launch_identity`."""
+    if not manifest_path:
+        return None
+    try:
+        value = json.loads(Path(manifest_path).read_bytes()).get("draft_weights_digest")
+    except Exception:  # identity never stops the server
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -354,7 +369,8 @@ def load(args):
                         "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                          "max_in_flight": batch},
-        model_digest=model_digest, launch=launch)
+        model_digest=model_digest, launch=launch,
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:

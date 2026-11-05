@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1238 facade rows, 4509 generated types.
+// UniFFI census: 1238 facade rows, 4511 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1190.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -29188,6 +29188,8 @@ pub enum DrafterActor {
     Agent(String),
     #[serde(rename = "coach")]
     Coach,
+    #[serde(rename = "host")]
+    Host,
     #[serde(rename = "erase")]
     Erase,
     #[serde(rename = "erased")]
@@ -29232,6 +29234,61 @@ pub struct DrafterBinding {
     pub changed_by: Option<String>,
     #[serde(rename = "changed_at")]
     pub changed_at: u64,
+}
+
+/// `oneiron::drafter::serving::DrafterUnservedReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterUnservedReason {
+    #[serde(rename = "no_serving_host")]
+    NoServingHost,
+    #[serde(rename = "no_serving_worker")]
+    NoServingWorker,
+    #[serde(rename = "unsupported_shared_worker")]
+    UnsupportedSharedWorker,
+    #[serde(rename = "unsupported_external_worker")]
+    UnsupportedExternalWorker,
+    #[serde(rename = "unsupported_runtime")]
+    UnsupportedRuntime,
+    #[serde(rename = "vault_locked")]
+    VaultLocked,
+    #[serde(rename = "version_not_servable")]
+    VersionNotServable,
+    #[serde(rename = "load_set_unverified")]
+    LoadSetUnverified,
+    #[serde(rename = "worker_rejected")]
+    WorkerRejected,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::drafter::serving::DrafterServedView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterServedView {
+    #[serde(rename = "target")]
+    pub target: DrafterTarget,
+    #[serde(rename = "serving", default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<DrafterServing>,
+    #[serde(
+        rename = "generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub generation: Option<u64>,
+    #[serde(
+        rename = "draft_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub draft_digest: Option<String>,
+    #[serde(rename = "worker", default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
+    #[serde(rename = "epoch", default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<String>,
+    #[serde(rename = "applying")]
+    pub applying: bool,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<DrafterUnservedReason>,
 }
 
 /// `oneiron::drafter::types::DrafterSkipReason`.
@@ -29330,6 +29387,21 @@ pub enum DrafterEventKind {
         #[serde(rename = "revision")]
         revision: u64,
     },
+    #[serde(rename = "served")]
+    Served {
+        #[serde(rename = "target")]
+        target: DrafterTarget,
+        #[serde(rename = "serving")]
+        serving: DrafterServing,
+        #[serde(rename = "generation")]
+        generation: u64,
+        #[serde(
+            rename = "draft_digest",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        draft_digest: Option<String>,
+    },
 }
 
 /// `oneiron::drafter::types::DrafterBindingChange`.
@@ -29370,6 +29442,8 @@ pub struct DrafterStatus {
     pub policy: DrafterPolicy,
     #[serde(rename = "bindings")]
     pub bindings: Vec<DrafterBinding>,
+    #[serde(rename = "served")]
+    pub served: Vec<DrafterServedView>,
     #[serde(rename = "events")]
     pub events: Vec<DrafterEvent>,
 }

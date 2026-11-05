@@ -5,7 +5,8 @@
 //! Off stops new work and returns every binding to stock; the versions stay
 //! retained. A newly excluded world returns to stock every binding whose
 //! version's ancestry trained on it; such a version is not reverted to while
-//! the world stays excluded, and its key is kept.
+//! the world stays excluded, and its key is kept. Either way the serving
+//! host restarts its worker with stock (FIX 14976).
 
 use std::collections::BTreeSet;
 
@@ -71,11 +72,22 @@ pub struct DrafterPolicySetRequest {
 /// write: off returns every binding to stock, and a newly excluded world
 /// returns to stock every binding whose version's ancestry trained on it.
 /// Each binding moved gets its own event; a set that moves none records one.
+/// After commit the serving host is told, which serves each moved binding.
 ///
 /// # Errors
 /// An owner proof that does not revalidate, a revision that moved since it
 /// was read, and storage faults.
 pub fn set_drafter_policy_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &DrafterPolicySetRequest,
+) -> Result<DrafterPolicy> {
+    let policy = set_policy_in_txn(vault, owner, input)?;
+    vault.notify_drafter_serving();
+    Ok(policy)
+}
+
+fn set_policy_in_txn(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &DrafterPolicySetRequest,

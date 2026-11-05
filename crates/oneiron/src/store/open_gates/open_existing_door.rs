@@ -221,6 +221,7 @@ impl Store {
             #[cfg(unix)]
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
+            drafter_serving: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::store::result_memory::ResultMemoryPool::new(
                     config

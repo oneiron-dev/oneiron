@@ -24,6 +24,23 @@ first. Only an actual failed rearm invokes the existing managed stop/grace path
 and normal supervisor relaunch. Guardian status never substitutes for worker
 status. There is no new timer, restart delay, cap or admission policy.
 
+## Restart for a vault's own drafter
+
+A vault's drafter binding (FIX 14976) restarts a managed EXL3 worker through
+the same row replacement as a changed config row. A new supervisor takes the
+row, and its launch loads the vault's private load set as the draft. The
+predecessor drains and stops through the existing managed stop and grace
+path. Then the new worker starts and qualifies. There is no new timer,
+restart delay, cap or admission policy. Calls that arrive during the restart
+wait for the new worker, as they do after a config change. The new worker
+reloads the target and starts with an empty cache.
+
+Only a process that launches the worker for its own one vault restarts it
+for a drafter. An external worker is never restarted for one. The hosted row
+stays the configured row. If the same config is configured again, the
+replacement stays. If the config changes, the row is replaced with the stock
+draft, and the vault's drafter host applies the binding again.
+
 ## Stop during a join
 
 A guardian is first spawned in its own private group. The controller obtains its

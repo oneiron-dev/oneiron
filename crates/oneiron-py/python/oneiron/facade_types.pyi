@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1238 facade rows, 4510 declarations.
+Census: 1238 facade rows, 4512 declarations.
 Inputs: 1168 of 1238 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1071 of 1238 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
@@ -9382,7 +9382,7 @@ class DrafterActorOwner(TypedDict):
     owner: EntityId
 class DrafterActorAgent(TypedDict):
     agent: EntityId
-DrafterActor = Literal["coach", "erase", "erased"] | DrafterActorOwner | DrafterActorAgent
+DrafterActor = Literal["coach", "host", "erase", "erased"] | DrafterActorOwner | DrafterActorAgent
 class DrafterPolicy(TypedDict):
     enabled: bool
     excluded_worlds: list[EntityId]
@@ -9397,6 +9397,16 @@ class DrafterBinding(TypedDict):
     previous: DrafterServing
     changed_by: NotRequired[EntityId | None]
     changed_at: int
+DrafterUnservedReason = Literal["no_serving_host", "no_serving_worker", "unsupported_shared_worker", "unsupported_external_worker", "unsupported_runtime", "vault_locked", "version_not_servable", "load_set_unverified", "worker_rejected", "superseded"]
+class DrafterServedView(TypedDict):
+    target: DrafterTarget
+    serving: NotRequired[DrafterServing | None]
+    generation: NotRequired[int | None]
+    draft_digest: NotRequired[str | None]
+    worker: NotRequired[str | None]
+    epoch: NotRequired[str | None]
+    applying: bool
+    reason: NotRequired[DrafterUnservedReason | None]
 DrafterSkipReason = Literal["policy_off"]
 DrafterHoldReason = Literal["no_trainer_recipe"]
 class DrafterRetrainOutcomeSkippedBody(TypedDict):
@@ -9444,7 +9454,14 @@ class DrafterEventKindPolicyBody(TypedDict):
     revision: int
 class DrafterEventKindPolicy(TypedDict):
     policy: DrafterEventKindPolicyBody
-DrafterEventKind = DrafterEventKindRetrain | DrafterEventKindQualify | DrafterEventKindActivate | DrafterEventKindRollback | DrafterEventKindRevert | DrafterEventKindErase | DrafterEventKindPolicy
+class DrafterEventKindServedBody(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    draft_digest: NotRequired[str | None]
+class DrafterEventKindServed(TypedDict):
+    served: DrafterEventKindServedBody
+DrafterEventKind = DrafterEventKindRetrain | DrafterEventKindQualify | DrafterEventKindActivate | DrafterEventKindRollback | DrafterEventKindRevert | DrafterEventKindErase | DrafterEventKindPolicy | DrafterEventKindServed
 DrafterBindingChange = TypedDict("DrafterBindingChange", {"target": DrafterTarget, "from": DrafterServing, "to": DrafterServing, "generation": int})
 class DrafterEvent(TypedDict):
     id: EntityId
@@ -9455,6 +9472,7 @@ class DrafterEvent(TypedDict):
 class DrafterStatus(TypedDict):
     policy: DrafterPolicy
     bindings: list[DrafterBinding]
+    served: list[DrafterServedView]
     events: list[DrafterEvent]
 class DrafterPolicySetRequest(TypedDict):
     expected_revision: int

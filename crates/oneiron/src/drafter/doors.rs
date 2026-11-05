@@ -4,8 +4,10 @@
 //! revert: "the owner or the agent can revert to any of them"). Each door
 //! judges its caller again in the snapshot it reads or writes.
 //!
-//! A revert moves the binding's pointer only. The serving worker that loads
-//! the pointed-at head is not wired yet, so serving stays stock until it is.
+//! A revert moves the binding's pointer and then tells the attached serving
+//! host, which restarts its own managed worker with the pointed-at head
+//! (FIX 14976, `serving`). The status shows what each target's worker serves
+//! now, and why a binding is not applied where it is not.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,9 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BINDINGS, BindingMove, DRAFTER_READ_GRANT_VERB, DRAFTER_REVERT_GRANT_VERB, DrafterActor,
-    DrafterBinding, DrafterEvent, DrafterEventKind, DrafterPolicy, DrafterServing, DrafterTarget,
-    DrafterVersion, DrafterVersionState, EVENTS, VERSIONS, ancestry, ancestry_names_world, invalid,
-    move_binding_in_txn, policy_in_txn, versions_by_id,
+    DrafterBinding, DrafterEvent, DrafterEventKind, DrafterPolicy, DrafterServedView,
+    DrafterServing, DrafterTarget, DrafterVersion, DrafterVersionState, EVENTS, VERSIONS, ancestry,
+    ancestry_names_world, invalid, move_binding_in_txn, policy_in_txn, versions_by_id,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -66,13 +68,16 @@ pub struct DrafterStatusRequest {
     pub events_after: Option<EntityId>,
 }
 
-/// The owner's policy, every bound target's pointer and the events, oldest
-/// first.
+/// The owner's policy, every bound target's pointer, what each target's
+/// worker serves now, and the events, oldest first.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DrafterStatus {
     pub policy: DrafterPolicy,
     pub bindings: Vec<DrafterBinding>,
+    /// What serves each target now, as the serving host's worker proved it,
+    /// and why a binding is not applied where it is not.
+    pub served: Vec<DrafterServedView>,
     pub events: Vec<DrafterEvent>,
 }
 
@@ -235,7 +240,7 @@ pub fn drafter_status_as_owner(
     let txn = store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     let policy = policy_in_txn(store, &txn)?;
-    let bindings = BINDINGS
+    let bindings: Vec<DrafterBinding> = BINDINGS
         .scan(store, &txn)?
         .into_iter()
         .map(|(_, binding)| binding)
@@ -246,9 +251,12 @@ pub fn drafter_status_as_owner(
         .filter(|(id, _)| input.events_after.is_none_or(|after| *id > after))
         .map(|(_, event)| event)
         .collect();
+    drop(txn);
+    let served = vault.drafter_served(&bindings);
     Ok(DrafterStatus {
         policy,
         bindings,
+        served,
         events,
     })
 }
@@ -290,12 +298,25 @@ pub fn revert_drafter_as_agent(
 /// erased, keeps its artifact and that artifact's key stands live; the
 /// policy is on and no excluded world is in its ancestry; the binding of
 /// its target holds the same target pins and sits at the generation the
-/// caller read. An erased version never comes back.
+/// caller read. An erased version never comes back. A revert that moved the
+/// binding tells the serving host after commit.
 ///
 /// # Errors
 /// Any check above that fails, an unknown version, and storage and custody
 /// faults.
 fn revert_in(
+    vault: &Vault,
+    caller: &Caller<'_>,
+    input: &DrafterRevertRequest,
+) -> Result<DrafterRevertReceipt> {
+    let receipt = revert_in_txn(vault, caller, input)?;
+    if receipt.event.is_some() {
+        vault.notify_drafter_serving();
+    }
+    Ok(receipt)
+}
+
+fn revert_in_txn(
     vault: &Vault,
     caller: &Caller<'_>,
     input: &DrafterRevertRequest,
