@@ -148,6 +148,7 @@ impl Vault {
             share_ref: None,
             delegation: None,
             comm,
+            trusted_contact: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;

@@ -255,6 +255,7 @@ impl Vault {
                 share_ref: None,
                 delegation: None,
                 comm: None,
+                trusted_contact: None,
             },
         )?;
         txn.commit()?;

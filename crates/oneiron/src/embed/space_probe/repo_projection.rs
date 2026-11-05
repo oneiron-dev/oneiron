@@ -258,6 +258,7 @@ impl Vault {
         let destination = author.endpoint();
         let mut work = Vec::new();
         {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
             let mut pending: Vec<[u8; 16]> = pending_in(&self.store, &rtxn, usize::MAX)?

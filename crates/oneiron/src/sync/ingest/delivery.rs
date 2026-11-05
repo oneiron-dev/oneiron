@@ -29,19 +29,24 @@ use loro::LoroMap;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::federation::PactDelivery;
+use crate::federation::delivery_record::{
+    DeliveredRecord, DeliveryOrigin, decode_delivered_record, encode_delivered_record,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::loro_support::map_for_each_value_bytes;
 use crate::{Vault, ports};
 
-/// Each record one pact delivered at one epoch, with the world it sits in
-/// (16 raw bytes; empty for base reality). Key: hex64 (pact) ":" hex16
-/// (epoch) ":" hex32 (record).
+/// Each record one pact delivered at one consent epoch, with its native
+/// admission binding, landed-image digest and world. Key: hex64 (pact)
+/// ":" hex16 (epoch) ":" hex32 (record).
 const DELIVERED: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_DELIVERED_RECORD);
 
 /// A row one pact's import brings, recorded before the import lands it: the
 /// pact (32 bytes), its epoch and when it was recorded (u64 big-endian
-/// seconds each), then the digest of the row's bytes. Key: hex32 (record)
+/// seconds each), the admitted grant (16 bytes), source vault (32 bytes),
+/// then the digest of the row's bytes. Key: hex32 (record)
 /// ":" hex64 (pact).
 const INTENT: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_DELIVERY_INTENT);
@@ -62,21 +67,27 @@ pub(in crate::sync) struct Delivery {
     vault: PathBuf,
     pact: [u8; 32],
     epoch: u64,
+    origin: DeliveryOrigin,
     rows: BTreeMap<EntityId, [u8; 32]>,
 }
 
 impl Delivery {
-    /// The delivery of `rows` ([`delivered_rows`]) into `vault` under pact
-    /// `pact` at consent epoch `epoch`.
+    /// The delivery of admitted `rows` into `vault`, under the same checked
+    /// `grant` and pact binding that admitted the part.
     pub(in crate::sync) fn new(
         vault: &Vault,
-        (pact, epoch): ([u8; 32], u64),
+        grant: EntityId,
+        delivery: PactDelivery,
         rows: &BTreeMap<EntityId, [u8; 32]>,
     ) -> Self {
         Self {
             vault: vault.store.env.path().to_path_buf(),
-            pact,
-            epoch,
+            pact: delivery.pact,
+            epoch: delivery.epoch,
+            origin: DeliveryOrigin {
+                grant_ref: grant,
+                source_vault: delivery.source_vault,
+            },
             rows: rows.clone(),
         }
     }
@@ -93,7 +104,15 @@ impl Delivery {
         let epoch = self.epoch.to_be_bytes();
         vault.with_write_txn_grouped(|wtxn| {
             for (id, sent) in &self.rows {
-                let intent = [&self.pact[..], &epoch, &held, sent].concat();
+                let intent = [
+                    &self.pact[..],
+                    &epoch,
+                    &held,
+                    self.origin.grant_ref.as_bytes(),
+                    &self.origin.source_vault,
+                    sent,
+                ]
+                .concat();
                 INTENT.put(&vault.store, wtxn, &intent_key(*id, &self.pact), &intent)?;
             }
             Ok(())
@@ -168,16 +187,22 @@ fn intent_key(record: EntityId, pact: &[u8; 32]) -> String {
     format!("{}:{}", record.to_hex(), bytes_to_hex_lower(pact))
 }
 
-/// An intent row's pact, epoch, when it was recorded and row digest.
-fn parse_intent(intent: &[u8]) -> Option<([u8; 32], u64, u64, [u8; 32])> {
+/// An intent row's pact, epoch, recorded time, admission binding and row digest.
+fn parse_intent(intent: &[u8]) -> Option<([u8; 32], u64, u64, DeliveryOrigin, [u8; 32])> {
     let (pact, rest) = intent.split_first_chunk::<32>()?;
     let (epoch, rest) = rest.split_first_chunk::<8>()?;
     let (held, rest) = rest.split_first_chunk::<8>()?;
+    let (grant, rest) = rest.split_first_chunk::<16>()?;
+    let (source_vault, rest) = rest.split_first_chunk::<32>()?;
     let sent = <[u8; 32]>::try_from(rest).ok()?;
     Some((
         *pact,
         u64::from_be_bytes(*epoch),
         u64::from_be_bytes(*held),
+        DeliveryOrigin {
+            grant_ref: EntityId::from_bytes(*grant).ok()?,
+            source_vault: *source_vault,
+        },
         sent,
     ))
 }
@@ -190,17 +215,17 @@ fn take_intents_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
     landed: &[u8; 32],
-) -> Result<BTreeSet<([u8; 32], u64)>> {
-    let mut pacts = BTreeSet::new();
+) -> Result<BTreeMap<([u8; 32], u64), DeliveryOrigin>> {
+    let mut pacts = BTreeMap::new();
     let prefix = format!("{}:", id.to_hex());
     for (key, intent) in INTENT.scan_from(&vault.store, wtxn, prefix.as_bytes())? {
-        let (pact, epoch, held, sent) =
+        let (pact, epoch, held, origin, sent) =
             parse_intent(&intent).ok_or(Error::CorruptedIndex("federation delivery intent"))?;
         let lapsed = DELIVERY_INTENT_EXPIRY.is_some_and(|expiry| {
             crate::unix_seconds_now().saturating_sub(held) >= expiry.as_secs()
         });
         if sent == *landed && !lapsed {
-            pacts.insert((pact, epoch));
+            pacts.insert((pact, epoch), origin);
         }
         INTENT.delete(&vault.store, wtxn, &key)?;
     }
@@ -225,7 +250,7 @@ pub(in crate::sync) fn note_delivered_in_txn(
     pacts.extend(DELIVERY.with(|slot| {
         slot.borrow().as_ref().and_then(|delivery| {
             (delivery.vault == vault.store.env.path() && delivery.rows.get(&id) == Some(&landed))
-                .then_some((delivery.pact, delivery.epoch))
+                .then_some(((delivery.pact, delivery.epoch), delivery.origin))
         })
     }));
     if pacts.is_empty() {
@@ -251,9 +276,13 @@ pub(in crate::sync) fn note_delivered_in_txn(
         )?
         .flatten()
     };
-    let place = world.map_or_else(Vec::new, |world| world.as_bytes().to_vec());
     let foreign = world.and_then(|world| ForeignWorldId::from_entity_id(world).ok());
-    for (pact, epoch) in pacts {
+    for ((pact, epoch), origin) in pacts {
+        let place = encode_delivered_record(&DeliveredRecord {
+            origin,
+            row_hash: landed,
+            world,
+        });
         DELIVERED.put(&vault.store, wtxn, &delivery_key(&pact, epoch, id), &place)?;
         if let Some(foreign) = foreign {
             crate::federation::register_foreign_world_for_pact_in(vault, wtxn, &pact, foreign)?;
@@ -304,11 +333,7 @@ impl Vault {
                 .ok()
                 .filter(|id| id.to_hex() == record)
                 .ok_or_else(corrupt)?;
-            let world = match <[u8; 16]>::try_from(place.as_slice()) {
-                Ok(bytes) => EntityId::from_bytes(bytes).map_err(|_| corrupt())?,
-                Err(_) if place.is_empty() => base,
-                Err(_) => return Err(corrupt()),
-            };
+            let world = decode_delivered_record(&place)?.world.unwrap_or(base);
             if epoch > epoch_cutoff
                 || worlds
                     .as_ref()

@@ -162,6 +162,7 @@ impl Vault {
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, space_id)? else {
                 return Err(Error::InvalidConfig(format!(
@@ -540,6 +541,8 @@ pub(super) fn asset_document_in(
     let learned_at = row.learned_at;
     let raw = row.encode();
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    let filed = super::repo_projection::repo_file_body_in(vault, store, txn, &id, body)?;
+    let body = filed.as_deref().unwrap_or(body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
     let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
         super::repo_projection::repo_blob_body_in(vault, store, txn, blob)
