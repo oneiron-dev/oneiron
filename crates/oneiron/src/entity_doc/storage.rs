@@ -215,6 +215,27 @@ pub(super) fn persist_canonical_skill(
     )
 }
 
+/// Consume the authenticated owner's actual constrained history cut, not an
+/// arbitrary shallow snapshot offered as inherited native state.
+pub(super) fn persist_purged_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    purged: &super::pins::PurgedDocument<'_>,
+) -> Result<()> {
+    let native_tokens = purged.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        purged.vault(),
+        txn,
+        entity,
+        h,
+        purged.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
 fn persist_scanned_inner(
     vault: &Vault,
     txn: &mut RwTxn<'_>,

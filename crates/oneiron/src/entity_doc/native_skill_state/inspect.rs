@@ -37,7 +37,7 @@ pub(super) struct NativeMapFloor {
 /// An ephemeral inventory, never stored as a second native operation ledger.
 /// Decoded witnesses here have no source, carrier-standing or ACK authority.
 #[derive(PartialEq, Eq)]
-pub(super) struct NativeMapInventory {
+pub(in crate::entity_doc) struct NativeMapInventory {
     pub(super) current: Option<SkillStateFact>,
     pub(super) floor: Option<NativeMapFloor>,
     pub(super) mutations: Vec<NativeMapMutation>,
@@ -46,7 +46,7 @@ pub(super) struct NativeMapInventory {
 impl NativeMapInventory {
     /// Opaque provenance references in this same inventory, not acceptance of
     /// its writes. Admission must precede recording their retained uses.
-    pub(super) fn writer_tokens(&self) -> Result<BTreeSet<EntityId>> {
+    pub(in crate::entity_doc) fn writer_tokens(&self) -> Result<BTreeSet<EntityId>> {
         let mut tokens = BTreeSet::new();
         if let Some(current) = &self.current {
             tokens.extend(current.writer_token()?);
@@ -72,7 +72,7 @@ fn malformed() -> Error {
 /// Inspect every retained raw write, including values hidden by later LWW
 /// writes. The shallow floor is read separately from its actual causal state.
 /// Nothing in this function grants admission to any of these values.
-pub(super) fn inspect(doc: &EntityDoc) -> Result<NativeMapInventory> {
+pub(in crate::entity_doc) fn inspect(doc: &EntityDoc) -> Result<NativeMapInventory> {
     let current = read_fact(doc)?;
     let floor = if doc.doc.is_shallow() {
         let frontier = doc.doc.shallow_since_frontiers().encode();
