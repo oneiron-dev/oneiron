@@ -108,7 +108,7 @@ impl Vault {
         candidate: &ClaimCandidate,
         envelope: &WriteEnvelope,
     ) -> Result<Option<(ClaimBody, ClaimBody)>> {
-        if stable_state_predicate(candidate.predicate()) || envelope.machine_signature().is_some() {
+        if envelope.machine_signature().is_some() {
             return Ok(None);
         }
         let Some(raw) = self.store.port_entity_raw(txn, id)? else {
@@ -126,7 +126,8 @@ impl Vault {
             return Ok(None);
         };
         if prior.lifecycle != ClaimLifecycleStatus::Active
-            || stable_state_predicate(&prior.predicate)
+            || (prior.predicate == candidate.predicate()
+                && stable_state_predicate(&prior.predicate))
             || crate::authority::machine_claim_needs_history(&self.store, txn, &prior)?
         {
             return Ok(None);
