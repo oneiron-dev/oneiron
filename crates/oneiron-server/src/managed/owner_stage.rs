@@ -84,7 +84,8 @@ pub(super) async fn verify_staged(
 /// past it, is staged as [`verify_staged`] stages a streaming route's, with
 /// no ceiling of its own: only the disk's floor ends it, and the route's own
 /// body limit still holds once it is replayed. The answers are
-/// [`verify_staged`]'s, and a body that failed is 400.
+/// [`verify_staged`]'s, including the same configured per-piece transfer idle
+/// limit while the body is held in memory. A body that failed is 400.
 pub(super) async fn verify_held(
     server: &SyncServer,
     ledger: &WakeLedger,
@@ -103,15 +104,16 @@ pub(super) async fn verify_held(
     });
     if fits {
         loop {
-            match pieces.next().await {
-                None => return verify_in_memory(ledger, assertion, holder, parts, held),
-                Some(Ok(piece)) => {
+            match tokio::time::timeout(server.transfers.idle, pieces.next()).await {
+                Ok(None) => return verify_in_memory(ledger, assertion, holder, parts, held),
+                Ok(Some(Ok(piece))) => {
                     held.extend_from_slice(&piece);
                     if held.len() > HELD_BODY_BYTES {
                         break;
                     }
                 }
-                Some(Err(_)) => return Err(body_failed()),
+                Ok(Some(Err(_))) => return Err(body_failed()),
+                Err(_) => return Err(body_stalled()),
             }
         }
     }
@@ -231,13 +233,7 @@ async fn spool_body(
             Ok(Some(Ok(piece))) => piece,
             Ok(None) => break,
             Ok(Some(Err(_))) => return Err(body_failed()),
-            Err(_) => {
-                return Err((
-                    StatusCode::REQUEST_TIMEOUT,
-                    "the request body stalled past the transfer idle limit",
-                )
-                    .into_response());
-            }
+            Err(_) => return Err(body_stalled()),
         };
         let size = u64::try_from(piece.len()).unwrap_or(u64::MAX);
         let landed = length.saturating_add(size);
@@ -299,6 +295,15 @@ fn replay(spool: std::fs::File) -> Body {
         })
     });
     Body::from_stream(pieces)
+}
+
+/// The answer to a body whose next piece missed the configured transfer idle limit.
+fn body_stalled() -> Response {
+    (
+        StatusCode::REQUEST_TIMEOUT,
+        "the request body stalled past the transfer idle limit",
+    )
+        .into_response()
 }
 
 /// The answer to a request body that failed on its way in.

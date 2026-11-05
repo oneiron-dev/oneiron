@@ -469,6 +469,12 @@ export class Oneiron {
       release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
       /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
       supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+      reminder_route: {
+        /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteGet(input) as Facade.CommitmentReminderRouteReply),
+        /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+        set: (input: Facade.CommitmentReminderRouteSetRequest): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteSet(input) as Facade.CommitmentReminderRouteReply),
+      },
     },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
@@ -1523,6 +1529,10 @@ export class Oneiron {
       },
     },
     sync: {
+      quarantine: {
+        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+        held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
+      },
       retained_work: {
         wait: {
           /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
@@ -2207,8 +2217,8 @@ export class Oneiron {
           preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
-      /** Appends one version of bytes to a blob artifact's append-only chain. */
-      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
+      /** Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep. */
+      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionAppendOutcome => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionAppendOutcome),
       /** Reads one version of a blob artifact's bytes. */
       read: (input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null => this.#call(() => this.#client.vaultArtifactsRead(input) as Facade.BlobContent | null),
     },
