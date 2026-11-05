@@ -38,6 +38,20 @@ impl State {
     }
 }
 
+/// The typed local operation and its historical successor source binding.
+/// Decoding this descriptor does not establish that its source was admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum Door {
+    Update,
+    Supersede {
+        successor: [u8; 16],
+        source_core: [u8; 32],
+        logical_body: [u8; 32],
+        document_pin: Option<([u8; 16], Vec<u8>)>,
+    },
+}
+
 /// The source coordinates at admission. The frontier and CORE fingerprint are
 /// historical evidence, not the current local incarnation or a restore key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +68,7 @@ struct Operation {
     previous: Option<AuthorityEntryHash>,
     prior: State,
     state: State,
+    door: Door,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +146,17 @@ impl SkillStateFact {
                 previous: previous.map(Self::token).transpose()?,
                 prior,
                 state: State::of(admitted.record()),
+                door: match admitted.superseding_revision() {
+                    None => Door::Update,
+                    Some(successor) => Door::Supersede {
+                        successor: *successor.entity().as_bytes(),
+                        source_core: successor.source_fingerprint(),
+                        logical_body: successor.logical_body_fingerprint(),
+                        document_pin: successor
+                            .document_pin()
+                            .map(|(id, frontier)| (*id.as_bytes(), frontier.to_vec())),
+                    },
+                },
             },
             attestation: None,
         };
@@ -178,6 +204,32 @@ impl SkillStateFact {
         super::super::document::decode_frontier(&fact.operation.source_frontier)?;
         fact.operation.prior.lifecycle()?;
         fact.operation.state.lifecycle()?;
+        match &fact.operation.door {
+            Door::Update => {
+                if fact.operation.state.lifecycle()? == SkillLifecycle::Superseded
+                    && fact.operation.prior.lifecycle()? != SkillLifecycle::Superseded
+                {
+                    return Err(malformed());
+                }
+            }
+            Door::Supersede {
+                successor,
+                document_pin,
+                ..
+            } => {
+                let successor = EntityId::from_bytes(*successor)?;
+                if successor.as_bytes() == &fact.operation.entity
+                    || fact.operation.prior.lifecycle()? != SkillLifecycle::Active
+                    || fact.operation.state.lifecycle()? != SkillLifecycle::Superseded
+                {
+                    return Err(malformed());
+                }
+                if let Some((id, frontier)) = document_pin {
+                    EntityId::from_bytes(*id)?;
+                    super::super::document::decode_frontier(frontier)?;
+                }
+            }
+        }
         if let Some(attestation) = &fact.attestation {
             EntityId::from_bytes(attestation.carrier.machine)?;
             if attestation.signature.len() != 64 {

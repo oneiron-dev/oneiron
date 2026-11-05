@@ -72,6 +72,11 @@ impl<'a> NativeSkillPostGate<'a> {
         &self.record
     }
 
+    /// Read-only actual successor binding of the closed supersede request.
+    pub(crate) fn superseding_revision(&self) -> Option<&crate::skill::SkillSupersessionRead> {
+        self.request.superseding_revision()
+    }
+
     pub(crate) fn actor(&self) -> Option<WriteActor> {
         self.actor
     }
