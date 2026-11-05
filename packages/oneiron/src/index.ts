@@ -2074,8 +2074,14 @@ export class Oneiron {
         due: (input: Facade.EmptyRequest = {}): Facade.EntityId[] => this.#call(() => this.#client.vaultHooksRegenDue(input) as Facade.EntityId[]),
         /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
         get: (input: Facade.HookRegenBindingRequest): Facade.HookRegenView | null => this.#call(() => this.#client.vaultHooksRegenGet(input) as Facade.HookRegenView | null),
+        /** Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing. */
+        history: (input: Facade.HookRegenHistoryRequest): Facade.HookRegenReceipt[] => this.#call(() => this.#client.vaultHooksRegenHistory(input) as Facade.HookRegenReceipt[]),
+        /** Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt. */
+        revert: (input: Facade.HookRegenRevertRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultHooksRegenRevert(input) as Facade.PackPutReceipt),
         /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
         adopt: (input: Facade.HookRegenAdoptRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultHooksRegenAdopt(input) as Facade.PackPutReceipt),
+        /** Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again. */
+        cancel: (input: Facade.HookRegenCancelRequest): Facade.HookRegenCancel => this.#call(() => this.#client.vaultHooksRegenCancel(input) as Facade.HookRegenCancel),
       },
     },
     artifacts: {

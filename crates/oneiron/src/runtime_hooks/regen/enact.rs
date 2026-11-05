@@ -1,0 +1,195 @@
+//! Hook regen enacted by hand (ARCH-0080 §8, FIX 4690): the owner sets a
+//! waiting decision aside ([`Vault::cancel_hook_regen`]) or reverts an
+//! adoption to the body it replaced ([`Vault::revert_hook_regen`]). Neither
+//! leaves a blank body: a cancel changes no body, and a revert installs the
+//! exact body the adoption replaced, through the owner's own pack put. Both
+//! decline the contract in force, so the engine's own pass leaves the hook
+//! on its body until the contract moves again, and both land a receipt in
+//! the hook's regen history.
+
+use serde::{Deserialize, Serialize};
+
+use crate::consent::AuthenticatedOwner;
+use crate::skill_hub::pack_catalog::PackInstallDisposition;
+use crate::{EntityId, Error, Result, Vault};
+
+use super::history::{self, HookRegenActor, HookRegenEvent};
+use super::{HookContractStamp, HookRegenPrior, HookRegenRecord, REGEN, files_with_hook_body};
+
+/// What a cancel set aside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookRegenCancel {
+    /// The candidate set aside, as BLAKE3 hex; absent for a failed regen's
+    /// decision, which holds none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_hash: Option<String>,
+    /// The contract the decision targeted, now declined.
+    pub declined: HookContractStamp,
+}
+
+/// The CALL behind the cancel fence: a cancel sets aside only the decision
+/// its caller read. A candidate is named by its hash; a failed regen's
+/// decision, which holds none, by no hash.
+fn named_pending(record: &HookRegenRecord, candidate_hash: Option<&str>) -> Result<()> {
+    let Some(pending) = record.pending.as_ref() else {
+        return Err(Error::InvalidConfig("no regen is pending".to_owned()));
+    };
+    if pending.candidate_hash().as_deref() != candidate_hash {
+        return Err(Error::InvalidConfig(
+            "the pending regen is not the candidate named: read the record again".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// The CALL behind the revert fence: a revert takes out only the adopted
+/// body its caller named, and only while the body it replaced is kept.
+fn revert_prior<'a>(
+    record: Option<&'a HookRegenRecord>,
+    adopted_hash: &str,
+) -> Result<&'a HookRegenPrior> {
+    let record = record.ok_or_else(|| Error::InvalidConfig("no adoption to revert".to_owned()))?;
+    if record.body_hash != adopted_hash {
+        return Err(Error::InvalidConfig(
+            "the hook's body is not the adopted body named: read the record again".to_owned(),
+        ));
+    }
+    record
+        .previous
+        .as_ref()
+        .ok_or_else(|| Error::InvalidConfig("no adoption to revert".to_owned()))
+}
+
+impl Vault {
+    /// Sets aside the decision waiting on `binding`, as the owner: a
+    /// candidate named by `candidate_hash`, or a failed regen's decision
+    /// named by none. The hook keeps its body, and the contract the decision
+    /// targeted is declined: neither the due list nor the engine's own pass
+    /// regenerates the hook again until the contract moves. The owner may
+    /// still run a regen by hand.
+    ///
+    /// # Errors
+    ///
+    /// An unknown binding, no decision waiting, a decision other than the one
+    /// named, the owner's proof, and storage errors.
+    pub fn cancel_hook_regen(
+        &self,
+        owner: &AuthenticatedOwner,
+        binding: EntityId,
+        candidate_hash: Option<&str>,
+    ) -> Result<HookRegenCancel> {
+        let (_, row) = self
+            .pack_hook_bindings()?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .ok_or(Error::EntityNotFound)?;
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let mut record = REGEN
+                .get(&self.store, txn, &binding)?
+                .ok_or_else(|| Error::InvalidConfig("no regen is pending".to_owned()))?;
+            named_pending(&record, candidate_hash)?;
+            let Some(pending) = record.pending.take() else {
+                return Err(Error::InvalidConfig("no regen is pending".to_owned()));
+            };
+            let cancel = HookRegenCancel {
+                candidate_hash: pending.candidate_hash(),
+                declined: pending.target().clone(),
+            };
+            record.declined = Some(cancel.declined.clone());
+            REGEN.put(self, txn, &binding, &record)?;
+            history::append_in_txn(
+                self,
+                txn,
+                binding,
+                &row,
+                &record.body_hash,
+                &HookRegenActor::Owner { actor },
+                HookRegenEvent::Cancelled {
+                    candidate_hash: cancel.candidate_hash.clone(),
+                    declined: cancel.declined.clone(),
+                },
+            )?;
+            Ok(cancel)
+        })
+    }
+
+    /// Reverts the adoption `binding` stands on, as the owner: the body the
+    /// adoption replaced is installed again through the owner's own pack put,
+    /// named by `adopted_hash`, the hash of the adopted body taken out. Only
+    /// a put that installs moves the record: back to that body under the
+    /// contract it passed under, with the contract in force declined. A
+    /// decision waiting on the adopted body is set aside with it. A Candidate
+    /// or Blocked put changes nothing and is answered as it is.
+    ///
+    /// # Errors
+    ///
+    /// An unknown binding, no adoption kept to revert, a body other than the
+    /// one named, the put's own refusals, and storage errors.
+    pub fn revert_hook_regen(
+        &self,
+        owner: &AuthenticatedOwner,
+        binding: EntityId,
+        adopted_hash: &str,
+    ) -> Result<PackInstallDisposition> {
+        let (_, row) = self
+            .pack_hook_bindings()?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .ok_or(Error::EntityNotFound)?;
+        let record = self.hook_regen_record(binding)?;
+        let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
+        let source = self
+            .get_pack_source(&row.source)?
+            .ok_or(Error::EntityNotFound)?;
+        let (files, _) = files_with_hook_body(&source, &row.hook, prior.body.as_bytes());
+        let prepared = self.prepare_owner_pack_put(files)?;
+        let disposition = self.with_write_txn_grouped(|txn| {
+            let (_, current) = self
+                .pack_hook_bindings_in_txn(txn)?
+                .into_iter()
+                .find(|(id, _)| *id == binding)
+                .ok_or(Error::EntityNotFound)?;
+            let record = REGEN.get(&self.store, txn, &binding)?;
+            let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
+            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
+            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+                return Ok(disposition);
+            }
+            let rebound = self.rebound_in_txn(txn, &current, &prior.body_hash, binding)?;
+            let declined = HookContractStamp::current();
+            let reverted = HookRegenRecord {
+                body_hash: prior.body_hash.clone(),
+                stamp: prior.stamp,
+                intent: record.and_then(|record| record.intent),
+                pending: None,
+                previous: None,
+                declined: Some(declined.clone()),
+            };
+            for id in std::iter::once(binding).chain(rebound) {
+                REGEN.put(self, txn, &id, &reverted)?;
+            }
+            history::append_in_txn(
+                self,
+                txn,
+                binding,
+                &current,
+                &prior.body_hash,
+                &HookRegenActor::Owner {
+                    actor: owner.actor(),
+                },
+                HookRegenEvent::Reverted {
+                    from_hash: adopted_hash.to_owned(),
+                    to_hash: prior.body_hash.clone(),
+                    declined,
+                    rebound,
+                },
+            )?;
+            Ok(disposition)
+        })?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
+    }
+}

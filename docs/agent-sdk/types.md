@@ -3001,8 +3001,14 @@ class Oneiron:
             """List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."""
         def get(self, spec: Facade.HookRegenBindingRequest) -> Facade.HookRegenView | None:
             """Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."""
+        def history(self, spec: Facade.HookRegenHistoryRequest) -> list[Facade.HookRegenReceipt]:
+            """Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing."""
+        def revert(self, spec: Facade.HookRegenRevertRequest) -> Facade.PackPutReceipt:
+            """Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt."""
         def adopt(self, spec: Facade.HookRegenAdoptRequest) -> Facade.PackPutReceipt:
             """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
+        def cancel(self, spec: Facade.HookRegenCancelRequest) -> Facade.HookRegenCancel:
+            """Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again."""
     class _VaultArtifactsVerbs:
         def publish_approval(self, spec: Facade.ArtifactPublishRequest) -> Facade.ArtifactPublishApproval:
             """Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."""
