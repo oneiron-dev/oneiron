@@ -448,7 +448,7 @@ where
         match read_scoped_comm_in_txn(store, txn, *id, bytes)? {
             ScopedCommRead::Ordinary => {}
             ScopedCommRead::Unavailable => return Ok(RelationshipRead::Decided(false)),
-            ScopedCommRead::Claim { body, record } => {
+            ScopedCommRead::Claim { body, record, .. } => {
                 let (space, private) = claim_access_axes(&body);
                 return Ok(RelationshipRead::Gated {
                     kind: ENTITY_TYPE_CLAIM,

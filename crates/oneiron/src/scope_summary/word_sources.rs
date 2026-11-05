@@ -89,7 +89,7 @@ pub(crate) fn word_sources_through_in(
             }
             Ok(Some(sources))
         }
-        ENTITY_TYPE_SUMMARY => {
+        ENTITY_TYPE_SUMMARY | crate::registry::ENTITY_TYPE_COMM_RECORD => {
             super::body_covers_through_in(vault, dbs, txn, id, header.entity_type, body)
         }
         // A reply carries its summary under the `summary` key, in any
