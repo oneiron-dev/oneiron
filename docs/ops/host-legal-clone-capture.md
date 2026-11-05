@@ -196,6 +196,67 @@ and model-call records are not part of this extent, and messages stored after
 the request are never included: only an explicit prospective scope may add
 them.
 
+## Message capture from one backup artifact
+
+An order can choose ONE of the vault's own backup artifacts and exact
+MESSAGE ids (`CaptureScope::ArtifactMessages`, scope tag 6). This covers a
+still-live message whose rows a later edit changed: the live capture already
+carries the earlier rows its revision ledger keeps (component 12), but an
+edge row removed since lives on only in an earlier backup.
+
+The request names the artifact by `vault_id`, `checkpoint_id` (the BLAKE3 of
+its image), `commitment_digest` (the BLAKE3 of its signed commitment),
+`file_len` and `file_blake3` (the whole file). Right after the request frame
+and its flush, the HOST sends exactly one byte, `ARTIFACT_FILE_MARKER`
+(`0x41`), carrying exactly one SCM_RIGHTS descriptor: the artifact's file,
+opened read-only, which the HOST keeps open until the exact acknowledgement.
+The source reads the request with exact reads, so nothing reads past it, then
+receives that byte with its descriptor close-on-exec. Another byte, a
+truncated control message, another control message, or any count but one
+descriptor refuses, and every descriptor received is closed.
+
+Before `Accepted`, the source refuses any of these:
+- a vault id other than its own;
+- a file that is not regular, or whose length or BLAKE3 is not the request's;
+- an artifact the real opener refuses: another vault's, a broken signed
+  commitment, manifest, chunk or image, or a signer the vault's device trust
+  does not admit;
+- a verified checkpoint id or commitment digest other than the request's;
+- a key custody of another lineage (`custody_lineage_mismatch`, the image's
+  binding is not the live vault's) or a missing key.
+
+It holds the custody read guard from the live custody read to the exact
+acknowledgement. The custody plan is the live vault's, as a restore preflight
+builds it. Beside that, every payload-compartment retirement the live vault
+committed counts as carried out, so an owner erased or purged since the cut
+never opens. Only the selected messages' entity trees and every actor group
+open. The image's rows that link to an owner that did not open are taken out
+first, as a restore takes them out. Nothing is restored, forked or written,
+and no other owner's rows are streamed.
+
+For each selected message, in id order, the stream carries what the artifact
+holds in the Messages extent's order and families: its entity row (8), its
+document head, slot rows and updates (9), its outgoing edge rows (10, an
+`authored_by` row put back from its author's opened group) and its revision
+ledger rows (12). The entity row, head, slot rows, edge rows and ledger rows
+are the artifact's exact stored bytes. A document's snapshot and updates are
+the join of its split history: the same history, not always the same bytes.
+Its state vector and shallow-since rows are derived, so no artifact holds
+them. Every component carries the BLAKE3 of the artifact's entity row as its
+revision. The extent is `ArtifactMessages`.
+
+A message is read only when the artifact's payload holds its entity tree's
+compartment and live custody opens it. A row the image keeps whole proves
+nothing about an erase since the cut, so an artifact with no compartments (an
+archived vault's checkpoint) yields every id missed. A selected id with no
+readable MESSAGE row is in `missed_messages`: its compartment did not open,
+the payload holds none for it, or its row is absent or not a MESSAGE.
+`messages` counts the captured messages, so captured and missed are exactly
+the selection, and a capture with misses is partial, never a whole
+fulfilment. This extent streams no result body yet. Each captured message
+whose row names a result attachment is in `absent_result_bodies`, which here
+means uncaptured, not gone.
+
 ## Prospective message capture
 
 Only an explicit `CaptureScope::ProspectiveMessages` request captures messages

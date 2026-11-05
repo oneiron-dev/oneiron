@@ -708,6 +708,23 @@ pub(crate) fn record_head_row_in_txn(
     Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
 }
 
+/// The full key of `entity`'s document head row.
+pub(crate) fn record_head_key(entity: &EntityId) -> Vec<u8> {
+    ENTITY_DOC_HEAD.key_bytes(&HexId(*entity))
+}
+
+/// The document slot an exact stored head row of `entity` names, decoded
+/// from its bytes as [`record_head_row_in_txn`] decodes them; for a
+/// legal-clone read of a head a checkpoint carries. A head that names
+/// another entity, or does not decode, is corrupt.
+pub(crate) fn record_head_slot(entity: &EntityId, bytes: &[u8]) -> Result<DocumentSlot> {
+    let head = ENTITY_DOC_HEAD.decode_value(bytes)?;
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("entity document head"));
+    }
+    DocumentSlot::from_hex(&head.document)
+}
+
 /// Read-only view for existing typed record readers; the durable row retains
 /// only the pointer and immutable fields, never a second copy of the text.
 pub(crate) fn resolve_record_body(

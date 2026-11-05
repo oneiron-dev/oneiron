@@ -346,15 +346,7 @@ fn result_body(
     id: &[u8; 16],
     row: &[u8],
 ) -> Result<Option<ResultBody>> {
-    let Some(attachment) = row
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(message_metadata)
-        .and_then(|metadata| {
-            MessageResultAttachment::from_metadata(Some(&metadata))
-                .ok()
-                .flatten()
-        })
-    else {
+    let Some(attachment) = result_attachment(row) else {
         return Ok(None);
     };
     let message = EntityId::from_bytes(*id)?;
@@ -379,6 +371,18 @@ fn result_body(
     } else {
         ResultBody::Released
     }))
+}
+
+/// The result attachment a stored MESSAGE row `row` names, if it names one
+/// that reads: none for malformed or unrecognised metadata.
+pub(super) fn result_attachment(row: &[u8]) -> Option<MessageResultAttachment> {
+    row.get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(message_metadata)
+        .and_then(|metadata| {
+            MessageResultAttachment::from_metadata(Some(&metadata))
+                .ok()
+                .flatten()
+        })
 }
 
 /// A MESSAGE body's metadata, as JSON, read in place.
