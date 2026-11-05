@@ -22,6 +22,10 @@ pub enum Shape {
     /// OpenAI-compatible chat: `POST …/v1/chat/completions`, top-level body
     /// `model`, `Authorization: Bearer <key>`.
     OpenAiChat,
+    /// OpenAI Responses over a broker-upgraded WebSocket: `GET …/v1/responses`
+    /// with a broker-set upgrade, Bearer. The create frame is JSON with a
+    /// top-level `model`; provider events stream back as text frames.
+    OpenAiResponses,
     /// OpenAI-compatible chat without the version prefix: `POST
     /// …/chat/completions`, JSON, top-level body `model`, Bearer.
     OpenAiChatUnversioned,
@@ -87,6 +91,12 @@ pub enum Shape {
     /// A server's liveness: `GET …/health`, no body, Bearer. A GPU pod
     /// answers its health here.
     Health,
+    /// A Gemini model listing: `GET …/v1beta/models`, no body,
+    /// `x-goog-api-key`.
+    GeminiModels,
+    /// An Anthropic-compatible model listing: `GET …/v1/models`, no body,
+    /// `x-api-key`.
+    AnthropicModels,
 }
 
 struct Row {
@@ -184,6 +194,14 @@ const OPENAI_CHAT: Row = openai(
     Body::Json,
     Selector::Body,
     false,
+);
+
+const OPENAI_RESPONSES: Row = openai(
+    "GET",
+    &["v1", "responses"],
+    Body::Json,
+    Selector::Body,
+    true,
 );
 
 const OPENAI_CHAT_UNVERSIONED: Row = openai(
@@ -337,6 +355,20 @@ const OPENAI_MODELS: Row = openai(
 
 const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
 
+const GEMINI_MODELS: Row = gemini("GET", &["v1beta", "models"], Body::Empty, Selector::Binding);
+
+const ANTHROPIC_MODELS: Row = Row {
+    method: "GET",
+    endpoint: &["v1", "models"],
+    query: None,
+    body: Body::Empty,
+    model: Selector::Binding,
+    auth_header: "x-api-key",
+    auth_prefix: "",
+    streams: false,
+    redirect: None,
+};
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -346,6 +378,7 @@ impl Shape {
     const fn row(self) -> &'static Row {
         match self {
             Self::OpenAiChat => &OPENAI_CHAT,
+            Self::OpenAiResponses => &OPENAI_RESPONSES,
             Self::OpenAiChatUnversioned => &OPENAI_CHAT_UNVERSIONED,
             Self::AnthropicMessages => &ANTHROPIC_MESSAGES,
             Self::OpenAiImages => &OPENAI_IMAGES,
@@ -365,6 +398,8 @@ impl Shape {
             Self::SystemOne => &SYSTEM_ONE,
             Self::OpenAiModels => &OPENAI_MODELS,
             Self::Health => &HEALTH,
+            Self::GeminiModels => &GEMINI_MODELS,
+            Self::AnthropicModels => &ANTHROPIC_MODELS,
         }
     }
 
