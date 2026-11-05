@@ -184,7 +184,7 @@ impl Vault {
         let mut cancelled = Vec::new();
         if erase {
             cancelled = crate::deletion::actor_fields::erase_actor_fields_in_txn(
-                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                crate::deletion::ActorErasureWriter::for_hard_purge(self, wtxn, *id),
                 act,
             )?;
             // Erase-only: an erased MESSAGE's model-call rows go with the

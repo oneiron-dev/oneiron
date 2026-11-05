@@ -14,6 +14,12 @@ use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PayloadEraseScope {
+    MarkerBound,
+    AcceptedHardPurge,
+}
+
 /// The accepted hard-erase continuation, borrowing its exact writer and
 /// target. Only deletion's hard branches may construct one; receipt scrubs
 /// cannot turn an actor id or an old marker into write authority.
@@ -21,6 +27,7 @@ pub(crate) struct ActorErasureWriter<'write, 'env> {
     vault: &'write Vault,
     wtxn: &'write mut heed::RwTxn<'env>,
     actor: EntityId,
+    payload_scope: PayloadEraseScope,
 }
 
 impl<'write, 'env> ActorErasureWriter<'write, 'env> {
@@ -29,7 +36,25 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
         wtxn: &'write mut heed::RwTxn<'env>,
         actor: EntityId,
     ) -> Self {
-        Self { vault, wtxn, actor }
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::MarkerBound,
+        }
+    }
+
+    pub(in crate::deletion) fn for_hard_purge(
+        vault: &'write Vault,
+        wtxn: &'write mut heed::RwTxn<'env>,
+        actor: EntityId,
+    ) -> Self {
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::AcceptedHardPurge,
+        }
     }
 
     /// Removes only this hard-erased target's frozen pattern revision witness.
@@ -107,7 +132,7 @@ pub(super) fn erase_actor_fields_in_txn(
         )?;
     }
     scrub_actor_fields_in_txn(&mut erase)?;
-    if hard {
+    if hard || erase.payload_scope == PayloadEraseScope::AcceptedHardPurge {
         return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(&mut erase);
     }
     Ok(Vec::new())
