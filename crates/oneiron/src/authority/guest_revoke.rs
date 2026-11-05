@@ -222,7 +222,14 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        Ok(Some(grant.authority_scope))
+        let mut scope = grant.authority_scope;
+        if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut scope.verbs
+            && (verbs.contains("read") || verbs.contains("core:read"))
+        {
+            verbs.insert("read".to_owned());
+            verbs.insert("core:read".to_owned());
+        }
+        Ok(Some(scope))
     }
 
     /// A Boolean recheck cannot replace a cached proof's Scope. Refuse a
