@@ -316,7 +316,10 @@ async fn image(
             &image,
             caller,
             verified_actor,
-            &mut |plan| {
+            &mut |plan, header_allocated| {
+                if header_allocated != 0 {
+                    lease.materialized(header_allocated, header_allocated);
+                }
                 let peak = plan.peak_bytes(read).unwrap_or(u64::MAX);
                 let more = peak.saturating_sub(lease.bytes());
                 if more == 0 {
