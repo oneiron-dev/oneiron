@@ -52,6 +52,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.commitments.reminder_route.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.commitments.reminder_route.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+                >(),
+            ),
+            (
                 "fetch",
                 crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
             ),
@@ -1275,6 +1285,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillFitSetRequest>(),
             ),
             (
+                "vault.skills.advisory_ask.set",
+                crate::code_run::vault_read::request_schema::<SkillAdvisoryAskRequest>(),
+            ),
+            (
                 "vault.skills.permissions.approve",
                 crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
             ),
@@ -1871,6 +1885,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstPolicySetRequest,
                 >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.quarantine.held_edits",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
             ),
             #[cfg(feature = "sync")]
             (
@@ -7089,6 +7109,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.commitments.fulfill",
     "vault.commitments.release",
     "vault.commitments.supersede",
+    "vault.commitments.reminder_route.get",
+    "vault.commitments.reminder_route.set",
     "fetch",
     "crawl",
     "feedback.preview",
@@ -7256,6 +7278,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.rules.set",
     "vault.skills.code_auto_install.set",
     "vault.skills.fit.set",
+    "vault.skills.advisory_ask.set",
     "vault.skills.permissions.approve",
     "vault.skills.optimize.start",
     "vault.skills.optimize.result",
@@ -7336,6 +7359,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.baseline",
     "vault.federation.burst.policy",
     "vault.federation.burst.policy.set",
+    "vault.sync.quarantine.held_edits",
     "vault.sync.retained_work.wait.set",
     "vault.federation.burst.ingress",
     "vault.federation.burst.disposition",
@@ -7960,6 +7984,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
         >(),
+        "vault.commitments.reminder_route.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
+        >(),
+        "vault.commitments.reminder_route.set" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
+        >(),
         "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
         "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
@@ -8451,6 +8481,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.skills.fit.set" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
+        "vault.skills.advisory_ask.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
         "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
@@ -8701,6 +8734,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstPolicy,
+        >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => crate::code_run::vault_read::request_schema::<
+            Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>,
         >(),
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
@@ -10641,6 +10678,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.commitments.reminder_route.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.reminder_route.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "fetch" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12372,6 +12423,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.skills.advisory_ask.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.permissions.approve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13185,6 +13243,14 @@ pub fn mcp_arguments_schema_from_input(
         }
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19248,6 +19314,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
                 decode(value.clone())?;
         }
+        "vault.commitments.reminder_route.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.commitments.reminder_route.set" => {
+            let _input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest =
+                decode(value.clone())?;
+        }
         "fetch" => {
             let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
         }
@@ -20055,6 +20128,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.fit.set" => {
             let _input: SkillFitSetRequest = decode(value.clone())?;
         }
+        "vault.skills.advisory_ask.set" => {
+            let _input: SkillAdvisoryAskRequest = decode(value.clone())?;
+        }
         "vault.skills.permissions.approve" => {
             let _input: HubSkillPermissionRequest = decode(value.clone())?;
         }
@@ -20424,6 +20500,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.federation.burst.policy.set" => {
             let _input: crate::sync::federation_burst::FederationBurstPolicySetRequest =
                 decode(value.clone())?;
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
@@ -23596,6 +23676,14 @@ pub fn invoke(
         "vault.commitments.supersede" => {
             encode(vault_commitments_supersede(memory, decode(value)?)?)
         }
+        "vault.commitments.reminder_route.get" => encode(vault_commitments_reminder_route_get(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.commitments.reminder_route.set" => encode(vault_commitments_reminder_route_set(
+            memory,
+            decode(value)?,
+        )?),
         "fetch" => encode(fetch(memory, decode(value)?)?),
         "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
@@ -23949,6 +24037,9 @@ pub fn invoke(
             encode(vault_skills_code_auto_install_set(memory, decode(value)?)?)
         }
         "vault.skills.fit.set" => encode(vault_skills_fit_set(memory, decode(value)?)?),
+        "vault.skills.advisory_ask.set" => {
+            encode(vault_skills_advisory_ask_set(memory, decode(value)?)?)
+        }
         "vault.skills.permissions.approve" => {
             encode(vault_skills_permissions_approve(memory, decode(value)?)?)
         }
@@ -24213,6 +24304,10 @@ pub fn invoke(
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
             encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
+            encode(vault_sync_quarantine_held_edits(memory, decode(value)?)?)
         }
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
@@ -26237,6 +26332,23 @@ pub fn vault_commitments_supersede(
         input,
     )
 }
+pub fn vault_commitments_reminder_route_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_get_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.get")?,
+    )
+}
+pub fn vault_commitments_reminder_route_set(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_set_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.set")?,
+        input,
+    )
+}
 pub fn fetch(
     memory: &Memory<'_>,
     input: crate::web_fetch::WebFetchRequest,
@@ -28201,6 +28313,16 @@ pub fn vault_skills_fit_set(
         &input,
     )
 }
+pub fn vault_skills_advisory_ask_set(
+    memory: &Memory<'_>,
+    input: SkillAdvisoryAskRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_advisory_ask_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.advisory_ask.set")?,
+        &input,
+    )
+}
 pub fn vault_skills_permissions_approve(
     memory: &Memory<'_>,
     input: HubSkillPermissionRequest,
@@ -29180,6 +29302,17 @@ pub fn vault_federation_burst_policy_set(
     crate::task_verb::sdk::set_federation_burst_policy_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.federation.burst.policy.set")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_quarantine_held_edits(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>> {
+    crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.quarantine.held_edits")?,
         input,
     )
 }
@@ -32847,6 +32980,7 @@ pub fn vault_artifacts_propose_output(
         "vault.artifacts.propose_output",
         &input,
         &[
+            "/read_rows/*",
             "/made_by/inputs/*/row",
             "/made_by/trigger/task",
             "/made_by/trigger/ask",

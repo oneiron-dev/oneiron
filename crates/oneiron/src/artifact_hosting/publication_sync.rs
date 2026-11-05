@@ -430,12 +430,19 @@ impl Vault {
                 return Ok(Staged);
             }
         }
-        self.put_filtered_codebase_snapshot_in_txn(
-            wtxn,
-            owner,
-            snapshot,
-            crate::secret_snapshot::SnapshotCustodyReport::default(),
-        )?;
+        // Keep a readable report for an identical retained manifest. Every
+        // case still replaces the snapshot and repairs its indexes (FIX 294).
+        let custody_report = if let Ok(Some(existing)) =
+            self.get_codebase_snapshot_in_txn(wtxn, owner)
+            && existing == *snapshot
+            && let Ok(Some(report)) =
+                self.get_codebase_snapshot_custody_report_in_txn(wtxn, &snapshot.fork_hash)
+        {
+            report
+        } else {
+            crate::secret_snapshot::SnapshotCustodyReport::default()
+        };
+        self.put_filtered_codebase_snapshot_in_txn(wtxn, owner, snapshot, custody_report)?;
         Ok(Applied)
     }
 

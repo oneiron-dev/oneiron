@@ -176,6 +176,18 @@ pub(crate) fn project_arrivals_in_txn(
     project(store, txn, ids, None)
 }
 
+/// Queues the batch's actual record and topology changes while projecting
+/// outcome facts only from the rows the batch materialized.
+pub(crate) fn project_arrivals_for_changes_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    materialized_ids: &std::collections::BTreeSet<EntityId>,
+    changed_ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<usize> {
+    enqueue_arrivals(store, txn, changed_ids)?;
+    project(store, txn, materialized_ids, None)
+}
+
 fn enqueue_arrivals(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

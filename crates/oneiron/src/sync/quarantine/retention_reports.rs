@@ -159,6 +159,47 @@ pub fn quarantined_records(vault: &Vault) -> Result<Vec<(u64, QuarantineRecord)>
     Ok(records)
 }
 
+impl Vault {
+    /// Retained hash-only held-edit evidence in stored sequence order.
+    /// The owner and any bound credential are checked in the same snapshot
+    /// before the quarantine scan. Shared retention still applies: these
+    /// records are neither live pending work nor settlement status.
+    pub fn held_edits_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<Vec<(u64, QuarantineRecord)>> {
+        let rtxn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &rtxn)?;
+        let mut records = Vec::new();
+        let iter = self
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, QUARANTINE_PREFIX)?;
+        for entry in iter {
+            let (key, value) = entry?;
+            let Some(seq) = decode_quarantine_seq(&key) else {
+                continue;
+            };
+            match decode_record(&value) {
+                Ok(rec)
+                    if rec.container == QuarantineContainer::Entities
+                        && (rec.reason_code
+                            == RepoProjectionHoldCause::SealedFileEdited.as_str()
+                            || rec.reason_code
+                                == RepoProjectionHoldCause::ProjectionEditConflict.as_str()) =>
+                {
+                    records.push((seq, rec));
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::warn!(seq, "sync: skipping undecodable quarantine row");
+                }
+            }
+        }
+        Ok(records)
+    }
+}
+
 /// Doctor/maintain surface for the sync quarantine + rematerialization
 /// markers (ONE-1124 AC5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
