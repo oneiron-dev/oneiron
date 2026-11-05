@@ -146,11 +146,12 @@ not mean a permit was admitted or that a provider received any bytes. An empty
 meter still reports unknown input and output, not measured zeros.
 
 The scoped receipt sink forwards the original receipt first and takes another
-capture on `Dispatched` and on `Settled` when its lease was dispatched. The
-existing dispatch receipt is emitted when the call ends or is dropped, not at
-its first send. A settled capture includes the native answered or failed-call
-reports recorded before that receipt. The sink forwards budget-hit hooks too.
-The unscoped path still uses its original funded run and receipt sink.
+capture on `Admitted`, `Dispatched` and `Settled`, including a settlement that
+never dispatched. The existing dispatch receipt is emitted when the call ends
+or is dropped, not at its first send. A settled capture includes the native
+answered or failed-call reports recorded before that receipt. The sink forwards
+budget-hit hooks too. The unscoped path still uses its original funded run and
+receipt sink.
 
 Every capture uses the actual run's guard and the native lease's scope, with
 an owned handle to that same vault. The guard lock is released before the
@@ -166,3 +167,31 @@ before a later receipt, other guards, child scopes and unbound or unsupported
 suppliers remain uncovered. Receipt completion is not whole-guard or
 whole-scope finality. Scope, generation and capture order do not attribute
 usage to one native run or decision call, and do not settle RSI reservations.
+
+## Native permit identity and end readback
+
+Each recorded scope/guard generation also keeps content-free permit observations
+keyed by the actual `RunReceipt.instance` and lease string. Another run can reuse
+a lease string; it cannot replace this pair. `admitted_receipt` and
+`dispatched_receipt` report only which native receipts were recorded.
+`answered` comes only from the actual `Dispatched` receipt, or stays unknown.
+It is not inferred from usage presence, charge, capture order or a run label.
+
+A recorded `settlement` means that native permit ended, including an admitted
+permit that never dispatched. Its `answer` copies only the optional explicit
+provider measurement. Its `reports` retain each native inference receipt's
+optional prompt and output values, including partial failed requests and equal
+reports from separate requests. Missing values stay unknown and reported zeros
+stay zero. Normalized counters, prices and reservations never supply a value.
+The native receipt merge does not retain physical-report finality, so this
+readback does not certify complete physical use or sum the reports into a total.
+
+Receipt stages merge independently of capture order. A stale concurrent capture
+can still add another permit or its settlement. A later financial-booking
+capture preserves the permit records; a late admission or dispatch receipt
+cannot erase a recorded settlement. All readback remains on the existing
+controller-gated `vault.research.budget` path and its one read snapshot.
+The scope's listed research runs are not an attribution of each permit to one
+attempt. Missing receipts, generations and child or unbound sources remain
+uncovered. Neither a permit's end nor all-present records close the scope,
+consume measured RSI tokens, or revise the existing reservation settlement.

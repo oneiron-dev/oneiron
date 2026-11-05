@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1248 facade rows, 4527 declarations.
+Census: 1248 facade rows, 4529 declarations.
 Inputs: 1179 of 1248 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1083 of 1248 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -9740,9 +9740,20 @@ class RsiExplorationRead(TypedDict):
     spent_exposure: int
     reserved_exposure: int
     suspended: bool
-class ResearchFailedCallTokenReportWire(TypedDict):
+class ResearchProviderTokenMeasurementWire(TypedDict):
     input: NotRequired[int | None]
     output: NotRequired[int | None]
+class ResearchProviderLeaseTokenSettlementWire(TypedDict):
+    dispatched: bool
+    answer: NotRequired[ResearchProviderTokenMeasurementWire | None]
+    reports: list[ResearchProviderTokenMeasurementWire]
+class ResearchProviderLeaseTokenObservationWire(TypedDict):
+    instance: str
+    lease: str
+    admitted_receipt: bool
+    dispatched_receipt: bool
+    answered: NotRequired[bool | None]
+    settlement: NotRequired[ResearchProviderLeaseTokenSettlementWire | None]
 class ResearchProviderTokenSnapshotWire(TypedDict):
     generation: str
     observation_id: str
@@ -9750,7 +9761,8 @@ class ResearchProviderTokenSnapshotWire(TypedDict):
     unsettled_calls: int
     input: NotRequired[int | None]
     output: NotRequired[int | None]
-    failed_call_reports: list[ResearchFailedCallTokenReportWire]
+    failed_call_reports: list[ResearchProviderTokenMeasurementWire]
+    leases: list[ResearchProviderLeaseTokenObservationWire]
 class ResearchScopeProviderTokensWire(TypedDict):
     scope: NotRequired[SpendScopeId | None]
     runs: list[str]
