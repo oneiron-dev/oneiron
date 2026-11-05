@@ -91,12 +91,15 @@ async fn recover(
                 .collect(),
             input.kit.passphrase.map(KitText::into_string),
         )?;
-        let secret = server.vault().restore_kit_here(
-            target,
-            KitSecretKind::RecoveryRoot,
-            &kit.pieces(),
-            kit.passphrase.as_ref(),
-        )?;
+        let secret = server
+            .vault()
+            .restore_kit_here(
+                target,
+                KitSecretKind::RecoveryRoot,
+                &kit.pieces(),
+                kit.passphrase.as_ref(),
+            )
+            .map_err(|error| OwnerError::Invalid(format!("the kit does not open: {error}")))?;
         let entry = server
             .vault()
             .recover_owner_authority_from_kit(secret, new_device)
