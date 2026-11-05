@@ -2342,6 +2342,8 @@ def uniffi_export(row, types, census):
                 result = 'crate::codec::lift_shape_groups(output)'
             elif row['output'] == 'crate::task_verb::sdk::AiAnswer':
                 result = f'crate::codec::lift_ai_answer({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiVideoJob':
+                result = f'crate::codec::lift_ai_video_job({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

@@ -14,3 +14,15 @@ pub(crate) fn lift_ai_answer(
     output.usage.raw_provider = raw_provider;
     Ok(output)
 }
+
+pub(crate) fn lift_ai_video_job(
+    verb: &str,
+    job: oneiron::task_verb::sdk::AiVideoJob,
+) -> Result<crate::AiVideoJob, OneironError> {
+    match job {
+        oneiron::task_verb::sdk::AiVideoJob::Done { answer } => Ok(crate::AiVideoJob::Done {
+            answer: lift_ai_answer(verb, answer)?,
+        }),
+        other => lift_record(verb, &other),
+    }
+}

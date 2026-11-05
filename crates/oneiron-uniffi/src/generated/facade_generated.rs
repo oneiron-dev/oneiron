@@ -4714,7 +4714,7 @@ export_facade! {
 "ai.video.poll" => fn ai_video_poll(&self, input: AiVideoJobRequest) -> AiVideoJob = |client| {
     let input: oneiron::task_verb::sdk::AiVideoJobRequest = crate::codec::lower_record("ai.video.poll", input)?;
     let output = client.ai_video_poll(&input)?;
-    crate::codec::lift_record("ai.video.poll", &output)
+    crate::codec::lift_ai_video_job("ai.video.poll", output)
 };
 "ai.video.cancel" => fn ai_video_cancel(&self, input: AiVideoJobRequest) -> AiVideoCancelled = |client| {
     let input: oneiron::task_verb::sdk::AiVideoJobRequest = crate::codec::lower_record("ai.video.cancel", input)?;

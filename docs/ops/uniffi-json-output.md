@@ -260,5 +260,10 @@ absent. The same finite record codec keeps part order, base64 strings, optional
 video fields, count defaults and embedding-number conversion. It also keeps
 each verb's original finite conversion diagnostics. This does not change
 native calls, inputs, public records, clients, hooks or media admission, and
-does not cover the nested video-job answer or claim depth, heap or runtime
-closure.
+does not claim depth, heap or runtime closure.
+
+`ai.video.poll` reuses the owned answer conversion for its completed video
+answer. Queued, running and failed jobs keep the original whole-record codec,
+including progress omission and every native error variant's custom serde
+fields. The existing job state, provider receipts, finite conversion errors,
+client call and native admission remain unchanged.

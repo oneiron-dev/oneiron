@@ -37,7 +37,7 @@ use crate::dto::{
 use crate::error::OneironError;
 
 mod ai_answers;
-pub(crate) use ai_answers::lift_ai_answer;
+pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
 mod ai_options;
 mod browser_answers;
 mod browser_batch;
