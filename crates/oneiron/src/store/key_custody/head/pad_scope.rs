@@ -139,30 +139,45 @@ pub(super) fn unwrap_world(
     machine: Option<(EntityId, &HybridSecretKey)>,
     root: Option<&HybridSecretKey>,
 ) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    let mut resource_error = None;
     if let Some((machine, secret)) = machine {
-        if let Some(key) = unwrap_for(
+        match unwrap_for(
             position,
             key_id,
             wraps,
             WrapRecipient::Machine(machine),
             secret,
-        )? {
-            return Ok(Some(key));
+        ) {
+            Ok(Some(key)) => return Ok(Some(key)),
+            Err(error) if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) =>
+            {
+                resource_error = Some(error);
+            }
+            Err(error) => return Err(error),
+            Ok(None) => {}
         }
     }
-    let Some(secret) = root else {
-        return Ok(None);
-    };
-    for recipient in wraps
-        .iter()
-        .filter_map(wrap_recipient)
-        .filter(|recipient| matches!(recipient, WrapRecipient::RecoveryRoot(_)))
-    {
-        if let Some(key) = unwrap_for(position, key_id, wraps, recipient, secret)? {
-            return Ok(Some(key));
+    if let Some(secret) = root {
+        for recipient in wraps
+            .iter()
+            .filter_map(wrap_recipient)
+            .filter(|recipient| matches!(recipient, WrapRecipient::RecoveryRoot(_)))
+        {
+            match unwrap_for(position, key_id, wraps, recipient, secret) {
+                Ok(Some(key)) => return Ok(Some(key)),
+                Err(error) if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) =>
+                {
+                    resource_error.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
+                Ok(None) => {}
+            }
         }
     }
-    Ok(None)
+    match resource_error {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 /// One world's pads, sealed alone at a custody position for its admitted

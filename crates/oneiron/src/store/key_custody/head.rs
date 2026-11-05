@@ -357,6 +357,7 @@ fn unwrap_key(
         return pad_scope::unwrap_world(position, id, wraps, opener.machine, opener.root);
     }
     let vault = position.vault.as_bytes();
+    let mut resource_error = None;
     for wrap in wraps {
         let opened = match (wrap.to, wrap.root) {
             (TO_ROOT, Some(root)) => {
@@ -374,7 +375,10 @@ fn unwrap_key(
                 let envelope = match Envelope::parse(&wrap.envelope) {
                     Ok(envelope) => envelope,
                     Err(oneiron_crypto::Error::OutOfMemory) => {
-                        return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+                        resource_error.get_or_insert_with(|| {
+                            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                        });
+                        continue;
                     }
                     Err(_) => continue,
                 };
@@ -395,7 +399,8 @@ fn unwrap_key(
                     Ok(opened) => Some(opened),
                     Err(error) if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) =>
                     {
-                        return Err(error);
+                        resource_error.get_or_insert(error);
+                        None
                     }
                     Err(_) => None,
                 }
@@ -403,10 +408,16 @@ fn unwrap_key(
             _ => None,
         };
         if let Some(opened) = opened {
-            return Ok(guarded_key(&opened));
+            if let Some(key) = guarded_key(&opened) {
+                return Ok(Some(key));
+            }
+            break;
         }
     }
-    Ok(None)
+    match resource_error {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 /// A 32-byte key straight into guarded storage, never through a plain
