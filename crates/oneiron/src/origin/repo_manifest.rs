@@ -450,6 +450,40 @@ impl Vault {
         })
     }
 
+    /// The raw manifest held under `portable` when it actually conflicts with
+    /// `carried` in `txn` (FIX 12763): both name `portable`, both CODE anchors
+    /// are live and their CODE or `minted_at` differs. `None` for a missing,
+    /// unbound or non-conflicting row; store faults propagate. Reads the raw
+    /// id row, never the alias redirect, so the window door reviews exactly
+    /// what the merge would judge as `Conflict` while both anchors are live.
+    #[cfg(feature = "sync")]
+    pub(crate) fn repo_manifest_conflict_held_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        portable: &RepoPortableId,
+        carried: &RepoManifest,
+    ) -> Result<Option<RepoManifest>> {
+        if carried.portable != *portable {
+            return Ok(None);
+        }
+        let Some(held) = MANIFESTS.get(&self.store, txn, &portable.0)? else {
+            return Ok(None);
+        };
+        if held.portable != *portable {
+            return Ok(None);
+        }
+        if !code_anchor_live(self, txn, &held.code)? {
+            return Ok(None);
+        }
+        if !code_anchor_live(self, txn, &carried.code)? {
+            return Ok(None);
+        }
+        if held.code == carried.code && held.minted_at == carried.minted_at {
+            return Ok(None);
+        }
+        Ok(Some(held))
+    }
+
     /// Hands CODE entity `code` to the live mirror as an import's row, so
     /// each loaded window that carries it takes its manifest now.
     fn note_repo_manifest_written(&self, code: EntityId) {
