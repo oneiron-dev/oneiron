@@ -7,4 +7,5 @@ pub mod document_resources;
 pub mod recovery;
 pub mod review_explainer;
 pub mod side_keys;
+#[cfg(feature = "sync")]
 pub mod sync;

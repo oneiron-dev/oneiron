@@ -28,8 +28,11 @@ use oneiron_base::error::VaultRootProblem;
 use crate::root_directory::FileIdentity;
 #[cfg(target_os = "linux")]
 use crate::root_directory::adopt_descriptor;
+#[cfg(unix)]
 use crate::root_directory::file_identity;
+#[cfg(target_os = "linux")]
 use crate::root_directory::named_directory_identity;
+#[cfg(target_os = "linux")]
 use crate::root_directory::open_root_directory;
 use oneiron_base::error::StoreError;
 
