@@ -668,14 +668,18 @@ impl Memory<'_> {
         }
         let ask = match self.raise_live_edit_holder_ask(artifact, editor) {
             Ok(receipt) => receipt.handle.group_ref,
-            Err(error) => {
-                return Err(crate::Error::InvalidConfig(format!(
-                    "the live edit by {} on artifact {} needs a standing entity.office.edit grant, and asking the owner was refused: {error}",
-                    editor.to_hex(),
-                    artifact.to_hex(),
-                ))
-                .into());
-            }
+            Err(error) => match self.existing_live_edit_ask_group(artifact, editor)? {
+                Some(group) => group,
+                None => {
+                    return Err(crate::Error::InvalidConfig(format!(
+                        "the live edit by {} on artifact {} needs a standing \
+                         entity.office.edit grant, and asking the owner was refused: {error}",
+                        editor.to_hex(),
+                        artifact.to_hex(),
+                    ))
+                    .into());
+                }
+            },
         };
         Err(match self.live_edit_ask_outcome(&ask)? {
             super::LiveEditAskOutcome::Pending => super::live_edit_waits(&ask, artifact, editor),
