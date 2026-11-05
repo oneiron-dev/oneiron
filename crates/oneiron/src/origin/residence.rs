@@ -58,6 +58,10 @@ impl OriginAuthorityLease {
     pub(in crate::origin) fn epoch(&self) -> u64 {
         self.epoch
     }
+
+    pub(in crate::origin) fn writer(&self) -> &str {
+        &self.writer
+    }
 }
 /// What one host holds of a served repository's origin authority, read from
 /// trusted host configuration and the authority row, never from the pusher.
