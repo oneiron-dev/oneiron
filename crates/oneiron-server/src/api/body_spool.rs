@@ -37,7 +37,7 @@ pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{
     Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
 };
-pub(super) use self::memory::decode_memory_refused;
+pub(super) use self::memory::{decode_memory_refused, reader_memory_refused};
 pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
@@ -65,8 +65,9 @@ pub(super) struct BodySpool {
 impl BodySpool {
     /// The spool as one JSON document `T`, decoded as it is read; `None`
     /// when it is not one.
-    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Option<T> {
-        serde_json::from_reader(BufReader::with_capacity(SPOOL_PIECE, &mut self.file)).ok()
+    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Result<Option<T>, MemoryRefusal> {
+        let mut memory = self.admit_reader()?;
+        Ok(self.with_reader_admitted(&mut memory, |reader| serde_json::from_reader(reader).ok()))
     }
 
     /// The spool as one JSON object `T`, with each bulk member's string
@@ -74,8 +75,9 @@ impl BodySpool {
     pub(super) fn object<T: serde::de::DeserializeOwned>(
         &mut self,
         bulk: &mut [BulkMember<'_>],
-    ) -> Result<T, JsonInvalid> {
-        json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
+    ) -> Result<Result<T, JsonInvalid>, MemoryRefusal> {
+        let mut memory = self.admit_reader()?;
+        Ok(self.with_reader_admitted(&mut memory, |reader| json::decode_object(reader, bulk)))
     }
 
     /// The declared string members, using reader room admitted with the text sink.
@@ -89,10 +91,16 @@ impl BodySpool {
         json::decode_string_object(reader, bulk)
     }
 
-    /// The spool's bytes from its start, read as they lie on the disk, a
-    /// piece at a time (FIX 12086).
-    pub(super) fn reader(&mut self) -> BufReader<&mut File> {
-        BufReader::with_capacity(SPOOL_PIECE, &mut self.file)
+    /// Reads the spool under an already-admitted buffer lease. The buffer
+    /// is allocated before the callback and drops before its lease can leave.
+    pub(in crate::api) fn with_reader_admitted<R>(
+        &mut self,
+        memory: &mut crate::machine::MemoryLease,
+        read: impl FnOnce(&mut BufReader<&mut File>) -> R,
+    ) -> R {
+        let mut reader = BufReader::with_capacity(SPOOL_PIECE, &mut self.file);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        read(&mut reader)
     }
 
     /// The room the spool holds on the disk floor, kept past the spool.

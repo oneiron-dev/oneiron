@@ -93,7 +93,9 @@ async fn hold(body: Body) -> Result<Held, ApiError> {
 }
 
 /// A spooled body as JSON `T`, on the spool's worker.
-fn decode_spool<T: DeserializeOwned>(mut spool: BodySpool) -> Option<T> {
+fn decode_spool<T: DeserializeOwned>(
+    mut spool: BodySpool,
+) -> Result<Option<T>, crate::machine::MemoryRefusal> {
     spool.json()
 }
 
@@ -164,6 +166,7 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
                 spool_then(server, declared, body, policy, decode_spool::<T>)
                     .await
                     .map_err(Unspooled::refusal)?
+                    .map_err(super::reader_memory_refused)?
                     .ok_or_else(invalid_json)
             }
         }
