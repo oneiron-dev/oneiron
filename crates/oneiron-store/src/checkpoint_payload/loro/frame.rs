@@ -19,4 +19,3 @@ pub struct Frame {
     pub holes: Vec<String>,
     pub history: Vec<u8>,
 }
-

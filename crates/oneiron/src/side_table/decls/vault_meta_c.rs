@@ -202,6 +202,9 @@ side_tables! {
     /// One accepted owner run-now joined a running feedback sweep and owes a later sweep.
     /// Scheduling intent only, no content or actor. Key/value: ().
     COACH_FEEDBACK_SWEEP_PENDING: VaultMeta b"coach:feedback_sweep_pending:v1" Named Engine;
+    /// A hash of the fold defaults the Coach last suggested for one agent type, so an unchanged
+    /// habit is not suggested again (FIX 12572). Key: id16 of the AGENT_DEF row.
+    COACH_FOLD_SUGGESTED: VaultMeta b"coach:fold_suggested:v1:" Raw;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
     /// hash32 of the fact.

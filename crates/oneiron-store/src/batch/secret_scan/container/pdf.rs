@@ -303,4 +303,3 @@ pub fn xref_offsets(bytes: &[u8]) -> Vec<usize> {
     offsets.dedup();
     offsets
 }
-

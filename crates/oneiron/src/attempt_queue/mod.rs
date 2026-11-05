@@ -23,6 +23,7 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod hook_hold;
 mod index;
 mod kind_payload_erase;
 pub mod maintenance_predicate;
@@ -65,6 +66,7 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub(crate) use hook_hold::HoldAttemptForHook;
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
