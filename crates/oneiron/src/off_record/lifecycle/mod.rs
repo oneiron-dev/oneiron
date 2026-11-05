@@ -63,6 +63,8 @@
 
 mod creator;
 mod executor;
+#[cfg(unix)]
+mod live_spill;
 mod note_reads;
 mod on_record;
 mod overlay_writes;
@@ -81,6 +83,8 @@ mod types;
 mod vault_api;
 
 pub use self::creator::OffRecordCreator;
+#[cfg(unix)]
+pub(crate) use self::live_spill::{LiveSessionSpillIdentity, PublishedSessionSpill};
 pub(crate) use self::note_reads::RoomNote;
 pub use self::note_reads::RoomNoteHandle;
 pub(crate) use self::on_record::SaverCheck;
