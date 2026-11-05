@@ -163,6 +163,7 @@ impl Memory<'_> {
     pub(crate) fn code_consent_principal(&self) -> crate::code_run::CodeConsentPrincipal {
         crate::code_run::CodeConsentPrincipal {
             actor_ref: self.actor,
+            actor_class: self.actor_class as u8,
             credential: self.invocation_slip.clone().map(|witness| {
                 crate::code_run::CodeConsentSavedCredential {
                     instrument: self.credential_instrument.clone(),
@@ -180,6 +181,25 @@ impl Memory<'_> {
     pub fn with_transport_invocation(mut self) -> Self {
         self.transport_invocation = true;
         self
+    }
+
+    /// Binds the current request's transport observations for signing audit
+    /// records. Only the host supplies these; they grant no authority and
+    /// are not retained as context for a future request.
+    #[must_use]
+    pub fn with_signing_request_transport(mut self, transport: SigningRequestTransport) -> Self {
+        self.signing_request_transport = Some(transport);
+        self
+    }
+
+    pub(crate) fn signing_request_transport(&self) -> (Option<String>, Option<String>) {
+        match &self.signing_request_transport {
+            Some(transport) => (
+                transport.peer_ip.map(|ip| ip.to_string()),
+                transport.user_agent.clone(),
+            ),
+            None => (None, None),
+        }
     }
 
     /// Whether the in-process host itself holds this surface: no transport

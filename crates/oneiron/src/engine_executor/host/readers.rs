@@ -158,6 +158,7 @@ impl RecordingJsHost<'_, '_> {
                     effect: SelfEffect::ReaderReport,
                     error: code.to_owned(),
                     code: None,
+                    disk_floor: None,
                 }),
                 None,
             )
