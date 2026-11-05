@@ -1,7 +1,9 @@
 //! The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he
 //! selects which roots attest his authority checkpoint images, and how many
-//! of them must, from any surface where he is authenticated, on any host,
-//! Hosted included. His say-so is the gate (`ActAuthority::Owner`, revalidated
+//! of them must, from any surface where he is authenticated. Hosted selection
+//! additionally needs the operator's explicit enterprise/advanced capability;
+//! normal hosted checkpoints are signed automatically by the host. His act
+//! is checked as `ActAuthority::Owner`, revalidated
 //! in the writing transaction); this install carries it under its own live
 //! machine profile, in any role the one carrier rule admits
 //! ([`super::owner_act_signer_admits`]), a hosted node included. The operator
@@ -36,9 +38,14 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
+const HOSTED_SELECTION_ADVANCED_ONLY: &str =
+    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+
 /// The vault's checkpoint root policy as the owner's surface shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointPolicyView {
+    /// Whether this operator permits owner checkpoint root selection here.
+    pub selection_available: bool,
     /// The revision to present back as `seen`: the digest of the live
     /// choices, zero when none.
     pub revision: [u8; 32],
@@ -58,6 +65,14 @@ pub struct CheckpointPolicyView {
 }
 
 impl Vault {
+    /// Self-host and relay owners choose their roots. A hosted owner needs
+    /// the explicit per-vault capability supplied by the operator, never by
+    /// an owner request or replicated authority choice.
+    pub fn checkpoint_policy_selection_available(&self) -> bool {
+        self.privacy_posture() != crate::HostingPrivacyPosture::Hosted
+            || self.config.allow_host_checkpoint_opt_out
+    }
+
     /// The vault's checkpoint root policy, its revision, the owner's choice
     /// in force, and any conflict among his live choices.
     pub fn checkpoint_policy_view(&self) -> Result<CheckpointPolicyView> {
@@ -68,18 +83,24 @@ impl Vault {
     fn checkpoint_policy_view_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<CheckpointPolicyView> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let folded = &fold.checkpoint_policy;
-        let (policy, refusal) = match checkpoint_root_policy_of(&fold, self.privacy_posture()) {
-            Ok(policy) => (Some(policy), None),
-            Err(Error::Record(RecordError::CheckpointPolicyRefused(reason))) => {
-                (None, Some(reason.to_owned()))
-            }
-            Err(other) => return Err(other),
-        };
+        let selection_available = self.checkpoint_policy_selection_available();
+        let (policy, refusal) =
+            match checkpoint_root_policy_of(&fold, self.privacy_posture(), selection_available) {
+                Ok(policy) => (Some(policy), None),
+                Err(Error::Record(RecordError::CheckpointPolicyRefused(reason))) => {
+                    (None, Some(reason.to_owned()))
+                }
+                Err(other) => return Err(other),
+            };
         Ok(CheckpointPolicyView {
+            selection_available,
             revision: folded.revision(CHECKPOINT_POLICY_REVISION_CONTEXT),
             policy,
             refusal,
-            selected: folded.in_force.clone().filter(|head| head.choice.is_some()),
+            selected: folded
+                .in_force
+                .clone()
+                .filter(|head| selection_available && head.choice.is_some()),
             heads: folded.live.values().cloned().collect(),
             conflict: folded.conflict.clone(),
         })
@@ -123,6 +144,9 @@ impl Vault {
         )?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        if choice.is_some() && !self.checkpoint_policy_selection_available() {
+            return Err(policy_refused(HOSTED_SELECTION_ADVANCED_ONLY));
+        }
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         // Revision integrity (mesh contract §4): the owner chose on what the

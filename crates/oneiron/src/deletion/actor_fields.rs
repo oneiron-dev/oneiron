@@ -67,9 +67,9 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
 /// (Engine 10-22); a delete writes no marker and keeps the text. Under
-/// `act`, the owner act the erase carries out, the blocked reports' rows go
-/// first, so each custody record their scrub revokes is carried to his other
-/// machines (FIX 11883); their declared scrub then finds none.
+/// `act`, the owner act the erase carries out, the blocked reports' and
+/// model-call rows go first, so each custody record their scrubs revoke is
+/// carried to his other machines; their declared scrubs then find none.
 pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
@@ -95,6 +95,7 @@ pub(super) fn erase_actor_fields_in_txn(
         crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
             vault, wtxn, actor, act,
         )?;
+        crate::code_run::erase_model_call_actor_as_in_txn(vault, wtxn, actor, act)?;
     }
     // The accepted hard erase must reach reply bodies before the actor scrub
     // removes their authenticated author. Its marker may be written later.

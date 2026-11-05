@@ -152,6 +152,7 @@ impl Memory<'_> {
                             machine,
                         },
                         false,
+                        Some(&current),
                     )?;
                     if let (Some(meeting), TranscriptIngestOutcome::Session { session_ref, .. }) =
                         (meeting, &outcome)

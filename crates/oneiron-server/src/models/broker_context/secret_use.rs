@@ -9,6 +9,7 @@ use oneiron::secret_custody::{
     BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply,
 };
 use oneiron_broker::{BrokerClient, BrokerConnection, CallHeader, Outcome, Shape};
+use oneiron_llm_anthropic::AnthropicMessagesConfig;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
@@ -60,6 +61,7 @@ impl BrokerContext {
                     ProviderKind::OpenaiCompat
                         | ProviderKind::LocalOpenaiCompat
                         | ProviderKind::Gemini
+                        | ProviderKind::AnthropicCompat
                 )
             {
                 continue;
@@ -76,9 +78,28 @@ impl BrokerContext {
                         "/v1beta/models",
                     ),
                 )
+            } else if provider.kind == ProviderKind::AnthropicCompat {
+                (Shape::AnthropicModels, join(prefix, "/v1/models"))
             } else {
                 (Shape::OpenAiModels, join(prefix, "/v1/models"))
             };
+            let mut headers: Vec<_> = provider
+                .headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    let name = name.to_ascii_lowercase();
+                    // The broker's existing bodyless shape carries no content type.
+                    (name != "content-type").then(|| (name, value.clone()))
+                })
+                .collect();
+            if provider.kind == ProviderKind::AnthropicCompat {
+                // Native wire headers take precedence over configured extras.
+                headers.retain(|(name, _)| name != "anthropic-version");
+                headers.push((
+                    "anthropic-version".to_owned(),
+                    AnthropicMessagesConfig::from_catalog([]).anthropic_version,
+                ));
+            }
             let timeout = Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN;
             let client = self
                 .inner
@@ -92,15 +113,7 @@ impl BrokerContext {
                     origin: url.origin().ascii_serialization(),
                     path,
                     shape,
-                    headers: provider
-                        .headers
-                        .iter()
-                        .filter_map(|(name, value)| {
-                            let name = name.to_ascii_lowercase();
-                            // The broker's existing bodyless shape carries no content type.
-                            (name != "content-type").then(|| (name, value.clone()))
-                        })
-                        .collect(),
+                    headers,
                     // A bodyless listing has no wire selector. Bind it to one
                     // actual configured model, as the existing endpoint probe
                     // does; this neither filters the listing nor proves serving.
@@ -123,7 +136,7 @@ impl BrokerModelListingHost for ListingHost {
         call: &str,
     ) -> Result<Box<dyn BrokerModelListingCall>, String> {
         let provider = self.providers.get(provider).ok_or_else(|| {
-            "name a configured broker-backed OpenAI-compatible or Gemini provider with a model rung"
+            "name a configured broker-backed OpenAI-compatible, Anthropic-compatible or Gemini provider with a model rung"
                 .to_owned()
         })?;
         let header = CallHeader::new(

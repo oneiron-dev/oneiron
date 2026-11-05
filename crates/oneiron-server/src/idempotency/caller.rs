@@ -81,7 +81,7 @@ impl EntryStamp {
 const SLIP_PREFIX: &str = "v2.slip.";
 
 /// The header an MCP connector names its credential in.
-const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 /// An individual credential a request presents that its route's gate did
 /// not verify: the request keeps the shared label, and the warning says

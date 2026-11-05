@@ -85,6 +85,33 @@ pub fn solved_group_coverage_read(
     })
 }
 
+/// The exact program's filing association, through `read` in the caller's
+/// transaction. Missing, withheld or mismatched anchors name no filing.
+/// This is not evidence that the program's runs succeeded or failed.
+///
+/// # Errors
+///
+/// Storage and scoped-read errors.
+pub(crate) fn filing_anchor_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    workflow: &EntityId,
+    digest: &[u8; 32],
+) -> Result<Option<WorkflowFiling>> {
+    let anchor = workflow_filing_id(workflow, digest)?;
+    let Some(raw) = read.entity_raw_live_in(txn, &anchor)? else {
+        return Ok(None);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    Ok(filing_of(
+        header.entity_type,
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )
+    .filter(|filing| filing.workflow == *workflow && filing.group == *digest))
+}
+
 /// The filing a `browser.workflow.filing` claim's body holds.
 fn filing_of(entity_type: u8, body: &[u8]) -> Option<WorkflowFiling> {
     if entity_type != crate::registry::ENTITY_TYPE_CLAIM {

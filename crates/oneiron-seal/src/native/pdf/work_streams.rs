@@ -12,15 +12,15 @@ pub(super) fn decoded(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, W
 }
 
 /// [`decoded`], each buffer it allocates admitted first by `limits`.
-pub(super) fn decoded_admitted(
-    stream: &Stream,
-    limits: &WorkLimits,
-) -> Result<Vec<u8>, WorkError> {
+pub(super) fn decoded_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, WorkError> {
     if stream.dict.has(b"Filter") {
         // organ: admitted, not refused (FIX 7980)
         decode_admitted(stream, limits)
     } else {
-        limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
+        limits
+            .ledger
+            .admit_len::<u8>(stream.content.len())
+            .map_err(WorkError::Memory)?;
         Ok(stream.content.clone())
     }
 }
@@ -37,7 +37,10 @@ pub(crate) fn decode_stream(stream: &Stream, limits: &WorkLimits) -> Result<Vec<
 fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, WorkError> {
     if !stream.dict.has(b"Filter") {
         // organ: admitted, not refused (FIX 7980)
-        limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
+        limits
+            .ledger
+            .admit_len::<u8>(stream.content.len())
+            .map_err(WorkError::Memory)?;
         return Ok(stream.content.clone());
     }
     if stream
@@ -83,7 +86,10 @@ fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, Work
         if needed > output.capacity() {
             // organ: admitted, not refused (FIX 7980)
             let grown = output.capacity().saturating_mul(2).max(needed);
-            limits.ledger.admit_len::<u8>(grown).map_err(WorkError::Memory)?;
+            limits
+                .ledger
+                .admit_len::<u8>(grown)
+                .map_err(WorkError::Memory)?;
             output.reserve_exact(grown - output.len());
         }
         output.extend_from_slice(&buffer[..count]);
@@ -91,7 +97,9 @@ fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, Work
             if decoder.total_in() as usize != stream.content.len() {
                 return Err(WorkError::Invalid(InputInvalidCode::MalformedPdf));
             }
-            limits.observed.note(Counter::StreamDecodeBytes, output.len());
+            limits
+                .observed
+                .note(Counter::StreamDecodeBytes, output.len());
             return predictor(stream, output, limits);
         }
         if decoder.total_in() == before_in && count == 0 {

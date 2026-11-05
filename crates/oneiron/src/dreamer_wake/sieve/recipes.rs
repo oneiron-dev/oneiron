@@ -18,6 +18,8 @@ use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
 use crate::dreamer_consolidation::KeptDecision;
 use crate::model_decision::EvidenceVersion;
 
+mod audit_erase;
+pub(crate) use audit_erase::forget_audit_candidate_in_txn;
 mod consumption;
 pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
 
