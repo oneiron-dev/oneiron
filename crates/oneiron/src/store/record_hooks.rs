@@ -146,4 +146,57 @@ pub trait StoreRecordHooks: Send + Sync {
         subject: &EntityId,
         turn: &EntityId,
     ) -> Result<bool>;
+
+    /// The engine's `Vault::campaign_step_body_text`.
+    fn campaign_step_body_text(
+        &self,
+        vault: &crate::Vault,
+        content_ref: &str,
+    ) -> Result<Option<String>>;
+
+    /// The engine's `Memory::compliance_install_as`.
+    fn compliance_install_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_amend`.
+    fn compliance_amend(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceAmendRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_approve_as`.
+    fn compliance_approve_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_reject_as`.
+    fn compliance_reject_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceApprovalRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_verify_as`.
+    fn compliance_verify_as(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &crate::campaign::compliance::ComplianceVerifyRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceReceipt>;
+
+    /// The engine's `Memory::compliance_result`.
+    fn compliance_result(
+        &self,
+        memory: &crate::memory::Memory<'_>,
+        input: &crate::campaign::compliance::ComplianceResultRequest,
+    ) -> crate::memory::MemoryResult<crate::campaign::compliance::ComplianceResult>;
 }
