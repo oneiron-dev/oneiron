@@ -640,7 +640,18 @@ pub(crate) fn scope_for_blob(
 ) -> Result<Option<Scope>> {
     let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let data = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if h.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+    scope_for_parts(store, txn, id, h.entity_type, data)
+}
+
+/// The scope of the actual row parts admitted by a read in `txn`.
+pub(crate) fn scope_for_parts(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let Ok(body) = crate::claim::decode_claim_body(data, true) else {
             return Ok(None);
         };
@@ -649,20 +660,20 @@ pub(crate) fn scope_for_blob(
         }
         return Ok(Some(body.record_scope("read")));
     }
-    if h.entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
         && crate::comm::ScopedTouchRecord::decode(id, data)?.is_some()
     {
         return comm_source::disclosure_in_txn(store, txn, id, data);
     }
-    if carries_birth_stamp(h.entity_type) {
+    if carries_birth_stamp(kind) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
-            let birth = default_stamp(h.entity_type, facet);
-            let mut scope = note_world::note_position(store, txn, id, h.entity_type, birth);
+            let birth = default_stamp(kind, facet);
+            let mut scope = note_world::note_position(store, txn, id, kind, birth);
             scope.verbs = singleton("read".to_owned());
             scope
         }));
     }
-    let mut scope = stored_scope(store, txn, id, h.entity_type)?;
+    let mut scope = stored_scope(store, txn, id, kind)?;
     if let Some(scope) = scope.as_mut() {
         scope.verbs = singleton("read".to_owned());
     }
