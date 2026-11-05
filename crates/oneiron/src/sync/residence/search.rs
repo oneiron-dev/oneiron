@@ -1,8 +1,7 @@
-//! A residence search served in pages (FIX 8865). A search for more hits
-//! than one page carries is answered a page at a time from one final ranked
-//! list, read at one second; each page names the revision of that whole
-//! list, so no page mixes two lists and none is cut short as complete. A
-//! search one page holds keeps its single call.
+//! A residence search served in pages (FIX 8865, FIX 196), from one final
+//! grant-selected ranked list read at one second. Each page names the
+//! revision of that whole list, so no page mixes two lists and none is cut
+//! short as complete. A search one page holds keeps its single call.
 
 use serde::{Deserialize, Serialize};
 
