@@ -202,6 +202,43 @@ pub(crate) fn redact_receipt_assertions_in_txn(
     Ok(())
 }
 
+/// A native session terminal's receipt pair, in the sink that staged its MESSAGE.
+/// Its caller has already admitted that exact new row in this same transaction.
+pub(in crate::memory::witness) fn keep_session_terminal_in_txn(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &MessageStreamReceipt,
+) -> Result<()> {
+    RECEIPT.put(dbs, txn, &receipt.message_id, receipt)?;
+    let reference = format!(
+        "{}:{}",
+        receipt.message_id.to_hex(),
+        receipt.generation.to_hex()
+    );
+    RECEIPT_BY_REF.put(dbs, txn, &reference, receipt)
+}
+
+pub(in crate::memory::witness) fn receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT.get(dbs, txn, &message)
+}
+
+pub(in crate::memory::witness) fn generation_receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    generation: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT_BY_REF.get(
+        dbs,
+        txn,
+        &format!("{}:{}", message.to_hex(), generation.to_hex()),
+    )
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
