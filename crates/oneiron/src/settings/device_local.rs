@@ -128,7 +128,6 @@ impl Vault {
         )
     }
 
-
     /// Whether a device-local world keeps `id` on this device, so no caller
     /// off it reads the row (DEC-0005). A row whose world cannot be read is
     /// kept too.

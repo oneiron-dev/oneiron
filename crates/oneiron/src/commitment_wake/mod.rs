@@ -47,8 +47,8 @@ pub(crate) use self::reminder_wording::wording_source_binding;
 pub use self::reminder_wording::{
     COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND, COMMITMENT_REMINDER_WORDING_MAX_BYTES,
     CommitmentReminderVoice, CommitmentReminderWorder, CommitmentReminderWordingPayload,
-    CommitmentReminderWordingRead, CommitmentReminderWordingRequest, CommitmentReminderWordingSource,
-    run_commitment_reminder_wording,
+    CommitmentReminderWordingRead, CommitmentReminderWordingRequest,
+    CommitmentReminderWordingSource, run_commitment_reminder_wording,
 };
 pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
