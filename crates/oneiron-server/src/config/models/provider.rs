@@ -375,7 +375,7 @@ impl ProviderFile {
             .filter(|url| !url.is_empty())
             .ok_or_else(|| anyhow::anyhow!("models.providers.{name}.base_url is required"))?;
         validate_base_url(name, kind, &base_url)?;
-        if let Some(siwc) = &self.siwc {
+        if self.siwc.is_some() {
             anyhow::ensure!(
                 kind == ProviderKind::OpenaiCompat
                     && base_url == oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL
