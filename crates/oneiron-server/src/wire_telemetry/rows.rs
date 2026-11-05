@@ -48,6 +48,8 @@ pub enum LimitRow {
     ResidenceIndexBytes,
     /// Decision reads the owner's probe route holds at once.
     DecisionReads,
+    /// Context-pack input workers held at once.
+    ContextReads,
     /// Task work (`can`, `ask`, `wait`, `tasks.answer`) one vault runs at
     /// once; past it, each caller's work waits its fair turn.
     TaskWork,
@@ -72,7 +74,7 @@ pub enum LimitRow {
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 25 + EngineLimit::ALL.len()] = [
+    pub const ALL: [Self; 26 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -93,6 +95,7 @@ impl LimitRow {
         Self::ResidenceIndexPages,
         Self::ResidenceIndexBytes,
         Self::DecisionReads,
+        Self::ContextReads,
         Self::TaskWork,
         Self::BookingWindows,
         Self::RendererWork,
@@ -266,6 +269,7 @@ impl LimitRow {
             Self::ResidenceIndexPages => "residence_operation_budgets.max_index_pages",
             Self::ResidenceIndexBytes => "residence_operation_budgets.index_cache_bytes",
             Self::DecisionReads => "limits.decision_reads",
+            Self::ContextReads => "limits.context_reads",
             Self::TaskWork => "limits.task_work",
             Self::BookingWindows => "booking.anti_abuse:per_minute",
             Self::RendererWork => "limits.renderer_work",
