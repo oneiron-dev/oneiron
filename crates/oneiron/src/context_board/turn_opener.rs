@@ -18,3 +18,12 @@ pub fn turn_opener_line(now_ms: u64) -> String {
     );
     format!("<turn now=\"{now}\"/>")
 }
+
+/// Whether `text` is one opener line exactly as [`turn_opener_line`]
+/// renders it: `<turn now="…"/>` around an RFC 3339 instant.
+#[must_use]
+pub fn is_turn_opener_line(text: &str) -> bool {
+    text.strip_prefix("<turn now=\"")
+        .and_then(|rest| rest.strip_suffix("\"/>"))
+        .is_some_and(|now| chrono::DateTime::parse_from_rfc3339(now).is_ok())
+}

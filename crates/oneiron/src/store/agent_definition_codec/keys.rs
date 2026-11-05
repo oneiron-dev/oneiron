@@ -1,21 +1,13 @@
-//! The AGENT_DEF body's pinned MessagePack keys, by name: the body, model
-//! entry, memory profile, budget split, skill dependency and MCP reference
-//! sub-maps, the scope discriminants, the output-decay sub-map and the
-//! verbatim-pin observation default.
+//! Core half of `store::agent_definition_codec::keys`: its store-layer items live in `oneiron_store::agent_definition_codec::keys` and are
+//! re-exported here; the items below stay in the engine.
 
-use oneiron_store::write_envelope::skill_record::SKILL_DEPENDENCY_KEYS;
+pub(crate) use oneiron_store::agent_definition_codec::keys::*;
 
 use crate::store::agent_record::{
     AGENT_DEF_BODY_KEYS, AGENT_MODEL_KEYS, CONTEXT_BUDGET_SPLIT_KEYS, MCP_REF_KEYS,
     MEMORY_PROFILE_KEYS,
 };
-
-/// The pinned sub-map keys for a profile's `output_decay`, in encode order.
-pub(crate) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
-
-/// Bytes of one verbatim pin past which a put asks (the length it once
-/// refused past); a pin of any length is kept, as any number of pins is.
-pub(crate) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
+use oneiron_store::write_envelope::skill_record::SKILL_DEPENDENCY_KEYS;
 
 pub(crate) const KEY_AGENT_ID: &str = AGENT_DEF_BODY_KEYS[0];
 
@@ -103,16 +95,6 @@ pub(crate) const KEY_SPLIT_SUMMARIES: &str = CONTEXT_BUDGET_SPLIT_KEYS[2];
 
 pub(crate) const KEY_SPLIT_OTHER: &str = CONTEXT_BUDGET_SPLIT_KEYS[3];
 
-pub(crate) const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
-
-pub(crate) const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
-
 pub(crate) const KEY_MCP_KEY: &str = MCP_REF_KEYS[0];
 
 pub(crate) const KEY_MCP_MIN_VERSION: &str = MCP_REF_KEYS[1];
-
-pub(crate) const SCOPE_ALL: &str = "all";
-
-pub(crate) const SCOPE_BASE: &str = "base";
-
-pub(crate) const SCOPE_WORLD: &str = "world";
