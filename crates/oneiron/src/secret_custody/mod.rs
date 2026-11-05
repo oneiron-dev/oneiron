@@ -82,6 +82,7 @@ mod masked_files;
 mod owner_door;
 mod pending_restore;
 mod reveal;
+pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
 mod sighted_file;
 mod storage_seal;
