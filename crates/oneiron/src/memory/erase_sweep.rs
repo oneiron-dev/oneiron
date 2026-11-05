@@ -134,15 +134,15 @@ impl Memory<'_> {
                 final_ref,
             )
         };
-        let custody =
-            self.vault
-                .erase_custody_in_txn(&txn, &receipt.custody_retirements)?
-                .map(|(state, pending, note)| RecordEraseCustody {
-                    state: state.to_owned(),
-                    pending,
-                    recall: ERASE_RECALL_NOTE.to_owned(),
-                    note: note.map(str::to_owned),
-                });
+        let custody = self
+            .vault
+            .erase_custody_in_txn(&txn, &receipt.custody_retirements)?
+            .map(|(state, pending, note)| RecordEraseCustody {
+                state: state.to_owned(),
+                pending,
+                recall: ERASE_RECALL_NOTE.to_owned(),
+                note: note.map(str::to_owned),
+            });
         Ok(Some(RecordEraseSweep {
             receipt_ref: format!("redaction:{}", receipt_id.to_hex()),
             request_id: receipt.request_id,
