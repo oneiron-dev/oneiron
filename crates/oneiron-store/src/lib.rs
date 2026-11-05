@@ -24,6 +24,7 @@ pub mod base_agent;
 pub mod batch;
 pub mod batch_op;
 pub mod blob_artifact;
+#[cfg(unix)]
 pub mod body_envelope;
 pub mod build_cache;
 pub mod bundle_generations;
