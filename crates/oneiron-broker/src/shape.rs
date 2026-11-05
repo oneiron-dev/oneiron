@@ -91,6 +91,9 @@ pub enum Shape {
     /// A Gemini model listing: `GET …/v1beta/models`, no body,
     /// `x-goog-api-key`.
     GeminiModels,
+    /// An Anthropic-compatible model listing: `GET …/v1/models`, no body,
+    /// `x-api-key`.
+    AnthropicModels,
     /// Cartesia speech: `POST …/tts/bytes`, JSON, top-level body `model_id`,
     /// `x-api-key: <key>`. The reply is audio bytes, streamed.
     CartesiaSpeech,
@@ -353,6 +356,18 @@ const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, f
 
 const GEMINI_MODELS: Row = gemini("GET", &["v1beta", "models"], Body::Empty, Selector::Binding);
 
+const ANTHROPIC_MODELS: Row = Row {
+    method: "GET",
+    endpoint: &["v1", "models"],
+    query: None,
+    body: Body::Empty,
+    model: Selector::Binding,
+    auth_header: "x-api-key",
+    auth_prefix: "",
+    streams: false,
+    redirect: None,
+};
+
 const CARTESIA_SPEECH: Row = Row {
     method: "POST",
     endpoint: &["tts", "bytes"],
@@ -406,6 +421,7 @@ impl Shape {
             Self::OpenAiModels => &OPENAI_MODELS,
             Self::Health => &HEALTH,
             Self::GeminiModels => &GEMINI_MODELS,
+            Self::AnthropicModels => &ANTHROPIC_MODELS,
             Self::CartesiaSpeech => &CARTESIA_SPEECH,
             Self::ElevenLabsSpeech => &ELEVENLABS_SPEECH,
         }
