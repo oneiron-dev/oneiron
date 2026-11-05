@@ -670,6 +670,38 @@ cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
 
+On the house EXL3 server a chat conversation keeps a native session: the
+canonical history stays computed between turns. Once a reply's successor is
+published, the session also prepares the part of the next turn already known,
+the state-only board rendered for that turn's reader, as background work beside
+it (I1 = C). When the next turn arrives, the worker compares its own tokens with
+the prepared ones and reuses only their identical beginning; everything after
+the first token that differs, the fresh recall included, is computed as
+before, and a preparation still running stops. `[models.sessions]` holds the
+policy:
+
+```toml
+[models.sessions]
+prepare_tail = true   # the fixed policy, on by default
+planner = "off"       # "learned": skip a conversation's preparation once its tails gave too little
+```
+
+`GET /v1/ai/status` lists `prepared_tails`: prepares started, ready and
+stopped, publishes skipped by reason, forks that attached to a tail or missed
+it, and the tokens computed, reused and wasted.
+
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
+
 ## 3. Let the Dreamer work
 
 The Dreamer consolidates witnessed turns into claims in the background. It
@@ -860,10 +892,13 @@ A chat turn's context board rides in two parts (I1 = C): its state part
 (worlds, tasks, loaded skills, room, inbox and the changed line) right
 before the user's message, and its query part (the memories and the skills
 that message found) right after it. Both come from one read, under one
-board budget. `turn_opener` under `[models.chat]` closes a turn whose board
-rides: `clock` (the default) adds `<turn now="…"/>`, the vault clock's
-instant in UTC, after the query part; `off` adds nothing. A turn whose board
-is held or not read ends at the user's message, as before. `POST
+board budget. A queued Continue or Retry reads its board the same way.
+`turn_opener` under `[models.chat]` closes every chat call and every queued
+Continue or Retry: `clock` (the default) adds `<turn now="…"/>`, the vault
+clock's instant in UTC, after the query part, or right after the user's
+message when the board is held or not read; `off` adds nothing. A Retry that
+reuses its reply's kept prefix sends today's opener in place of the captured
+one; a Continue keeps the opener its saved reply followed. `POST
 /v1/core/context-board` and `ai.reply` still render the one frame.
 
 ## 5. Saved workflows
@@ -1182,6 +1217,19 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A fold can also take one kind of content over a span:
+`self.fold({kind: "repl_output", before: "t40", note?})` (or `from` and
+`through`; with no bound it reaches the current step). Each step in the span
+keeps its program, and with it its speech calls; its console shows one stub
+in place of the output: `⟨f3 · repl_output folded⟩`, the output's read
+handle, a read handle to each stored result the output names, and the ids it
+names. The engine writes these stubs from the steps' outputs, with no model
+call. A kind mark lands in the same batch as every other mark, and a batch of
+kind marks alone lands at once. A folded output is never read into the
+request, so it no longer counts against the window. `self.unfold({fold})`
+appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
+fold may lie over a whole-step fold; that fold still hides its steps.
+
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
 where it was found and whether a reveal would deliver at once, ask the owner
@@ -1206,13 +1254,15 @@ Gate record with the handle, generation, effector, operation and send status.
 
 A served host also supplies `native_mail.jmap` against its installed native
 mail server and `broker.models` against a configured broker-backed
-OpenAI-compatible or Gemini provider. The latter takes
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
 `arguments: {"provider": "<configured provider name>"}` and returns one actual
-provider JSON response: `/v1/models` for OpenAI-compatible providers or
-`/v1beta/models` for Gemini. Any provider pagination token is returned as-is;
-this operation does not fetch later pages or claim a complete catalog. It
-presents the requested handle, not the provider's configured secret, under the
-existing `broker:model` binding.
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
 The host uses one actual model rung only as the broker's bodyless-request
 binding; it does not filter the listing or claim that model is serving.
 The broker is connected before custody releases the value. Both result and

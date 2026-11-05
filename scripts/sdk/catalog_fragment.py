@@ -84,8 +84,9 @@ VAULT_HOST_DOC = ('/** Members the `vault` root holds beside its verbs; another 
                   'by merging into this interface. */')
 CONNECTOR_TOOLS = '{{ readonly [name: string]: {{ readonly [tool: string]: (args?: object) => {result} }} }} & '
 # `self.fold` is the one positional verb (ARCH-0067 #folds), as bootstrap.js
-# takes it.
-POSITIONAL = {'self.fold': '(span: readonly [number, number], options?: { note?: string | null })'}
+# takes it: a span and its options, or one fold by kind (`{kind, before?}`).
+POSITIONAL = {'self.fold': ('(span: readonly [number, number], options?: { note?: string | null })',
+                            f'(input: {NAMESPACE}.FoldByKind)')}
 # Names no reached type may take: the global the fragment names from inside
 # the namespace, and the fragment's own interface.
 TAKEN = ('StoredResult', VAULT_HOST)
@@ -117,7 +118,8 @@ class Fragment:
         return {field[0] for field in node[1]} if node[0] == 'object' else set()
 
     def params(self, row):
-        return POSITIONAL.get(row['name']) or f'(input: {self.ts(row["input"])})'
+        'The row\'s parameter lists: a positional verb\'s spellings, else its one input.'
+        return POSITIONAL.get(row['name']) or (f'(input: {self.ts(row["input"])})',)
 
     def reply(self, text):
         output = self.ts(text) if text else 'unknown'
@@ -129,12 +131,12 @@ class Fragment:
 
     def signatures(self, row):
         'The row\'s call signatures, most specific first: one per input field whose presence selects its own reply, then its own.'
-        own = (self.params(row), self.result(row))
-        if 'outputs_by_input' not in row: return [own]
+        own = [(params, self.result(row)) for params in self.params(row)]
+        if 'outputs_by_input' not in row: return own
         base = self.ts(row['input'])
         if compound(base): base = f'({base})'
         return [(f'(input: {base} & {{ {ts_key(field)}: NonNullable<{base}[{json.dumps(field)}]> }})', self.reply(output))
-                for field, output in row['outputs_by_input'].items()] + [own]
+                for field, output in row['outputs_by_input'].items()] + own
 
     def call(self, row):
         'The row as one call type: an arrow, or a call-signature literal over its overloads.'
