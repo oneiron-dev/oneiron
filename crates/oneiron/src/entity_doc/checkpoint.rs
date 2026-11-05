@@ -20,6 +20,7 @@
 mod documents;
 mod loro;
 mod message_receipts;
+mod native_source;
 mod proposal;
 
 // The entity document family's Loro split and join (FIX 9126): a group is
@@ -264,12 +265,35 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     let rebuilt = documents::join(&opened)?;
-    rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
-        if documents::owns(at) {
-            let row = rebuilt.get(at).cloned();
-            return row.map(Some).ok_or_else(rows::bad_part);
+    restore_prepared(dbs, txn, &opened, &rebuilt)
+}
+
+/// The closed source owns the exact authenticated rows. Prepare and validate
+/// their native document histories before the first row is written.
+pub(crate) fn restore_authenticated_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    source: crate::recovery::checkpoint::EntityDocRestoreSource,
+) -> Result<Restored> {
+    let opened = source.into_rows();
+    let rebuilt = native_source::prepare(&opened)?;
+    restore_prepared(dbs, txn, &opened, &rebuilt)
+}
+
+fn restore_prepared(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: &OpenedOwnerRows,
+    rebuilt: &BTreeMap<RowLocator, Vec<u8>>,
+) -> Result<Restored> {
+    rows::restore_parts(dbs, txn, opened, check, |view, at, value, parts| {
+        if let Some(row) = rebuilt.get(at) {
+            return Ok(Some(row.clone()));
         }
-        join(dbs, view, &opened, at, value, parts)
+        if documents::owns(at) {
+            return Err(rows::bad_part());
+        }
+        join(dbs, view, opened, at, value, parts)
     })
 }
 

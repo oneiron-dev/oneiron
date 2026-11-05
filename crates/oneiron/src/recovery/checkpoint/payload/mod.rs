@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 
 pub(super) use self::actors::{opened_content, unavailable};
 pub(super) use self::capture::{project_image, seal_image};
+pub(crate) use self::restore::EntityDocRestoreSource;
 pub(super) use self::restore::{OpenedPayload, open_image_payload, restore_opened_in_txn};
 use self::rows::{Class, DbClass, Families};
 use self::seal::Bundle;

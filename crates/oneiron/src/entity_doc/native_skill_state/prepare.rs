@@ -69,7 +69,7 @@ pub(super) fn prepare_in_txn(
             .map_err(|_| Error::InvariantViolation("native SKILL state timestamp overflow"))?;
         document.doc.commit_with(
             CommitOptions::new()
-                .commit_msg("native_skill_state")
+                .commit_msg(super::ANONYMOUS_COMMIT)
                 .timestamp(timestamp),
         );
     }

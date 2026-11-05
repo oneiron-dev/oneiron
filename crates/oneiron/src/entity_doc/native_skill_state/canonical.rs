@@ -37,13 +37,15 @@ impl<'a> CanonicalSkillState<'a> {
         row: &'a CanonicalEntityDocument,
         source: &StoreCapturedCanonical,
     ) -> Result<Self> {
+        // Full row membership binds the current source slot and every exact
+        // carried witness. A witness's own document id is historical: a
+        // legitimate SWITCH keeps it while moving the storage slot.
         source.require_entity_document(row)?;
         let entity = EntityId::from_bytes(row.entity_id)?;
-        let document = EntityId::from_bytes(row.document_id)?;
         let validate = |bytes: Option<&[u8]>| -> Result<()> {
             if let Some(bytes) = bytes {
                 let fact = SkillStateFact::decode(bytes)?;
-                if !fact.target_is(entity, document, row.birth_at) {
+                if !fact.target_birth_is(entity, row.birth_at) {
                     return Err(invalid());
                 }
             }
