@@ -24,9 +24,18 @@ Symbol definitions use the same selected repo and pinned snapshot. The
 symbol manifest must still match that snapshot's repo ref and commit, and
 each returned definition must pass the Grant's readable-path bounds.
 
-These selectors do not change native Git, snapshot ingestion, symbol
-writes, work, or view doors. Native repo admission checks the same typed
-selector against the existing EntityId Grant bounds; it grants no new
-rights. Served-anchor lookup still has no portable selector. Reads add no
-grants and do not change masking, owner approval, or repo admission rules.
-A manifest alone never grants access.
+`self.code.snapshots.ingest` accepts the same optional selector. The
+selected CODE supplies the stored folder and project key, the run's read
+lane, and the returned `repo`. The existing import writer still limits the
+snapshot, blobs, and symbol graph to paths the run's Grant reads. Before
+any write, it resolves the same selector again and checks the selected
+CODE, hit state, current Grant bounds, and run lease. A changed selection
+retries without writing rows. An absent or unknown id keeps the existing
+fallback behavior.
+
+These selectors do not change native Git, work, or view doors. Native repo
+admission checks the same typed selector against the existing EntityId
+Grant bounds; it grants no new rights. Served-anchor lookup still has no
+portable selector. Reads and imports add no grants and do not change
+masking, owner approval, or repo admission rules. A manifest alone never
+grants access.

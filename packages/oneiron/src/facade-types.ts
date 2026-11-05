@@ -5561,7 +5561,7 @@ export type RepoQueueEntryView = { batch: string; work: EntityId; proposals: Ent
 /** `oneiron::memory::repo_doors::types::RepoMergeQueueObserveOutput` */
 export type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsIngestInput` */
-export type RepoSnapshotsIngestInput = { repo: EntityId; ref: string }
+export type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsIngestOutput` */
 export type RepoSnapshotsIngestOutput = RepoSnapshotView
 /** `oneiron::memory::repo_doors::types::RepoWorkOpenInput` */

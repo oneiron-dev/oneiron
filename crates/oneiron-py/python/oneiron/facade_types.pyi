@@ -13829,6 +13829,7 @@ class RepoMergeQueueObserveOutput(TypedDict):
     entries: list[RepoQueueEntryView]
 class RepoSnapshotsIngestInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
 RepoSnapshotsIngestOutput = RepoSnapshotView
 class RepoWorkOpenInput(TypedDict):
