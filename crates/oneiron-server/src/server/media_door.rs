@@ -209,6 +209,13 @@ impl AiMediaDoor for MediaDoor {
             let request = self.admit(request)?;
             // No whole source set is asserted from routing or credential metadata.
             if let Some(phone) = &self.phone {
+                let release = || {
+                    phone.agent(&self.vault).map(|_| ())?;
+                    if let Some(release) = release {
+                        release()?;
+                    }
+                    Ok(())
+                };
                 self.runtime
                     .media()
                     .run_for_agent(
@@ -216,7 +223,7 @@ impl AiMediaDoor for MediaDoor {
                         self.payer.clone(),
                         None,
                         phone.agent(&self.vault)?,
-                        release,
+                        Some(&release),
                     )
                     .await
             } else if release.is_some() {
