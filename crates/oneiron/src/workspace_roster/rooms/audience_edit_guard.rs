@@ -144,6 +144,7 @@ pub(super) fn tear_root_edits_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     root: &EntityId,
+    deindex: &dyn Fn(&mut heed::RwTxn<'_>, &EntityId) -> Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let sources: Vec<EntityId> = crate::ports::EdgeStoreRead::port_edges(
         store,
@@ -165,7 +166,7 @@ pub(super) fn tear_root_edits_in_txn(
             continue;
         }
         let _torn = TornWithRoot::begin(edit);
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &edit)?;
+        let (_, vector, graph, neighbors) = deindex(txn, &edit)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &edit, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;
