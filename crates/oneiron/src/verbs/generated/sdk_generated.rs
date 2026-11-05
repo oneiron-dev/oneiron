@@ -28007,7 +28007,8 @@ pub fn vault_campaign_compliance_install(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_install_as(
+    memory.vault().store.record_hooks.compliance_install_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.install")?,
         &input,
     )
@@ -28016,13 +28017,18 @@ pub fn vault_campaign_compliance_amend(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_amend(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_amend(memory, &input)
 }
 pub fn vault_campaign_compliance_approve(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_approve_as(
+    memory.vault().store.record_hooks.compliance_approve_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.approve")?,
         &input,
     )
@@ -28031,7 +28037,8 @@ pub fn vault_campaign_compliance_reject(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_reject_as(
+    memory.vault().store.record_hooks.compliance_reject_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.reject")?,
         &input,
     )
@@ -28040,7 +28047,8 @@ pub fn vault_campaign_compliance_verify(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceVerifyRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_verify_as(
+    memory.vault().store.record_hooks.compliance_verify_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.verify")?,
         &input,
     )
@@ -28049,7 +28057,11 @@ pub fn vault_campaign_compliance_result(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceResultRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
-    memory.compliance_result(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_result(memory, &input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,
