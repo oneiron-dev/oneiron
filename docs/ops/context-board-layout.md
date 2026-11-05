@@ -123,5 +123,8 @@ sections the layout folded or fitted.
 
 - An owner override of one agent's layout alone (the override applies to
   every agent).
-- Filters beyond TASKS, and the connector board's TASKS share, filter and
-  full fold counts (its fold line counts its scoped rows only).
+- MEMORIES filters: a memory row names no author yet, so `who` cannot
+  narrow it. TASKS filters by `who` and `status`; INBOX filters by `who`
+  (the sender).
+- The connector board's TASKS share, filter and full fold counts (its fold
+  line counts its scoped rows only).
