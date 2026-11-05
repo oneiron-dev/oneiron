@@ -155,6 +155,16 @@ impl Vault {
                 self.batch_in()
                     .claim_candidate(&id, candidate, &envelope, occurred, now),
             )?;
+            let stored_claim = self
+                .get_claim_in_txn(content.read(), &id)?
+                .ok_or(Error::InvalidClaimBody("AG-UI capture was not stored"))?;
+            let stored_file: StoredFile = rmpv::ext::from_value(stored_claim.value)
+                .map_err(|_| Error::InvalidClaimBody("invalid finalized AG-UI source"))?;
+            if fingerprint(&stored_file)? != hash {
+                return Err(Error::InvalidClaimBody(
+                    "AG-UI exact capture was changed by admission",
+                ));
+            }
             Ok(AgUiFileReceipt {
                 claim_ref: id.to_hex(),
                 source_hash: hash.clone(),
@@ -213,6 +223,11 @@ impl Memory<'_> {
                 {
                     return Err(Error::InvalidClaimBody(
                         "AG-UI source capture binding changed",
+                    ));
+                }
+                if !crate::policy_model::is_live_vault_owner_in_txn(self.vault(), txn, &actor)? {
+                    return Err(Error::InvalidClaimBody(
+                        "AG-UI source mapping is not registered by a live owner",
                     ));
                 }
                 let hash = fingerprint(&file)?;

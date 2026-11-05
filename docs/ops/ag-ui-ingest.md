@@ -55,6 +55,9 @@ a live project, the complete JSONL bytes, and the app's CUSTOM mappings in one
 fresh `ingest.ag_ui.file` CLAIM. The authenticated owner is the real capture
 actor and principal; no event field selects either. The owner proof and project
 are checked in the same actor-content writer as the Imported/Proposed claim.
+Normal secret masking still runs. The import rechecks the finalized capture in
+that same writer and aborts if admission changed any captured bytes or context;
+it never bypasses masking or returns an original fingerprint for changed data.
 This is file import, not a live connector or an agent-principal setup API.
 
 Each CUSTOM mapping names the exact event `name`, its reported kind (`action`,
@@ -75,6 +78,11 @@ metadata. A changed capture fails the exact fingerprint check; the reader does
 not substitute a current file, another claim or an older fingerprint. The
 underlying CLAIM retains its ordinary lifecycle, history and erasure rules.
 This is a content pin, not a new immutable blob-version store.
+
+The typed reader also proves, in its same read snapshot, that the authenticated
+capture author is a live vault owner. A Human actor alone, or a generic imported
+claim shaped like a capture, does not attest an owner-registered mapping. Generic
+imports remain available without gaining that typed-source status.
 
 The typed reader returns the original JSONL and the registered app observations.
 Each reported outcome's repair link names occurrence ordinals only when the
