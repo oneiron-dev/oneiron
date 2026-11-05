@@ -3,7 +3,7 @@
 use super::super::cms;
 use super::verify_chain_gates::{issuer_permits_crl_sign, key_usage_permits};
 use super::verify_dss_core::EmbeddedCert;
-use crate::memory::{MemoryLedger, SealMemoryRefusal};
+use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 
 /// Seconds-since-epoch for an X.509 time choice.
 fn time_secs(t: x509_cert::time::Time) -> u64 {
@@ -216,15 +216,23 @@ pub(crate) fn gen_time_beyond_skew(gen_time: u64, clock_ms: u64) -> bool {
 
 /// Hash `data` with the CertID hash algorithm; only SHA-1 and SHA-256 are
 /// recognized evidence-hash forms.
-fn cert_id_hash(oid_bytes: &[u8], data: &[u8]) -> Option<Vec<u8>> {
+fn cert_id_hash(
+    oid_bytes: &[u8],
+    data: &[u8],
+    memory: &MemoryLedger,
+) -> Result<Option<(Vec<u8>, LedgerHold)>, SealMemoryRefusal> {
     if cms::is_sha256_oid(oid_bytes) {
-        return Some(cms::sha256(data).to_vec());
+        let hash = cms::sha256(data);
+        let held = memory.hold(hash.len())?;
+        return Ok(Some((hash.to_vec(), held)));
     }
     if oid_bytes == OID_SHA1_BYTES {
         use sha1::Digest;
-        return Some(sha1::Sha1::digest(data).to_vec());
+        let hash = sha1::Sha1::digest(data);
+        let held = memory.hold(hash.len())?;
+        return Ok(Some((hash.to_vec(), held)));
     }
-    None
+    Ok(None)
 }
 
 /// The cert a SingleResponse binds to: serial match against an embedded or
@@ -258,25 +266,41 @@ fn ocsp_cert_binding<'a>(
         let Some(issuer) = issuer else {
             continue;
         };
-        let Ok(subject_der) = der::Encode::to_der(&issuer.cert.tbs_certificate.subject) else {
-            continue;
+        let name_matches = {
+            use der::Encode;
+            let subject = &issuer.cert.tbs_certificate.subject;
+            let Some(subject_len) = subject
+                .encoded_len()
+                .ok()
+                .and_then(|len| usize::try_from(len).ok())
+            else {
+                continue;
+            };
+            let _subject_held = memory.hold(subject_len)?;
+            let Ok(subject_der) = subject.to_der() else {
+                continue;
+            };
+            let Some(name_hash) = cert_id_hash(oid, &subject_der, memory)? else {
+                continue;
+            };
+            name_hash.0 == cert_id.issuer_name_hash.as_bytes()
         };
-        let key_bytes = issuer
-            .cert
-            .tbs_certificate
-            .subject_public_key_info
-            .subject_public_key
-            .raw_bytes();
-        let Some(name_hash) = cert_id_hash(oid, &subject_der) else {
-            continue;
-        };
-        if name_hash != cert_id.issuer_name_hash.as_bytes() {
+        if !name_matches {
             continue;
         }
-        let Some(key_hash) = cert_id_hash(oid, key_bytes) else {
-            continue;
+        let key_matches = {
+            let key_bytes = issuer
+                .cert
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .raw_bytes();
+            let Some(key_hash) = cert_id_hash(oid, key_bytes, memory)? else {
+                continue;
+            };
+            key_hash.0 == cert_id.issuer_key_hash.as_bytes()
         };
-        if key_hash != cert_id.issuer_key_hash.as_bytes() {
+        if !key_matches {
             continue;
         }
         return Ok(Some((target, issuer)));
@@ -458,6 +482,15 @@ fn ocsp_basic_valid<'a>(
     if !cms::sig_alg_permitted(alg, oid) {
         return Ok(None);
     }
+    let Some(tbs_len) = basic
+        .tbs_response_data
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let _tbs_held = memory.hold(tbs_len)?;
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
         return Ok(None);
     };
