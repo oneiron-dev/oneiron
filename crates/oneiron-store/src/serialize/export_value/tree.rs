@@ -78,4 +78,3 @@ pub enum NodeIn {
     #[serde(untagged)]
     Nil,
 }
-
