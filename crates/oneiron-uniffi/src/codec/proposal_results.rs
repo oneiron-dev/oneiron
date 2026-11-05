@@ -1,0 +1,246 @@
+//! Owned lifts for nested pending-proposal results (FIX 12936).
+//!
+//! Each outcome below consumes its nested `proposed` leaf first through the
+//! existing `PendingProposalView` lift, then converts its finite siblings
+//! through the shared record shape. Caller-named JSON leaves (`unit`,
+//! `requested_schema`) move owned into `WireJson::lift`; no `lift_record`
+//! here runs over a graph containing a `serde_json::Value`.
+
+use super::{Lift, OneironError, WireJson, lift_record};
+
+impl Lift<oneiron::blob_artifact::DeckProposeOutcome> for crate::DeckProposeOutcome {
+    fn lift(value: oneiron::blob_artifact::DeckProposeOutcome) -> Result<Self, OneironError> {
+        let oneiron::blob_artifact::DeckProposeOutcome { proposed, rejected } = value;
+        // Consume the nested proposal (and its deep summary tree) first.
+        let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
+        Ok(Self {
+            proposed,
+            rejected: lift_record("vault.artifacts.propose_deck:rejected", &rejected)?,
+        })
+    }
+}
+
+impl Lift<oneiron::office_body::DeckExportView> for crate::DeckExportView {
+    fn lift(value: oneiron::office_body::DeckExportView) -> Result<Self, OneironError> {
+        let oneiron::office_body::DeckExportView {
+            frontier,
+            profile,
+            projector,
+            authoritative,
+            noop,
+            changed_parts,
+            effects,
+            record,
+            proposed,
+            reconciliation,
+        } = value;
+        // Consume the nested proposal (and its deep summary tree) first.
+        let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
+        Ok(Self {
+            frontier,
+            profile,
+            projector,
+            authoritative,
+            noop,
+            changed_parts,
+            effects,
+            record: lift_record("vault.artifacts.body.deck.export:record", &record)?,
+            proposed,
+            reconciliation: lift_record(
+                "vault.artifacts.body.deck.export:reconciliation",
+                &reconciliation,
+            )?,
+        })
+    }
+}
+
+impl Lift<oneiron::edit_roundtrip::UnitAbstention> for crate::UnitAbstention {
+    fn lift(value: oneiron::edit_roundtrip::UnitAbstention) -> Result<Self, OneironError> {
+        let oneiron::edit_roundtrip::UnitAbstention {
+            unit,
+            decision,
+            judged_live,
+        } = value;
+        // Consume the caller-named unit JSON first, before any sibling lift.
+        let unit = WireJson::lift(unit)?;
+        Ok(Self {
+            unit,
+            decision: lift_record("artifact ask abstention decision", &decision)?,
+            judged_live: judged_live.map(|pin| crate::LivePin {
+                frontier: pin.frontier,
+                commits: pin.commits,
+            }),
+        })
+    }
+}
+
+impl Lift<oneiron::blob_artifact::unit_refusal::UnitRefusal> for crate::UnitRefusal {
+    fn lift(
+        value: oneiron::blob_artifact::unit_refusal::UnitRefusal,
+    ) -> Result<Self, OneironError> {
+        let oneiron::blob_artifact::unit_refusal::UnitRefusal {
+            unit,
+            reason,
+            judged_live,
+        } = value;
+        // Consume the caller-named unit JSON first, before any sibling lift.
+        let unit = WireJson::lift(unit)?;
+        Ok(Self {
+            unit,
+            reason,
+            judged_live: judged_live.map(|pin| crate::LivePin {
+                frontier: pin.frontier,
+                commits: pin.commits,
+            }),
+        })
+    }
+}
+
+impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutcome {
+    fn lift(value: oneiron::blob_artifact::ArtifactAskOutcome) -> Result<Self, OneironError> {
+        let oneiron::blob_artifact::ArtifactAskOutcome {
+            proposed,
+            abstained,
+            refused,
+        } = value;
+        // Consume the nested proposal (and its deep summary tree) first.
+        let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
+        let abstained = abstained
+            .into_iter()
+            .map(crate::UnitAbstention::lift)
+            .collect::<Result<Vec<_>, _>>()?;
+        let refused = refused
+            .into_iter()
+            .map(crate::UnitRefusal::lift)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            proposed,
+            abstained,
+            refused,
+        })
+    }
+}
+
+impl Lift<oneiron::blob_artifact::SlideReviewOutcome> for crate::SlideReviewOutcome {
+    fn lift(value: oneiron::blob_artifact::SlideReviewOutcome) -> Result<Self, OneironError> {
+        let oneiron::blob_artifact::SlideReviewOutcome {
+            proposed,
+            judgments,
+            comments,
+            abstained,
+            refused,
+        } = value;
+        // Consume the nested proposal (and its deep summary tree) first.
+        let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
+        Ok(Self {
+            proposed,
+            judgments: lift_record("vault.artifacts.review_slides:judgments", &judgments)?,
+            comments: lift_record("vault.artifacts.review_slides:comments", &comments)?,
+            abstained: lift_record("vault.artifacts.review_slides:abstained", &abstained)?,
+            refused: lift_record("vault.artifacts.review_slides:refused", &refused)?,
+        })
+    }
+}
+
+impl Lift<oneiron::verbs::NarrowedQuestion> for crate::NarrowedQuestion {
+    fn lift(value: oneiron::verbs::NarrowedQuestion) -> Result<Self, OneironError> {
+        let oneiron::verbs::NarrowedQuestion {
+            key,
+            message,
+            requested_schema,
+            on_device,
+        } = value;
+        // Native `Some(Value::Null)` serializes as JSON null, which the
+        // generated `Option<WireJson>` reads as absent; keep that shape.
+        // Null itself carries no recursive children.
+        let requested_schema = match requested_schema {
+            None | Some(serde_json::Value::Null) => None,
+            Some(schema) => Some(WireJson::lift(schema)?),
+        };
+        Ok(Self {
+            key,
+            message,
+            requested_schema,
+            on_device: if on_device { Some(true) } else { None },
+        })
+    }
+}
+
+impl Lift<oneiron::verbs::NarrowedQuestions> for crate::NarrowedQuestions {
+    fn lift(value: oneiron::verbs::NarrowedQuestions) -> Result<Self, OneironError> {
+        let oneiron::verbs::NarrowedQuestions {
+            outcome,
+            questions_narrowed,
+            handle,
+            call_ref,
+            source,
+            foreign,
+            questions,
+            live_until_ms,
+            reasons,
+        } = value;
+        let questions = questions
+            .into_iter()
+            .map(crate::NarrowedQuestion::lift)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            outcome,
+            questions_narrowed,
+            handle,
+            call_ref,
+            source,
+            foreign,
+            questions,
+            live_until_ms,
+            reasons: if reasons.is_empty() {
+                None
+            } else {
+                Some(reasons)
+            },
+        })
+    }
+}
+
+impl Lift<oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>>
+    for crate::ActAnswerSlideReviewOutcome
+{
+    fn lift(
+        value: oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
+    ) -> Result<Self, OneironError> {
+        match value {
+            oneiron::task_verb::sdk::ActAnswer::DetailsOnDevice(details) => {
+                Ok(Self::DetailsOnDevice(crate::DetailsOnDevice {
+                    details_on_device: details.details_on_device,
+                }))
+            }
+            oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(questions) => Ok(
+                Self::QuestionsNarrowed(crate::NarrowedQuestions::lift(questions)?),
+            ),
+            oneiron::task_verb::sdk::ActAnswer::Done(outcome) => {
+                Ok(Self::Done(crate::SlideReviewOutcome::lift(outcome)?))
+            }
+        }
+    }
+}
+
+impl Lift<oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>>
+    for crate::ActAnswerArtifactAskOutcome
+{
+    fn lift(
+        value: oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>,
+    ) -> Result<Self, OneironError> {
+        match value {
+            oneiron::task_verb::sdk::ActAnswer::DetailsOnDevice(details) => {
+                Ok(Self::DetailsOnDevice(crate::DetailsOnDevice {
+                    details_on_device: details.details_on_device,
+                }))
+            }
+            oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(questions) => Ok(
+                Self::QuestionsNarrowed(crate::NarrowedQuestions::lift(questions)?),
+            ),
+            oneiron::task_verb::sdk::ActAnswer::Done(outcome) => {
+                Ok(Self::Done(crate::ArtifactAskOutcome::lift(outcome)?))
+            }
+        }
+    }
+}

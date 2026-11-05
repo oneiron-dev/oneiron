@@ -2160,6 +2160,11 @@ UNIFFI_RESULTS = {
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
+    'crate::office_body::DeckExportView': 'DeckExportView',
+    'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
 }
 
 # A typed binding argument the client takes as is: its foreign type and how it
