@@ -108,7 +108,27 @@ impl Memory<'_> {
         let Some((entity_type, Some(body), Some(view), turn, stale, handle)) = admitted else {
             return Ok(None);
         };
-        let (turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
+        let (mut turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
+        if !turn_messages.is_empty() {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
+            if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                    &self.vault.store,
+                    &txn,
+                    turn_messages.iter().map(|(_, text)| text.as_str()),
+                )?;
+                for (_, text) in &mut turn_messages {
+                    if let Some(masked) = keys.masked(text) {
+                        *text = masked;
+                    }
+                }
+            }
+        }
         let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
             value: edges,
@@ -182,13 +202,29 @@ impl Memory<'_> {
             }
             // A claim whose parts read as a secret together serves none of them.
             let secret = crate::batch::export::claim_reads_as_secret(&body);
-            let value_json = if let Some(handle) = handle {
+            let mut value_json = if let Some(handle) = handle {
                 serde_json::Value::String(handle)
             } else if secret {
                 serde_json::Value::String("[redacted]".to_owned())
             } else {
                 super::served_value_json(&body.value)
             };
+            {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                    let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                        &self.vault.store,
+                        &txn,
+                        &value_json,
+                    )?;
+                    keys.mask_json(&mut value_json);
+                }
+            }
             Ok(Some(MemoryItem {
                 asset_ref: (entity_type == crate::registry::ENTITY_TYPE_ASSET).then(|| id.to_hex()),
                 embedding_matches: Vec::new(),
