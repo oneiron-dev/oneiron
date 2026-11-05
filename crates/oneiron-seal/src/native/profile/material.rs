@@ -1,4 +1,4 @@
-//! B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs.
+//! B-LT validation material: working CRLs first, then OCSP for uncovered certificates.
 
 use const_oid::AssociatedOid;
 use der::{Decode, Encode};
@@ -12,6 +12,8 @@ use crate::memory::{MemoryLedger, SealMemoryRefusal, SharedBytes};
 use super::super::{cms, tsp, verify};
 use super::DssMaterial;
 use super::assembly::SealContext;
+
+mod ocsp;
 
 pub(super) fn trust_anchors(
     config: &SealConfig,
@@ -161,13 +163,13 @@ pub(super) fn key_bound_issuer<'a>(
 }
 
 /// Gather complete validation material for B-LT (§7.5): signer + TSA chains
-/// and a valid CRL for every NON-ANCHOR chain certificate. Certificates
+/// and valid CRL or OCSP evidence for every NON-ANCHOR chain certificate. Certificates
 /// whose DER is a configured trust anchor ride anchor trust and are exempt;
 /// every other chain certificate counts toward `need`, including ones with
-/// no advertised CRL DP or an unresolvable issuer — those count uncovered,
+/// no advertised revocation URL or an unresolvable issuer — those count uncovered,
 /// so the gather fails closed (degrade to B-T) instead of self-reporting
-/// B-LT on zero-evidence material. OCSP is preferred when reachable; v1
-/// gathers CRLs through the guarded fetcher and treats unreachable/missing
+/// B-LT on zero-evidence material. Existing CRL attempts run first; only an
+/// uncovered certificate tries OCSP. The guarded fetcher treats unreachable/missing
 /// material as degradation (`Ok(None)`), never as a seal failure. A fetch
 /// memory refused is the seal's own resource error, never degradation.
 pub(super) async fn gather_validation_material(
@@ -209,12 +211,18 @@ pub(super) async fn gather_validation_material(
     let signer_chain_ders: Vec<Vec<u8>> = std::iter::once(identity.signer_certificate_der.clone())
         .chain(identity.certificate_chain_der.iter().cloned())
         .collect();
-    if verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000).is_err() {
-        return Ok(None);
+    match verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000, &memory) {
+        Ok(()) => {}
+        Err(SealError::Fatal {
+            code: FatalCode::CertificatePathInvalid,
+            ..
+        }) => return Ok(None),
+        Err(error) => return Err(error),
     }
     let empty_chain: &[Vec<u8>] = &[];
     let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());
     let mut crls_der = Vec::new();
+    let mut ocsps_der = Vec::new();
     let mut covered = 0usize;
     let mut need = 0usize;
     for chain in [signer_chain_ders.as_slice(), tsa_chain] {
@@ -224,21 +232,33 @@ pub(super) async fn gather_validation_material(
             }
             need += 1;
             let urls = crl_urls_for(cert);
-            if urls.is_empty() {
-                continue; // no advertised CRL DP: uncovered by construction
-            }
             // Issuer identity is bound by key, never by position: the CMS
             // SET OF order is arbitrary, so a positional pick can verify the
             // CRL against the wrong cert and falsely degrade.
             let issuer = key_bound_issuer(cert, chain, &ctx.config.trust_anchors_der, &memory)
                 .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
             if let Some(issuer) = issuer {
+                let mut crl_covered = false;
                 for u in urls {
                     if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await? {
                         crls_der.push(crl);
                         covered += 1;
+                        crl_covered = true;
                         break;
                     }
+                }
+                if !crl_covered
+                    && let Some(ocsp) = ocsp::fetch_valid_ocsp(ctx, cert, issuer, &memory).await?
+                {
+                    if ocsps_der.is_empty() {
+                        let slots = signer_chain_ders.len().saturating_add(tsa_chain.len());
+                        memory
+                            .admit_len::<SharedBytes>(slots)
+                            .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+                        ocsps_der.reserve_exact(slots);
+                    }
+                    ocsps_der.push(ocsp);
+                    covered += 1;
                 }
             }
         }
@@ -248,7 +268,7 @@ pub(super) async fn gather_validation_material(
     }
     Ok(Some(DssMaterial {
         certs_der,
-        ocsps_der: Vec::new(),
+        ocsps_der,
         crls_der,
     }))
 }

@@ -7,7 +7,10 @@
 //!
 //! The adopted pin and attestations are kept in one row; its pin names the
 //! adopted image, so no second head row exists. Every read verifies again: a
-//! stored row is not trusted for having been stored.
+//! stored row is not trusted for having been stored. Cached readers
+//! (`cached_*`) re-read both stored rows in the caller's `txn` and compare
+//! (plus a BLAKE3 over the image bytes) before returning the once-verified
+//! value; any swapped row misses and falls through to fresh verify.
 //!
 //! Adoption is one transaction: it compares what the caller read (the v2
 //! head, the adopted pin's digest, the authority cache generation), checks
@@ -16,6 +19,7 @@
 //! then keeps the image as the head, stores the pin and attestations and
 //! advances the generation. It publishes nothing into the process cache.
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +34,7 @@ use crate::store::Store;
 const ADOPTED: SideTable<(), AdoptedCheckpoint, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ADOPTED_PIN);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AdoptedCheckpoint {
     pin: AuthorityCheckpointPin,
@@ -190,6 +194,130 @@ pub(crate) fn adopted_authority_checkpoint_in_txn(
     let bytes =
         super::checkpoint::checkpoint_image_bytes_in_txn(store, txn, &adopted.pin.checkpoint)?;
     verified_adoption(&adopted, bytes.as_deref()).map(Some)
+}
+
+/// The adopted image verified once, keyed by the exact stored rows the
+/// verification consumed: the `ADOPTED` row contents and the image id. A
+/// generation-keyed cache cannot serve it: the image is immutable while the
+/// authority generation moves on every staged row (FIX 2987/3006). Never
+/// persisted; dies with the handle, so a reopen re-verifies. Entries from
+/// an older snapshot never serve a newer one: a lookup reads both rows in
+/// the caller's `txn` first and hits only on exact row equality, so the
+/// cache returns committed state only when the caller's snapshot already
+/// names it. A write txn's uncommitted rows never publish (see
+/// `publish_adopted_image_if_committed_tip`).
+#[derive(Debug)]
+pub(crate) struct AdoptedImageCacheEntry {
+    adopted: AdoptedCheckpoint,
+    verified: Arc<VerifiedAuthorityCheckpoint>,
+    evidence: Arc<super::adopted_evidence::AdoptedEvidence>,
+}
+
+/// The image this vault adopted, verified once per stored rows and shared
+/// across readers (FIX 2987/3415/3449: every door-view rebuild, owner audit
+/// page and per-row/per-packet call re-verified the image). A hit reads
+/// both stored rows and compares them to the entry: a swapped `ADOPTED`
+/// row, swapped attestations or swapped image bytes always miss and fall
+/// through to the fresh primitive, so corruption still surfaces as
+/// `CorruptedIndex`, never a stale hit. None when nothing was adopted.
+pub(crate) fn cached_adopted_authority_checkpoint_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<Arc<VerifiedAuthorityCheckpoint>>> {
+    Ok(adopted_image_view_in_txn(store, txn)?.map(|(verified, _)| verified))
+}
+
+/// The carried bodies of the image this vault adopted, decoded once per
+/// stored rows (FIX 3449 hint: the evidence had no crate-visible accessor
+/// and no cache outside the door view). Same key and publish rule as
+/// [`cached_adopted_authority_checkpoint_in_txn`].
+pub(crate) fn cached_adopted_evidence_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<Arc<super::adopted_evidence::AdoptedEvidence>>> {
+    Ok(adopted_image_view_in_txn(store, txn)?.map(|(_, evidence)| evidence))
+}
+
+pub(crate) fn adopted_image_view_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<
+    Option<(
+        Arc<VerifiedAuthorityCheckpoint>,
+        Arc<super::adopted_evidence::AdoptedEvidence>,
+    )>,
+> {
+    let Some(adopted) = ADOPTED.get(store, txn, &())? else {
+        return Ok(None);
+    };
+    let bytes =
+        super::checkpoint::checkpoint_image_bytes_in_txn(store, txn, &adopted.pin.checkpoint)?;
+    let image_id = bytes.as_deref().map(checkpoint_image_id);
+    if let Ok(cache) = store.adopted_image_cache.lock()
+        && let Some(entry) = cache.as_ref()
+        && entry.adopted == adopted
+        && image_id == Some(entry.verified.id())
+    {
+        return Ok(Some((
+            Arc::clone(&entry.verified),
+            Arc::clone(&entry.evidence),
+        )));
+    }
+    let verified = Arc::new(verified_adoption(&adopted, bytes.as_deref())?);
+    let evidence = Arc::new(super::adopted_evidence::AdoptedEvidence::of_verified(
+        &verified,
+    )?);
+    publish_adopted_image_if_committed_tip(store, &adopted, image_id, &verified, &evidence);
+    Ok(Some((verified, evidence)))
+}
+
+/// Publishes `verified`/`evidence` only when the caller's rows are still
+/// the committed tip: a separate thread opens its own read txn (a second
+/// read txn on a thread holding the caller's write txn fails, as in
+/// `per_authority_generation`), and the publish lands only when committed
+/// state names the same `ADOPTED` row and image id. A write txn's
+/// uncommitted adoption, and a stale snapshot superseded since, never
+/// publish. Concurrent publishers race on the mutex; every published entry
+/// verified its own rows, so any winner serves correctly.
+fn publish_adopted_image_if_committed_tip(
+    store: &Store,
+    adopted: &AdoptedCheckpoint,
+    image_id: Option<[u8; 32]>,
+    verified: &Arc<VerifiedAuthorityCheckpoint>,
+    evidence: &Arc<super::adopted_evidence::AdoptedEvidence>,
+) {
+    let committed: Option<(AdoptedCheckpoint, Option<[u8; 32]>)> = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let txn = store.env.read_txn().ok()?;
+                let current: AdoptedCheckpoint = ADOPTED.get(store, &txn, &()).ok()??;
+                let current_image = super::checkpoint::checkpoint_image_bytes_in_txn(
+                    store,
+                    &txn,
+                    &current.pin.checkpoint,
+                )
+                .ok()?
+                .as_deref()
+                .map(checkpoint_image_id);
+                Some((current, current_image))
+            })
+            .join()
+            .ok()
+            .flatten()
+    });
+    let Some((current, current_image)) = committed else {
+        return;
+    };
+    if current != *adopted || current_image != image_id {
+        return;
+    }
+    if let Ok(mut cache) = store.adopted_image_cache.lock() {
+        *cache = Some(AdoptedImageCacheEntry {
+            adopted: adopted.clone(),
+            verified: Arc::clone(verified),
+            evidence: Arc::clone(evidence),
+        });
+    }
 }
 
 /// `adopted` verified again against `image`, the stored bytes of the image
