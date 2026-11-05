@@ -3975,6 +3975,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.snapshots.capture",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotCaptureRequest,
+                >(),
+            ),
+            (
                 "vault.code.snapshots.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::codebase_doors::CodeSnapshotRequest,
@@ -7635,6 +7641,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.cache.get",
     "vault.code.cache.reuse",
     "vault.code.snapshots.ingest",
+    "vault.code.snapshots.capture",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
@@ -9594,6 +9601,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::code_view_doors::CodeCacheOutcome,
         >(),
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotView,
+        >(),
+        "vault.code.snapshots.capture" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
         >(),
         "vault.code.snapshots.get" => crate::code_run::vault_read::request_schema::<
@@ -15684,6 +15694,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.snapshots.capture" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.snapshots.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21692,6 +21709,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
                 decode(value.clone())?;
         }
+        "vault.code.snapshots.capture" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotCaptureRequest =
+                decode(value.clone())?;
+        }
         "vault.code.snapshots.get" => {
             let _input: crate::memory::codebase_doors::CodeSnapshotRequest = decode(value.clone())?;
         }
@@ -25031,6 +25052,9 @@ pub fn invoke(
         "vault.code.cache.reuse" => encode(vault_code_cache_reuse(memory, decode(value)?)?),
         "vault.code.snapshots.ingest" => {
             encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
+        }
+        "vault.code.snapshots.capture" => {
+            encode(vault_code_snapshots_capture(memory, decode(value)?)?)
         }
         "vault.code.snapshots.get" => encode(vault_code_snapshots_get(memory, decode(value)?)?),
         "vault.code.snapshots.read" => encode(vault_code_snapshots_read(memory, decode(value)?)?),
@@ -32181,6 +32205,15 @@ pub fn vault_code_snapshots_ingest(
 ) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotView> {
     memory.code_snapshot_ingest_as(
         &memory.embedded_owner("vault.code.snapshots.ingest")?,
+        input,
+    )
+}
+pub fn vault_code_snapshots_capture(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotCaptureRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotView> {
+    memory.code_snapshot_capture_as(
+        &memory.embedded_owner("vault.code.snapshots.capture")?,
         input,
     )
 }

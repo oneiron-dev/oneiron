@@ -111,7 +111,9 @@ pub fn derive_symbol_fingerprint(
 
 pub(super) fn repo_identity_key(repo_ref: &RepoRef) -> String {
     match repo_ref {
-        RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => format!("local:{path}"),
+        RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => {
+            format!("local:{path}")
+        }
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
     }
 }
