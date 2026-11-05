@@ -102,7 +102,9 @@ pub(super) async fn fetch_valid_crl(
         // Denied, unreachable, timed out or invalid: no CRL from here.
         Err(_) => return Ok(None),
     };
-    Ok(crl_valid(ctx, issuer_cert_der, &resp.body).map(|()| resp.body))
+    let valid = crl_valid(ctx, issuer_cert_der, &resp.body)
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+    Ok(valid.map(|()| resp.body))
 }
 
 /// `Some` when `crl_der` is a valid CRL: it parses, its signature verifies
@@ -112,20 +114,43 @@ pub(super) async fn fetch_valid_crl(
 /// verify-side cRLSign KeyUsage gate): an unauthorized-issuer CRL embedded
 /// here would fail the mandatory self-verify, turning an expected B-LT
 /// degradation into a VerifyFailed for the whole seal.
-fn crl_valid(ctx: &SealContext<'_>, issuer_cert_der: &[u8], crl_der: &[u8]) -> Option<()> {
-    let crl = x509_cert::crl::CertificateList::from_der(crl_der).ok()?;
+fn crl_valid(
+    ctx: &SealContext<'_>,
+    issuer_cert_der: &[u8],
+    crl_der: &[u8],
+) -> Result<Option<()>, SealMemoryRefusal> {
+    let Ok(crl) = x509_cert::crl::CertificateList::from_der(crl_der) else {
+        return Ok(None);
+    };
     if !verify::crl_complete_scope(&crl) {
-        return None; // delta / IDP-scoped CRL: not complete evidence
+        return Ok(None); // delta / IDP-scoped CRL: not complete evidence
     }
-    let alg = cms::cert_signature_algorithm(issuer_cert_der).ok()?;
-    let tbs = crl.tbs_cert_list.to_der().ok()?;
-    cms::verify_signature_value(alg, issuer_cert_der, &tbs, crl.signature.raw_bytes()).ok()?;
+    let Ok(alg) = cms::cert_signature_algorithm(issuer_cert_der) else {
+        return Ok(None);
+    };
+    let Some(tbs_len) = crl
+        .tbs_cert_list
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let _tbs_held = ctx.limits.memory.hold(tbs_len)?;
+    let Ok(tbs) = crl.tbs_cert_list.to_der() else {
+        return Ok(None);
+    };
+    if cms::verify_signature_value(alg, issuer_cert_der, &tbs, crl.signature.raw_bytes()).is_err() {
+        return Ok(None);
+    }
     // Key verification alone is not authorization: when the issuer carries
     // a KeyUsage it must assert cRLSign (same gate the verifier applies to
     // embedded DSS CRLs).
-    let issuer_cert = x509_cert::Certificate::from_der(issuer_cert_der).ok()?;
+    let Ok(issuer_cert) = x509_cert::Certificate::from_der(issuer_cert_der) else {
+        return Ok(None);
+    };
     if !verify::issuer_permits_crl_sign(&issuer_cert) {
-        return None;
+        return Ok(None);
     }
     let now_secs = ctx.clock_ms / 1000;
     if !verify::evidence_fresh(
@@ -133,9 +158,9 @@ fn crl_valid(ctx: &SealContext<'_>, issuer_cert_der: &[u8], crl_der: &[u8]) -> O
         crl.tbs_cert_list.next_update,
         now_secs,
     ) {
-        return None; // not yet valid, or stale
+        return Ok(None); // not yet valid, or stale
     }
-    Some(())
+    Ok(Some(()))
 }
 
 /// Issuer of `cert_der` bound by key (the r4 lesson, seal side): the chain
