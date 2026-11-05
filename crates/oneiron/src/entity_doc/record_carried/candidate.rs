@@ -191,6 +191,13 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                     )));
                 }
                 let document = EntityDoc::from_loro(document.doc)?;
+                super::retained::require_retained_extension(&incoming, &document)?;
+                let local = EntityDoc::from_snapshot(
+                    local_snapshot
+                        .as_deref()
+                        .ok_or(invalid("local document snapshot"))?,
+                )?;
+                super::retained::require_retained_extension(&local, &document)?;
                 if document.birth().entity != head.entity
                     || document.birth().at != incoming.birth().at
                 {
