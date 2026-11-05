@@ -1,7 +1,7 @@
 //! Core half of `secret_lease::delivery`: its store-layer items live in `oneiron_store::secret_lease::delivery` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::secret_lease::delivery::*;
+pub(crate) use oneiron_store::secret_lease::delivery::*;
 
 use super::grant::{SecretCleanup, SecretGrantHolder};
 use crate::entity_id::EntityId;
