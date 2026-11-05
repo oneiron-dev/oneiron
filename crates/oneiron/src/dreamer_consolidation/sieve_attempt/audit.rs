@@ -78,12 +78,12 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,
     ) -> Result<DreamerAttemptExecution> {
-        if let Some((completed_units, step_hashes)) =
+        if let Some((completed_units, step_bindings)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes,
+                step_bindings,
             });
         }
         let retry_at = ctx
@@ -102,7 +102,7 @@ impl ConsolidationExecutor<'_> {
             WindowRead::Superseded => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             // The source may be withheld for now: the audit waits for it.
@@ -110,7 +110,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
         };
@@ -226,12 +226,13 @@ impl ConsolidationExecutor<'_> {
                 response,
                 memoized,
                 failure_policy,
+                binding,
                 ..
             }) => {
                 if let Err(error) = charges.record_terminal(
                     ctx.vault,
-                    attempt.status.attempt.id,
-                    step_hash,
+                    binding.attempt_id,
+                    binding.step_hash,
                     &response.usage,
                 ) {
                     if !memoized {
@@ -242,8 +243,8 @@ impl ConsolidationExecutor<'_> {
                 if failure_policy.is_some() {
                     return match charges.park_on_fallback(
                         ctx.vault,
-                        attempt.status.attempt.id,
-                        step_hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         SIEVE_FALLBACK,
                         &response,
                     ) {
@@ -301,7 +302,7 @@ impl ConsolidationExecutor<'_> {
             discovered,
             unlocated,
             completed_units: charges.units,
-            step_hashes: charges.step_hashes.clone(),
+            step_bindings: charges.step_bindings.clone(),
             at: ctx.now_ms / 1_000,
         };
         match sieve::finish_window_audit(
@@ -313,12 +314,12 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
                 retry_at,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

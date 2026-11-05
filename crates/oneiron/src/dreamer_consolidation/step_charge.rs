@@ -20,7 +20,7 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 #[derive(Default)]
 pub(super) struct StepChargeTally {
     pub(super) units: u64,
-    pub(super) step_hashes: Vec<[u8; 32]>,
+    pub(super) step_bindings: Vec<StepEffectBinding>,
 }
 
 impl StepChargeTally {
@@ -54,7 +54,7 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self.step_hashes.clone(),
+            step_bindings: self.step_bindings.clone(),
         }
     }
 
@@ -91,11 +91,17 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    *binding
+                        != StepEffectBinding {
+                            attempt_id,
+                            step_hash,
+                        }
+                })
                 .collect(),
         })
     }
@@ -119,11 +125,17 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause: DreamerParkCause::Retry,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    *binding
+                        != StepEffectBinding {
+                            attempt_id,
+                            step_hash,
+                        }
+                })
                 .collect(),
         })
     }
@@ -135,12 +147,16 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         usage: &LlmUsage,
     ) -> Result<()> {
-        if self.step_hashes.contains(&step_hash)
+        let binding = StepEffectBinding {
+            attempt_id,
+            step_hash,
+        };
+        if self.step_bindings.contains(&binding)
             || DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt_id, &step_hash)?
         {
             return Ok(());
         }
-        self.step_hashes.push(step_hash);
+        self.step_bindings.push(binding);
         self.record_usage(usage);
         Ok(())
     }
@@ -156,10 +172,16 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         usage: &LlmUsage,
     ) -> Result<()> {
-        let tallied = self.step_hashes.len();
+        let tallied = self.step_bindings.len();
         self.record_terminal(ctx.vault, attempt_id, step_hash, usage)?;
-        if self.step_hashes.len() > tallied {
-            ctx.note_terminal_step_charge(step_hash, usage_units(usage));
+        if self.step_bindings.len() > tallied {
+            ctx.note_terminal_step_charge(
+                StepEffectBinding {
+                    attempt_id,
+                    step_hash,
+                },
+                usage_units(usage),
+            );
         }
         Ok(())
     }

@@ -104,7 +104,7 @@ impl DreamerWakeDriver<'_> {
             Ok(DreamerAttemptExecution::Deferred {
                 completed_units: 0,
                 retry_at: input.now.saturating_add(1),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             })
         } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
             reason,
@@ -130,7 +130,7 @@ impl DreamerWakeDriver<'_> {
                 retry_at: input
                     .now
                     .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             })
         } else {
             // Pre-dispatch sync (FIX 11963): a wake ask raised while
@@ -173,7 +173,7 @@ impl DreamerWakeDriver<'_> {
                     crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
                     Ok(DreamerAttemptExecution::Completed {
                         completed_units: 0,
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     })
                 } else if admitted.status.attempt.kind
                     == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND

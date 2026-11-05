@@ -212,7 +212,7 @@ impl ConsolidationExecutor<'_> {
                 }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
         }
@@ -308,11 +308,15 @@ impl ConsolidationExecutor<'_> {
                 response,
                 memoized,
                 failure_policy,
+                binding,
                 ..
             }) => {
-                if let Err(error) =
-                    charges.record_terminal(ctx.vault, run.attempt_id, hash, &response.usage)
-                {
+                if let Err(error) = charges.record_terminal(
+                    ctx.vault,
+                    binding.attempt_id,
+                    binding.step_hash,
+                    &response.usage,
+                ) {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -323,8 +327,8 @@ impl ConsolidationExecutor<'_> {
                 if failure_policy.is_some() {
                     return match charges.park_on_fallback(
                         ctx.vault,
-                        run.attempt_id,
-                        hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         NOTE_FALLBACK,
                         &response,
                     ) {

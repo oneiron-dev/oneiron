@@ -30,7 +30,7 @@ use crate::llm::call_as_step_checked;
 use crate::llm::decision::AskTo;
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole,
@@ -94,10 +94,10 @@ pub enum SieveRungOutcome {
 }
 
 /// A rung read's outcome, and each generation that finished (its request
-/// hash and usage) whatever the outcome.
+/// hash, usage and optional durable binding) whatever the outcome.
 pub struct SieveRungRead {
     pub outcome: DurableStepResult<SieveRungOutcome>,
-    pub steps: Vec<([u8; 32], LlmUsage)>,
+    pub steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>)>,
 }
 
 /// One child's extraction, as the child hands it to its port.

@@ -1,5 +1,7 @@
 //! Durable model-step identity frozen into outbound effects.
 
+use serde::{Deserialize, Serialize};
+
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -8,7 +10,7 @@ use oneiron_model::llm::LlmRequest;
 
 /// Exact durable-step identity frozen beside an outbound payload. This is a
 /// correlation key, never a caller-authored permission bit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepEffectBinding {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],

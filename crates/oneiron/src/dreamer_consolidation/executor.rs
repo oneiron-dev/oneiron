@@ -527,7 +527,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
@@ -600,7 +600,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
 
@@ -685,7 +685,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                                 .now_ms
                                 .div_ceil(1_000)
                                 .saturating_add(super::RESIDENCY_RETRY_SECS),
-                            step_hashes: Vec::new(),
+                            step_bindings: Vec::new(),
                         })
                     }
                     _ => Err(invalid_consolidation(

@@ -38,7 +38,7 @@ impl ResidentLend<'_> {
         if available == 0 {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         let own = match own_dreaming_slot(self.vault, resident)? {
@@ -60,7 +60,7 @@ impl ResidentLend<'_> {
                 let Some(ladder) = self.weaver_ladder else {
                     return Ok(DreamerAttemptExecution::Completed {
                         completed_units: 0,
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     });
                 };
                 (
