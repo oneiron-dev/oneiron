@@ -152,6 +152,8 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
 /// Batch-level mutable state threaded through per-op arms and the tail.
 struct BatchApplyState {
     #[cfg(feature = "sync")]
+    record_documents: Vec<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
     pending_native_skill_puts: Vec<super::put_apply::PendingNativeSkillPut>,
     replay: bool,
     run_derivations: Option<crate::skill_attribution::RunDerivations>,
@@ -237,12 +239,21 @@ pub(super) fn apply_ops_with_origin(
 /// not publication or proof that actor-after and caller-terminal checks ran.
 pub(super) struct PendingNativeSkillBatch {
     #[cfg(feature = "sync")]
+    record_documents: Vec<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
     request: Option<crate::skill::SkillStateWrite>,
     #[cfg(feature = "sync")]
     puts: Vec<super::put_apply::PendingNativeSkillPut>,
 }
 
 impl PendingNativeSkillBatch {
+    #[cfg(feature = "sync")]
+    pub(super) fn take_record_documents(
+        &mut self,
+    ) -> Vec<crate::entity_doc::PendingRecordDocument> {
+        std::mem::take(&mut self.record_documents)
+    }
+
     #[cfg(feature = "sync")]
     pub(super) fn into_parts(
         self,
@@ -426,6 +437,8 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
         replay,
     };
     let mut state = BatchApplyState {
+        #[cfg(feature = "sync")]
+        record_documents: Vec::new(),
         #[cfg(feature = "sync")]
         pending_native_skill_puts: Vec::new(),
         replay,
@@ -641,9 +654,13 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
     }
 
     #[cfg(feature = "sync")]
+    let record_documents = std::mem::take(&mut state.record_documents);
+    #[cfg(feature = "sync")]
     let puts = std::mem::take(&mut state.pending_native_skill_puts);
     tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)?;
     Ok(PendingNativeSkillBatch {
+        #[cfg(feature = "sync")]
+        record_documents,
         #[cfg(feature = "sync")]
         request: gate_mode.skill_state_write,
         #[cfg(feature = "sync")]
