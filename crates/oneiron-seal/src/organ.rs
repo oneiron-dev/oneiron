@@ -49,6 +49,7 @@
 //! analysis counted (`SealObserved`), on a failure too: the engine measures
 //! each count against its `[limits]` row before it reads the outcome.
 
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -57,6 +58,7 @@ use std::thread::{self, Thread};
 use std::time::Instant;
 
 use async_trait::async_trait;
+use oneiron_organ_protocol::codec::{CodecError, EncodeScratch};
 use oneiron_organ_protocol::{
     ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AnswerMemory, AskCode, AskRefusal, AskReply, Asker,
     ByteBuf, CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ,
@@ -906,6 +908,66 @@ impl SealMemory for AskedMemory {
     }
 }
 
+/// Identity encoding uses the existing host grants, held until call end.
+/// Freed traversal stacks do not return those grants early.
+struct IdentityEncoding {
+    memory: AskedMemory,
+    refused: Option<SealMemoryRefusal>,
+}
+
+impl IdentityEncoding {
+    fn error(&mut self) -> BackendError {
+        self.refused.take().map_or(
+            BackendError::Rejected {
+                code: BackendRejectCode::InvalidResponse,
+            },
+            BackendError::Memory,
+        )
+    }
+}
+
+impl EncodeScratch for IdentityEncoding {
+    fn grow(&mut self, bytes: u64) -> Result<(), CodecError> {
+        if self.refused.is_none() {
+            match self.memory.grow(bytes) {
+                Ok(()) | Err(SealMemoryRefusal::Unavailable) => return Ok(()),
+                Err(refusal) => self.refused = Some(refusal),
+            }
+        }
+        Err(CodecError::Invalid("identity encoding admission failed"))
+    }
+
+    fn materialized(&mut self, reserved: u64, actual: u64) {
+        if actual > reserved {
+            // grow latches a refusal; IdentityValue checks it after every pass.
+            let _ = self.grow(actual - reserved);
+        }
+    }
+
+    fn shrink(&mut self, _bytes: u64) {}
+}
+
+struct IdentityValue<'a> {
+    value: &'a Value,
+    encoding: &'a RefCell<IdentityEncoding>,
+}
+
+impl Serialize for IdentityValue<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut encoding = self.encoding.borrow_mut();
+        let result = self
+            .value
+            .serialize_with_scratch(serializer, &mut *encoding);
+        if encoding.refused.is_some() {
+            Err(serde::ser::Error::custom(
+                "identity encoding admission failed",
+            ))
+        } else {
+            result
+        }
+    }
+}
+
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
     asks: Arc<CallAsks>,
@@ -953,20 +1015,28 @@ impl SealBackend for AskedBackend {
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
-        let decode_cost = read_cost(&reply.value).map_err(|_| BackendError::Rejected {
-            code: BackendRejectCode::InvalidResponse,
-        })?;
-        let memory = AskedMemory {
-            asks: Arc::clone(&self.asks),
+        let encoding = RefCell::new(IdentityEncoding {
+            memory: AskedMemory {
+                asks: Arc::clone(&self.asks),
+            },
+            refused: None,
+        });
+        let value = IdentityValue {
+            value: &reply.value,
+            encoding: &encoding,
         };
-        match memory.grow(decode_cost) {
+        let decode_cost = read_cost(&value).map_err(|_| encoding.borrow_mut().error())?;
+        match encoding.borrow().memory.grow(decode_cost) {
             Ok(()) | Err(SealMemoryRefusal::Unavailable) => {}
             Err(refusal) => return Err(BackendError::Memory(refusal)),
         }
+        let encoded =
+            oneiron_organ_protocol::to_vec(&value).map_err(|_| encoding.borrow_mut().error())?;
         let answer: IdentityAnswer =
-            from_value(&reply.value, "identity").map_err(|_| BackendError::Rejected {
+            oneiron_organ_protocol::from_slice(&encoded).map_err(|_| BackendError::Rejected {
                 code: BackendRejectCode::InvalidResponse,
             })?;
+        drop(encoded);
         let identity = SigningIdentity {
             algorithm: answer.algorithm,
             signer_certificate_der: answer.signer_certificate.into_vec(),
