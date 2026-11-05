@@ -277,6 +277,7 @@ pub fn fork_executor_run(
         limits: EngineExecutorLimits {
             soft_steps: body.soft_steps,
         },
+        wake: None,
     };
     let seed = ChildSeed {
         config: &config,
