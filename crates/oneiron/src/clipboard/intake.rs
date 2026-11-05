@@ -11,7 +11,7 @@ use super::{ClipboardWorld, clipboard_world_id};
 
 pub const PREDICATE_CLIPBOARD_CAPTURED: &str = "clipboard.captured";
 const KEY_TEXT: &str = "text";
-const KEY_COPIED_AT: &str = "copied_at";
+pub(super) const KEY_COPIED_AT: &str = "copied_at";
 
 /// One ordinary clip, read back after the batch door's secret masking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -110,15 +110,36 @@ impl Vault {
             return Ok(rows);
         }
         for clip in self.claims_for_subject_in_txn(txn, &world)? {
-            if let Some(entry) = self.clipboard_entry_in_txn(txn, clip)? {
-                rows.push(ClipMetadata {
+            match self.clipboard_entry_in_txn(txn, clip) {
+                Ok(Some(entry)) => rows.push(ClipMetadata {
                     clip,
                     copied_at: entry.copied_at,
                     text_bytes: u64::try_from(entry.text.len()).unwrap_or(u64::MAX),
-                });
+                }),
+                Ok(None) => {}
+                Err(Error::InvalidClaimBody(_)) => {
+                    tracing::warn!(clip = %clip.to_hex(), reason = "malformed_clipboard_value", "skipping malformed Clipboard value");
+                }
+                Err(error) => return Err(error),
             }
         }
         Ok(rows)
+    }
+
+    pub(super) fn clipboard_claim_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        clip: EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let world = clipboard_world_id()?;
+        let Some(body) = self.get_claim_in_txn(txn, &clip)? else {
+            return Ok(None);
+        };
+        Ok((body.predicate == PREDICATE_CLIPBOARD_CAPTURED
+            && body.world == Some(world)
+            && body.subject == ClaimSubject::Entity(world)
+            && body.lifecycle == ClaimLifecycleStatus::Active)
+            .then_some(body))
     }
 
     pub(super) fn clipboard_entry_in_txn(
@@ -126,17 +147,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         clip: EntityId,
     ) -> Result<Option<ClipboardEntry>> {
-        let world = clipboard_world_id()?;
-        let Some(body) = self.get_claim_in_txn(txn, &clip)? else {
+        let Some(body) = self.clipboard_claim_in_txn(txn, clip)? else {
             return Ok(None);
         };
-        if body.predicate != PREDICATE_CLIPBOARD_CAPTURED
-            || body.world != Some(world)
-            || body.subject != ClaimSubject::Entity(world)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            return Ok(None);
-        }
         let fields = body
             .value
             .as_map()

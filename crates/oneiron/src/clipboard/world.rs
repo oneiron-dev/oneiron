@@ -91,7 +91,7 @@ impl Vault {
         })?;
         let revision = self.world_privacy_revision(world)?;
         if revision.0 == [0; 32] {
-            self.set_world_privacy_as(
+            match self.set_world_privacy_as(
                 owner,
                 surface,
                 world,
@@ -101,7 +101,17 @@ impl Vault {
                     models: ModelOrder::Inherit,
                 },
                 Some(revision),
-            )?;
+            ) {
+                Ok(_) => {}
+                Err(error @ Error::ConcurrentWrite(_)) => {
+                    // Another opener or an owner choice installed the settings.
+                    // Preserve that nonzero revision, never retry our defaults over it.
+                    if self.world_privacy_revision(world)?.0 == [0; 32] {
+                        return Err(error);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(ClipboardWorld { world })
     }
