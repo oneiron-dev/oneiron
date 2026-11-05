@@ -2,7 +2,9 @@
 
 pub mod builder;
 pub mod export;
+pub mod facet_identity;
 pub mod leader_chat_admission;
+pub mod phonetic_apply;
 pub mod phonetic_codes;
 pub mod put_apply;
 pub mod row_put;

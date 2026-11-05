@@ -1,11 +1,7 @@
-//! The remote half of an automatic mirror push plan (FIX 6866 part 2): the
-//! authenticated read of what the mirror holds at a plan's refs, and the
-//! push of some of a plan's refs exactly as frozen. Both go through the
-//! custody door bound to `origin:mirror-push`, whose token reaches git only
-//! as the one child's header, and both ride the mirror push's fixed
-//! outbound profile (`git_wire::mirror_plan_push`).
+//! Core half of `origin::publish::mirror_plan_remote`: its store-layer items live in `oneiron_store::origin::publish::mirror_plan_remote` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
+pub(crate) use oneiron_store::origin::publish::mirror_plan_remote::*;
 
 use super::mirror_plan::MirrorRunScope;
 use super::mirror_plan_types::{MirrorObservedTip, MirrorPushPlan};
@@ -14,9 +10,7 @@ use super::types::OriginPublishDestination;
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitPlanPushReport, GitPlanRef, GitRefName};
-
-/// The longest redacted cause a plan keeps.
-pub(super) const MIRROR_PLAN_MAX_DETAIL_BYTES: usize = 256;
+use std::collections::BTreeMap;
 
 impl Vault {
     /// What the mirror holds at each of `names`, read with its credential.
@@ -128,14 +122,4 @@ fn plan_ref_out(plan: &MirrorPushPlan, index: u32) -> Result<GitPlanRef> {
             .transpose()?,
         lease,
     })
-}
-
-/// A cause cut to [`MIRROR_PLAN_MAX_DETAIL_BYTES`] on a character boundary.
-pub(super) fn bounded(mut text: String) -> String {
-    let mut cut = text.len().min(MIRROR_PLAN_MAX_DETAIL_BYTES);
-    while !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    text.truncate(cut);
-    text
 }

@@ -1,4 +1,7 @@
-//! Pure complete-tree partition, digest and recorded mode vocabulary.
+//! Core half of `store::code_revision_record::tree_inventory`: its store-layer items live in `oneiron_store::code_revision_record::tree_inventory` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::code_revision_record::tree_inventory::*;
 
 use super::CodeRevision;
 use crate::error::{ArtifactError, Error, Result};
@@ -15,10 +18,6 @@ pub struct CodeTreeInventory {
     pub(crate) documents: BTreeMap<[u8; 32], CodeDocumentFrontier>,
     pub(crate) modes: BTreeMap<[u8; 32], u32>,
     pub(crate) blobs: BTreeMap<String, CodeTreeBlob>,
-}
-
-pub(crate) fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
 }
 
 impl CodeTreeInventory {
@@ -95,20 +94,6 @@ impl CodeTreeInventory {
         hasher.update(&0_u64.to_be_bytes());
         hash_blobs(&mut hasher, blobs);
         *hasher.finalize().as_bytes()
-    }
-}
-
-/// Folds every blob's path, object, hash, size and mode, in path order.
-fn hash_blobs(hasher: &mut blake3::Hasher, blobs: &BTreeMap<String, CodeTreeBlob>) {
-    hasher.update(&(blobs.len() as u64).to_be_bytes());
-    for (path, blob) in blobs {
-        for part in [path.as_bytes(), blob.git_oid.as_bytes()] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part);
-        }
-        hasher.update(&blob.content_hash);
-        hasher.update(&blob.size_bytes.to_be_bytes());
-        hasher.update(&blob.mode.to_be_bytes());
     }
 }
 

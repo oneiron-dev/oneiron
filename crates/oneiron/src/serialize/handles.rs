@@ -1,17 +1,19 @@
-//! Pack-local first-mention rendering. Citation IDs remain revision-qualified metadata.
+//! Core half of `serialize::handles`: its store-layer items live in `oneiron_store::serialize::handles` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::serialize::handles::*;
+
 use super::pack_entry::{PreparedEntity, PreparedPack};
 use crate::context_pack::ContextPack;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-
-/// An alias's entity: its short id, its name, and its source id.
-type Handle = (String, String, [u8; 16]);
 
 #[derive(Default)]
 pub(super) struct Handles {
     aliases: HashMap<String, Handle>,
     seen: HashSet<String>,
 }
+
 impl Handles {
     pub(super) fn new(pack: &ContextPack, prepared: &mut PreparedPack) -> Self {
         // Names must come from the projected, already-truncated rows. Using
@@ -174,46 +176,4 @@ impl Handles {
             _ => {}
         }
     }
-}
-
-/// `text` with each alias that stands as a whole word rendered by `render`,
-/// the first of `aliases` that matches taken.
-fn substitute(
-    text: &str,
-    aliases: &[(&String, &Handle)],
-    mut render: impl FnMut(&Handle) -> String,
-) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut tail = text;
-    let mut left_boundary = true;
-    while !tail.is_empty() {
-        let matched = aliases.iter().find_map(|(alias, handle)| {
-            if !left_boundary {
-                return None;
-            }
-            let rest = tail.strip_prefix(alias.as_str())?;
-            rest.chars()
-                .next()
-                .is_none_or(|c| !is_word(c))
-                .then_some((alias, handle, rest))
-        });
-        if let Some((alias, handle, rest)) = matched {
-            output.push_str(&render(handle));
-            left_boundary = alias.chars().next_back().is_none_or(|c| !is_word(c));
-            tail = rest;
-        } else {
-            let mut chars = tail.chars();
-            if let Some(c) = chars.next() {
-                output.push(c);
-                left_boundary = !is_word(c);
-            }
-            tail = chars.as_str();
-        }
-    }
-    output
-}
-
-/// What an alias's edges must not touch for it to stand as a whole word.
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
 }

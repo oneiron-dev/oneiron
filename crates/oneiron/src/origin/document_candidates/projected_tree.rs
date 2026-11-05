@@ -1,18 +1,14 @@
-//! A projected candidate's canonical files and target tree (FIX 7608
-//! slice 2b-ii-B2): the trees and bytes it reads, and the blobs and trees
-//! its translation writes into the canonical store, from the ORIGINAL base
-//! tree, each edited path set to its blob and mode or removed.
+//! Core half of `origin::document_candidates::projected_tree`: its store-layer items live in `oneiron_store::origin::document_candidates::projected_tree` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
+pub(crate) use oneiron_store::origin::document_candidates::projected_tree::*;
 
 use super::super::tree::OriginTreeFile;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo};
 use crate::store::code_document_values::CodeFilePresence;
 use crate::store::code_tree_blob::CodeTreeBlob;
-
-/// A tree's Git mode.
-const MODE_TREE: u32 = 0o040_000;
+use std::collections::BTreeMap;
 
 pub(super) fn commit_tree(
     wire: &GitWire<'_>,
@@ -22,44 +18,6 @@ pub(super) fn commit_tree(
     wire.commit_trees(repo, std::slice::from_ref(commit))?
         .remove(commit)
         .ok_or(Error::EntityNotFound)
-}
-
-pub(super) fn presence(blob: Option<&CodeTreeBlob>) -> CodeFilePresence {
-    blob.map_or_else(CodeFilePresence::absent, |blob| {
-        CodeFilePresence::file(blob.mode)
-    })
-}
-
-pub(super) fn tree_blob(
-    entries: &BTreeMap<String, (String, u32)>,
-    files: &BTreeMap<String, OriginTreeFile>,
-    path: &str,
-) -> Option<CodeTreeBlob> {
-    let (oid, mode) = entries.get(path)?;
-    let content = files
-        .get(path)
-        .map_or(&[][..], |file| file.content.as_slice());
-    Some(CodeTreeBlob {
-        git_oid: oid.clone(),
-        content_hash: *blake3::hash(content).as_bytes(),
-        size_bytes: content.len() as u64,
-        mode: *mode,
-    })
-}
-
-/// One side of a changed file: its blob and its bytes, when present.
-pub(super) fn file_input<'f>(
-    entries: &BTreeMap<String, (String, u32)>,
-    files: &'f BTreeMap<String, OriginTreeFile>,
-    path: &str,
-) -> Result<Option<(GitOid, &'f [u8])>> {
-    let Some((oid, _)) = entries.get(path) else {
-        return Ok(None);
-    };
-    let bytes = files
-        .get(path)
-        .map_or(&[][..], |file| file.content.as_slice());
-    Ok(Some((GitOid::parse_hex(oid.clone())?, bytes)))
 }
 
 pub(super) fn write_blob(

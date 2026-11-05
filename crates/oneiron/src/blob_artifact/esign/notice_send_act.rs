@@ -1,19 +1,8 @@
-//! The send act a signing document's staged notices go out under while no
-//! caller is present (FIX 6219, Engine design B).
-//!
-//! When a document is sent for signature, the e-sign sink records here, in
-//! the writer that appends the trail's `Sent` event, the act that authorized
-//! it: the principal the send crossed the gate as, its gate class, and the
-//! send's intent ref (its OF-327 ledger row and `receipt:` id). Both come off
-//! the ledger row the send's admission committed, never from a caller. The
-//! notices that document stages later name that principal (the trail's first
-//! sender), and the housekeeping notice worker sends them as it while it
-//! still stands.
-//!
-//! No credential is kept: no slip, token or proof. The row is engine-private
-//! and is never copied into a notice or the delivery outbox. A send whose
-//! admitted call cannot be read records nothing: its notices keep the
-//! caller-driven door, and the send itself goes on unchanged.
+//! Core half of `blob_artifact::esign::notice_send_act`: its store-layer items live in `oneiron_store::blob_artifact::esign::notice_send_act` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::blob_artifact::esign::notice_send_act::*;
+
 use super::ledger::events_in;
 use super::model::{EsignEvent, invalid};
 use super::outbound::EsignOutboundVerb;
@@ -27,25 +16,6 @@ use serde::{Deserialize, Serialize};
 /// One signing document's recorded send act. Key: id16 (document).
 const SEND_ACT: SideTable<EntityId, NoticeSendAct, Named> =
     SideTable::new(&side_table::ESIGN_NOTICE_SEND_ACT);
-
-/// The act that sent a document for signature, as its admission recorded it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoticeSendAct {
-    /// The principal the send crossed the gate as, lower-hex.
-    principal: String,
-    /// Its gate class: `human`, `agent` or `system`.
-    class: String,
-    /// The send's intent ref: its OF-327 ledger row, receipt `receipt:<ref>`.
-    send_ref: String,
-}
-
-/// A recorded send act, read back for the notice worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct RecordedSendAct {
-    pub(super) principal: EntityId,
-    pub(super) class: EdgeActorClass,
-}
 
 /// Records the send `request` carries for `document`, in the e-sign sink's
 /// writer right after its `Sent` event. The first act stands; a send whose
@@ -151,17 +121,6 @@ pub(super) fn send_act_in(
         return Ok(None);
     }
     Ok(Some(RecordedSendAct { principal, class }))
-}
-
-/// The class a gate class string names.
-fn gate_class(class: &str) -> Option<EdgeActorClass> {
-    [
-        EdgeActorClass::Human,
-        EdgeActorClass::Agent,
-        EdgeActorClass::System,
-    ]
-    .into_iter()
-    .find(|known| known.gate_actor_class() == class)
 }
 
 /// An erased actor's recorded send acts go (FIX 3520): its documents'

@@ -1,29 +1,16 @@
-//! One world's pads installed into current custody and read back (KS-5, FIX
-//! 6706; PAD-2, FIX 10470): the core a hydrated capsule's install and a
-//! custody head's reopen share (`current`, and the restore's
-//! `recovery::checkpoint` pad reopen). It takes the pads as their full ids and
-//! bytes, so neither adapter forges the other's recipient.
+//! Core half of `store::world_pad_custody::install`: its store-layer items live in `oneiron_store::world_pad_custody::install` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use heed::RwTxn;
-use zeroize::Zeroizing;
+pub(crate) use oneiron_store::world_pad_custody::install::*;
 
 use super::{WorldPadCustody, WorldPadItem};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 use crate::store::key_custody::CustodyKind;
-
-/// What an install did, for its read back.
-pub(crate) struct InstalledWorldPads {
-    /// Each pad it published into custody here, or found there already with
-    /// the same bytes.
-    pub(crate) held: Vec<WorldPadItem>,
-    /// Each pad its source named that it left out: retired at the source or
-    /// here, erased here, or a custody that takes none.
-    pub(crate) skipped: usize,
-}
+use heed::RwTxn;
+use std::collections::BTreeMap;
+use zeroize::Zeroizing;
 
 impl Store {
     /// Publishes each pad of `world` in `live` that current custody here

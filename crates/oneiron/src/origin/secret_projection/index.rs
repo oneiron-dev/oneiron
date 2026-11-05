@@ -1,34 +1,7 @@
-//! The copy a repo-derived index or embedding input is made from (FIX 7608
-//! slice 3, ASK 1: search and embeddings read the MASKED copy, and a FILE
-//! reveal grants neither plaintext search nor embedding inputs).
-//!
-//! Every text index, symbol graph, phonetic code and vector built from a
-//! repo blob a receive mark covers is derived from its projection, never
-//! the stored bytes: the masked copy, or the sealed-file placeholder
-//! [`REPO_OPAQUE_FILE_BYTES`] for residue no span isolates. A copy only
-//! replaces bytes: a document, chunk or item that indexes today still
-//! indexes, as its safe copy. The stored blob, its ASSET, its snapshot
-//! entry and its history stay exactly as received.
-//!
-//! An input is joined to a marked blob only by a proved link: the whole
-//! BLAKE3 of its bytes (a snapshot ASSET's body, a media envelope's inner
-//! bytes, a file's full source), or a record whose id is the snapshot ASSET
-//! id that BLAKE3 derives. No path, chunk text or recorded hash string is a
-//! link. The marks are read once per pass (CALL 8033 option d); a lookup's
-//! store error propagates, never an exact fallback (Engine 10-22 05:5x).
-//! Every unmarked input reads as it always has.
-//!
-//! A copy's stamp names its source, the marks and copy it was made under,
-//! and [`RepoIndexProjectionVersion`]. It stays internal: a writer that
-//! publishes a copy compares it with the copy the same transaction makes
-//! now, and a mask change requeues the copies its blobs derive
-//! ([`refresh_repo_index_projection_in_txn`]).
+//! Core half of `origin::secret_projection::index`: its store-layer items live in `oneiron_store::origin::secret_projection::index` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
-
-use heed::RoTxn;
+pub(crate) use oneiron_store::origin::secret_projection::index::*;
 
 use super::types::REPO_OPAQUE_FILE_BYTES;
 use super::{RepoBodyProjection, project_repo_bytes_in_txn};
@@ -37,143 +10,18 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup, RepoSecretSource};
 use crate::store::code_snapshot::snapshot_asset_entity_id;
-
-mod derived;
-mod invalidate;
 pub(crate) use derived::{
     RepoDerivedIndexSources, bind_envelope_sources_in_txn, repo_derived_dependents_in,
     repo_derived_index_sources_in, repo_source_identity_in,
 };
+use heed::RoTxn;
 pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// The domain of a copy stamp's fingerprint.
-const REPO_INDEX_STAMP_CONTEXT: &str = "oneiron.repo-index-projection.stamp.v1";
-
-/// The domain of a mark generation's digest.
-const REPO_MARK_GENERATION_CONTEXT: &str = "oneiron.repo-index-projection.mark-generation.v1";
-
-/// What a sync release does with a mark failure no blob is tied to (a mark
-/// claim that does not decode and names no blob, or a store failure in the
-/// mark walk), when no item is then provably unmarked (CALL
-/// S4FIX-UNKNOWN-MARK; review F4 rule, ruling A3): `true` fails that pass
-/// closed with the error, never raw; `false` would go on without the mark
-/// and report it. A mark tied to its blob fails only that blob's items.
-pub(crate) const UNATTRIBUTABLE_MARK_FAILS_CLOSED: bool = true;
-
-/// The rules an index copy is made by (CALL 3-I, ruling (d), Engine 10-22
-/// 07:20): part of every copy's stamp, so a change to them rebuilds only the
-/// copies it changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct RepoIndexProjectionVersion(u16);
-
-impl RepoIndexProjectionVersion {
-    /// Copies are the masked projection or the sealed-file placeholder.
-    pub(crate) const CURRENT: Self = Self(1);
-
-    pub(crate) const fn get(self) -> u16 {
-        self.0
-    }
-}
-
-/// How an index copy stands in for its source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RepoIndexCopyKind {
-    /// Each marked span overwritten in place.
-    Masked,
-    /// [`REPO_OPAQUE_FILE_BYTES`].
-    Opaque,
-}
-
-/// What one index copy was made from: value-free (no secret, no per-key
-/// fingerprint), and equal for two copies only when their source, marks,
-/// returned bytes and rules all are.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "the copy identity a CALL 3-I version change rebuilds by; writers read copy_blake3 and kind"
-)]
-pub(crate) struct RepoIndexProjectionStamp {
-    /// The whole BLAKE3 of the stored blob the copy stands in for.
-    pub(crate) source_blake3: [u8; 32],
-    /// Every readable mark of that blob, sorted.
-    pub(crate) mark_ids: Vec<EntityId>,
-    /// The BLAKE3 of exactly the copy's bytes: a later mask on the same mark
-    /// ids changes it.
-    pub(crate) copy_blake3: [u8; 32],
-    pub(crate) kind: RepoIndexCopyKind,
-    pub(crate) version: RepoIndexProjectionVersion,
-}
-
-impl RepoIndexProjectionStamp {
-    /// One digest of every field: the identity a derived work item commits
-    /// to.
-    #[allow(
-        dead_code,
-        reason = "the copy identity a CALL 3-I version change rebuilds by"
-    )]
-    pub(crate) fn fingerprint(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key(REPO_INDEX_STAMP_CONTEXT);
-        hasher.update(&self.version.get().to_be_bytes());
-        hasher.update(&[match self.kind {
-            RepoIndexCopyKind::Masked => 0,
-            RepoIndexCopyKind::Opaque => 1,
-        }]);
-        hasher.update(&self.source_blake3);
-        hasher.update(&self.copy_blake3);
-        hasher.update(&(self.mark_ids.len() as u64).to_be_bytes());
-        for id in &self.mark_ids {
-            hasher.update(id.as_bytes());
-        }
-        *hasher.finalize().as_bytes()
-    }
-}
-
-/// The bytes one index input is derived from: the stored bytes when no mark
-/// covers them, else their copy and its stamp.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoIndexInput {
-    bytes: Vec<u8>,
-    stamp: Option<RepoIndexProjectionStamp>,
-}
-
-impl RepoIndexInput {
-    fn stored(bytes: Vec<u8>) -> Self {
-        Self { bytes, stamp: None }
-    }
-
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
-
-    /// The copy's stamp; `None` for stored bytes.
-    pub(crate) fn stamp(&self) -> Option<&RepoIndexProjectionStamp> {
-        self.stamp.as_ref()
-    }
-
-    /// Whether the input is the sealed-file placeholder.
-    pub(crate) fn opaque(&self) -> bool {
-        self.stamp
-            .as_ref()
-            .is_some_and(|stamp| stamp.kind == RepoIndexCopyKind::Opaque)
-    }
-
-    /// The input as text: a copy that no longer decodes keeps every other
-    /// character.
-    pub(crate) fn into_text(self) -> String {
-        text_of(self.bytes)
-    }
-}
-
-/// `bytes` as text, each undecodable sequence replaced.
-fn text_of(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
-}
-
-/// The sealed-file placeholder as text.
-pub(crate) fn opaque_index_text() -> String {
-    text_of(REPO_OPAQUE_FILE_BYTES.to_vec())
-}
+mod derived;
+mod invalidate;
 
 /// Every readable repo mark, read once for one index pass, and the two
 /// joins an input is proved by: the marked blobs' whole BLAKE3, and the

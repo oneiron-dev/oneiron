@@ -1,4 +1,7 @@
-//! Row birth derivation envelopes and copy-scoped withheld identities.
+//! Core half of `store::row_birth`: its store-layer items live in `oneiron_store::row_birth` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::row_birth::*;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -11,14 +14,6 @@ use crate::write_envelope::provenance::made_by::{
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-/// Most hex characters a birth's input hash may carry.
-const MAX_CONTENT_HASH_HEX: usize = 128;
-
-/// Hex characters of a withheld ref's keyed hash in its handle, after `wh_`
-/// (64 bits; an open call in engine-calls-review/CALLS.md, "OF-491 Q26
-/// handles").
-const WITHHELD_HANDLE_HEX: usize = 16;
 
 /// The birth envelope of one row: Rule A's `made_by` plus the derivation
 /// memo-key's input hash (ARCH-0035, `content_hash`: the hash of the exact
@@ -40,47 +35,6 @@ pub struct RowBirth {
     /// base stamp treats it as absent, and no copy carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_evidence: Option<RoomEvidence>,
-}
-
-/// The evidence refs a room write's caller named, each with what the room
-/// read it as (FIX 4281, Engine 10-22). A ref the room did not read as a
-/// TURN is kept as supplied: the room accepts it, and it is no evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomEvidence {
-    /// Every supplied ref, in the order given.
-    pub refs: Vec<RoomEvidenceRef>,
-}
-
-/// One supplied evidence ref of a room write.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomEvidenceRef {
-    /// The ref as the caller spelled it.
-    pub supplied: String,
-    /// The 32 hex digits of the TURN the caller read it as in the room, one
-    /// of the birth's inputs; `None` for a ref the room read as no TURN.
-    pub turn: Option<String>,
-}
-
-/// A ref a birth names that its copy's destination may not see (Q26 = B): a
-/// handle in its place, never the ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WithheldRef {
-    /// `wh_` and 16 hex of the ref keyed by the copy's [`WithheldKey`]: one
-    /// ref reads as one handle within a copy, and the handle never reverses.
-    pub handle: String,
-    pub role: WithheldRole,
-}
-
-/// What a withheld ref was in the birth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WithheldRole {
-    Input,
-    Prompt,
-    Trigger,
 }
 
 /// One copy's masking key. An export takes a fresh one, so its handles link
@@ -364,14 +318,6 @@ impl RowBirth {
 /// `()`; value: 32 raw bytes. Local only: no copy or sync ships it.
 const WITHHELD_SECRET: SideTable<(), [u8; 32], Raw> =
     SideTable::new(&side_table::PROVENANCE_WITHHELD_SECRET);
-
-/// One evidence ref a room write's caller supplied: as spelled, and the
-/// TURN the caller read it as in the room with the bytes it read, when it
-/// read one.
-pub(crate) struct SuppliedEvidence {
-    pub(crate) supplied: String,
-    pub(crate) turn: Option<(EntityId, Vec<u8>)>,
-}
 
 impl RowBirth {
     /// The birth of a row `actor` staged in a room through `door` at `at`, of

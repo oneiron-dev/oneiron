@@ -1,11 +1,7 @@
-//! Citation floors: a derived record that quotes an entity document keeps the
-//! history it quoted. The citing write records the frontier it read (or the
-//! birth state, when the entity had no document yet) in its own transaction.
-//! An owner purge never drops history past the floor of a live citer, and a
-//! value-only recovery that would rebuild the document under a fresh
-//! incarnation refuses while one exists. Unlike a `CitationPin`, a floor is
-//! not a quote the recovery artifact must carry, so canonical capture stays
-//! available.
+//! Core half of `entity_doc::citation_floor`: its store-layer items live in `oneiron_store::entity_doc::citation_floor` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::entity_doc::citation_floor::*;
 
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
@@ -18,26 +14,9 @@ use crate::vault::live_entity_row_in_txn;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-/// What one citer quoted of one entity document.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct CitationFloor {
-    /// Every incarnation-qualified frontier the citer named.
-    pub(super) frontiers: Vec<Vec<u8>>,
-    /// The citer quoted the entity before it had a document: its birth state.
-    pub(super) birth: bool,
-}
-
 /// Keyed by cited entity then citer.
 pub(super) const ENTITY_DOC_CITATION_FLOOR: SideTable<HexPair, CitationFloor, Named> =
     SideTable::new(&side_table::ENTITY_DOC_CITATION_FLOOR);
-
-/// Hex incarnation id leading every qualified frontier.
-const INCARNATION_LEN: usize = 32;
-
-fn entity_prefix(entity: &EntityId) -> Vec<u8> {
-    format!("{}:", entity.to_hex()).into_bytes()
-}
 
 /// The bare document frontier of a qualified one, which must name `incarnation`.
 fn bare<'a>(qualified: &'a [u8], incarnation: &str) -> Result<&'a [u8]> {

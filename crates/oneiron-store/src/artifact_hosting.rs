@@ -1,5 +1,6 @@
 //! Store-layer modules of core `artifact_hosting`; core re-exports each one at its old path.
 
+pub mod checkpoint;
 pub mod door_types;
 pub mod preview;
 pub mod publication_sync;

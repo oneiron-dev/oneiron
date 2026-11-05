@@ -1,4 +1,8 @@
-//! Owner-editable principal set and the legal-reality-gated D6 action dial.
+//! Core half of `blob_artifact::esign::principals`: its store-layer items live in `oneiron_store::blob_artifact::esign::principals` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::blob_artifact::esign::principals::*;
+
 use super::model::{invalid, reference};
 use crate::consent::AuthenticatedOwner;
 use crate::limit_ask::EngineLimit;
@@ -10,25 +14,11 @@ use std::collections::BTreeSet;
 /// Signing principal. Key: hex32.
 const PRINCIPALS: SideTable<HexId, SigningPrincipal, LegacyJson> =
     SideTable::new(&side_table::ESIGN_PRINCIPAL);
+
 /// Signing principal set owner stamp. Key: ().
 const OWNER_STAMP: SideTable<(), [u8; 16], Raw> =
     SideTable::new(&side_table::ESIGN_PRINCIPAL_OWNER_STAMP);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SigningAutonomy {
-    ScopedRead,
-    Draft,
-    SendWithApproval,
-    AutonomousInEnvelope,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SigningPrincipal {
-    pub principal_ref: String,
-    pub autonomy: SigningAutonomy,
-    /// Defaults closed. This is a legal-reality dial, not a fixed safety ban.
-    pub automated_sign_action: bool,
-}
+
 pub(super) fn verify_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -44,6 +34,7 @@ pub(super) fn verify_owner(
     .map_err(|_| invalid("live owner authority required"))?;
     Ok(actor)
 }
+
 impl Vault {
     /// Replaces the signing principal set with `principals`, every one of
     /// them, however many: past the `[limits] esign_signing_principals` row
@@ -93,6 +84,7 @@ impl Vault {
             .collect())
     }
 }
+
 pub(crate) fn automated_signing_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

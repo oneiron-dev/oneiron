@@ -1,33 +1,14 @@
-//! Whether a stored SUMMARY is an epoch summary, in every form it is stored
-//! in (Astra 1384e).
+//! Core half of `compaction::stored_epoch`: its store-layer items live in `oneiron_store::compaction::stored_epoch` and are
+//! re-exported here; the items below stay in the engine.
 
-use rmpv::Value;
+pub(crate) use oneiron_store::compaction::stored_epoch::*;
 
 use super::epoch::KEY_EPOCH_TEXT;
 use super::withdrawn::WithdrawnKeyframe;
 use super::{EPOCH_SUMMARY_BODY_KEYS, decode_epoch_summary_body};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-
-/// What a stored SUMMARY body is, whichever form it is stored in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StoredEpoch {
-    /// No epoch summary.
-    No,
-    /// An epoch summary, its text inline or on the document plane.
-    Yes,
-    /// A document pointer that keeps an epoch's keyframe, whose head in this
-    /// transaction does not complete it. A reader holds it as an epoch it
-    /// cannot place.
-    Unresolved,
-}
-
-impl StoredEpoch {
-    /// Whether a reader takes the row as an epoch summary.
-    pub(crate) fn may_be(self) -> bool {
-        self != Self::No
-    }
-}
+use rmpv::Value;
 
 /// Whether the stored SUMMARY body `body` of `id` is an epoch summary, in
 /// every form it is stored in (Astra 1384e). When its owner moves its text to

@@ -2,3 +2,5 @@
 
 pub mod projected;
 pub mod projected_files;
+pub mod projected_source;
+pub mod projected_tree;

@@ -1,10 +1,7 @@
-//! A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the
-//! sitting's close, written from the turns the sitting retained, and never
-//! from its own earlier body (CLM-009).
-//!
-//! The close only queues it: nothing is read or checked there. The sitting's
-//! actor, sources and readability are judged when the attempt runs, and a
-//! refusal there is the attempt's failure, never the close's.
+//! Core half of `scope_summary::session`: its store-layer items live in `oneiron_store::scope_summary::session` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::scope_summary::session::*;
 
 use super::codec::{invalid, reply_summary};
 use super::doors::ScopeSources;
@@ -22,12 +19,6 @@ use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
-
-/// The declaration key a sitting's summary names its sitting under.
-pub(super) const SESSION_KEY: &str = "session";
-/// The purpose a sitting's summary takes.
-const SESSION_PURPOSE: &str = "session_recap";
-const SOURCE_SET_DOMAIN: &[u8] = b"oneiron:session-summary-sources:v1";
 
 /// A read of `crate::compaction`'s SESSION to TURN membership index, which
 /// it owns: the same declaration, bound here to read a sitting's turns.
@@ -70,15 +61,6 @@ pub(crate) fn enqueue_session_summary_in_txn(
     let (EnqueueDreamerAttemptOutcome::Enqueued(status)
     | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
     Ok(status.attempt.id)
-}
-
-/// Whether `input` declares a sitting's summary.
-pub(super) fn is_session_declaration(input: &Value) -> bool {
-    input.as_map().is_some_and(|fields| {
-        fields
-            .iter()
-            .any(|(key, _)| key.as_str() == Some(SESSION_KEY))
-    })
 }
 
 /// A sitting's summary is its own actor's, in the class a host hook reads
@@ -176,18 +158,6 @@ fn retained_turn_in_txn(vault: &Vault, txn: &RoTxn<'_>, turn: &EntityId) -> Resu
         return Ok(None);
     }
     Ok(Some(row.learned_at))
-}
-
-/// The source set a sitting's summary was written from: its sitting and its
-/// TURNs, sorted and once each, so the same set is the same id.
-pub(super) fn source_set_id(session: &EntityId, turns: &[EntityId]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(SOURCE_SET_DOMAIN);
-    hasher.update(session.as_bytes());
-    for turn in turns.iter().collect::<std::collections::BTreeSet<_>>() {
-        hasher.update(turn.as_bytes());
-    }
-    *hasher.finalize().as_bytes()
 }
 
 /// A sitting's summary covers TURNs of its sitting, each still live and not

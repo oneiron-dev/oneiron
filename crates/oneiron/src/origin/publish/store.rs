@@ -1,14 +1,7 @@
-//! The one store of exact publish requests (`ORIGIN_PUBLISH_REQUEST`, LIVE):
-//! each request's row and, beside it, the pages of its review. A request
-//! changes only by a compare-and-set on its state in one write transaction,
-//! so two callers can never both take its one dispatch. An actor's erase
-//! scrubs every act that names it and keeps the rest of the record; a
-//! request row that does not decode is dropped there instead, never an
-//! abort of the erase or restore.
+//! Core half of `origin::publish::store`: its store-layer items live in `oneiron_store::origin::publish::store` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
+pub(crate) use oneiron_store::origin::publish::store::*;
 
 use super::types::{
     OriginPublishRefusal, OriginPublishRequestView, OriginPublishReviewItem,
@@ -18,20 +11,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
-
-/// The domain of a request id an idempotency key fixes.
-const ORIGIN_PUBLISH_REQUEST_ID_DOMAIN: &[u8] = b"oneiron:origin-publish-request:v1";
-
-/// The longest idempotency key, in bytes.
-pub(super) const ORIGIN_PUBLISH_MAX_KEY_BYTES: usize = 128;
-
-/// The WARN code of a request row an actor scrub dropped because it does
-/// not decode (CALLS "FIX 6866 undecodable request on scrub").
-const ORIGIN_PUBLISH_REQUEST_UNDECODABLE_DROPPED: &str =
-    "origin_publish_request_undecodable_dropped";
-
-/// Repo id, request id, then nothing for the request or a u64be page.
-type PublishKey = (EntityId, EntityId, Vec<u8>);
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// One row of the store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,22 +23,6 @@ enum PublishRow {
 
 const REQUESTS: SideTable<PublishKey, PublishRow, Named> =
     SideTable::new(&side_table::ORIGIN_PUBLISH_REQUEST);
-
-fn request_key(repo_id: EntityId, request_id: EntityId) -> PublishKey {
-    (repo_id, request_id, Vec::new())
-}
-
-fn page_key(repo_id: EntityId, request_id: EntityId, page: u64) -> PublishKey {
-    (repo_id, request_id, page.to_be_bytes().to_vec())
-}
-
-/// The request id `key` fixes for one repository.
-pub(super) fn keyed_request_id(repo_id: &EntityId, key: &str) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(
-        ORIGIN_PUBLISH_REQUEST_ID_DOMAIN,
-        &[repo_id.as_bytes(), key.as_bytes()],
-    )
-}
 
 impl Vault {
     /// One request, as `txn` reads it.

@@ -1,17 +1,12 @@
-//! The bundle framing of an owner's content and of an actor's parts: a
-//! version byte, then fixed fields and length-prefixed bytes, every length a
-//! u32be. Framing only: the seal and its commitments are KS7-2b's.
+//! Core half of `store::checkpoint_payload::rows::frame`: its store-layer items live in `oneiron_store::checkpoint_payload::rows::frame` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::checkpoint_payload::rows::frame::*;
 
 use super::super::{OWNER_LEN, Subtype, corrupt};
 use super::{ActorPart, Dependency, OwnerRef, OwnerRows, RowDb, RowLocator, RowPart};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-
-const VERSION: u8 = 1;
-
-const EXACT: u8 = 0;
-const NO_ACTOR: u8 = 1;
-const ACTOR_KEYED: u8 = 2;
 
 fn db_code(db: RowDb) -> u8 {
     match db {
@@ -34,18 +29,6 @@ fn db_of(code: u8) -> Option<RowDb> {
         6 => Some(RowDb::SyncQueue),
         _ => None,
     }
-}
-
-fn put_len(out: &mut Vec<u8>, len: usize) -> Result<()> {
-    let len = u32::try_from(len).map_err(|_| corrupt())?;
-    out.extend_from_slice(&len.to_be_bytes());
-    Ok(())
-}
-
-fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
-    put_len(out, bytes.len())?;
-    out.extend_from_slice(bytes);
-    Ok(())
 }
 
 fn put_locator(out: &mut Vec<u8>, at: &RowLocator) -> Result<()> {
@@ -247,14 +230,6 @@ pub(crate) fn read_actor_parts(bytes: &[u8]) -> Result<Vec<ActorPart>> {
     }
     reader.finish()?;
     Ok(parts)
-}
-
-/// One row's key and value, as an actor-keyed row's actor part holds them.
-pub(super) fn frame_row(key: &[u8], value: &[u8]) -> Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(key.len() + value.len() + 8);
-    put_bytes(&mut out, key)?;
-    put_bytes(&mut out, value)?;
-    Ok(out)
 }
 
 /// A row's key and value as [`frame_row`] framed them.

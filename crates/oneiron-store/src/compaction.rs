@@ -1,5 +1,7 @@
 //! Store-layer modules of core `compaction`; core re-exports each one at its old path.
 
+pub mod folds;
 pub mod gate;
 pub mod host_request;
 pub mod packet_source;
+pub mod stored_epoch;

@@ -1,20 +1,7 @@
-//! An exact publish's outbound IO and its settlement (FIX 6866; CALLS "FIX
-//! 6866 retry" and "FIX 6866 unknown remote tip").
-//!
-//! The mirror's token leaves custody only through the custody door, bound to
-//! the mirror push effector, and reaches git only as one child's header.
-//! Each request is pushed at most once. A push that did not prove its own
-//! outcome is settled from an authenticated read of the branch, never by a
-//! second send: the commit there is `observed_published`; the leased tip
-//! there is `rejected` after the mirror's own refusal, else
-//! `outcome_unknown`; anything else is `remote_moved`. A branch that cannot
-//! be read leaves the request dispatching until a later call reads it. A
-//! claimed request is settled by another call only once the mirror's push
-//! hold, which its push's child inherits, is free (FIX 7045).
+//! Core half of `origin::publish::reconcile`: its store-layer items live in `oneiron_store::origin::publish::reconcile` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::path::Path;
-
-use base64::Engine as _;
+pub(crate) use oneiron_store::origin::publish::reconcile::*;
 
 use super::PublishScope;
 use super::types::{
@@ -31,9 +18,8 @@ use crate::git_wire::{
 use crate::origin::mirror::ORIGIN_MIRROR_PUSH_EFFECTOR;
 use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::publication::OriginKeepRefKind;
-
-/// The longest redacted cause a refusal carries.
-const MAX_DETAIL_BYTES: usize = 256;
+use base64::Engine as _;
+use std::path::Path;
 
 impl Vault {
     /// Reads `name` at the request's mirror with the mirror's credential.

@@ -1,15 +1,7 @@
-//! The needs-you notice of the lift proposals (OF-067). It is an inbox Ask
-//! (`NOTIFICATION`), raised as the found-key notice is: non-blocking, one per
-//! owner. A run that files proposals raises one notice for the proposals left
-//! open, counted by cause, whose result points at `vault.secrets.lift_history`;
-//! the next such run's notice replaces it, and it resolves, acknowledged for
-//! each owner it was raised for, once no proposal is open. It names no row
-//! and holds no value.
+//! Core half of `batch::secret_scan::lift_history::notice`: its store-layer items live in `oneiron_store::batch::secret_scan::lift_history::notice` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
+pub(crate) use oneiron_store::batch::secret_scan::lift_history::notice::*;
 
 use super::{PROPOSALS, SecretLiftHistoryProposal};
 use crate::Vault;
@@ -21,13 +13,9 @@ use crate::inbox::{
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-
-/// Producer name of the lift proposals' notice.
-const NOTIFICATION_PRODUCER_SECRET_LIFT: &str = "secret.lift_proposals";
-
-/// Where the notice sends the owner: the row that lists the proposals and
-/// closes them.
-const POINTER: &str = "vault.secrets.lift_history";
+use heed::{RoTxn, RwTxn};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// How the notice groups the open proposals it counts (CALLS, open): by why
 /// the sweep left each. One notice covers every open proposal, raised by a
@@ -36,15 +24,6 @@ const NOTICE_GROUP: fn(&SecretLiftHistoryProposal) -> &'static str = by_cause;
 
 /// The notice raised last. Key: ().
 const NOTICE: SideTable<(), LiftNotice, Named> = SideTable::new(&side_table::SECRET_LIFT_NOTICE);
-
-/// The notice raised last: the run that raised it, and each owner's inbox
-/// row.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LiftNotice {
-    run_id: EntityId,
-    /// `(notification, owner)`.
-    raised: Vec<(EntityId, EntityId)>,
-}
 
 fn by_cause(proposal: &SecretLiftHistoryProposal) -> &'static str {
     proposal.cause.code()

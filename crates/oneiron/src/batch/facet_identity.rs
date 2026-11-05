@@ -1,5 +1,8 @@
-//! FACET write checks: the local identity-body refusal, immutable substrate
-//! identity and retired privacy axes.
+//! Core half of `batch::facet_identity`: its store-layer items live in `oneiron_store::batch::facet_identity` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::facet_identity::*;
+
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::{
@@ -7,20 +10,6 @@ use crate::{
     error::{Error, Result},
     store::Store,
 };
-
-/// The one local identity-body refusal. PERSON holds identity; a FACET is a
-/// scenario mask, so a FACET body shaped as a persona or relationship is
-/// refused on every local door (put apply and checkpoint restore).
-pub(crate) fn validate_local_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
-    if entity_type == ENTITY_TYPE_FACET
-        && crate::write_envelope::person_identity::is_identity_facet_body(body)
-    {
-        return Err(Error::InvalidClaimBody(
-            "FACET cannot carry PERSON identity",
-        ));
-    }
-    Ok(())
-}
 
 /// A substrate cannot be replaced by an arbitrary opaque mask.
 pub(super) fn validate_facet_overwrite(

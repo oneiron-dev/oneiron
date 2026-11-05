@@ -1,7 +1,7 @@
 //! Core half of `store::key_custody::protocol`: its store-layer items live in `oneiron_store::key_custody::protocol` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::key_custody::protocol::*;
+pub(crate) use oneiron_store::key_custody::protocol::*;
 
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
 use crate::EntityId;

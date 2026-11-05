@@ -1,7 +1,7 @@
-//! The single-writer landing: apply path, per-ref publication fan-out, and
-//! wire-outcome mapping.
+//! Core half of `origin::smart_http::landing`: its store-layer items live in `oneiron_store::origin::smart_http::landing` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::path::Path;
+pub use oneiron_store::origin::smart_http::landing::*;
 
 use super::door_window::printable_ref_name;
 use super::evidence::{
@@ -25,41 +25,7 @@ use crate::origin::publication::{
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::store::code_snapshot::RepoRef;
 use crate::temporal::TimeRange;
-
-/// Attribution from the durable receive-pack observer. The landing verifies
-/// the local producer receipt and the actor/repository/operation binding.
-#[derive(Debug, Clone, Copy)]
-pub struct ReceivePackAttribution {
-    /// Server-derived authenticated principal, not an origin-local stand-in.
-    pub actor_id: EntityId,
-    /// Durable observed-outcome claim written by this module's serve path.
-    /// Landing reads it; caller-supplied active claims are not source proof.
-    pub provenance_claim_id: EntityId,
-}
-
-/// The durable record of one landing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReceivePackLanding {
-    /// What certified the first ref. A multi-ref landing is not atomic;
-    /// success means every ref certified, but failure never rolls earlier refs back.
-    pub receipt: ReceivePackCertificate,
-    /// Whether a durable terminal record answered without re-running git.
-    pub replayed: bool,
-}
-
-/// What certified one landed ref.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReceivePackCertificate {
-    /// The journaled ref effect the landing drove or replayed.
-    Wire(GitWireReceipt),
-    /// The `Published` publication that had already made this ref's move.
-    /// The backend left the ref at its value, its proof covers the push, and
-    /// no ref effect ran for it: the push's own outcome stays its record.
-    ResolvedToOwner {
-        /// The owner's publication id.
-        publication_id: EntityId,
-    },
-}
+use std::path::Path;
 
 /// Whether the repository already carries every observed value.
 ///
@@ -441,21 +407,4 @@ fn landing_from_publication(
         }));
     };
     landed_wire_outcome(outcome)
-}
-
-/// The receipt and replay flag of one journaled ref effect, or a refusal.
-fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(ReceivePackCertificate, bool)> {
-    match outcome {
-        GitWireCommitOutcome::Applied(receipt) => {
-            Ok((ReceivePackCertificate::Wire(receipt), false))
-        }
-        GitWireCommitOutcome::Replayed(receipt) => {
-            Ok((ReceivePackCertificate::Wire(receipt), true))
-        }
-        GitWireCommitOutcome::Rejected { reason, .. } => {
-            Err(Error::Code(CodeError::ReceivePackLandingRefused {
-                reason: format!("{reason:?}"),
-            }))
-        }
-    }
 }

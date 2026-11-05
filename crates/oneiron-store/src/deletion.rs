@@ -9,6 +9,9 @@ pub mod delete;
 #[cfg(feature = "sync")]
 pub mod delete_bearing_update;
 pub mod erase;
+pub mod gate;
+#[cfg(feature = "sync")]
+pub mod owed_window_compaction;
 pub mod receipt;
 pub mod sweep_queue;
 #[cfg(feature = "sync")]

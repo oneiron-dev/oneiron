@@ -2,6 +2,7 @@
 
 pub mod codec;
 pub mod diagnostics;
+pub mod index;
 pub use crate::config::bm25::Bm25Config;
 pub use crate::config::bm25::FieldLengthPolicy;
 pub use diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};

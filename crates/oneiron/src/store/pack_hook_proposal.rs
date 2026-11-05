@@ -1,16 +1,13 @@
-//! The pack hook selector types and the agent hook proposal rows
-//! (ARCH-0080 §3, §10): when a hook fires, how it may spend model time, the
-//! outcome set, the HOOK.md selector, and each agent hook's ask wider than
-//! its own ceiling, with the erase and the actor scrub a deletion makes of
-//! them. The pack catalog (`skill_hub::pack_catalog::hooks`) parses,
-//! binds, lists and settles them; the derived-row erase and the side-table
-//! declaration's actor scrub call the store functions.
-use serde::{Deserialize, Serialize};
+//! Core half of `store::pack_hook_proposal`: its store-layer items live in `oneiron_store::pack_hook_proposal` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::pack_hook_proposal::*;
 
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::pack_hook_actor_class::HookActorClass;
 use crate::{EntityId, Result, Vault};
+use serde::{Deserialize, Serialize};
 
 /// When a hook fires (ARCH-0080 §2).
 #[derive(
@@ -24,27 +21,6 @@ pub enum HookPhase {
     Post,
     /// After a write commits, on its own runner.
     Fact,
-}
-
-/// How a hook's body may spend model time (ARCH-0035 render classes;
-/// ARCH-0080 §4 Its shape).
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookRenderClass {
-    /// No model call: the body stays deterministic inside its budget.
-    #[default]
-    DeterministicEager,
-    /// A fact hook that may call `ai.verdict`, paid from its pack's budget
-    /// line.
-    Generative,
-}
-
-impl HookRenderClass {
-    pub(crate) const fn is_deterministic(&self) -> bool {
-        matches!(self, Self::DeterministicEager)
-    }
 }
 
 /// The one outcome set; the phase decides which kinds apply.
@@ -100,36 +76,6 @@ pub struct HookSelector {
 /// Each agent hook's ask, by the binding claim it widens.
 pub(crate) const PROPOSALS: SideTable<EntityId, PackHookProposal, Named> =
     SideTable::new(&side_table::SKILL_HUB_PACK_HOOK_PROPOSAL);
-
-/// What an agent's hook asks beyond its own ceiling.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookWidening {
-    /// Fail safe before the verb runs; only the owner marks a hook blocking.
-    Blocking,
-    /// A pre-hook's Skip of the verbs it selects.
-    Skip,
-    /// A pre-hook's Ask before the verbs it selects.
-    Ask,
-    /// A pre-hook's Rewrite of the verbs it selects.
-    Rewrite,
-}
-
-/// Where a proposal stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PackHookProposalStatus {
-    /// Waiting for the owner; the binding runs at the agent's ceiling.
-    Proposed,
-    /// The owner bound the hook as asked.
-    Approved,
-    /// The owner declined; the binding stays at the agent's ceiling.
-    Discarded,
-    /// The agent's later put no longer asks it, or stopped the hook.
-    Withdrawn,
-}
 
 /// One agent hook's ask for the binding its HOOK.md declares, where the
 /// agent's put bound it narrower.

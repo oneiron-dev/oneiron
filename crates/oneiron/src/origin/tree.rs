@@ -1,20 +1,14 @@
-//! Byte-preserving projection of complete Git trees. No worktree IO or ref writes.
+//! Core half of `origin::tree`: its store-layer items live in `oneiron_store::origin::tree` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::origin::tree::*;
+
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
 use std::collections::BTreeMap;
 
-/// One file's bytes a tree read holds in memory: a machine floor.
-pub(crate) const MAX_TREE_FILE_BYTES: usize = 32 * 1024 * 1024;
-/// One tree's file bytes a read holds in memory at once: a machine floor.
-const MAX_TREE_BYTES: usize = 128 * 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OriginTreeFile {
-    pub mode: u32,
-    pub content: Vec<u8>,
-}
 /// Reads committed bytes, including symlink targets without following links.
 /// The walk reads every tree and file however many (rule 5): past its scan
 /// row it raises a check and reads on; only the byte floors stop it.

@@ -1,20 +1,7 @@
-//! The entity document's actor carriers in its Loro history (FIX 6072): its
-//! birth's actor and every engine stamp's, with a receipted message's
-//! receipt actors ([`super::message_receipts`], FIX 6479), split out and put
-//! back through the shared projection
-//! ([`crate::store::checkpoint_payload::loro`]). Every other operation of the
-//! document's schema (its body text and its metadata map) names no one; an
-//! operation outside that schema, or a message that is no engine stamp,
-//! keeps its whole group under the vault-wide seal. A birth or stamp whose
-//! actor did not open reads as no one, never as an actor some binding of its
-//! peer names (Engine R2).
-//!
-//! A fork snapshot is a group of its own. A shallow one, as the live writer
-//! keeps every one, stays under the vault-wide seal (Engine R3), and so does
-//! a pending fork's: its record goes when its opener does not open, so its
-//! snapshot is never kept without it (Engine and lead pick).
+//! Core half of `entity_doc::checkpoint::loro`: its store-layer items live in `oneiron_store::entity_doc::checkpoint::loro` and are
+//! re-exported here; the items below stay in the engine.
 
-use ::loro::{ContainerID, ContainerType, JsonOp, JsonOpContent, LoroValue};
+pub(crate) use oneiron_store::entity_doc::checkpoint::loro::*;
 
 use super::super::EntityDoc;
 use super::super::doc_actor::DocActor;
@@ -30,26 +17,12 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RoundTripPolicy, TypedRow, Unresolved,
 };
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use ::loro::{ContainerID, ContainerType, JsonOp, JsonOpContent, LoroValue};
 
 /// The round trip a full-history fork snapshot takes (Engine R1): the same
 /// history, in a container Loro may encode anew. No row keeps a digest of a
 /// fork snapshot's bytes, so its restore has none to derive again.
 const FORK_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
-
-/// The path of a stamp's actor in its message.
-pub(super) const STAMP_ACTOR: &str = "actor";
-/// The path of the birth's actor in its record.
-const BIRTH_ACTOR: &str = "Birth.actor";
-
-/// A commit message that is no engine stamp.
-const NOT_A_STAMP: &str = "an entity document commit message that is no engine stamp";
-/// A birth record that does not read, or does not spell its bytes back.
-const BIRTH_UNREAD: &str = "an entity document birth that does not spell back";
-/// An operation outside the entity document's body and metadata.
-const OUTSIDE_SCHEMA: &str = "an entity document operation outside its body and metadata";
-/// A pending fork's snapshot, whose record goes when its opener does not
-/// open.
-const PENDING_FORK: &str = "a pending fork's snapshot, whose record goes with its opener";
 
 /// The entity document's actor carriers.
 struct EntityDocActors;
@@ -143,17 +116,6 @@ impl LoroActorCodec for EntityDocActors {
             JsonOpContent::Map(_) if is_root(&op.container, META, ContainerType::Map) => Ok(()),
             _ => Err(OUTSIDE_SCHEMA),
         }
-    }
-}
-
-/// Whether `container` is the root container `name` of kind `kind`.
-fn is_root(container: &ContainerID, name: &str, kind: ContainerType) -> bool {
-    match container {
-        ContainerID::Root {
-            name: root,
-            container_type,
-        } => root.as_str() == name && *container_type == kind,
-        ContainerID::Normal { .. } => false,
     }
 }
 

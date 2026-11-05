@@ -1,24 +1,12 @@
-//! The checkpoint getter of blob artifact versions (KS7-2): each artifact's
-//! head record and version records under the artifact's own entity tree.
-//! These are metadata only: the bytes a version names sit in an ASSET, and
-//! KS-2 seals every ASSET's bytes, inline or file (the entity getter hands
-//! each ASSET row to it), so nothing here seals them twice. The version
-//! highwater, claim and reference rows hold no payload and stay structure.
-//! It also places the artifact's hosting rows (pointer, publish admission,
-//! serving descriptor) under the artifact (FIX 10436).
-//!
-//! A version's MadeBy names its process's actor: the compartment keeps the
-//! record with the artifact in that place, and the actor is an actor part.
-//! The erased-producer form stays in the record with no actor part (FIX 9619).
-//! A retired actor can be recovered only from its version's fully bound native
-//! claim during authenticated restore, then scrubbed with that claim before
-//! commit; otherwise the version stays out (FIX 6259).
+//! Core half of `blob_artifact::checkpoint`: its store-layer items live in `oneiron_store::blob_artifact::checkpoint` and are
+//! re-exported here; the items below stay in the engine.
+
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
+pub(crate) use oneiron_store::blob_artifact::checkpoint::*;
 
 use super::erase::erased_producer;
 use super::versions::{BlobArtifactVersion, HEAD, VERSIONS};
@@ -28,9 +16,7 @@ use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
 };
-
-/// The field the MadeBy process's actor fills.
-const PROCESS: &str = "made_by.process.actor";
+use heed::{RoTxn, RwTxn};
 
 /// Moves the process's actor out, leaving `artifact` in its place.
 fn take_process(

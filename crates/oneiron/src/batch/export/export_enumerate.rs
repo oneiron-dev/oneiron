@@ -1,15 +1,11 @@
-//! Snapshot enumeration for whole-vault exports, independent of type whitelists.
+//! Core half of `batch::export::export_enumerate`: its store-layer items live in `oneiron_store::batch::export::export_enumerate` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::batch::export::export_enumerate::*;
+
 use super::whole_vault_export_excludes_entity_in_txn;
 use crate::batch::EntityMetadataHeader;
 use crate::{EntityId, Error, Result, Vault};
-
-/// A row selected for export. Serialization owns credential nulling; this
-/// enumerator returns identities, never raw credentials or unredacted bodies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WholeVaultExportRow {
-    pub entity_id: EntityId,
-    pub entity_type: u8,
-}
 
 impl Vault {
     /// Walks every entity row in one read snapshot. There is no type whitelist,

@@ -1,16 +1,7 @@
-//! OF-221: the actor-bound inbox page over NOTIFICATION records, and the one
-//! write door that marks a notification seen or acknowledged.
-//!
-//! The page walks the type index in entity-ID order — not creation order —
-//! from an exclusive `after` cursor. Every candidate is admitted through the
-//! actor's own read lane, then delivered through the context board's
-//! recipient predicate; a withheld or undelivered row never fills a slot or
-//! becomes the cursor, and a page reads on past them until it fills or the
-//! index ends. `next_after` is present only when a further delivered row
-//! exists. Listing never marks anything: seen and acknowledged state changes
-//! only through [`Memory::inbox_mark`].
+//! Core half of `inbox::list`: its store-layer items live in `oneiron_store::inbox::list` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde::{Deserialize, Serialize};
+pub use oneiron_store::inbox::list::*;
 
 use super::actions::NotificationAction;
 use super::notification::{
@@ -29,21 +20,7 @@ use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
-
-/// Rows a page serves when its caller names no limit.
-pub const INBOX_PAGE_DEFAULT: usize = 100;
-
-/// Type-index rows one admission round reads.
-const INBOX_SCAN_WINDOW: usize = 256;
-
-/// What [`Memory::inbox_mark`] records for its caller. Acknowledging also
-/// marks seen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NotificationMark {
-    Seen,
-    Acked,
-}
+use serde::{Deserialize, Serialize};
 
 /// One delivered notification as its caller reads it: the caller's own seen
 /// and acknowledged state, never another caller's.
@@ -118,10 +95,6 @@ fn delivered_row(
     }
     let body = decode_notification_body(raw).ok()?;
     Some(row_for(id, learned_at, body, caller))
-}
-
-fn notification_not_found() -> MemoryError {
-    MemoryError::not_found("no notification with that id is delivered to this actor")
 }
 
 /// Who [`Memory::inbox_mark`] lets write in a shared vault without a

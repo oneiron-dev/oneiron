@@ -1,48 +1,17 @@
-//! Create-door database phase: open the manifest databases and gate versions.
+//! Core half of `store::open_gates::create_dbs`: its store-layer items live in `oneiron_store::open_gates::create_dbs` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::sync::MutexGuard;
-
-use heed::types::{Bytes, Str};
-use heed::{Database, RwTxn};
-
-use crate::error::Result;
-use crate::overlay_db::OverlayDb;
+pub(crate) use oneiron_store::open_gates::create_dbs::*;
 
 use super::manifest_storage_gates::{
     OwnedEnv, create_manifest_db, create_manifest_dupsort_db, create_manifest_str_db,
     gate_storage_versions, lmdb_database_open_guard, validate_db_manifest_set,
 };
-
-pub(super) struct CreatedDbs {
-    pub(super) entities: Database<Bytes, Bytes>,
-    pub(super) edges_out: Database<Bytes, Bytes>,
-    pub(super) edges_in: Database<Bytes, Bytes>,
-    pub(super) vectors: Database<Bytes, Bytes>,
-    pub(super) hnsw_neighbors: Database<Bytes, Bytes>,
-    pub(super) hnsw_meta: Database<Bytes, Bytes>,
-    pub(super) text_postings: Database<Bytes, Bytes>,
-    pub(super) text_meta: Database<Bytes, Bytes>,
-    pub(super) text_forward: Database<Bytes, Bytes>,
-    pub(super) text_bm25_field_stats: Database<Bytes, Bytes>,
-    pub(super) text_doc_field_lengths: Database<Bytes, Bytes>,
-    pub(super) vault_meta: Database<Bytes, Bytes>,
-    pub(super) ppr_cache: Database<Bytes, Bytes>,
-    pub(super) ppr_cache_deps: Database<Bytes, Bytes>,
-    pub(super) type_index: Database<Bytes, Bytes>,
-    pub(super) temporal_occurred_start: Database<Bytes, Bytes>,
-    pub(super) temporal_occurred_end: Database<Bytes, Bytes>,
-    pub(super) temporal_learned: Database<Bytes, Bytes>,
-    pub(super) temporal_long_intervals: Database<Bytes, Bytes>,
-    pub(super) phonetic_index: Database<Bytes, Bytes>,
-    pub(super) phonetic_forward: Database<Bytes, Bytes>,
-    pub(super) short_ids: Database<Bytes, Bytes>,
-    pub(super) short_ids_reverse: Database<Bytes, Bytes>,
-    pub(super) sync_state: Database<Str, Bytes>,
-    pub(super) sync_queue: Database<Bytes, Bytes>,
-    pub(super) attempt_records: Database<Bytes, Bytes>,
-    pub(super) attempt_ready: Database<Bytes, Bytes>,
-    pub(super) attempt_dedupe: Database<Bytes, Bytes>,
-}
+use crate::error::Result;
+use crate::overlay_db::OverlayDb;
+use heed::types::{Bytes, Str};
+use heed::{Database, RwTxn};
+use std::sync::MutexGuard;
 
 pub(super) fn create_dbs(
     env: &OwnedEnv,

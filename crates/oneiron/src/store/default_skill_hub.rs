@@ -1,19 +1,13 @@
-//! The first-party library skill hub every vault opens with: its stable id
-//! and the offline seed of its pinned Git record. The skill hub
-//! (`skill_hub::default_hub`) imports from it and lets the owner repoint it;
-//! the vault open path seeds it.
+//! Core half of `store::default_skill_hub`: its store-layer items live in `oneiron_store::default_skill_hub` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::default_skill_hub::*;
+
 use crate::entity_id::derived_domains::FIRST_PARTY_SKILL_HUB;
 use crate::write_envelope::skill_source::{
     HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, encode_skill_hub_record,
 };
 use crate::{EntityId, Vault, error::Result, temporal::TimeRange};
-
-const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
-
-/// Stable identity of the first-party library hub in every vault.
-pub fn default_skill_hub_id() -> Result<EntityId> {
-    EntityId::derive(FIRST_PARTY_SKILL_HUB, &[])
-}
 
 pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
     let id = default_skill_hub_id()?;

@@ -1,20 +1,12 @@
-//! A projected candidate's source, as every later seam proves it (FIX 7608
-//! slice 2b-ii-A).
-//!
-//! A candidate from a masked copy stands only while its ingress proof and
-//! its translation record both stand, exactly as written: the copy graph,
-//! the receive operation and its admitted authority, the submitted COPY
-//! tip, the ORIGINAL base and the canonical target its pins name. The
-//! translation record is written with the candidate, once, and never
-//! rebinds its source or base; an exact or rebased replacement is a new
-//! candidate with its own record.
+//! Core half of `origin::document_candidates::projected_source`: its store-layer items live in `oneiron_store::origin::document_candidates::projected_source` and are
+//! re-exported here; the items below stay in the engine.
 
 #![allow(
     dead_code,
     reason = "FIX 7608 2b-ii-A: the queue and landing seams call it in 2b-ii-B"
 )]
 
-use heed::{RoTxn, RwTxn};
+pub(crate) use oneiron_store::origin::document_candidates::projected_source::*;
 
 use super::projected::RepoProjectedCandidatePins;
 use crate::error::Result;
@@ -23,6 +15,7 @@ use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionRecord, RepoProjectionTranslation,
 };
 use crate::{EntityId, Vault};
+use heed::{RoTxn, RwTxn};
 
 /// The translation record `pins` stand on for `candidate` of the receive
 /// `operation`; `None` while the pins name no ORIGINAL base or a tip that

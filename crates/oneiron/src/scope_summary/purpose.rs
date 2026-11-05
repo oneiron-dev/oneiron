@@ -1,4 +1,7 @@
-//! Open, owner-approved summary-purpose descriptors, not a closed enum.
+//! Core half of `scope_summary::purpose`: its store-layer items live in `oneiron_store::scope_summary::purpose` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::scope_summary::purpose::*;
 
 use super::codec::invalid;
 use crate::Vault;
@@ -9,19 +12,6 @@ use serde::{Deserialize, Serialize};
 
 const PURPOSE: SideTable<String, SummaryPurpose, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PURPOSE);
-
-/// A named purpose with host-editable descriptive text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SummaryPurpose {
-    pub id: String,
-    pub description: String,
-}
-
-fn seeds() -> Result<Vec<SummaryPurpose>> {
-    serde_json::from_str(include_str!("purposes.json"))
-        .map_err(|_| invalid("invalid summary purpose seeds"))
-}
 
 pub(super) fn purpose_in_txn(
     vault: &Vault,

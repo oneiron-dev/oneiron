@@ -1,16 +1,17 @@
-//! Pending-deletion recovery sidecar Store methods and codec.
+//! Core half of `store::gate_decision::sidecar`: its store-layer items live in `oneiron_store::gate_decision::sidecar` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::{RoTxn, RwTxn};
-
-use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::Store;
+pub(crate) use oneiron_store::gate_decision::sidecar::*;
 
 use super::types::{
     GateDecisionId, GateDecisionRecord, PENDING_DELETION_GATE_DECISION_VERSION,
     PendingDeletionGateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
+use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::Store;
+use heed::{RoTxn, RwTxn};
 
 /// Codec fixed `Raw` (see the decls.rs note): [`RawValue`] delegates to
 /// [`encode_pending_deletion_gate_decision`]/[`decode_pending_deletion_gate_decision`].
@@ -24,28 +25,6 @@ impl RawValue for PendingDeletionGateDecisionRecord {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         Ok(decode_pending_deletion_gate_decision(bytes)?)
-    }
-}
-
-/// The deletion-gate-required marker's hand-rolled `version ‖
-/// tombstone_reason ‖ target(16)` layout. Kept as the module's own codec
-/// behind [`Raw`], reusing the existing encode/decode functions verbatim.
-struct DeletionGateRequired {
-    target: [u8; 16],
-    tombstone_reason: u8,
-}
-
-impl RawValue for DeletionGateRequired {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_deletion_gate_required(&self.target, self.tombstone_reason).to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let (target, tombstone_reason) = decode_deletion_gate_required(bytes)?;
-        Ok(Self {
-            target,
-            tombstone_reason,
-        })
     }
 }
 
@@ -210,26 +189,6 @@ fn decode_pending_deletion_gate_decision(raw: &[u8]) -> Result<PendingDeletionGa
         .map_err(|_| Error::CorruptedIndex("pending deletion gate decision"))?;
     vet_pending_deletion_gate_decision_record(&record)?;
     Ok(record)
-}
-
-fn encode_deletion_gate_required(target: &[u8; 16], tombstone_reason: u8) -> [u8; 18] {
-    let mut value = [0_u8; 18];
-    value[0] = PENDING_DELETION_GATE_DECISION_VERSION;
-    value[1] = tombstone_reason;
-    value[2..].copy_from_slice(target);
-    value
-}
-
-fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
-    let raw: [u8; 18] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("deletion gate required marker"))?;
-    if raw[0] != PENDING_DELETION_GATE_DECISION_VERSION || !matches!(raw[1], 1..=4) {
-        return Err(Error::CorruptedIndex("deletion gate required marker"));
-    }
-    let mut target = [0_u8; 16];
-    target.copy_from_slice(&raw[2..]);
-    Ok((target, raw[1]))
 }
 
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]

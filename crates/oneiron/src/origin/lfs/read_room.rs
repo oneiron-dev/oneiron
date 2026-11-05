@@ -1,29 +1,13 @@
-//! Room a host lends the origin to read whole LFS manifests in memory.
-//!
-//! A check that a published ref's LFS objects are readable reads each
-//! object's whole manifest. A host that holds its LFS reads to a room in
-//! memory lends that room here, so these checks wait for it as its own reads
-//! do, by the bytes of the manifest's stored row.
+//! Core half of `origin::lfs::read_room`: its store-layer items live in `oneiron_store::origin::lfs::read_room` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::any::Any;
-use std::sync::{Arc, PoisonError};
+pub use oneiron_store::origin::lfs::read_room::*;
 
 use super::LfsOid;
 use crate::Vault;
 use crate::error::{CodeError, Error, Result};
-
-/// A host's room for reading whole LFS manifests.
-pub trait LfsReadRoom: Send + Sync {
-    /// Waits for room to read a manifest whose stored row is `row_bytes`,
-    /// held until the answer drops; `None` when the wait ran out. Called on
-    /// a thread that may block.
-    fn hold(&self, row_bytes: u64) -> Option<Box<dyn Any + Send>>;
-}
-
-/// Room held for one manifest read, if the host lent any.
-pub(crate) struct LfsReadHold {
-    _held: Option<Box<dyn Any + Send>>,
-}
+use std::any::Any;
+use std::sync::{Arc, PoisonError};
 
 impl Vault {
     /// Lends the origin's availability checks this host's room for LFS

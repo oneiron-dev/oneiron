@@ -10,6 +10,7 @@ pub mod export_value;
 pub mod field_profile_table;
 pub mod grant_fields;
 pub mod group_labels;
+pub mod handles;
 pub mod item_budget;
 pub mod json_format;
 pub mod l2_prefix;

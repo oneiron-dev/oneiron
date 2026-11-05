@@ -1,88 +1,15 @@
-//! The outbound Git-LFS batch client: one https remote's batch API
-//! (`<remote>.git/info/lfs/objects/batch`) and its basic transfer. A
-//! mirror's objects go up, an upload and its verify call per object the
-//! remote does not hold yet (FIX 919); an outside import's come down, each
-//! installed through the vault-LFS upload door, its scan, SHA-256 and size
-//! checks included (FIX 7596).
-//!
-//! https only, no redirects, no proxy. The one credential is the
-//! `Authorization` value the caller hands it inside the custody door; it
-//! rides the batch call to the remote's own host alone, and each action's
-//! own headers ride that action's request alone. An object is streamed,
-//! never held whole in memory. A batch carries at most
-//! [`LFS_BATCH_OBJECTS`] objects, more go in further batches, so no count
-//! is refused.
+//! Core half of `origin::lfs::batch_client`: its store-layer items live in `oneiron_store::origin::lfs::batch_client` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek, SeekFrom};
-use std::time::Duration;
-
-use serde::{Deserialize, Serialize};
+pub(crate) use oneiron_store::origin::lfs::batch_client::*;
 
 use super::{LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsOid};
 use crate::error::{ArtifactError, Error, Result};
 use crate::{TimeRange, Vault};
-
-/// Objects one batch call names: the size Git-LFS servers commonly take.
-const LFS_BATCH_OBJECTS: usize = 100;
-
-/// The bound of one batch answer read into memory.
-const LFS_BATCH_ANSWER_MAX_BYTES: u64 = 16 * 1024 * 1024;
-
-/// How long one batch or verify call may take.
-const LFS_BATCH_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// How long one object's transfer may take.
-const LFS_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60 * 60);
-
-fn invalid(why: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidLfsObject(why))
-}
-
-#[derive(Serialize)]
-struct BatchRequest<'a> {
-    operation: &'a str,
-    transfers: [&'a str; 1],
-    objects: Vec<BatchObjectRef>,
-    hash_algo: &'a str,
-}
-
-#[derive(Serialize)]
-struct BatchObjectRef {
-    oid: String,
-    size: u64,
-}
-
-#[derive(Deserialize)]
-struct BatchAnswer {
-    objects: Vec<BatchObject>,
-}
-
-#[derive(Deserialize)]
-struct BatchObject {
-    oid: String,
-    #[serde(default)]
-    actions: Option<BatchActions>,
-    #[serde(default)]
-    error: Option<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-struct BatchActions {
-    #[serde(default)]
-    upload: Option<BatchAction>,
-    #[serde(default)]
-    verify: Option<BatchAction>,
-    #[serde(default)]
-    download: Option<BatchAction>,
-}
-
-#[derive(Deserialize)]
-struct BatchAction {
-    href: String,
-    #[serde(default)]
-    header: BTreeMap<String, String>,
-}
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek, SeekFrom};
+use std::time::Duration;
 
 /// One https Git-LFS remote, named by its Git URL.
 pub(crate) struct LfsBatchRemote {
