@@ -126,6 +126,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
+        "vm-outbox-companion-admitted",
+        |args| args.vm_outbox_companion_admitted,
+        ArgvUse::Read,
+    ),
+    (
         "vm-restore-revision",
         |args| args.vm_restore_revision.is_some(),
         ArgvUse::Read,
@@ -198,6 +203,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "broker-extra-roots",
         |args| args.broker_extra_roots.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-memory-bytes",
+        |args| args.host_memory_bytes.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-cpu-millis",
+        |args| args.host_cpu_millis.is_some(),
         ArgvUse::Read,
     ),
     // The embedder's layered flags: managed mode reads its settings file.
@@ -425,11 +440,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.failure_signal_training.is_some(),
         ArgvUse::Read,
     ),
-    // Contract v1 has no managed privacy override: refuse instead of dropping it.
+    // Hosting and checkpoint opt-out are explicit operator declarations,
+    // never derived from custody or read from the owner's settings file.
     (
         "privacy-posture",
         |args| args.privacy_posture.is_some(),
-        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "managed-checkpoint-host-opt-out",
+        |args| args.managed_checkpoint_host_opt_out,
+        ArgvUse::Read,
     ),
     (
         "hosted-kms-key-ref",
