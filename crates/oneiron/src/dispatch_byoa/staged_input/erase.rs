@@ -69,7 +69,7 @@ pub(crate) fn erase_staged_input_in_txn(
             OWED_STAGED_ERASES.put(store, txn, digest, &owed)?;
             tracing::warn!(
                 artifact = %artifact.to_hex(),
-                "staged job erase: a legal hold keeps the job's artifact; its pins are erased"
+                "staged job erase: a hold or selected storage-only restriction keeps the job's artifact; its pins are erased"
             );
             continue;
         }
