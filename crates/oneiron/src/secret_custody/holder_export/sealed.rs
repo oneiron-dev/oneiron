@@ -178,7 +178,13 @@ pub(super) fn open_supplement(
     let count = u32::try_from(envelopes.len()).map_err(|_| malformed())?;
     let mut plain = Zeroizing::new(Vec::new());
     for (index, bytes) in (0..count).zip(envelopes) {
-        let chunk = Envelope::parse(bytes)
+        let parsed = match Envelope::parse(bytes) {
+            Err(oneiron_crypto::Error::OutOfMemory) => {
+                return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+            }
+            parsed => parsed,
+        };
+        let chunk = parsed
             .and_then(|envelope| {
                 envelope.open_with_aad(
                     OpenKey::Hybrid(secret),

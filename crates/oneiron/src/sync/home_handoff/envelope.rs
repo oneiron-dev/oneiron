@@ -291,7 +291,13 @@ pub(crate) fn open_handoff(vault: &Vault, id: HandoffId, sealed: &[u8]) -> Resul
             min_epoch: HANDOFF_EPOCH,
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
-        let opened = Envelope::parse(piece)
+        let parsed = match Envelope::parse(piece) {
+            Err(oneiron_crypto::Error::OutOfMemory) => {
+                return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+            }
+            parsed => parsed,
+        };
+        let opened = parsed
             .and_then(|envelope| envelope.open(OpenKey::Hybrid(&secret.secret), &policy))
             .map_err(|_| refused("the handoff does not open for this machine"))?;
         plain.extend_from_slice(&opened);
