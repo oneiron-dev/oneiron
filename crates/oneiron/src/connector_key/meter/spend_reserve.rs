@@ -151,9 +151,11 @@ pub(crate) fn reserve_connector_spend_in_txn(
                 if price.minor_units == 0 {
                     continue;
                 }
-                state.usage.entries.push((now, price.minor_units));
+                let entry = UsageEntry::settled(store, wtxn, now, price.minor_units)?;
+                state.usage.entries.push(entry);
                 USAGE.put(store, wtxn, &(*owner, state.row.usage_key()), &state.usage)?;
                 debits.push(EffectorBudgetDebit {
+                    entry_id: entry.id,
                     key_ref: *owner,
                     row: state.row,
                     approval: EffectorBudgetApproval::capture(record, state.row)?,
@@ -227,15 +229,17 @@ pub(crate) fn reconcile_connector_spend_in_txn(
         }) && let Some(position) = usage
             .entries
             .iter()
-            .position(|entry| *entry == (estimate.at, estimate.amount))
+            .position(|entry| entry.id == estimate.entry_id)
         {
             usage.entries.remove(position);
             reconciliation.released.push(*estimate);
         }
         usage.touch(&budget.window, budget.limit, now);
         if actual.minor_units > 0 {
-            usage.entries.push((now, actual.minor_units));
+            let entry = UsageEntry::settled(store, wtxn, now, actual.minor_units)?;
+            usage.entries.push(entry);
             reconciliation.written.push(EffectorBudgetDebit {
+                entry_id: entry.id,
                 key_ref: location.key_ref,
                 row: location.row,
                 approval: reserved.approval,

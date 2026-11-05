@@ -19,7 +19,8 @@ their own original approval binding.
 When a send certainly stops without delivery, release checks the current
 same-key approval in the consuming writer before touching charter usage. If the
 approval changed, the old reservation no longer names the current counter and
-leaves it untouched. Ordinary key-row occurrence accounting is unchanged.
+leaves it untouched. Key-row release names the original native debit ID rather
+than choosing a timestamp/amount occurrence.
 
 When a delivered send reports actual cost, reconciliation performs the same
 check separately for each original spend target, before removing an estimate,
@@ -36,8 +37,9 @@ into a reusable allocation. No second accounting ledger or clock is added.
 
 This fixes current terminal release and Done-time spend reconciliation. It does
 not enable charter-backed non-delivery retry release or change uncertain or
-mixed retry behavior. Reserved-versus-settled budget projections and the timing
-of budget ladder signals are separate work. Existing admission, limits, pricing,
-owner checks, and the text/compiled approval checks remain unchanged.
+mixed retry behavior. [Reserved-versus-settled budget projections](effector-usage-lifecycle.md)
+now use those same native debit identities. The timing of budget ladder signals
+is separate work. Existing admission, limits, pricing, owner checks, and the
+text/compiled approval checks remain unchanged.
 
 This is a source contract, not a runtime or timing measurement.

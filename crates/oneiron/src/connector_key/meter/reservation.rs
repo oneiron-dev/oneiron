@@ -55,6 +55,7 @@ pub struct EffectorSpendReservationRow {
 /// the amount and the charge's instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectorBudgetDebit {
+    pub entry_id: EntityId,
     pub key_ref: EntityId,
     pub row: EffectorBudgetRowId,
     pub approval: EffectorBudgetApproval,
@@ -91,7 +92,7 @@ pub(crate) fn release_effector_debits_in_txn(
         let Some(position) = usage
             .entries
             .iter()
-            .position(|entry| *entry == (debit.at, debit.amount))
+            .position(|entry| entry.id == debit.entry_id)
         else {
             continue;
         };
@@ -115,7 +116,12 @@ pub(crate) fn restore_effector_debits_in_txn(
         grouped
             .entry((debit.key_ref, debit.row))
             .or_insert_with(Vec::new)
-            .push((debit.at, debit.amount));
+            .push(UsageEntry {
+                id: debit.entry_id,
+                at: debit.at,
+                amount: debit.amount,
+                reserved: true,
+            });
     }
     let mut block = BudgetBlock::Open;
     let mut restored_rows = Vec::new();
@@ -193,4 +199,30 @@ pub(crate) fn restore_effector_debits_in_txn(
         USAGE.put(store, wtxn, &key, &usage)?;
     }
     Ok(BudgetBlock::Open)
+}
+
+/// Changes only the exact live entries carried by one outbound reservation.
+/// A window expiry or charter reset leaves no entry to mark.
+pub(crate) fn set_effector_debits_reserved_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    debits: &[EffectorBudgetDebit],
+    reserved: bool,
+) -> Result<()> {
+    for debit in debits {
+        let key = (debit.key_ref, debit.row.usage_key());
+        let Some(mut usage) = USAGE.get(store, wtxn, &key)? else {
+            continue;
+        };
+        let Some(entry) = usage
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == debit.entry_id)
+        else {
+            continue;
+        };
+        entry.reserved = reserved;
+        USAGE.put(store, wtxn, &key, &usage)?;
+    }
+    Ok(())
 }

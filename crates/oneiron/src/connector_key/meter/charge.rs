@@ -5,6 +5,16 @@
 use super::*;
 
 impl EffectorBudgetCharge {
+    /// Refreshes the admission snapshot after its same-writer reservation marks.
+    pub(crate) fn refresh_read_in_txn(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        now: u64,
+    ) -> Result<()> {
+        refresh_read_in_txn(store, txn, &mut self.read, now)
+    }
+
     /// Folds the catalog pool's own charge into this per-grant key's: the
     /// pool's read rides `read.pool`, the rest `pool`.
     fn meet_pool(&mut self, mut pool: Self) {
@@ -17,6 +27,24 @@ impl EffectorBudgetCharge {
             ladder_events: pool.ladder_events,
         });
     }
+}
+
+fn refresh_read_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    read: &mut EffectorBudgetRead,
+    now: u64,
+) -> Result<()> {
+    let record = crate::connector_key::txn::read_connector_key_in_txn(store, txn, &read.key_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let states = load_budget_row_states(store, txn, &read.key_ref, &record, None, false, now)?;
+    let pool = read.pool.take();
+    *read = budget_read_from_states(&read.key_ref, &record, &states);
+    read.pool = pool;
+    if let Some(pool) = read.pool.as_mut() {
+        refresh_read_in_txn(store, txn, pool, now)?;
+    }
+    Ok(())
 }
 
 impl EffectorBudgetChargeOutcome {
@@ -356,8 +384,10 @@ fn charge_key_budgets(
     let mut debits = Vec::new();
     for state in states.iter_mut().filter(|state| state.matched) {
         if state.amount > 0 {
-            state.usage.entries.push((now, state.amount));
+            let entry = UsageEntry::settled(store, wtxn, now, state.amount)?;
+            state.usage.entries.push(entry);
             debits.push(EffectorBudgetDebit {
+                entry_id: entry.id,
                 key_ref: *key_id,
                 row: state.row,
                 approval: EffectorBudgetApproval::capture(key, state.row)?,
