@@ -11,9 +11,30 @@ use oneiron::claim::{OwnedScopedRead, ScopedRead};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
+/// Keeps the already-allocated interlocutor controls charged with their request.
+pub(super) struct RetainedContextRequest {
+    pub(super) request: CoreContextPackRequest,
+    _storage: oneiron_contracts::host_memory::MemoryLease,
+}
+
+impl RetainedContextRequest {
+    fn new(request: CoreContextPackRequest, memory: &crate::machine::MachineMemory) -> Self {
+        let bytes = request
+            .interlocutors
+            .as_ref()
+            .map_or(0, |controls| controls.retained_storage_bytes());
+        let mut storage = memory.empty_lease();
+        storage.materialized(0, bytes);
+        Self {
+            request,
+            _storage: storage,
+        }
+    }
+}
+
 pub(super) struct ResolvedContextInputs {
     pub(super) read: OwnedScopedRead,
-    pub(super) req: CoreContextPackRequest,
+    pub(super) req: RetainedContextRequest,
     pub(super) optional_memory: Option<oneiron::agent_def::OptionalMemory>,
     pub(super) room_id: Option<oneiron::EntityId>,
     pub(super) room_members: Option<Vec<oneiron::EntityId>>,
@@ -24,7 +45,7 @@ pub(super) struct ResolvedContextInputs {
 // The turn drops after the inputs if a thread cannot start or its caller leaves.
 struct ContextInputWork {
     read: OwnedScopedRead,
-    req: CoreContextPackRequest,
+    req: RetainedContextRequest,
     auth: CoreAuth,
     turn: Permit,
 }
@@ -37,12 +58,13 @@ impl ContextInputWork {
             return;
         }
         let (read, inputs) = self.read.with_read(|read| {
-            let optional_memory = reader_optional_memory(read, self.req.reader.as_ref())?;
+            let optional_memory = reader_optional_memory(read, self.req.request.reader.as_ref())?;
             if answer.is_closed() {
                 return Ok(None);
             }
             let room_id = self
                 .req
+                .request
                 .conversation_id
                 .as_deref()
                 .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
@@ -55,7 +77,7 @@ impl ContextInputWork {
                 read.vault(),
                 &self.auth,
                 read,
-                self.req.interlocutors.as_ref(),
+                self.req.request.interlocutors.as_ref(),
                 room.as_ref(),
             )?;
             Ok::<_, ApiError>(Some((
@@ -100,6 +122,7 @@ pub(super) async fn resolve_context_inputs(
     let read = read
         .into_owned_base(Arc::clone(&server.vault))
         .map_err(|_| ApiError::internal_server_error("context-pack reader transfer failed"))?;
+    let req = RetainedContextRequest::new(req, &server.memory);
     let caller = auth
         .principal_ref()
         .unwrap_or(auth.principal())

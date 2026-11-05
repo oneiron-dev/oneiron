@@ -68,7 +68,7 @@ pub(crate) async fn core_context_pack(
 pub(crate) async fn run_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    mut req: CoreContextPackRequest,
+    req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
 ) -> Result<
     (
@@ -84,14 +84,14 @@ pub(crate) async fn run_context_pack(
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let super::input_worker::ResolvedContextInputs {
         read,
-        req: resolved_req,
+        req: mut retained_req,
         optional_memory,
         room_id,
         room_members,
         room,
         interlocutors,
     } = super::input_worker::resolve_context_inputs(server, auth, scoped_read, req).await?;
-    req = resolved_req;
+    let req = &mut retained_req.request;
     let scoped_read = read
         .into_borrowed(&server.vault)
         .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
@@ -271,7 +271,7 @@ pub(crate) async fn run_context_pack(
     read_reaction_signals(
         server,
         auth,
-        &req,
+        req,
         &scoped_read,
         signal_disclosure.as_ref(),
         &mut response,
