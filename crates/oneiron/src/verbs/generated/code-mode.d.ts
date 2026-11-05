@@ -5825,9 +5825,9 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.CodeViewReadRequest): Promise<Sdk.CodeViewFileBytes | StoredResult>;
     };
     waits: {
-      /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
+      /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
       receipt(input: Sdk.CodeWaitReceiptRequest): Promise<Sdk.CodeWaitReceiptView | null | StoredResult>;
-      /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
+      /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
       resolve(input: Sdk.CodeWaitResolveRequest): Promise<Sdk.CodeWaitReceiptView | StoredResult>;
     };
   };
