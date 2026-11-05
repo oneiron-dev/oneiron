@@ -14,7 +14,7 @@ impl OffRecordSessionVault<'_> {
         &self,
         room: EntityId,
         actor: EntityId,
-    ) -> Result<Vec<(String, OffRecordMode)>> {
+    ) -> Result<Vec<(String, EntityId, OffRecordMode)>> {
         let txn = self.vault.store.env.read_txn()?;
         if !is_member_in_txn(self.vault, &txn, room, actor)? {
             return Ok(Vec::new());
@@ -25,7 +25,7 @@ impl OffRecordSessionVault<'_> {
                 && record.room == Some(*room.as_bytes())
                 && !record.closing
             {
-                stretches.push((record.session_ref, record.mode));
+                stretches.push((record.session_ref, record.instance_ref, record.mode));
             }
         }
         Ok(stretches)

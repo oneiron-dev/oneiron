@@ -161,6 +161,8 @@ impl RoomPosture {
 #[derive(Debug, Clone)]
 pub struct RoomStretch {
     pub session_ref: String,
+    /// The live instance, even when a closed stretch's handle is reused.
+    pub instance_ref: EntityId,
     pub mode: crate::off_record::OffRecordMode,
 }
 
@@ -224,8 +226,9 @@ impl RoomSection {
                 crate::off_record::OffRecordMode::Anonymous => "anonymous",
             };
             format!(
-                "stretch: {} mode={mode}",
-                one_line_token(&stretch.session_ref)
+                "stretch: {} instance={} mode={mode}",
+                one_line_token(&stretch.session_ref),
+                stretch.instance_ref.to_hex()
             )
         }));
         rows.extend(self.roster.iter().map(|member| {

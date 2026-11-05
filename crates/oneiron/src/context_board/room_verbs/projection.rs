@@ -107,7 +107,11 @@ impl Memory<'_> {
                 .off_record_session_vault()
                 .room_stretches_for(room, self.actor())?
                 .into_iter()
-                .map(|(session_ref, mode)| RoomStretch { session_ref, mode })
+                .map(|(session_ref, instance_ref, mode)| RoomStretch {
+                    session_ref,
+                    instance_ref,
+                    mode,
+                })
                 .collect(),
             roster,
             scope,
