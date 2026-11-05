@@ -32,6 +32,37 @@ pub async fn seat_siwc_login(args: crate::cli::SiwcLoginArgs) -> anyhow::Result<
     Ok(())
 }
 
+pub fn seat_siwc_clear(args: crate::cli::SiwcCredentialArgs) -> anyhow::Result<()> {
+    let result = crate::runtime::seat_login::siwc::clear(args.credential_file)?;
+    print_sign_out(result)
+}
+
+pub async fn seat_siwc_revoke(args: crate::cli::SiwcRevokeArgs) -> anyhow::Result<()> {
+    let result =
+        crate::runtime::seat_login::siwc::revoke(crate::runtime::seat_login::siwc::RevokeOptions {
+            credential_file: args.credential_file,
+            retries: args.retries,
+            backoff: std::time::Duration::from_millis(args.backoff_ms),
+            timeout: std::time::Duration::from_secs(args.timeout_secs),
+        })
+        .await?;
+    print_sign_out(result)
+}
+
+fn print_sign_out(result: crate::runtime::seat_login::siwc::SignOut) -> anyhow::Result<()> {
+    use crate::runtime::seat_login::siwc::SignOut;
+    let message = match result {
+        SignOut::NoLocalRecord => "No local SIWC record; remote revocation was not confirmed.",
+        SignOut::LocalOnly => "Local SIWC tokens cleared; remote grant was not revoked.",
+        SignOut::Revoked => "SIWC session revocation confirmed; local tokens cleared.",
+        SignOut::RevocationUnconfirmed => {
+            "Local SIWC tokens cleared; remote revocation unconfirmed. Disconnect the app in ChatGPT Settings."
+        }
+    };
+    writeln!(io::stdout().lock(), "{message}")?;
+    Ok(())
+}
+
 pub fn seat_routes() -> anyhow::Result<()> {
     print_json(&seat_route_catalog())
 }

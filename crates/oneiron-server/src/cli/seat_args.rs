@@ -26,6 +26,41 @@ pub enum SeatCommand {
     /// Sign in locally with ChatGPT and save one protected account record.
     /// Prints the URL for you to open; never starts a browser or prints tokens.
     SiwcLogin(Box<SiwcLoginArgs>),
+    /// Clear only local SIWC tokens, keeping the account registration.
+    /// Does not revoke the remote grant.
+    SiwcClear(Box<SiwcCredentialArgs>),
+    /// Stop local SIWC use, revoke the renewable session, then clear tokens.
+    /// Keeps the account registration even when remote revocation is unconfirmed.
+    SiwcRevoke(Box<SiwcRevokeArgs>),
+}
+
+const DEFAULT_SIWC_REVOKE_RETRIES: u32 = 2;
+const DEFAULT_SIWC_REVOKE_BACKOFF_MS: u64 = 1000;
+const DEFAULT_SIWC_REVOKE_TIMEOUT_SECS: u64 = 120;
+
+#[derive(Args, Clone, Debug)]
+pub struct SiwcCredentialArgs {
+    /// Protected local SIWC account record; its registration is retained.
+    #[arg(long)]
+    pub credential_file: PathBuf,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SiwcRevokeArgs {
+    /// Protected local SIWC account record; its registration is retained.
+    #[arg(long)]
+    pub credential_file: PathBuf,
+    /// Extra attempts after a network failure or HTTP 5xx; zero makes one attempt.
+    #[arg(long, default_value_t = DEFAULT_SIWC_REVOKE_RETRIES)]
+    pub retries: u32,
+    /// Initial retry delay in milliseconds, multiplied by the retry number.
+    /// Zero retries without waiting.
+    #[arg(long, default_value_t = DEFAULT_SIWC_REVOKE_BACKOFF_MS)]
+    pub backoff_ms: u64,
+    /// Total timeout in seconds for each revocation HTTP request.
+    /// Zero expires immediately, not an unlimited wait.
+    #[arg(long, default_value_t = DEFAULT_SIWC_REVOKE_TIMEOUT_SECS)]
+    pub timeout_secs: u64,
 }
 
 #[derive(Args, Clone, Debug)]

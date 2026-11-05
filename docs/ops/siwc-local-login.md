@@ -130,8 +130,47 @@ there is no automatic retry or claim that the vendor rolled it back. Sign in aga
 if that grant is no longer valid. Do not configure a saved token as an environment
 key or vault secret to work around a failed refresh.
 
-Registration revocation and full official-seat Dreamer execution remain separate
-engineering work.
+## Clear local tokens or revoke the renewable session
+
+Use `oneiron seat siwc-clear --credential-file /your/private/config/chatgpt-account.json`
+to clear only local access, refresh and ID tokens. It does not revoke the remote
+grant. The protected account/issued-client/host/callback mapping stays available
+for a later sign-in; the separate host-ID file is unchanged.
+
+Use `oneiron seat siwc-revoke --credential-file /your/private/config/chatgpt-account.json`
+to stop local use, attempt remote session revocation and then clear the tokens.
+The user action first saves `session_active=false` in that same locked record.
+Every subsequent credential open and physical release honors it before refreshing
+or sending. Requests already physically sent may still finish; this command is
+not a claim that remote in-flight work was cancelled.
+
+The command posts the saved refresh token, `token_type_hint=refresh_token` and
+that registration's issued client ID to the published revocation endpoint. Only
+HTTP 200 confirms revocation, including for an already-invalid token. Network
+failures and HTTP 5xx retry with backoff while the protected token is retained.
+Initial defaults are two extra attempts, linear 1000 ms backoff and a 120-second
+total HTTP timeout per attempt. `--retries`, `--backoff-ms` and `--timeout-secs`
+override them. Zero extra retries makes one attempt; zero backoff removes the
+wait; zero timeout expires immediately rather than allowing an unlimited wait.
+These numeric defaults are an open owner-review call, not vendor requirements.
+
+After the attempts, all local tokens are cleared even when remote revocation is
+unconfirmed. The command says so and directs the user to disconnect the app in
+ChatGPT Settings. With no refresh token it clears locally and reports unconfirmed;
+it does not invent access-token revocation. Revocation does not delete the issued
+client. The command preserves the account mapping and checks the entire record
+again after the network awaits, so it cannot overwrite a different registration
+or restore a removed credential file.
+
+Ctrl-C cancels the revocation task without a detached writer. If local use was
+already stopped, its protected tokens may remain in the inactive record for an
+explicit retry. Ordinary model calls cannot refresh or send from that state.
+Rerun `siwc-revoke`, use `siwc-clear`, or sign in again explicitly. The latter uses
+the retained issued client and verified subject and saves a new active grant.
+
+`session_active` is required current-format local state, not a new account
+identity assertion or a remote revocation receipt. Full official-seat Dreamer
+execution remains separate engineering work.
 
 The vendor contract is documented at
 <https://developers.openai.com/siwc/token-sharing-open-source/sign-in>.
