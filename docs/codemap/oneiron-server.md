@@ -700,7 +700,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/widen_proposal_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or… |
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
 | `src/api/owner_routes/world_privacy_routes.rs` | src | m | 10 crate-vis | — | `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480) |
-| `src/api/owner_routes/world_privacy_work_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/worlds/privacy/settings` and `/reassert`: a holder changes a world's settings, or re-asserts them… |
+| `src/api/owner_routes/world_privacy_work_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner/worlds/privacy/settings` and `/reassert`: a holder changes a world's settings, or re-asserts them… |
 | `src/api/packs/defaults.rs` | src | s | 4 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 2 crate-vis | — | Served pack operations, including explicit default skill imports |
 | `src/api/pairing.rs` | src | m | 16 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
@@ -1010,7 +1010,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_call_host/resume.rs` | src | m | 6 crate-vis | — | A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49) |
 | `src/connector_call_host/sent.rs` | src | s | 7 crate-vis | — | What one send of the call host came to, before the ledger scrubs its raw fields |
 | `src/connector_call_host/stream_pump.rs` | src | s | 5 crate-vis | — | A live stream's reader while its round waits for an answer (FIX 9286) |
-| `src/connector_call_settle.rs` | src | s | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
+| `src/connector_call_settle.rs` | src | m | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/connector_elicitation.rs` | src | m | 16 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |
 | `src/connector_elicitation/owner.rs` | src | s | 4 crate-vis | — | The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly… |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |

@@ -1520,7 +1520,7 @@
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -1544,7 +1544,7 @@
      "purpose": "The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed shape vocabulary the planner…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 2
      }
@@ -6831,7 +6831,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -7453,7 +7453,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -7491,7 +7491,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 3
      }
@@ -8273,7 +8273,7 @@
      "path": "src/batch/short_id.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -8420,7 +8420,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -21373,6 +21373,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/consent/answer_wake.rs",
+     "purpose": "A committed consent answer wakes the connector-call settler",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/consent/approval_proof.rs",
      "purpose": "Gate-attested owner approval carriers and retained proof families",
      "surface": {
@@ -29443,8 +29454,8 @@
      "path": "src/dreamer_runner/maintenance/code_fix/publisher_refs.rs",
      "purpose": "Local references to occurrences in the host's actual publisher inputs",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -47897,7 +47908,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 40,
       "re-export": 69
      }
@@ -48889,9 +48900,19 @@
      "purpose": "The typed result a MESSAGE carries in place of an answer too large to say (FIX 365): a bounded preview of…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/result_attachment/restore.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -57225,7 +57246,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -57285,6 +57306,19 @@
      "path": "src/policy_model/owner_rows/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldMachinePlacement"
+     ],
+     "path": "src/policy_model/owner_rows/world_placement_switch.rs",
+     "purpose": "\"This Mac only\": one switch over a world's two placement settings, for a surface that shows a single toggle…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -57981,7 +58015,7 @@
      "path": "src/ports/lmdb_query/checkpoint.rs",
      "purpose": "The checkpoint getter of the entity and edge rows (KS7-2): each raw entity row by its own entity tree, and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -60608,7 +60642,7 @@
      "path": "src/recovery/checkpoint/payload/restore.rs",
      "purpose": "KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -67122,7 +67156,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 12,
       "re-export": 1,
       "struct": 2
@@ -69873,7 +69907,7 @@
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -75181,7 +75215,7 @@
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
       "crate-vis": 11,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -75478,11 +75512,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ResidenceSearchPage"
+     ],
      "path": "src/sync/client/residence/search.rs",
      "purpose": "A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -75493,7 +75530,7 @@
      "purpose": "Home search orchestration",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -75664,7 +75701,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "crate-vis": 1,
-      "fn": 17,
+      "fn": 18,
       "re-export": 4,
       "struct": 3
      }
@@ -76950,9 +76987,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 14,
-      "re-export": 23,
+      "re-export": 24,
       "struct": 2
      }
     },
@@ -77418,7 +77455,7 @@
      "path": "src/sync/residence/prune.rs",
      "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
      }
@@ -77473,6 +77510,20 @@
      "path": "src/sync/residence/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorldEviction"
+     ],
+     "path": "src/sync/residence/world_eviction.rs",
+     "purpose": "A world the owner keeps on one other machine leaves this one (DEC-0005 fix 3: \"A returning old device learns…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -82206,7 +82257,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 15
      }
     },
@@ -88065,7 +88116,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -89808,7 +89859,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90319,7 +90370,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 362,
+     "files": 363,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90445,7 +90496,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90816,7 +90867,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 349,
+     "files": 350,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91028,7 +91079,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6373,
+   "source_files": 6377,
    "test_files": 895
   },
   "oneiron-android": {
@@ -102255,7 +102306,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -103809,7 +103860,7 @@
      "path": "src/lib/backend.rs",
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 8,
       "struct": 2
      }
@@ -115876,7 +115927,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/world_privacy_work_routes.rs",
@@ -119354,7 +119405,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_call_settle.rs",
@@ -127647,7 +127698,7 @@
     "connector_call_settle": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
