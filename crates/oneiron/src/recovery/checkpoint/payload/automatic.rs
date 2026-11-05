@@ -148,6 +148,7 @@ impl Selection {
                 super::Getter::BlobArtifact,
                 super::Getter::EmbedMedia,
                 super::Getter::Codebase,
+                super::Getter::EntityRevision,
             ] {
                 out.captured_rows(&getter.capture(&vault.store, txn)?, |at| {
                     [
@@ -161,6 +162,10 @@ impl Selection {
                         &crate::side_table::EMBEDDING_MEDIA_VECTOR,
                         &crate::side_table::EMBEDDING_MEDIA_DEVICE,
                         &crate::side_table::CODEBASE_SNAPSHOT,
+                        &crate::side_table::ENTITY_REVISION_STATE,
+                        &crate::side_table::ENTITY_REVISION_DOC,
+                        &crate::side_table::ENTITY_REVISION_FRONTIER,
+                        &crate::side_table::ENTITY_REVISION_IDENTITY,
                     ]
                     .into_iter()
                     .any(|decl| at.in_table(decl))
