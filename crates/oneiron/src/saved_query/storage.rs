@@ -210,6 +210,7 @@ pub(super) fn store_record_in_txn(
                 end: record.updated_at,
             },
             learned_at: record.updated_at,
+            row_version: None,
             data: encode_record(record)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
