@@ -39666,7 +39666,7 @@
      "path": "src/git_wire/bundle_tree.rs",
      "purpose": "Exact bundle bytes and modes staged through the existing Git bridge",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -61929,7 +61929,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "Capture, validation and restore of repository working-tree snapshots",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -80982,7 +80982,7 @@
      "path": "src/task_verb/ask_record/attendee_late_ask.rs",
      "purpose": "A placed attendee's first later identity question, separate from its immutable first-entry history cut",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -82890,7 +82890,7 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "struct": 2,
