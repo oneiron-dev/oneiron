@@ -45,9 +45,10 @@ reserve does not change. An embedded host may lend no disk floor.
 
 The disk claim admits the exact encoded metadata and raw payload lengths after
 the transaction's consume-once and deletion preflights, before either put. It
-stays held through the grouped commit. The attempt's durable own-commit witness
-marks it landed even if a later postcommit action reports an error. Uncommitted
-errors release the pending claim. A measured floor reports `StorageFull`
+stays held through the grouped commit. An accounted write's durable own-commit
+witness marks it landed even if a later postcommit action reports an error.
+Unaccounted callers keep the original durable-return rule. Uncommitted errors
+release the pending claim. A measured floor reports `StorageFull`
 with its measured values. A measurement error remains its original I/O error.
 
 This disk budget covers encoded values, not LMDB keys, pages, splits, freelists
