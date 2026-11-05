@@ -220,11 +220,16 @@ impl VaultVm {
             outbox.resume();
         }
         let with_source = self.config.restore_source_disk.is_some();
-        let source_device = with_source.then_some(if self.config.config_disk.is_some() {
-            VmRestoreSourceDevice::Vdd
-        } else {
-            VmRestoreSourceDevice::Vdc
-        });
+        let source_device = with_source.then_some(
+            match (
+                self.config.config_disk.is_some(),
+                self.config.model_disk.is_some(),
+            ) {
+                (true, true) => VmRestoreSourceDevice::Vde,
+                (true, false) | (false, true) => VmRestoreSourceDevice::Vdd,
+                (false, false) => VmRestoreSourceDevice::Vdc,
+            },
+        );
         let (channel, anchor) = match self.restore_boot(source_device, fscrypt_key, timeout).await {
             Ok(channels) => channels,
             Err(error) => {

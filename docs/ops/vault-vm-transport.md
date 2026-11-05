@@ -285,6 +285,40 @@ stream it carries. A RAM resume starts it again for the same URL.
 | A malformed header, a short payload, bytes after it, or a wrong vault | The boot is refused. If A was announced, the guest ends its engine before the engine can read an EOF. |
 | The proxy cannot reach the URL's host and port | The call fails as unreachable, and the anchor stays pending. The vault still starts. |
 
+## Shared model drive (`model_disk`, FIX 6872)
+
+`model_disk` is optional in the VM profile (`null` or absent means no model
+attachment). It names the node's read-only ext4 model image. The host attaches
+it after the optional config drive and before any cold-restore source. The
+guest mounts it at `/models` with `ro,nosuid,nodev,noexec` and passes the engine
+`--shared-model-root /models`. No drive means no new mount or flag; ordinary
+per-vault model copies and native hosts stay unchanged.
+
+The host names the actual model device in `oneiron.models`: `/dev/vdc` without
+a config drive, `/dev/vdd` with one. The restore source follows both optional
+drives, so it is `/dev/vde` when both are present, `/dev/vdd` when one is
+present, and `/dev/vdc` when neither is present. `VmRestoreSourceDevice` now
+includes the serialized value `vde`; the matching engine and guest use that
+same enum and path decoder. The restore wire revision stays 1; this added
+value is not support claimed for an older image.
+
+An image built with this mount publishes `vm_model_drive_revision: 1` in its
+rootfs receipt and manifest (`oneiron_vault_contract::vm::VM_MODEL_DRIVE_REVISION`).
+The supervisor must use the actual matching image hashes and merged engine
+floor before opting into `model_disk`; the marker alone is not a commissioned
+image or proof that a bundle was mounted. Rebuild the image and engine together.
+No image is built or deployed merely by adding this source support.
+
+The supervisor's producer stages one node-wide, root-owned image whose files
+are readable by the vault UID and not group/other-writable. It maps only the
+actual pinned shared Oneironer bundle to the guest path
+`/models/oneironer/<stack_sha16>` in the generated settings. It must not pass a
+host path into the guest or rewrite unrelated owner settings. The existing
+shared-root ownership checks, exact class/stack layout and actual bundle
+manifest validation still admit the read; attaching a drive grants no authority.
+The external producer, intake mapping and matching image rollout are separate
+from this engine/image source slice. FIX 6872 remains PART until they land.
+
 ## Source drive (`restore_source_disk`)
 
 - `restore_source_disk` is an optional key in the VM profile. It names a clean,
@@ -292,9 +326,10 @@ stream it carries. A RAM resume starts it again for the same URL.
 - The image holds only the sealed artifact and its keyless custody head. It
   never holds a secret, an unsealed backup or a credential.
 - The host attaches it only on a restore's boot, after the root, vault and
-  config drives: `/dev/vdc` without a config drive, `/dev/vdd` with one. A
-  profile with a `network` always has a config drive, so its source drive is
-  `/dev/vdd`.
+  optional config and model drives: `/dev/vdc` with neither optional drive,
+  `/dev/vdd` with one, `/dev/vde` with both. A profile with a `network` always
+  has a config drive, so its source is `/dev/vdd` without a model drive and
+  `/dev/vde` with one.
 - The guest mounts it at `/restore` with `ro,nosuid,nodev,noexec`, and unmounts
   it when the engine ends.
 - Make its files readable by the vault's guest UID, and author the plan's
@@ -316,6 +351,10 @@ Snapshots:
   setup in the guest. So keep the TAP, its MAC, its rules and the config drive
   as they are while a snapshot is published. A changed network plan needs a
   cold boot: drop the published snapshot first.
+- The shared model image likewise stays at the same host path with the same
+  bytes while a snapshot is published; snapshot loading reopens its saved
+  drive configuration. Replacing a model image or changing whether the
+  config/model drives are attached needs a cold boot, not a snapshot resume.
 
 ## Guest network (FIX 6808)
 
