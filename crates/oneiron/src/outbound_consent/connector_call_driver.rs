@@ -16,6 +16,9 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, OutboundToolDescriptor, abandon_record,
 };
 use crate::secret_custody::SecretUseSend;
+use crate::web_connector::{
+    WEB_CONNECTOR_NAME, WebFetchInput, WebProviderKey, WebSearchInput, WebTool,
+};
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
@@ -110,6 +113,19 @@ pub(super) fn refused(reason: &str) -> Step {
     }
 }
 
+/// The builtin `web` tool's input contract (FIX 11606): a bare string or the
+/// typed object, from the same `WebSearchInput`/`WebFetchInput` the call
+/// parses. Input shape only, never a key or budget promise.
+fn web_tool_input_schema(tool: WebTool) -> crate::Result<Value> {
+    let schema = match tool {
+        WebTool::Search => schemars::schema_for!(WebSearchInput),
+        WebTool::Fetch => schemars::schema_for!(WebFetchInput),
+    };
+    let object = serde_json::to_value(schema)
+        .map_err(|_| Error::InvalidConfig("web connector: the input schema is not JSON".into()))?;
+    Ok(serde_json::json!({ "anyOf": [{ "type": "string" }, object] }))
+}
+
 impl Step {
     /// The reasons a hold or a refusal carries.
     fn into_reasons(self) -> Vec<String> {
@@ -131,6 +147,14 @@ impl Vault {
     /// takes. Reads only; nothing is held, sent or written. Each catalog
     /// key, grant, governing key and slate it reads lists on the answer,
     /// however the read ends (FIX 5816).
+    ///
+    /// The builtin `web` connector (FIX 11606) has no catalogued key or
+    /// approved MCP manifest: its provider tools answer the first-party
+    /// input contract (`WebSearchInput`/`WebFetchInput`, a bare string or
+    /// the typed object), while a hub switch reads the configured
+    /// connector's governing manifest instead. The schema describes the
+    /// input shape only; it promises neither a provider key nor a budget
+    /// to send with.
     pub fn connector_tool_schema(
         &self,
         memory: &Memory<'_>,
@@ -150,7 +174,10 @@ impl Vault {
     }
 
     /// [`Self::connector_tool_schema`] for `principal_ref`, listing each row
-    /// it reads in `read`.
+    /// it reads in `read`. An exact `web` name is intercepted before the
+    /// catalog route, as the server's call is: an unknown web tool is
+    /// unavailable, a hub switch continues below under the configured
+    /// connector's name, and provider tools answer their input contract.
     fn connector_tool_schema_reading(
         &self,
         principal_ref: &str,
@@ -161,6 +188,25 @@ impl Vault {
         let unavailable = |stop: Step| ConnectorToolSchema::Unavailable {
             reasons: stop.into_reasons(),
         };
+        // Match the served web branch before resolving catalog names.
+        let hub_target: Option<String> = if name == WEB_CONNECTOR_NAME {
+            let Some(web_tool) = WebTool::parse(tool) else {
+                return Ok(unavailable(refused("connector_tool_unknown")));
+            };
+            let setting = self.web_connector_setting()?;
+            match &setting.key {
+                WebProviderKey::Hub { connector } => Some(connector.clone()),
+                WebProviderKey::Backend | WebProviderKey::Secret { .. } => {
+                    return Ok(ConnectorToolSchema::Approved {
+                        input_schema: web_tool_input_schema(web_tool)?,
+                        destructive_hint: false,
+                    });
+                }
+            }
+        } else {
+            None
+        };
+        let name = hub_target.as_deref().unwrap_or(name);
         let (route, catalog_key) = self.route_connector_call_listing(name)?;
         read.extend(catalog_key);
         let Some(route) = route else {
@@ -261,7 +307,9 @@ impl Vault {
         // A row that stops waiting on its owner (it settles, or meets its
         // connector's questions) withdraws the owner questions it named in
         // the same write, and their waiters wake once it committed (FIX 2551).
-        let put_row = |call_ref: &EntityId, row: &PendingConnectorCall| {
+        let put_row = |call_ref: &EntityId,
+                       row: &PendingConnectorCall,
+                       outcome: Option<&ConnectorCallOutcome>| {
             let mut row = row.clone();
             let withdrawn = self.with_write_txn(|txn| {
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
@@ -270,6 +318,19 @@ impl Vault {
                     Vec::new()
                 };
                 put_pending_call_in_txn(&self.store, txn, call_ref, &row)?;
+                // A terminal live outcome settles the code consent wait the
+                // actual row names in this same writer (FIX 4518): the wait's
+                // reply, receipt and trap delivery commit with the held row,
+                // so no crash between them strands or receipt-strips the wait.
+                if let (Some(wait_id), Some(outcome)) = (row.code_consent_wait, outcome) {
+                    crate::code_run::settle_code_consent_wait_listing_in_txn(
+                        self,
+                        txn,
+                        wait_id,
+                        outcome,
+                        row.source_rows.as_deref(),
+                    )?;
+                }
                 Ok(withdrawn)
             })?;
             self.signal_withdrawn_call_asks(&withdrawn);
@@ -277,16 +338,18 @@ impl Vault {
         };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            put_row(&call_ref, pending)?;
+            put_row(&call_ref, pending, None)?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
-        let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
+        let settle = |call_ref: Option<EntityId>,
+                      settled: SettledConnectorCall,
+                      outcome: &ConnectorCallOutcome| {
             if let Some(call_ref) = call_ref {
                 let row = PendingConnectorCall {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                put_row(&call_ref, &row)?;
+                put_row(&call_ref, &row, Some(outcome))?;
             }
             Ok::<_, IntentLedgerError>(())
         };
@@ -297,13 +360,18 @@ impl Vault {
                 result_absence,
                 budget_steering,
             } => {
-                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
-                ConnectorCallOutcome::Delivered {
+                let outcome = ConnectorCallOutcome::Delivered {
                     intent,
                     result,
                     result_absence,
                     budget_steering,
-                }
+                };
+                settle(
+                    call_ref,
+                    SettledConnectorCall::Delivered { intent },
+                    &outcome,
+                )?;
+                outcome
             }
             // The call reached the connector, which asked for input: the
             // call's row, kept for a first call too, holds the round for its
@@ -317,17 +385,26 @@ impl Vault {
                     )),
                     ..pending.clone()
                 };
-                match keep(call_ref, &row) {
-                    Ok(call_ref) => {
-                        host.bind_awaiting_call(&input.handle, call_ref);
-                        ConnectorCallOutcome::AwaitingInput {
-                            call_ref,
-                            intent,
-                            input,
-                        }
+                // Terminal for a code consent wait too (FIX 4518): the ref is
+                // resolved once and the row plus the live outcome commit in
+                // one writer, so the wait settles with the actual questions.
+                // Bind the live handle before the commit can publish its reply.
+                // Durable resume persistence follows the commit, never precedes it.
+                let resolved = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
+                let handle = input.handle.clone();
+                let outcome = ConnectorCallOutcome::AwaitingInput {
+                    call_ref: resolved,
+                    intent,
+                    input,
+                };
+                host.bind_awaiting_call(&handle, resolved);
+                match put_row(&resolved, &row, Some(&outcome)) {
+                    Ok(()) => {
+                        host.awaiting_call_committed(&handle, resolved);
+                        outcome
                     }
                     Err(error) => {
-                        host.abandon_awaiting_input(&input.handle);
+                        host.abandon_awaiting_input(&handle);
                         return Err(error);
                     }
                 }
@@ -336,31 +413,29 @@ impl Vault {
                 decision_ref,
                 reasons,
             } => {
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Refused {
-                        decision_ref: decision_ref.clone(),
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::Refused {
+                let settled = SettledConnectorCall::Refused {
+                    decision_ref: decision_ref.clone(),
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::Refused {
                     decision_ref,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
             Step::Unsettled { intent, reasons } => {
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Unsettled {
-                        intent,
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::PendingDelivery {
+                let settled = SettledConnectorCall::Unsettled {
+                    intent,
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::PendingDelivery {
                     intent,
                     call_ref: None,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
             Step::Held {
                 decision_ref,
@@ -442,17 +517,16 @@ impl Vault {
                     IntentEscalationReason::BindingInvalid,
                     now_ms(),
                 )?;
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Refused {
-                        decision_ref: None,
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::Refused {
+                let settled = SettledConnectorCall::Refused {
+                    decision_ref: None,
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
         };
         Ok((outcome, rows))

@@ -335,7 +335,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
         && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
-            crate::campaign::compliance::campaign_compliance_gate(
+            store.gate_hooks.campaign_compliance_gate(
                 store,
                 &*wtxn,
                 &hydrated_effect,
