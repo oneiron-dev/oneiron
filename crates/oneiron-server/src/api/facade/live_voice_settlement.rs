@@ -2,16 +2,47 @@
 use std::sync::Arc;
 
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
 };
-use oneiron::task_verb::sdk::ConnectorCallReply;
+use oneiron::outbound_consent::ConnectorCallRequest;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::{self, ConnectorCallReply};
 use oneiron::verbs::{ConnectorCallStatus, ConnectorCallStatusRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{carrying_calling_run, credential_listing};
 use crate::auth::CoreAuth;
+use crate::connector_elicitation::ConnectorResultInterest;
 use crate::server::SyncServer;
 use crate::voice_host::PublicSession;
+
+/// Registers native result interest before dispatch or the held-row replay read.
+pub(super) fn call(
+    server: &SyncServer,
+    memory: Memory<'_>,
+    input: ConnectorCallRequest,
+) -> MemoryResult<(
+    (ConnectorCallReply, Option<Vec<EntityId>>),
+    Option<ConnectorResultInterest>,
+)> {
+    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
+        return super::connector_call_doors::connector_call_listing_as(server, &memory, input)
+            .map(|reply| (reply, None));
+    }
+    let invocation = memory.invocation().unwrap_or_else(InvocationId::mint);
+    let memory = memory.with_invocation(invocation);
+    let native =
+        sdk::connector_call_invocation(memory.actor(), invocation).map_err(MemoryError::from)?;
+    let call_ref = native
+        .call_ref(memory.actor())
+        .map_err(sdk::connector_call_error)?;
+    let interest = server
+        .connector_elicitations
+        .observe_result(memory.actor(), call_ref);
+    let reply = super::connector_call_doors::connector_call_listing_as(server, &memory, input)?;
+    Ok((reply, Some(interest)))
+}
 
 pub(super) fn follow(
     server: &Arc<SyncServer>,
@@ -20,6 +51,7 @@ pub(super) fn follow(
     session: &Arc<PublicSession>,
     call_ref: String,
     listed: Vec<EntityId>,
+    interest: Option<ConnectorResultInterest>,
 ) -> MemoryResult<()> {
     let work = observe(
         Arc::clone(server),
@@ -28,6 +60,7 @@ pub(super) fn follow(
         Arc::clone(session),
         call_ref.clone(),
         listed,
+        interest,
     );
     session.follow_tool(server, call_ref, carrying_calling_run(work))
 }
@@ -39,6 +72,7 @@ async fn observe(
     session: Arc<PublicSession>,
     call_ref: String,
     listed: Vec<EntityId>,
+    interest: Option<ConnectorResultInterest>,
 ) {
     let mut delivered = None;
     loop {
@@ -78,9 +112,22 @@ async fn observe(
                     delivered = Some((result, sources));
                 }
                 Ok(ConnectorCallStatus::Settled {
+                    reply: ConnectorCallReply::Delivered { result: None, .. },
+                    ..
+                }) => {
+                    // The worker retained its cleared live result before the
+                    // receipt became visible. Durable rows still keep no body.
+                    let Some(result) = interest.as_ref().and_then(|interest| interest.result())
+                    else {
+                        return;
+                    };
+                    let mut sources = listed.clone();
+                    sources.extend(rows);
+                    delivered = Some(((*result).clone(), sources));
+                }
+                Ok(ConnectorCallStatus::Settled {
                     reply:
-                        ConnectorCallReply::Delivered { result: None, .. }
-                        | ConnectorCallReply::Refused { .. }
+                        ConnectorCallReply::Refused { .. }
                         | ConnectorCallReply::PendingDelivery { call_ref: None, .. },
                     ..
                 }) => return,

@@ -505,6 +505,11 @@ impl Worker {
                     if let Some(kept) = &self.kept {
                         clear_event(&mut event, &kept.sent());
                     }
+                    if let WorkerEvent::Result(result) = &event
+                        && let Some(registry) = self.registry.upgrade()
+                    {
+                        registry.publish_observed_result(&self.handle, result);
+                    }
                     let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
                     if matches!(event, WorkerEvent::Result(_)) {
                         self.keep_row(call_ref, |vault, call_ref| {

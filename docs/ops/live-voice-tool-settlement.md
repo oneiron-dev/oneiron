@@ -20,6 +20,22 @@ result for another attempt. A successful attachment ends the observer. The
 session follows each call ref at most once, including after its observer ends.
 Terminal refusals and deliveries with no retained result attach nothing.
 
+Before a generic connector call dispatches or reads a replayed call's row, the
+credential-bound blocking caller registers interest in its exact native call ref.
+An invocation it already carries keeps that identity; a call with none uses a fresh
+native invocation. Web connector calls keep their existing path. For an input
+call, the connector worker hands its cleared original result to active interests
+before settling the receipt-only row. The status reader still authorizes the
+caller before the voice observer uses that result. A concurrent answer that
+settles a replay during the call can therefore still feed the same observer.
+
+Only active interests retain a result, shared immutably between authorized
+session observers. Each session keeps its own once-per-ref attachment gate.
+The interest is owned before the observer is spawned; a rejected or unpolled
+future drops it too. The last interest's drop releases the retained body. This
+is not a permanent result cache: calls that already completed without a live
+interest still have only their receipt, and a restart retains no result body.
+
 The host owns these observers in its existing session-task collection. Stop
 signals them and waits for them, including an in-flight blocking status read.
 Session shutdown or a naturally closed command receiver ends a waiting observer.
