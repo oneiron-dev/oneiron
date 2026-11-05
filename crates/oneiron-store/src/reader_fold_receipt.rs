@@ -22,3 +22,15 @@ pub struct SummaryMemo {
     pub path: String,
     pub handle: String,
 }
+
+/// The summary memo's row is its JSON form.
+impl RawValue for SummaryMemo {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex("code-run summary memo").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        serde_json::from_slice(bytes)
+            .map_err(|_| Error::CorruptedIndex("code-run summary memo").into())
+    }
+}
