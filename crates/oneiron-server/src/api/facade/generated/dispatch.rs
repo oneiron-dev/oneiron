@@ -10242,6 +10242,40 @@ async fn vault_shared_propose_remove_owner(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_shared_propose_add_owner(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.propose_add_owner")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.propose_add_owner", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shared.propose_add_owner", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shared_propose_add_owner(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_shared_execute(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11172,6 +11206,76 @@ async fn vault_shared_policy_changes(
     let mut hooks = facade_hooks_pre(server, call, "vault.shared.policy.changes", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_shared_policy_changes(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_owner_change_wait_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.owner_change_wait.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.owner_change_wait.set", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.shared.owner_change_wait.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shared_owner_change_wait_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_owner_change_wait_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.owner_change_wait.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.owner_change_wait.get", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.shared.owner_change_wait.get", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shared_owner_change_wait_get(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -39804,6 +39908,9 @@ async fn call_verb_row(
         "vault.shared.propose_remove_owner" => {
             Box::pin(vault_shared_propose_remove_owner(server, call, input)).await
         }
+        "vault.shared.propose_add_owner" => {
+            Box::pin(vault_shared_propose_add_owner(server, call, input)).await
+        }
         "vault.shared.execute" => Box::pin(vault_shared_execute(server, call, input)).await,
         "vault.shared.receipt" => Box::pin(vault_shared_receipt(server, call, input)).await,
         "vault.shared.outcomes" => Box::pin(vault_shared_outcomes(server, call, input)).await,
@@ -39855,6 +39962,12 @@ async fn call_verb_row(
         }
         "vault.shared.policy.changes" => {
             Box::pin(vault_shared_policy_changes(server, call, input)).await
+        }
+        "vault.shared.owner_change_wait.set" => {
+            Box::pin(vault_shared_owner_change_wait_set(server, call, input)).await
+        }
+        "vault.shared.owner_change_wait.get" => {
+            Box::pin(vault_shared_owner_change_wait_get(server, call, input)).await
         }
         "vault.federation.coreference.link" => {
             Box::pin(vault_federation_coreference_link(server, call, input)).await

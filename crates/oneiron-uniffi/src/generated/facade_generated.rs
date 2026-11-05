@@ -1631,6 +1631,11 @@ export_facade! {
     let output = client.vault_shared_propose_remove_owner(&input)?;
     crate::codec::lift_record("vault.shared.propose_remove_owner", &output)
 };
+"vault.shared.propose_add_owner" => fn vault_shared_propose_add_owner(&self, input: SharedAddOwnerRequest) -> PendingAuthorityAct = |client| {
+    let input: oneiron::task_verb::sdk::SharedAddOwnerRequest = crate::codec::lower_record("vault.shared.propose_add_owner", input)?;
+    let output = client.vault_shared_propose_add_owner(&input)?;
+    crate::codec::lift_record("vault.shared.propose_add_owner", &output)
+};
 "vault.shared.execute" => fn vault_shared_execute(&self, input: SharedActRequest) -> ActAnswerSharedActExecuted = |client| {
     let input: oneiron::task_verb::sdk::SharedActRequest = crate::codec::lower_record("vault.shared.execute", input)?;
     let output = client.vault_shared_execute(&input)?;
@@ -1780,6 +1785,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.changes", input)?;
     let output = client.vault_shared_policy_changes(&input)?;
     crate::codec::lift_record("vault.shared.policy.changes", &output)
+};
+"vault.shared.owner_change_wait.set" => fn vault_shared_owner_change_wait_set(&self, input: SharedOwnerChangeWaitSetRequest) -> Option<u64> = |client| {
+    let input: oneiron::task_verb::sdk::SharedOwnerChangeWaitSetRequest = crate::codec::lower_record("vault.shared.owner_change_wait.set", input)?;
+    let output = client.vault_shared_owner_change_wait_set(&input)?;
+    crate::codec::lift_record("vault.shared.owner_change_wait.set", &output)
+};
+"vault.shared.owner_change_wait.get" => fn vault_shared_owner_change_wait_get(&self) -> Option<u64> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shared.owner_change_wait.get")?;
+    let output = client.vault_shared_owner_change_wait_get(&input)?;
+    crate::codec::lift_record("vault.shared.owner_change_wait.get", &output)
 };
 "vault.federation.coreference.link" => fn vault_federation_coreference_link(&self, input: CoreferenceLinkRequest) -> CoreferenceLinkReceipt = |client| {
     let input: oneiron::task_verb::sdk::CoreferenceLinkRequest = crate::codec::lower_record("vault.federation.coreference.link", input)?;

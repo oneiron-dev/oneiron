@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4488 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1235 facade rows, 4490 declarations.
+Inputs: 1166 of 1235 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1070 of 1235 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -6928,6 +6928,9 @@ class SharedRemoveOwnerRequest(TypedDict):
     successor: NotRequired[str | None]
     target_keeps: NotRequired[FederationGrantRole | None]
     export_first: bool
+class SharedAddOwnerRequest(TypedDict):
+    vault_id: str
+    owner: str
 class SharedActRequest(TypedDict):
     act_id: str
 class SharedVaultChangeVaultDeletedBody(TypedDict):
@@ -7320,6 +7323,9 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class SharedOwnerChangeWaitSetRequest(TypedDict):
+    vault_id: str
+    days: NotRequired[int | None]
 CoreferenceStatus = Literal["proposed", "confirmed"]
 class CoreferenceLinkRequest(TypedDict):
     local_person: EntityId

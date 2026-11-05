@@ -1399,6 +1399,8 @@ export class Oneiron {
       propose_transfer: (input: Facade.SharedTransferRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as Facade.PendingAuthorityAct),
       /** Starts a shared vault's remove_owner act, with its export-first answer. */
       propose_remove_owner: (input: Facade.SharedRemoveOwnerRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as Facade.PendingAuthorityAct),
+      /** Starts a shared vault's add_owner act: a live Owner adds another person as Owner. */
+      propose_add_owner: (input: Facade.SharedAddOwnerRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeAddOwner(input) as Facade.PendingAuthorityAct),
       /** A live Owner runs a matured shared-vault act and gets its receipt. */
       execute: (input: Facade.SharedActRequest): Facade.ActAnswer<Facade.SharedActExecuted> => this.#call(() => this.#client.vaultSharedExecute(input) as Facade.ActAnswer<Facade.SharedActExecuted>),
       /** One shared-act or membership receipt its reader was told about, by id. */
@@ -1432,6 +1434,12 @@ export class Oneiron {
         change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
         /** A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale. */
         changes: (input: Facade.SharedVaultRequest): Facade.SharedActPolicyChange[] => this.#call(() => this.#client.vaultSharedPolicyChanges(input) as Facade.SharedActPolicyChange[]),
+      },
+      owner_change_wait: {
+        /** One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds. */
+        set: (input: Facade.SharedOwnerChangeWaitSetRequest): number | null => this.#call(() => this.#client.vaultSharedOwnerChangeWaitSet(input) as number | null),
+        /** The shared vault's common owner-change wait in seconds, if one is set. */
+        get: (input: Facade.EmptyRequest = {}): number | null => this.#call(() => this.#client.vaultSharedOwnerChangeWaitGet(input) as number | null),
       },
     },
     org_admin: {
