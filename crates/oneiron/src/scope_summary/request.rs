@@ -308,13 +308,18 @@ pub(super) fn plan_in_txn(
         (None, Some(session)) => super::session::session_sources_in_txn(vault, txn, &session)?,
         // A NOTE set has no conversation to resolve: its NOTEs are read in
         // this writer, as its requester reads them (FIX 5757).
-        (None, None) => note_sources_in_txn(
-            vault,
-            txn,
-            request.requester,
-            admitted.as_deref().unwrap_or_default(),
-            &requester_lane::declared_lane(input)?,
-        )?,
+        (None, None) => {
+            let lane = requester_lane::declared_lane(input)?;
+            let basis = requester_lane::declared_read_basis(input, &lane)?;
+            note_sources_in_txn(
+                vault,
+                txn,
+                request.requester,
+                admitted.as_deref().unwrap_or_default(),
+                &lane,
+                basis,
+            )?
+        }
     };
     // A sitting that retained no turns has no summary: its attempt completes
     // with none (FIX 7509), never with invented prose.
