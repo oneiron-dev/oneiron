@@ -1,7 +1,7 @@
 //! Core half of `vault_cleanup::codec_receipts`: its store-layer items live in `oneiron_store::vault_cleanup::codec_receipts` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::vault_cleanup::codec_receipts::*;
+pub(crate) use oneiron_store::vault_cleanup::codec_receipts::*;
 
 use super::{
     CLEANUP_PHASE, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture,
