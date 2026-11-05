@@ -5,12 +5,13 @@
 //! says capacity (`disk_capacity`). The sealed custody change also judges its
 //! spool against the server's disk floor as it goes (`transfers.disk`, kept
 //! at `limits.disk_reserve_bytes`, FIX 5674) and keeps the transfers' idle
-//! bound on its body; no other route does either.
+//! bound on its body. Widen answers opt into the same transfer policy.
 //!
 //! [`OwnerJsonBody`] is every owner JSON route's body. [`json`] decodes a
 //! spooled document whole while its bulk string members stream to sinks, so
 //! a field of any length never becomes one string in memory.
 
+mod hex;
 mod json;
 mod owner_json;
 
@@ -29,8 +30,9 @@ use crate::machine::{DiskClaim, DiskFloor};
 use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
+pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField};
-pub(super) use self::owner_json::OwnerJsonBody;
+pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
 const SPOOL_PIECE: usize = 64 * 1024;
@@ -113,7 +115,7 @@ pub(super) fn declared_length(headers: &HeaderMap) -> Option<u64> {
 /// How a spool reads its body: the disk floor it is judged against, and the
 /// longest the client may go quiet between frames. Every owner route reads
 /// with neither, so only the listener's own body policy ends a quiet body;
-/// the custody change keeps both ([`Self::custody`]).
+/// the custody change and widen answers keep both ([`Self::custody`]).
 #[derive(Default)]
 pub(super) struct SpoolPolicy {
     floor: Option<DiskFloor>,
