@@ -328,6 +328,47 @@ pub fn assemble_tasks_section(
     .with_discovery_rows(fits))
 }
 
+impl TasksSection {
+    /// The normal TASKS section, with actually rendered kept rows in its
+    /// always-open floor. Native row-byte fallback still applies; unknown or
+    /// unreadable ids never create content. Discovery hints retain their
+    /// existing shed rank, and the rest of TASKS still sheds to counts.
+    pub fn board_section_keeping(
+        &self,
+        lead: Vec<String>,
+        keep: &[crate::EntityId],
+    ) -> Result<BoardSection, BoardFrameError> {
+        let mut section = assemble_tasks_section(self, lead)?;
+        if keep.is_empty() {
+            return Ok(section);
+        }
+        for row in &self.rows {
+            if !keep.iter().any(|id| id.to_hex() == row.id) {
+                continue;
+            }
+            if let Some(index) = section
+                .detail_rows
+                .iter()
+                .position(|line| *line == row.line)
+            {
+                section.pinned_rows.push(section.detail_rows.remove(index));
+            }
+        }
+        if !section.pinned_rows.is_empty() {
+            section.count_rows = vec![format!(
+                "count: {}",
+                self.rows.len().saturating_sub(section.pinned_rows.len())
+            )];
+            if !section.detail_rows.is_empty()
+                && rows_tok(&section.count_rows) > rows_tok(&section.detail_rows)
+            {
+                section.detail_rows = section.count_rows.clone();
+            }
+        }
+        Ok(section)
+    }
+}
+
 /// The typed render input: header, mandatory legend, ordered sections.
 #[derive(Debug, Clone, Copy)]
 pub struct BoardFrame<'a> {
