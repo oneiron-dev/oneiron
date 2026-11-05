@@ -141,7 +141,12 @@ pub(crate) fn erase_centroid_source_in_txn(
     // The same erased disposition a retired image's copy takes (FIX 10822).
     let carriage = erased_carriage().ok_or(Error::InvariantViolation("centroid erased marker"))?;
     for key in dependent {
-        ResponseFamily::CentroidEvidence.retire_in_txn(&vault.store, txn, &key, &carriage)?;
+        ResponseFamily::CentroidEvidence.retire_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            txn,
+            &key,
+            &carriage,
+        )?;
     }
     Ok(())
 }

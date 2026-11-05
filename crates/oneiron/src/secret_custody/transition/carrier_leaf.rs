@@ -26,7 +26,7 @@ use crate::authority::AuthorityFold;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::HexId;
-use crate::store::{CredentialLeaf, CustodyKind};
+use crate::store::{CredentialLeaf, CustodyKind, Store};
 
 /// The carrier key minted for one transition, with its reference.
 pub(crate) struct TransitionLeaf {
@@ -71,19 +71,19 @@ pub(super) fn mint_transition_leaf_in_txn(
 /// # Errors
 /// Storage faults reading the kept transition.
 pub(super) fn retire_held_carrier_in_txn(
-    vault: &Vault,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
     let Some(carrier) = TRANSITIONS
-        .get(&vault.store, wtxn, &HexId(id))?
+        .get(store, wtxn, &HexId(id))?
         .and_then(|held| CustodyPieces::decode(&held))
         .and_then(|held| held.lead().carrier)
     else {
         return Ok(());
     };
-    vault.custody_leaves().forget(&carrier);
-    if let Err(error) = vault.store.stage_carrier_retirement_in_txn(
+    store.custody_leaves().forget(&carrier);
+    if let Err(error) = store.stage_carrier_retirement_in_txn(
         wtxn,
         carrier.kind,
         &carrier.credential,
