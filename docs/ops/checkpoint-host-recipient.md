@@ -37,8 +37,12 @@ existing descriptor-ownership error, not a missing-recipient fallback.
 ## Vault VM
 
 Native host profiles require `checkpoint_host_holds_recipient`: either the
-same public object or `null`. The actual `VaultVmConfig` value goes in the
-provision prelude, before the unchanged 64-byte fscrypt key frame. Provision
+same public object or `null`. Before encoding the provision prelude, the
+host validates that actual `VaultVmConfig` material through the same native
+ONHB and fingerprint checks. Unusable material becomes `null` with a
+content-free diagnostic, so even an oversized invalid string cannot veto
+startup at the frame encoder. The guest must echo that exact normalized
+prelude. It still precedes the unchanged 64-byte fscrypt key frame. Provision
 revision 2 requires that field in both the prelude and the guest's exact echo.
 No revision-1 reader is retained. Provision preludes, revision peeks and
 replies use their own frame budget: the original 1 KiB binding/reply allowance

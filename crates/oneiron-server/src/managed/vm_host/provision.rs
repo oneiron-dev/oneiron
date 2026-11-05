@@ -33,7 +33,9 @@ impl VaultVm {
             revision: VM_PROVISION_REVISION,
             vault: self.vault.clone(),
             binding: self.config.provision.clone(),
-            checkpoint_host_holds_recipient: self.config.checkpoint_host_holds_recipient.clone(),
+            checkpoint_host_holds_recipient: crate::managed::checkpoint_recipient::normalized(
+                self.config.checkpoint_host_holds_recipient.as_ref(),
+            ),
         };
         stream
             .write_all(encode_vm_provision_frame(&sent)?.as_bytes())
