@@ -53,10 +53,15 @@ impl Memory<'_> {
     ) -> MemoryResult<CodeSymbolLeaseView> {
         let holder = self.code_owner(owner)?;
         self.code_readable(input.task, Some(ENTITY_TYPE_TASK))?;
-        let lease = self
-            .vault
-            .renew_symbols(input.task, holder, self.code_lease_clock())?;
-        self.code_lease_view(&lease)
+        let now = self.code_lease_clock();
+        let view = self.vault.with_write_txn_grouped(|txn| {
+            let lease = self
+                .vault
+                .renew_symbols_in_txn(txn, input.task, holder, now)?;
+            code_lease_view(&lease)
+        })?;
+        self.code_listed(view.symbols.iter().copied())?;
+        Ok(view)
     }
 
     /// `vault.code.symbols.release`: removes the caller's own declaration of
@@ -112,18 +117,23 @@ impl Memory<'_> {
     /// The CALL behind the lease reply: the stored declaration as the engine
     /// holds it, with no lease ref, epoch or receipt the engine does not keep.
     fn code_lease_view(&self, lease: &SymbolLease) -> MemoryResult<CodeSymbolLeaseView> {
-        let symbols = lease
-            .symbols
-            .iter()
-            .map(|symbol| EntityId::from_hex(symbol))
-            .collect::<crate::error::Result<Vec<EntityId>>>()?;
-        self.code_listed(symbols.iter().copied())?;
-        Ok(CodeSymbolLeaseView {
-            task: EntityId::from_hex(&lease.task_ref)?,
-            holder: EntityId::from_hex(&lease.holder_ref)?,
-            symbols,
-            expires_at: lease.expires_at,
-            held: lease.held,
-        })
+        let view = code_lease_view(lease)?;
+        self.code_listed(view.symbols.iter().copied())?;
+        Ok(view)
     }
+}
+
+fn code_lease_view(lease: &SymbolLease) -> crate::error::Result<CodeSymbolLeaseView> {
+    let symbols = lease
+        .symbols
+        .iter()
+        .map(|symbol| EntityId::from_hex(symbol))
+        .collect::<crate::error::Result<Vec<EntityId>>>()?;
+    Ok(CodeSymbolLeaseView {
+        task: EntityId::from_hex(&lease.task_ref)?,
+        holder: EntityId::from_hex(&lease.holder_ref)?,
+        symbols,
+        expires_at: lease.expires_at,
+        held: lease.held,
+    })
 }
