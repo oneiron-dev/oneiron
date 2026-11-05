@@ -1018,6 +1018,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -1030,6 +1034,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -5162,6 +5170,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditHeader {
@@ -5170,6 +5179,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::EditFooter {
@@ -5177,6 +5187,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditFooter {
@@ -5185,6 +5196,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::CreateHeader { kind, rationale } => Ok(EditStep::CreateHeader {

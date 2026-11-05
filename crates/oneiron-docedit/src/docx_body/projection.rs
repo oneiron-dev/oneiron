@@ -273,6 +273,7 @@ fn story_runs_op(
                 "target": target.id.to_string(),
                 "expect": target.text,
                 "content": story_runs_content(runs),
+                "exact_marks": true,
                 "semantic_hash": target.guard,
             }))
         }
@@ -302,6 +303,7 @@ fn story_runs_op(
                 "target": target.id.to_string(),
                 "expect": target.text,
                 "content": story_runs_content(runs),
+                "exact_marks": true,
                 "semantic_hash": target.guard,
             }))
         }
