@@ -305,7 +305,55 @@ fn writer_settled(prior: &Stamp, proposed: &Scope) -> bool {
             ..prior.scope.clone()
         } == *proposed
 }
+thread_local! {
+    /// The stored scopes one recall on this thread has read, for one
+    /// committed snapshot ([`crate::ports::recall_memo_key`]).
+    static STORED_SCOPES: std::cell::RefCell<StoredScopes> =
+        std::cell::RefCell::new(StoredScopes::default());
+}
+
+/// [`stored_scope`] answers kept for one recall's committed snapshot: each
+/// reads only that snapshot (the stamp, the birth facet, a NOTE's live
+/// `InWorld` edges), never a clock, so a later stage of one recall that
+/// judges a row again reads its scope back instead of decoding its stamp
+/// again (L15 recall speed). An error is never kept.
+#[derive(Default)]
+struct StoredScopes {
+    at: Option<(u64, usize, usize)>,
+    scopes: std::collections::HashMap<(EntityId, u8), Option<Scope>>,
+}
+
 fn stored_scope(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<Option<Scope>> {
+    let Some(key) = crate::ports::recall_memo_key(store, txn) else {
+        return stored_scope_read(store, txn, id, kind);
+    };
+    let kept = STORED_SCOPES.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some(key) {
+            memo.at = Some(key);
+            memo.scopes.clear();
+        }
+        memo.scopes.get(&(id, kind)).cloned()
+    });
+    if let Some(scope) = kept {
+        return Ok(scope);
+    }
+    let scope = stored_scope_read(store, txn, id, kind)?;
+    STORED_SCOPES.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at == Some(key) {
+            memo.scopes.insert((id, kind), scope.clone());
+        }
+    });
+    Ok(scope)
+}
+
+fn stored_scope_read(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

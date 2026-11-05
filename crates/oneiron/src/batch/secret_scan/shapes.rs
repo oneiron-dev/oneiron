@@ -4,6 +4,8 @@ mod blocklist_entries;
 // A recovery phrase's spans (FIX 1099).
 mod mnemonic_spans;
 mod phrase_run;
+// A constant-time lookup into the list (L15 recall speed).
+mod word_lookup;
 pub(super) use mnemonic_spans::mnemonic_spans;
 
 use std::ops::Range;
@@ -273,14 +275,7 @@ fn segment_break(ch: char) -> bool {
 }
 
 fn list_word_index(word: &str) -> Option<u16> {
-    if word.len() > MAX_LIST_WORD_LEN {
-        return None;
-    }
-    let lower = word.to_ascii_lowercase();
-    WORDS
-        .binary_search(&lower.as_str())
-        .ok()
-        .and_then(|index| u16::try_from(index).ok())
+    word_lookup::lookup().index(word_lookup::word_key(word.as_bytes())?)
 }
 
 /// The list is the BIP39 English list in its canonical (sorted) order, so a
