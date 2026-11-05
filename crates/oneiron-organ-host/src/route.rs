@@ -426,3 +426,29 @@ fn read_inputs(
     inputs.extend(lent.into_iter().map(|input| (None, input)));
     Ok(inputs)
 }
+
+impl OrganRouter {
+    /// A held-call encoding uses the router's existing memory line. It has
+    /// no execution clock yet: only the mesh stop ends this admission wait.
+    pub(crate) fn hold_wait_encoding(
+        &self,
+        bytes: u64,
+    ) -> Result<Option<Box<dyn crate::resource_memory::FloorLease>>, HostError> {
+        let Some(floor) = &self.floor else {
+            return Ok(None);
+        };
+        floor
+            .0
+            .lease_untimed(bytes, &shutdown::stopping)
+            .map(Some)
+            .map_err(|refused| match refused {
+                crate::resource_memory::FloorRefusal::Floor { needed, available } => {
+                    HostError::Io(std::io::Error::new(
+                        std::io::ErrorKind::OutOfMemory,
+                        format!("held-call encoding needs {needed} bytes, {available} available"),
+                    ))
+                }
+                crate::resource_memory::FloorRefusal::Deadline => HostError::Interrupted,
+            })
+    }
+}
