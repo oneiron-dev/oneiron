@@ -76,6 +76,7 @@ pub(super) fn graph_proposal(
                 providers: vec![prediction.provider],
                 paired,
                 rule: prediction.rule,
+                cost_per_thousand: Some(prediction.cost_per_thousand),
             }))
         }
         Some(GraphDecision::Decision(decision)) => {
