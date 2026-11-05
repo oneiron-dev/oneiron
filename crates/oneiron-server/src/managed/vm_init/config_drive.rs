@@ -1,7 +1,7 @@
 //! The vault VM's config drive as the root bootstrap reads it: only the typed
 //! files the contract names below
 //! [`VM_GUEST_CONFIG_DIR`](oneiron_vault_contract::vm::VM_GUEST_CONFIG_DIR)
-//! (the network plan, and the managed profile's five files of
+//! (the network plan, and the managed profile's seven files of
 //! [`super::profile`]), each read whole, at most [`MAX_VM_CONFIG_FILE_BYTES`],
 //! once per boot that serves and before the vault's key goes in. The drive's
 //! other files (its settings, its seal files, the host's addresses) reach the
@@ -33,7 +33,7 @@ const NETWORK_FORM: &str =
 pub(super) struct VmGuestConfig {
     /// [`VM_GUEST_NETWORK_FILE`]: the guest NIC to set up.
     pub(super) network: Option<VmGuestNetworkConfig>,
-    /// The managed profile's five files (FIX 6809): the engine's own
+    /// The managed profile's seven files (FIX 6809): the engine's own
     /// managed-profile flags.
     pub(super) profile: VmManagedProfile,
 }
