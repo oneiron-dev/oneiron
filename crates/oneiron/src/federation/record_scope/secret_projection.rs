@@ -23,8 +23,8 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::origin::secret_projection::selector_release::{CopyRow, SyncSecretProjection};
 use crate::provenance::birth::RowBirth;
-use crate::sync::selector::secret_projection::{CopyRow, SyncSecretProjection};
 
 /// One export's marked repo copies.
 pub(super) struct ExportProjection(Option<SyncSecretProjection>);

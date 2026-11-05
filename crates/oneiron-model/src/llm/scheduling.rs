@@ -318,6 +318,19 @@ impl WorkCancel {
         self.flag.load(Ordering::Acquire)
     }
 
+    /// Waits until [`Self::cancel`] fires. The flag is the truth: a wake with
+    /// the flag still clear rearms, so a spurious wake never returns.
+    pub async fn cancelled(&self) {
+        loop {
+            let mut notified = std::pin::pin!(self.changed.notified());
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     /// The flag a host places on a device work request.
     #[must_use]
     pub fn shared(&self) -> Arc<AtomicBool> {
