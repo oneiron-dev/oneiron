@@ -30,21 +30,19 @@ pub(super) fn for_run<'a>(
     reply: &'a LlmMessage,
 ) -> Result<ReplyEvidence<'a>> {
     let source = storage.code_run_known_source(exec_run)?;
-    let content = reply
-        .content
-        .iter()
-        .map(|part| {
-            let ContentPart::Text { text } = part else {
-                return Ok(Cow::Borrowed(part));
-            };
-            Ok(match source.replace_person_text(text)? {
+    let mut evidence = ReplyEvidence {
+        role: &reply.role,
+        content: Vec::with_capacity(reply.content.len()),
+    };
+    for part in &reply.content {
+        let part = match part {
+            ContentPart::Text { text } => match source.replace_person_text(text)? {
                 Some(text) => Cow::Owned(ContentPart::Text { text }),
                 None => Cow::Borrowed(part),
-            })
-        })
-        .collect::<Result<_>>()?;
-    Ok(ReplyEvidence {
-        role: &reply.role,
-        content,
-    })
+            },
+            _ => Cow::Borrowed(part),
+        };
+        evidence.content.push(part);
+    }
+    Ok(evidence)
 }
