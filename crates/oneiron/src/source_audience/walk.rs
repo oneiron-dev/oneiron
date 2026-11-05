@@ -32,7 +32,7 @@
 //! whose words came from a row bound otherwise, and every bound row on any
 //! other lane, does not leave this vault ([`withheld_from_replication_in`]).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -188,13 +188,15 @@ pub(crate) enum ReplicationScope {
 
 /// Whether the row `id` stays out of replication on `scope`. On a restricted
 /// lane: when it is bound to a source audience, a source landed it, or its
-/// words came from such a row (any support of a CLAIM counts, so a claim
-/// also supported elsewhere stays too). On the full owner window: unless it
-/// is itself bound to a policy whose closure resolves here, and nothing its
-/// words came from is bound to another policy or was landed by a source
-/// with no binding; such a row travels with its binding and policy. Where
-/// the vault holds no policy only a row a source landed is withheld, by its
-/// own stamp.
+/// words came from such a row. On the full owner window: when it is bound
+/// to anything but a policy whose closure publishes here, a source landed it
+/// with no binding, or its words came from a row bound otherwise or landed
+/// unbound; such a row travels with its binding and policy. There its words
+/// come from rows as a read takes them: every row it was written from, and,
+/// for a CLAIM, one of its supports, so a claim one free support carries
+/// travels as it reads (FIX 12559 follow-up); a restricted lane counts every
+/// support. Where the vault holds no policy only a row a source landed is
+/// withheld, by its own stamp.
 ///
 /// # Errors
 ///
@@ -220,31 +222,20 @@ pub(crate) fn withheld_from_replication_in(
             _ => None,
         },
     };
-    // A worklist, not recursion: an ancestry chain of any length is read
-    // without growing the stack.
-    let mut seen = BTreeSet::from([*id]);
-    let mut pending = vec![*id];
-    while let Some(row) = pending.pop() {
-        let binding = super::binding_in(vault, txn, &row)?;
-        match (binding, travels_under) {
-            (Some(bound), Some(policy)) if bound == policy => {}
-            (Some(_), _) => return Ok(true),
-            (None, _) => {}
-        }
-        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
-            continue;
-        };
-        if binding.is_none() && source_marked_in(&dbs, txn, row, &bytes)? {
-            return Ok(true);
-        }
-        let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
-        for source in every.into_iter().chain(supports) {
-            if seen.insert(source) {
-                pending.push(source);
-            }
-        }
-    }
-    Ok(false)
+    // The read's own judge, on heap frames, asking each row's binding to be
+    // the one the row travels under.
+    let mut judge = Judge {
+        vault,
+        dbs: &dbs,
+        txn,
+        ask: Ask::Travel {
+            under: travels_under,
+            every_support: scope == ReplicationScope::Restricted,
+        },
+        policies: BTreeMap::new(),
+        rows: BTreeMap::new(),
+    };
+    Ok(!judge.row_readable(*id, None)?)
 }
 
 /// Whether every one of `viewers` reads the revision `raw` of `id` under
@@ -269,19 +260,34 @@ pub(crate) fn readable_with_read_in(
         vault,
         dbs,
         txn,
-        viewers,
+        ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
         rows: BTreeMap::new(),
     };
     judge.row_readable(id, Some(raw))
 }
 
-/// One read's verdicts, memoised by row and by policy.
+/// What a judge asks of each row's own binding.
+#[derive(Clone, Copy)]
+enum Ask<'a> {
+    /// A read by every one of these viewers: the binding's policy reads to
+    /// them.
+    Read(&'a [EntityId]),
+    /// Replication: the binding is the policy the row travels under, which
+    /// a restricted lane has none of. A restricted lane counts every support
+    /// of a CLAIM as a row it was written from (L02, 6 Nov 06:24).
+    Travel {
+        under: Option<EntityId>,
+        every_support: bool,
+    },
+}
+
+/// One read's or one replication's verdicts, memoised by row and by policy.
 struct Judge<'a, 's, 't> {
     vault: &'a Vault,
     dbs: &'a crate::store::StoreRead<'s>,
     txn: &'a heed::RoTxn<'t>,
-    viewers: &'a [EntityId],
+    ask: Ask<'a>,
     policies: BTreeMap<EntityId, bool>,
     rows: BTreeMap<EntityId, bool>,
 }
@@ -421,10 +427,14 @@ impl Judge<'_, '_, '_> {
     /// from.
     fn open(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<Opened> {
         let binding = super::binding_in(self.vault, self.txn, &id)?;
-        if let Some(policy) = binding
-            && !self.policy_readable(policy)?
-        {
-            return Ok(Opened::Decided(false));
+        if let Some(policy) = binding {
+            let admitted = match self.ask {
+                Ask::Read(viewers) => self.policy_readable(policy, viewers)?,
+                Ask::Travel { under, .. } => under == Some(policy),
+            };
+            if !admitted {
+                return Ok(Opened::Decided(false));
+            }
         }
         let bytes = match raw {
             Some(raw) => raw.to_vec(),
@@ -441,11 +451,20 @@ impl Judge<'_, '_, '_> {
         if binding.is_none() && source_marked_in(self.dbs, self.txn, id, &bytes)? {
             return Ok(Opened::Decided(false));
         }
-        let (every, supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;
+        let (mut every, mut supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;
+        if matches!(
+            self.ask,
+            Ask::Travel {
+                every_support: true,
+                ..
+            }
+        ) {
+            every.append(&mut supports);
+        }
         Ok(Opened::Waiting(Frame::new(id, every, supports)))
     }
 
-    fn policy_readable(&mut self, policy: EntityId) -> Result<bool> {
+    fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {
         if let Some(known) = self.policies.get(&policy) {
             return Ok(*known);
         }
@@ -453,8 +472,8 @@ impl Judge<'_, '_, '_> {
             None => false,
             Some(None) => true,
             Some(Some(readers)) => {
-                let mut every = !self.viewers.is_empty();
-                for viewer in self.viewers {
+                let mut every = !viewers.is_empty();
+                for viewer in viewers {
                     if !every {
                         break;
                     }
