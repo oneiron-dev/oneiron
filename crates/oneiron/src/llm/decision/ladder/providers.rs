@@ -90,14 +90,32 @@ pub struct DecisionCallContext<'a> {
 /// A native packed provider checks this once per request; a sequential provider
 /// checks it before each of its requests. A memo replay starts no generation.
 pub trait DecisionGenerationAdmission: Send + Sync {
-    fn admit(&self) -> Result<()>;
+    /// False keeps this generation unstarted; it is not a provider failure.
+    fn admit(&self) -> bool;
 }
 
 impl DecisionCallContext<'_> {
     /// Checks the caller's allowance after native preflights, before a request starts.
-    pub fn admit_generation(&self) -> Result<()> {
+    pub fn admit_generation(&self) -> bool {
         self.generation
-            .map_or(Ok(()), DecisionGenerationAdmission::admit)
+            .is_none_or(DecisionGenerationAdmission::admit)
+    }
+}
+
+/// Whether a native read started, apart from its provider result. An unstarted
+/// stronger read leaves the ladder's prior answer available for its normal cut rule.
+pub enum DecisionReadOutcome<T> {
+    NotStarted,
+    Answered(T),
+}
+
+impl<T> DecisionReadOutcome<T> {
+    /// Transforms only a returned answer, never an unstarted read.
+    pub fn map<U>(self, answer: impl FnOnce(T) -> U) -> DecisionReadOutcome<U> {
+        match self {
+            Self::NotStarted => DecisionReadOutcome::NotStarted,
+            Self::Answered(value) => DecisionReadOutcome::Answered(answer(value)),
+        }
     }
 }
 
@@ -105,14 +123,14 @@ impl DecisionCallContext<'_> {
 /// Receipt usage stays optional; neither an empty inventory nor a receipt count
 /// establishes token use or a number of logical generations.
 pub struct CapturedDecision {
-    pub result: Result<ProviderDecision>,
+    pub result: Result<DecisionReadOutcome<ProviderDecision>>,
     pub receipts: Vec<RunReceipt>,
 }
 
 /// A native pack's original result and every settlement in its paid prefix,
 /// including when a later request fails. Usage remains optional on each receipt.
 pub struct CapturedDecisionPack {
-    pub result: Result<Vec<ProviderDecision>>,
+    pub result: Result<Vec<DecisionReadOutcome<ProviderDecision>>>,
     pub receipts: Vec<RunReceipt>,
 }
 
