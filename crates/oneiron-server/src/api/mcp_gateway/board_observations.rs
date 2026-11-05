@@ -13,7 +13,8 @@ use tokio::sync::{MappedMutexGuard, MutexGuard};
 
 /// A tagged connector key cannot alias Core's two-element session key,
 /// even if a Core principal deliberately chooses an MCP-looking name.
-/// Both namespaces share the server-owned store and its eviction policy.
+/// Both namespaces share the server-owned store. MCP entries close when
+/// their connector credential is pruned.
 pub(super) async fn read_set<'a>(
     server: &'a SyncServer,
     actor: &McpResolvedActor,
