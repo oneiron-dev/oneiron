@@ -122583,7 +122583,7 @@
      "path": "src/managed/state_serve/control.rs",
      "purpose": "The ctl dispatcher: every parsed ctl request a managed vault answers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -136098,13 +136098,14 @@
       "ShedCause",
       "ShedStatus",
       "TrainingPurgeState",
-      "TrainingPurgeStateWire"
+      "TrainingPurgeStateWire",
+      "VmOutboxCompanionState"
      ],
      "path": "src/lib/ctl.rs",
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 12,
+      "enum": 13,
       "fn": 6,
       "re-export": 3,
       "struct": 4
