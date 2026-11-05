@@ -155,6 +155,7 @@ impl Memory<'_> {
                         entity_type: put.entity_type,
                         occurred: put.occurred,
                         learned_at: put.learned_at,
+                        row_version: None,
                         data: put.data.to_vec(),
                         allow_maintenance: false,
                         allow_reserved_predicate: false,

@@ -149,6 +149,15 @@ URL. Managed serve (`--managed-by-hypnos`) takes both from its supervisor on
 argv (`--kit-bundle-public-urls`, `--oauth-resource-indicator`), and its
 settings file may not set them.
 
+`git_door_base` (flag `--git-door-base`, env `ONEIRON_GIT_DOOR_BASE`) is the
+host's own Git door, `https://<host>/git` (plain `http` only on loopback).
+When it is set, every run checkout bind (the public `vault.repo` door, a code
+run's `repo.checkout_bind`, and a resident run's) names this base, and the
+endpoint the caller sent is ignored. When it is unset, the caller's explicit
+endpoint is used, as before. The server refuses to start on a value outside
+that grammar. Managed serve takes it from its supervisor on argv, like the
+other public addresses.
+
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
 (`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
@@ -393,6 +402,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+codebase_manifest_files = 10000000 # files one legacy codebase snapshot manifest names; past it the manifest is kept whole and the row asks
 requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
 embedding_dimensions = 1048576 # embedding vector dimensions one vault opened with, measured where its host serves it; past it the vault serves as opened and the row asks
 ```
