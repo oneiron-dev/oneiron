@@ -245,20 +245,25 @@ impl Vault {
     /// before. A later AgentRun append without settlement waits as the same
     /// native-output proposal any organ result uses, with the caller's live
     /// content-write authority checked beside it; HEAD stays untouched until
-    /// Keep takes the existing authorized settlement path (FIX 8208).
+    /// Keep takes the existing authorized settlement path (FIX 8208). The read
+    /// lane is constructed only for a retained envelope naming sources beyond
+    /// its writer, never for a landed append (FIX 12562).
     #[expect(clippy::too_many_arguments)]
-    pub fn append_blob_artifact_version_checked(
+    pub fn append_blob_artifact_version_checked<'reader, E>(
         &self,
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
         bytes: &[u8],
         provenance: &BlobVersionProvenance,
         made_by: Option<&MadeBy>,
-        reader: Option<MadeByReader<'_>>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<BlobArtifactAppendOutcome> {
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
         let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
             self.decide_blob_artifact_append_in_txn(
                 wtxn,
@@ -280,6 +285,15 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let output =
             checked::direct_append_output(body, bytes, provenance, made_by, actor, learned_at);
+        let reader = if made_by.is_some_and(|named| {
+            named.process.actor != actor.entity_ref()
+                || !named.inputs.is_empty()
+                || named.trigger.is_some()
+        }) {
+            reader()?
+        } else {
+            None
+        };
         self.propose_native_output_with_write_grant(
             artifact_id,
             &output,
@@ -289,6 +303,7 @@ impl Vault {
             fork_base,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
+        .map_err(E::from)
     }
 
     /// Appends one version to the artifact's append-only chain.
@@ -453,6 +468,7 @@ impl Vault {
             None,
             Some(made_by),
             true,
+            false,
         )
     }
 
@@ -531,6 +547,7 @@ impl Vault {
             None,
             None,
             false,
+            true,
         )?;
         Ok((version, staged))
     }
@@ -551,10 +568,10 @@ impl Vault {
         fork_parent: Option<u64>,
         made_by: Option<&MadeBy>,
     ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_with_parent_and_engine_in_txn(
+        self.append_blob_artifact_version_body_in_txn(
             wtxn,
             artifact_id,
-            bytes,
+            VersionBody::Bytes(bytes),
             provenance,
             actor,
             occurred,
@@ -562,6 +579,8 @@ impl Vault {
             fork_parent,
             calc_engine,
             made_by,
+            false,
+            false,
         )
     }
 
@@ -617,13 +636,15 @@ impl Vault {
             calc_engine,
             made_by,
             false,
+            true,
         )
     }
 
     /// The one version append every door takes, over a slice or a staged
     /// body (FIX 12091). `preserve_made_by` is the trusted Keep path only:
     /// the retained envelope lands validated but unbound, so the keeper is
-    /// never rebound as producer (blind review of #4554).
+    /// never rebound as producer (blind review of #4554). Direct doors re-anchor
+    /// HTML here; Keep and settlement keep their existing behavior and results.
     #[expect(clippy::too_many_arguments)]
     fn append_blob_artifact_version_body_in_txn(
         &self,
@@ -638,6 +659,7 @@ impl Vault {
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
+        reanchor_html: bool,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -827,6 +849,18 @@ impl Vault {
         }
 
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
+        if reanchor_html && let Some(head) = head {
+            self.reanchor_html_append_in_txn(
+                wtxn,
+                artifact_id,
+                &record.export_media_type,
+                head.version,
+                record.version,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+        }
         Ok(record)
     }
 }
