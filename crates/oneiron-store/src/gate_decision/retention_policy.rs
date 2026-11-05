@@ -12,4 +12,3 @@ pub enum GateRetentionOverrideCeiling {
     Vault,
     Parent,
 }
-
