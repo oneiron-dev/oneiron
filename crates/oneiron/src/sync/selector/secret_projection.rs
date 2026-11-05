@@ -66,8 +66,8 @@ pub(crate) use documents::settlement::{
     review_repo_copy_edit_in_txn,
 };
 pub(crate) use documents::{
-    IndexCopies, document_copy_in_txn, import_document_copy, stored_item_in_txn,
-    with_copy_generation_in_txn,
+    IndexCopies, document_copy_in_txn, document_text_would_project_in_txn, import_document_copy,
+    stored_item_in_txn, with_copy_generation_in_txn,
 };
 pub use documents::{
     RepoCopyAliases, repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
