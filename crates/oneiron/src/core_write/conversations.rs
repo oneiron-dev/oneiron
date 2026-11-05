@@ -6,8 +6,8 @@
 
 use super::batch::CoreWriteLane;
 use super::shape::{
-    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times, entity_id,
-    stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times,
+    encode_core_body, entity_id, stage_core_put, text_pairs, write_id,
 };
 use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
@@ -217,6 +217,9 @@ impl Vault {
         }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
+        let normalized_body = core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement);
+        let encoded_body = encode_core_body(&normalized_body)?;
+        let text_fields = core_text_pairs(input.text.as_deref().map(text_pairs), &normalized_body);
         let outside = std::cell::Cell::new(false);
         let existed = std::cell::Cell::new(false);
         let committed = stage_core_put(
@@ -237,7 +240,27 @@ impl Vault {
                         txn,
                         &id,
                     )?);
-                    return Ok(());
+                    if existed.get()
+                        && crate::conversation_dag::exact_core_turn_retry_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                            &conversation,
+                            times.occurred,
+                            times.learned_at,
+                            &encoded_body,
+                        )?
+                        && crate::store::text_index::index::source_fields_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                        )?
+                        .unwrap_or_default()
+                            == text_fields
+                    {
+                        return Ok(false);
+                    }
+                    return Ok(true);
                 }
                 outside.set(true);
                 Err(crate::Error::EntityNotFound)
@@ -269,7 +292,7 @@ impl Vault {
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
-            core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
+            normalized_body.into_owned(),
         )))
     }
 }

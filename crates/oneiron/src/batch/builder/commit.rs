@@ -189,10 +189,12 @@ impl BatchBuilder<'_> {
     /// The target guard and retained-denial behavior, with atomic hooks
     /// after successful preflight and after apply. Either hook's error rolls
     /// back the batch and its allow receipts. This terminal has no reader
-    /// savepoint: its hooks share the batch's writer.
+    /// savepoint: its hooks share the batch's writer. A guard returning false
+    /// has verified an exact replay: it succeeds without applying any op or
+    /// running either hook, and still waits for the group's durable commit.
     pub(crate) fn commit_with_target_guard_and_hooks(
         self,
-        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
         before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
@@ -246,7 +248,7 @@ impl BatchBuilder<'_> {
         self.commit_inner_with_before_apply(
             checker,
             reader,
-            target_guard,
+            |txn| target_guard(txn).map(|_| true),
             |_| Ok(()),
             after_apply,
             writer_hold_site,
@@ -257,7 +259,7 @@ impl BatchBuilder<'_> {
         mut self,
         checker: Option<&BoundedAutoChecker>,
         reader: Option<&ScopedRead<'_>>,
-        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
         before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         writer_hold_site: Option<&'static str>,
@@ -299,8 +301,20 @@ impl BatchBuilder<'_> {
             // The caller's writer-hold site, when it named one: started
             // here so the span is this closure's hold only (FIX 12511).
             let _hold = writer_hold_site.map(crate::store::writer_hold::WriterHold::start);
-            if let Err(err) = target_guard(wtxn) {
-                return Rows::Discard(Err(err.into()));
+            match target_guard(wtxn) {
+                Ok(true) => {}
+                Ok(false) => {
+                    #[cfg(feature = "sync")]
+                    rows.clear();
+                    return Rows::Discard(Ok(Committed {
+                        changes_claims: false,
+                        tasks: Vec::new(),
+                        staged_gate_decisions: Vec::new(),
+                        approved_vad_ids: Vec::new(),
+                        pad_windows: BTreeSet::new(),
+                    }));
+                }
+                Err(err) => return Rows::Discard(Err(err.into())),
             }
             #[cfg(feature = "sync")]
             if let Err(err) =
