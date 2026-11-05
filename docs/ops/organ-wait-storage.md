@@ -12,8 +12,10 @@ under the same artifact/run-ref key. Both writes, releases and artifact purges
 share one transaction. The call bytes do not pass through a Named byte-array
 encoding. There is no old-format reader or migration.
 
-Listings and the redrive census read metadata. Each redrive borrows one payload,
-checks its exact length and digest, and admits the organ protocol's shape bound
+Listings and the redrive census read metadata. Each redrive borrows one payload
+from the base pages or the accessor's immutable single-valued overlay snapshot,
+without copying the payload before admission. It checks the exact length and
+digest and admits the organ protocol's shape bound
 and the capacity walk's depth-first iterator frames before decoding. The memory-floor wait ends its read transaction first.
 Conversion allocations grow the same lease. Actual owned capacities replace
 pending reservations. The lease survives dispatch and landing. A fresh preflight
@@ -41,6 +43,6 @@ with its measured values. A measurement error remains its original I/O error.
 This disk budget covers encoded values, not LMDB keys, pages, splits, freelists
 or copy-on-write amplification. It is not a total native-disk or native-heap
 measurement. LMDB's configured map limit and actual filesystem I/O errors remain
-in force. Overlay read copies, save-serializer scratch, traversal scratch and
-native transaction allocations still need their own admission; this document
+in force. Other overlay read copies, save-serializer scratch and native
+transaction allocations still need their own admission; this document
 does not claim complete resource coverage or runtime proof.

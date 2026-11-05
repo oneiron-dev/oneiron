@@ -338,15 +338,15 @@ impl Vault {
             return Ok(None);
         }
         let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
-        let bytes = CALLS
-            .get_borrowed(&self.store, &txn, &key)?
-            .ok_or(Error::CorruptedIndex("organ wait call missing"))?;
-        if bytes.len() as u64 != wait.call_len
-            || blake3::hash(&bytes).as_bytes() != &wait.call_digest
-        {
-            return Err(Error::CorruptedIndex("organ wait call digest"));
-        }
-        Ok(Some(read(&bytes)))
+        CALLS.with_bytes(&self.store, &txn, &key, |bytes| {
+            let bytes = bytes.ok_or(Error::CorruptedIndex("organ wait call missing"))?;
+            if bytes.len() as u64 != wait.call_len
+                || blake3::hash(bytes).as_bytes() != &wait.call_digest
+            {
+                return Err(Error::CorruptedIndex("organ wait call digest"));
+            }
+            Ok(Some(read(bytes)))
+        })?
     }
 
     /// Drops a held call: it ran and landed, or a person let it go.

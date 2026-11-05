@@ -420,6 +420,25 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         self.get_raw(dbs, txn, &self.key_bytes(key))
     }
 
+    /// Reads stored bytes within their loan. Single-valued vault metadata
+    /// borrows both base pages and immutable overlay values without a body copy.
+    pub(crate) fn with_bytes<T>(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &RoTxn<'_>,
+        key: &K,
+        read: impl FnOnce(Option<&[u8]>) -> T,
+    ) -> Result<T> {
+        let full = self.key_bytes(key);
+        match self.decl.db {
+            SideDb::VaultMeta => dbs.side_vault_meta().with_value(txn, &full, read),
+            SideDb::SyncState => {
+                let bytes = self.get_raw(dbs, txn, &full)?;
+                Ok(read(bytes.as_deref()))
+            }
+        }
+    }
+
     /// Reads one row, treating a row that does not decode as absent, for readers whose rows
     /// were always read leniently (a damaged sidecar falls back to its default). A storage error
     /// still fails the read.
