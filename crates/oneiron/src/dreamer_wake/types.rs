@@ -433,12 +433,12 @@ pub trait DreamerAttemptExecutor {
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
 
-    /// Runs one window of plain Micro consolidation partitions the driver
+    /// Runs one window of plain Micro or Meso consolidation partitions the driver
     /// admitted back to back (FIX 12487): their extractions may overlap,
     /// but outcomes come back in window order and every commit lands
     /// serially in that order, so the committed rows equal serial
     /// `execute` calls over the same attempts. The window holds only
-    /// plain partition attempts (Micro kind, the scope's own attempt
+    /// plain partition attempts (a Micro or Meso kind, the scope's own attempt
     /// type, a Ready prepared plan, no thing branch); a wrapper that
     /// intercepts other shapes never sees its own shape here and may
     /// forward the window whole. The default runs the window serially.

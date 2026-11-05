@@ -1,4 +1,4 @@
-//! One window of plain Micro partitions (FIX 12487): slots pinned and
+//! One window of plain Micro or Meso partitions (FIX 12487): slots pinned and
 //! opened in admission order, extraction prefixes side by side, then
 //! serial finishes in order against branches re-opened at the finish,
 //! so the committed rows equal the serial run's. Split from
@@ -58,7 +58,7 @@ enum WindowSlotRun<'a> {
 }
 
 impl ConsolidationExecutor<'_> {
-    /// Runs one driver window of plain Micro partitions (FIX 12487):
+    /// Runs one driver window of plain Micro or Meso partitions (FIX 12487):
     /// every slot is pinned and opened in admission order, the
     /// extraction prefixes run side by side, then each slot finishes
     /// serially in order against its branch re-opened at the finish —
@@ -153,7 +153,7 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// One window slot at its admission: the serial gates and open, in
-    /// window order. What is not a plain prepared Micro partition — an
+    /// window order. What is not a plain prepared Micro or Meso partition — an
     /// unprepared or direct call, another attempt shape, a thing branch
     /// with its own scoped agent — stays serial in its place.
     fn admit_window_slot<'w>(
@@ -161,9 +161,10 @@ impl ConsolidationExecutor<'_> {
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'w>,
     ) -> WindowSlotRun<'w> {
-        if attempt.status.payload.attempt_type
-            != crate::dreamer_runner::DreamerConsolidationScope::Micro.as_str()
-        {
+        if !super::super::selection::windowed_partition(
+            &attempt.status.attempt.kind,
+            &attempt.status.payload.attempt_type,
+        ) {
             return WindowSlotRun::Serial;
         }
         let (Some(plan), Some(wake)) = (ctx.prepared_attempt, ctx.prepared_wake) else {
