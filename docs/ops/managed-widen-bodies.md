@@ -35,6 +35,23 @@ length therefore cannot exceed the raw body's length. That same room is retained
 through both files' final native read; it is not replaced with a second cumulative
 claim. Files are anonymous and are removed when their handles close.
 
+## Decoder I/O memory
+
+Before the large accept or reject decoder constructs its text writer or JSON
+reader, its dedicated transfer worker admits both existing 64 KiB I/O buffers
+on the process's shared memory line. One lease covers both, and each buffer's
+actual capacity is recorded on it. The lease stays live through parsing and
+both sinks' flush and close, including errors and unwinding, and is then returned
+on that worker before the native answer runs. This does not add a request-size
+limit or change the I/O geometry.
+
+The memory wait has no new deadline. If the awaiting spool future leaves, a
+local cancellation flag lets the waiting worker leave the same untimed line.
+A physical floor uses the existing internal-server-error response with an
+allocation message; a cancelled wait uses the existing body-not-whole response.
+No error code or field is added. For admitted decodes, JSON, hex, file, holder
+and native validation keep their existing order.
+
 ## Native answers
 
 Native acceptance checks the holder credential before validating the reference's
@@ -62,7 +79,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, normal working-buffer admission and stored proposal allocations
-remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, schema-sized name vectors, raw-spool/feed-buffer admission and stored
+proposal allocations remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
