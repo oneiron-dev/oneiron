@@ -18,9 +18,9 @@ There is no old-format reader or migration.
 ## Destination projection
 
 On-device status includes all contributions. Off-device status uses the existing
-source-entity destination filter. The source is established only for ordinary entity
-records, typed-body documents, typed-body forks, office-body forks, codebase snapshots, note proposals and repo-mutation proposals whose
-producer keys name the actual source entity. A codebase snapshot's source is the
+source-entity destination filter. Native producer keys establish the source for ordinary
+entity records, typed-body documents, typed-body forks, office-body forks, codebase
+snapshots, note proposals and repo-mutation proposals. A codebase snapshot's source is the
 CODE_ARTIFACT entity id that its native writer validates and uses as the table key.
 A typed-body fork's source is the first entity id in its native `(entity, fork)` key:
 its writer validates that entity's live typed-body head before storing the fork
