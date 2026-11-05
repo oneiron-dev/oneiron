@@ -14,6 +14,14 @@ settings. Only formula caches, their value types, calculate-always flags and Exc
 error tags change; the package keeps every other byte. This crate depends on
 `oneiron-docedit`, never on the core.
 
+The retained writer carries the caller's `Resources` through its cooperative cancellation
+token and polls it at formula AST and arena nodes, including reference evaluation, and at
+existing cancellation checkpoints. A deadline is only one the caller supplied; no deadline
+stays untimed. A checkpoint refusal returns the existing typed `FormulaError::Resource` to
+the direct `recalculate_xlsx` caller. The core's current no-deadline recalc and precision
+fallback are unchanged. A long builtin that does not poll can still run until its next
+checkpoint; this is not a time bound on every builtin.
+
 The recalculation behaves like Excel recalculating at edit time. Its caller passes a
 `RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
 local UTC offset their date and time use, and the seed of RAND, RANDBETWEEN and RANDARRAY. The
