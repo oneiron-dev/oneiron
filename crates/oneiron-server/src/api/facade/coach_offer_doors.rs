@@ -134,7 +134,7 @@ pub(crate) async fn vault_coach_training_offers_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferAnswerRequest,
-) -> Listed<oneiron::skill_optimize::OfferAnswerRecord> {
+) -> Listed<offer_doors::OfferAnswerReply> {
     owned_control(
         server,
         auth,
