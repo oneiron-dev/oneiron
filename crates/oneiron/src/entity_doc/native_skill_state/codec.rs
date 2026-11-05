@@ -104,8 +104,7 @@ impl SkillStateFact {
         }
         let prior = State::of(admitted.snapshot().prior());
         if let Some(previous) = previous
-            && (!previous.target_is(entity, document, birth.at)
-                || previous.operation.state != prior)
+            && (!previous.target_birth_is(entity, birth.at) || previous.operation.state != prior)
         {
             return Err(malformed());
         }
@@ -236,10 +235,10 @@ impl SkillStateFact {
         }))
     }
 
-    pub(super) fn target_is(&self, entity: EntityId, document: EntityId, birth_at: u64) -> bool {
-        self.operation.entity == *entity.as_bytes()
-            && self.operation.document == *document.as_bytes()
-            && self.operation.birth_at == birth_at
+    /// A selected admitted source may have moved slots through SWITCH or
+    /// restore. Its signed document coordinate stays historical.
+    pub(super) fn target_birth_is(&self, entity: EntityId, birth_at: u64) -> bool {
+        self.operation.entity == *entity.as_bytes() && self.operation.birth_at == birth_at
     }
 
     /// Pure projection can check the supplied birth, but has no Store/head

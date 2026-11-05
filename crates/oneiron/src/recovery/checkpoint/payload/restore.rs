@@ -47,6 +47,19 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
     unavailable_calls: Vec<(RowLocator, Vec<u8>)>,
 }
 
+/// Exact rows consumed from an independently authenticated artifact's payload.
+/// Only this module's opened-bundle dispatch can construct this source. It
+/// grants no peer standing, owner authority or grant admission.
+pub(crate) struct EntityDocRestoreSource {
+    rows: OpenedOwnerRows,
+}
+
+impl EntityDocRestoreSource {
+    pub(crate) fn into_rows(self) -> OpenedOwnerRows {
+        self.rows
+    }
+}
+
 /// Opens `sealed`, the payload an artifact carries apart from its image,
 /// before anything is made: each compartment it names is required through
 /// `plan`, a live one opens, and a retired one's owner is unopened; the rows
@@ -255,6 +268,13 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
                     txn,
                     rows,
                     retired_digests,
+                )?
+            }
+            BundleRole::Content(Getter::EntityDoc) => {
+                crate::entity_doc::checkpoint::restore_authenticated_in_txn(
+                    store,
+                    txn,
+                    EntityDocRestoreSource { rows },
                 )?
             }
             BundleRole::Content(getter) => getter.restore_in_txn(store, txn, rows)?,
