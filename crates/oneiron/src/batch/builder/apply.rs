@@ -50,6 +50,7 @@ impl BatchBuilder<'_> {
             None,
             None,
             None,
+            None,
         )
     }
 

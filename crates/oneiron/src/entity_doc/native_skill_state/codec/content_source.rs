@@ -41,6 +41,16 @@ pub(super) struct SharedSuccess {
     expiry_checked_at: Option<u64>,
 }
 
+impl SharedSuccess {
+    pub(super) fn view(&self) -> super::recipient::SkillStateSharedSuccessView<'_> {
+        super::recipient::SkillStateSharedSuccessView {
+            grant: &self.grant,
+            inputs_fingerprint: &self.inputs_fingerprint,
+            expiry_checked_at: self.expiry_checked_at,
+        }
+    }
+}
+
 impl ContentSource {
     #[cfg(feature = "sync")]
     pub(super) fn capture(input: &NativeSkillFinalInput<'_>) -> Result<Self> {

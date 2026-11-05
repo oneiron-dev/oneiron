@@ -20,8 +20,15 @@ pub(super) use checkpoint::{
     check_checkpoint_insert, check_checkpoint_op, is_checkpoint_root, validate_checkpoint_history,
     validate_image_history,
 };
+pub(super) use codec::recipient::{
+    SkillStateContentSourceView, SkillStateDoorView, SkillStateFactView, SkillStateOperationView,
+    SkillStateSharedSuccessView, SkillStateWriterView,
+};
 pub(super) use inherited::reconcile_for_persist;
-pub(super) use inspect::{NativeMapInventory, inspect as inspect_inventory};
+pub(super) use inspect::{
+    NativeMapFloorView, NativeMapInventory, NativeMapMutationView, NativeMapWriteView,
+    inspect as inspect_inventory,
+};
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
 pub(crate) use request::SkillStateSnapshot;

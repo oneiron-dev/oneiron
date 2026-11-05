@@ -9,7 +9,10 @@ use crate::EntityId;
 use super::super::EntityDoc;
 use super::codec::SkillStateFact;
 use super::register::{CURRENT, ROOT, read_fact};
+
+mod recipient;
 use crate::error::{Error, Result};
+pub(super) use recipient::{NativeMapFloorView, NativeMapMutationView, NativeMapWriteView};
 
 /// These are observed operations, not admitted operations. A delete must also
 /// reach source validation; a later insert cannot hide it from the validator.
