@@ -391,6 +391,13 @@ impl Vault {
         let mut saved = package.clone();
         saved.record = self.read_skill_record_in_txn(wtxn, &entity)?;
         self.persist_hub_package_in_txn(wtxn, &entity, &saved)?;
+        crate::team::pattern::bind_hub_pattern_in_txn(
+            self,
+            wtxn,
+            &entity,
+            &saved.files,
+            learned_at,
+        )?;
         self.write_hub_import_receipt_in_txn(
             wtxn,
             &entity,
@@ -679,6 +686,7 @@ impl Vault {
         let mut saved = package.clone();
         saved.record = self.read_skill_record_in_txn(txn, entity)?;
         self.persist_hub_package_in_txn(txn, entity, &saved)?;
+        crate::team::pattern::bind_hub_pattern_in_txn(self, txn, entity, &saved.files, learned_at)?;
         Ok(gate_passed
             && !super::import_receipt::marketplace_hash_blocked_in_txn(
                 &self.store,
