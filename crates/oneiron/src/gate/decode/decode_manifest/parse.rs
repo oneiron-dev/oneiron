@@ -107,6 +107,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
                 | "experiment_selection"
+                | crate::gate::entity_resolution_bands::KEY
                 | crate::gate::carry_forward_policy::KEY
                 | crate::gate::judge_calibration::MANIFEST_KEY
                 | POLICY_SYNC_WORLD_CEILING_KEY
@@ -615,6 +616,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
 
+    let entity_resolution_bands =
+        match single_map_value(&entries, crate::gate::entity_resolution_bands::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::entity_resolution_bands::EntityResolutionBands::parse(value)?)
+            }
+        };
     let carry_forward_confidence =
         match single_map_value(&entries, crate::gate::carry_forward_policy::KEY) {
             MapValue::Missing => None,
@@ -784,6 +793,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         compilation_policy,
         teacher_probe,
         experiment_selection,
+        entity_resolution_bands,
         carry_forward_confidence,
         judge_calibration,
         credential_lifetimes,
