@@ -164,5 +164,3 @@ macro_rules! json_row {
 }
 
 json_row!(ReaderFoldReceipt, "code-run reader fold receipt");
-
-json_row!(SummaryMemo, "code-run summary memo");

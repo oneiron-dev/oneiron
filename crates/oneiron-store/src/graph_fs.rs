@@ -2,3 +2,4 @@
 
 pub mod coreutils_text;
 pub mod paging;
+pub mod snapshot;
