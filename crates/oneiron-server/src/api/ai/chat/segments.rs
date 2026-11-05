@@ -40,8 +40,8 @@ use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
 use crate::models::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, turn_admitted,
 };
 pub(crate) use actions::ActionSession;
 
@@ -610,12 +610,15 @@ impl CheckpointAuthority for ChatAuthority {
 /// The turn's authority is held until the outcome ends even when the turn
 /// wrote no rows, so a restore for its call rechecks under it instead of
 /// running cold; only the commit handoff still needs `written` (FIX 11287).
+/// With `next`, what the conversation's next turn is known to start with,
+/// the session prepares that once the successor is published (I1 = C).
 pub(super) fn commit_on_answer(
     segments: Option<TurnSegments>,
     reader: &Reader,
     credential: &TurnCredential,
     written: Option<&[EntityId]>,
     turn: EntityId,
+    next: Option<Arc<dyn NextTurnSource>>,
     answering: Answering,
 ) -> Answering {
     let Some(segments) = segments else {
@@ -699,15 +702,17 @@ pub(super) fn commit_on_answer(
                     })
                     .unwrap_or(turn)
             });
-            reply_committed(
-                &segments.manifest,
-                ReplyCommit {
-                    head,
-                    message,
-                    text,
-                },
-                Arc::new(authority),
-            );
+            let commit = ReplyCommit {
+                head,
+                message,
+                text,
+            };
+            match next {
+                Some(next) => {
+                    reply_committed_preparing(&segments.manifest, commit, Arc::new(authority), next)
+                }
+                None => reply_committed(&segments.manifest, commit, Arc::new(authority)),
+            }
         }
     });
     Answering {

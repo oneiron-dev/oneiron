@@ -77,6 +77,7 @@ mod delivery;
 mod hook_ask;
 mod hooks;
 mod model_call;
+mod next_turn;
 mod recall;
 mod segments;
 mod session_invocation;
