@@ -161,7 +161,10 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
     /// 8814 follow-up), by its Message-ID.
     fn read_back_delivery(&self, request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
         match self.prepared(request) {
-            Ok((mailbox, message_id)) => self.client.read_back(&mailbox, &message_id),
+            Ok((mailbox, message_id)) => {
+                self.client
+                    .read_back(&mailbox, &message_id, &self.message.to)
+            }
             Err(_) => DeliveryReadBack::Unknown,
         }
     }
@@ -205,32 +208,38 @@ impl StalwartClient {
     }
 
     /// What the server's own record says became of the served send keyed
-    /// `send_key` from `identity`'s mailbox (FIX 8814 follow-up): the read-back
-    /// of [`Self::submit_served_text`]'s draft.
+    /// `send_key` from `identity`'s mailbox to `to` (FIX 8814 follow-up): the
+    /// read-back of [`Self::submit_served_text`]'s draft.
     pub fn read_back_served(
         &self,
         identity: crate::EntityId,
         address: &str,
         send_key: &str,
+        to: &str,
     ) -> DeliveryReadBack {
         if send_key.trim().is_empty() {
             return DeliveryReadBack::Unknown;
         }
+        let Ok(to) = canonical_recipient(to) else {
+            return DeliveryReadBack::Unknown;
+        };
         match self.mailbox(identity, address) {
-            Ok(mailbox) => self.read_back(&mailbox, &self.message_id_for(send_key)),
+            Ok(mailbox) => self.read_back(&mailbox, &self.message_id_for(send_key), &to),
             Err(_) => DeliveryReadBack::Unknown,
         }
     }
 
-    /// What the server's own record says became of the send whose draft
-    /// carries `message_id` in `mailbox` (FIX 8814 follow-up). Only a
-    /// submission of the draft, one not cancelled, proves the send:
-    /// `Delivered`. Nothing here proves a send never went, since an
-    /// unanswered submission may still be landing and Sent membership or a
-    /// cleared `$draft` can be set by any client: every other answer, an
-    /// ambiguous Message-ID and a failed read are `Unknown` (REVIEW-5934).
-    fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str) -> DeliveryReadBack {
-        self.read_back_checked(mailbox, message_id)
+    /// What the server's own record says became of the send to `to` whose
+    /// draft carries `message_id` in `mailbox` (FIX 8814 follow-up). Only a
+    /// submission of the draft that was not cancelled and whose envelope is
+    /// the frozen send's own (from the mailbox's address to `to` alone)
+    /// proves the send: `Delivered`. Nothing here proves a send never went,
+    /// since an unanswered submission may still be landing and Sent
+    /// membership or a cleared `$draft` can be set by any client: every other
+    /// answer, an ambiguous Message-ID and a failed read are `Unknown`
+    /// (REVIEW-5934).
+    fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str, to: &str) -> DeliveryReadBack {
+        self.read_back_checked(mailbox, message_id, to)
             .unwrap_or(DeliveryReadBack::Unknown)
     }
 
@@ -238,6 +247,7 @@ impl StalwartClient {
         &self,
         mailbox: &StalwartMailbox,
         message_id: &str,
+        to: &str,
     ) -> Result<DeliveryReadBack> {
         let query = self.call(
             "Email/query",
@@ -266,11 +276,39 @@ impl StalwartClient {
         let held = self.call(
             "EmailSubmission/get",
             json!({
-                "accountId": &mailbox.account_id, "ids": ids, "properties": ["undoStatus"]
+                "accountId": &mailbox.account_id, "ids": ids,
+                "properties": ["undoStatus", "envelope"]
             }),
         )?;
+        // The envelope this sink submits: the mailbox's own address to the
+        // frozen recipient alone. Another client's submission of the same
+        // draft to anyone else proves nothing about this send.
+        let addressed = |address: Option<&str>, expected: &str| {
+            address
+                .and_then(|address| canonical_recipient(address).ok())
+                .is_some_and(|address| address == expected)
+        };
+        let Ok(from) = canonical_recipient(&mailbox.address) else {
+            return Ok(DeliveryReadBack::Unknown);
+        };
         let sent = array(&held, "list")?.iter().any(|submission| {
+            let envelope = submission.get("envelope");
+            let rcpt = envelope
+                .and_then(|envelope| envelope.get("rcptTo"))
+                .and_then(Value::as_array);
             submission.get("undoStatus").and_then(Value::as_str) != Some("canceled")
+                && addressed(
+                    envelope
+                        .and_then(|envelope| envelope.pointer("/mailFrom/email"))
+                        .and_then(Value::as_str),
+                    &from,
+                )
+                && rcpt.is_some_and(|rcpt| {
+                    matches!(rcpt.as_slice(), [only] if addressed(
+                        only.get("email").and_then(Value::as_str),
+                        to,
+                    ))
+                })
         });
         Ok(if sent {
             DeliveryReadBack::Delivered

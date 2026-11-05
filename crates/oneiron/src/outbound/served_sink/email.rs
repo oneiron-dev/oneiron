@@ -178,9 +178,12 @@ impl ServedChannelSink<'_> {
                 let header = authorization_header(value)?;
                 read_back = Some(
                     match StalwartClient::connect(route.placement.clone(), header) {
-                        Ok(client) => {
-                            client.read_back_served(route.identity, &route.address, send_key)
-                        }
+                        Ok(client) => client.read_back_served(
+                            route.identity,
+                            &route.address,
+                            send_key,
+                            &request.intent.target,
+                        ),
                         Err(_) => DeliveryReadBack::Unknown,
                     },
                 );
