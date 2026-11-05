@@ -657,6 +657,7 @@ vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
 vaultHooksRegenHistory(input: unknown): unknown
 vaultHooksRegenRevert(input: unknown): unknown
+vaultHooksRegenRun(input: unknown): unknown
 vaultHooksRegenAdopt(input: unknown): unknown
 vaultHooksRegenCancel(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
@@ -1213,6 +1214,8 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+selfHooksRegenAdopt(input: unknown): unknown
+selfHooksRegenGet(input: unknown): unknown
 vaultRunsReview(input: unknown): unknown
 vaultRunsSettle(input: unknown): unknown
 vaultRunsSettlement(input: unknown): unknown

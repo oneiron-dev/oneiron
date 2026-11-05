@@ -20005,6 +20005,37 @@ async fn vault_hooks_regen_revert(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_hooks_regen_run(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.regen.run")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.regen.run", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.run", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_hooks_regen_run(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_hooks_regen_adopt(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37046,6 +37077,50 @@ async fn self_history(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn self_hooks_regen_adopt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.hooks.regen.adopt",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_hooks_regen_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.hooks.regen.get",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_runs_review(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40598,6 +40673,7 @@ async fn call_verb_row(
             Box::pin(vault_hooks_regen_history(server, call, input)).await
         }
         "vault.hooks.regen.revert" => Box::pin(vault_hooks_regen_revert(server, call, input)).await,
+        "vault.hooks.regen.run" => Box::pin(vault_hooks_regen_run(server, call, input)).await,
         "vault.hooks.regen.adopt" => Box::pin(vault_hooks_regen_adopt(server, call, input)).await,
         "vault.hooks.regen.cancel" => Box::pin(vault_hooks_regen_cancel(server, call, input)).await,
         "vault.artifacts.publish_approval" => {
@@ -41740,6 +41816,8 @@ async fn call_verb_row(
         "self.run.attach" => Box::pin(self_run_attach(server, call, input)).await,
         "self.folds.describe" => Box::pin(self_folds_describe(server, call, input)).await,
         "self.history" => Box::pin(self_history(server, call, input)).await,
+        "self.hooks.regen.adopt" => Box::pin(self_hooks_regen_adopt(server, call, input)).await,
+        "self.hooks.regen.get" => Box::pin(self_hooks_regen_get(server, call, input)).await,
         "vault.runs.review" => Box::pin(vault_runs_review(server, call, input)).await,
         "vault.runs.settle" => Box::pin(vault_runs_settle(server, call, input)).await,
         "vault.runs.settlement" => Box::pin(vault_runs_settlement(server, call, input)).await,

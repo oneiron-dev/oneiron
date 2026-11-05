@@ -5,16 +5,83 @@
 //! exact body the adoption replaced, through the owner's own pack put. Both
 //! decline the contract in force, so the engine's own pass leaves the hook
 //! on its body until the contract moves again, and both land a receipt in
-//! the hook's regen history.
+//! the hook's regen history. A hook an agent authored takes every new body
+//! through that agent's own put ([`HookPut`]), so it stays the agent's.
 
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::skill_hub::pack_catalog::PackInstallDisposition;
-use crate::{EntityId, Error, Result, Vault};
+use crate::skill_hub::HubFile;
+use crate::skill_hub::pack_catalog::{
+    HookAuthor, PackHookBinding, PackInstallDisposition, PreparedPackPut,
+};
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 use super::history::{self, HookRegenActor, HookRegenEvent};
 use super::{HookContractStamp, HookRegenPrior, HookRegenRecord, REGEN, files_with_hook_body};
+
+/// Whose put installs a hook body a regen enacts (FIX 4692).
+#[derive(Clone, Copy)]
+pub(crate) enum HookPut<'a> {
+    /// The owner's own put, which revalidates the owner in its writer.
+    Owner(&'a AuthenticatedOwner),
+    /// The authoring agent's own put of the `local` pack: the hook binds as
+    /// the agent's again, at its ceiling, its grant carried. `owner` is the
+    /// owner's proof when the owner enacts it, revalidated in the writer.
+    Agent {
+        agent: WriteActor,
+        owner: Option<&'a AuthenticatedOwner>,
+    },
+}
+
+impl HookPut<'_> {
+    /// The put that installs a new body for `row`'s hook: a hook an agent
+    /// authored installs through that agent's own put whoever enacts it, so
+    /// it stays the agent's; an agent enacts only a hook it authored.
+    pub(crate) fn for_hook(self, row: &PackHookBinding) -> Result<Self> {
+        match (self, &row.author) {
+            (Self::Owner(owner), HookAuthor::Agent { agent }) => Ok(Self::Agent {
+                agent: WriteActor::new(*agent, EdgeActorClass::Agent),
+                owner: Some(owner),
+            }),
+            (Self::Owner(_), _) => Ok(self),
+            (Self::Agent { agent, .. }, HookAuthor::Agent { agent: author })
+                if agent.entity_ref() == *author =>
+            {
+                Ok(self)
+            }
+            (Self::Agent { .. }, _) => Err(Error::InvalidConfig(
+                "an agent enacts a regen only on a hook it authored".to_owned(),
+            )),
+        }
+    }
+
+    /// Prepares the put of `files` outside the writer.
+    pub(crate) fn prepare(self, vault: &Vault, files: Vec<HubFile>) -> Result<PreparedPackPut> {
+        match self {
+            Self::Owner(_) => vault.prepare_owner_pack_put(files),
+            Self::Agent { .. } => vault.prepare_agent_local_pack_put(files),
+        }
+    }
+
+    /// The prepared put in the caller's writer.
+    pub(crate) fn put_in_txn(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        prepared: &PreparedPackPut,
+    ) -> Result<PackInstallDisposition> {
+        match self {
+            Self::Owner(owner) => vault.put_owner_pack_prepared_in_txn(txn, owner, prepared),
+            Self::Agent { agent, owner } => {
+                if let Some(owner) = owner {
+                    owner.revalidate_in_txn(vault, txn)?;
+                }
+                vault.put_agent_pack_prepared_in_txn(txn, &agent, prepared)
+            }
+        }
+    }
+}
 
 /// What a cancel set aside.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -137,13 +204,14 @@ impl Vault {
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
+        let put = HookPut::Owner(owner).for_hook(&row)?;
         let record = self.hook_regen_record(binding)?;
         let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
         let source = self
             .get_pack_source(&row.source)?
             .ok_or(Error::EntityNotFound)?;
         let (files, _) = files_with_hook_body(&source, &row.hook, prior.body.as_bytes());
-        let prepared = self.prepare_owner_pack_put(files)?;
+        let prepared = put.prepare(self, files)?;
         let disposition = self.with_write_txn_grouped(|txn| {
             let (_, current) = self
                 .pack_hook_bindings_in_txn(txn)?
@@ -152,7 +220,7 @@ impl Vault {
                 .ok_or(Error::EntityNotFound)?;
             let record = REGEN.get(&self.store, txn, &binding)?;
             let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
-            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
+            let disposition = put.put_in_txn(self, txn, &prepared)?;
             if !matches!(disposition, PackInstallDisposition::Installed(_)) {
                 return Ok(disposition);
             }

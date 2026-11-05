@@ -2432,6 +2432,8 @@ class Oneiron:
             """Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing."""
         def revert(self, spec: Facade.HookRegenRevertRequest) -> Facade.PackPutReceipt:
             """Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt."""
+        def run(self, spec: Facade.HookRegenBindingRequest) -> Facade.HookRegenView | None:
+            """Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing."""
         def adopt(self, spec: Facade.HookRegenAdoptRequest) -> Facade.PackPutReceipt:
             """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
         def cancel(self, spec: Facade.HookRegenCancelRequest) -> Facade.HookRegenCancel:
@@ -3627,6 +3629,8 @@ class Oneiron:
         def history(self, spec: Facade.FoldHistoryRequest) -> Facade.FoldHistory:
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
         @property
+        def hooks(self) -> "Oneiron._SelfHooksVerbs": ...
+        @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
             """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
@@ -3798,6 +3802,14 @@ class Oneiron:
             """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
         def describe(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldDescription]:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+    class _SelfHooksVerbs:
+        @property
+        def regen(self) -> "Oneiron._SelfHooksRegenVerbs": ...
+    class _SelfHooksRegenVerbs:
+        def adopt(self, spec: Facade.HookRegenAdoptRequest) -> Facade.PackPutReceipt:
+            """Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner."""
+        def get(self, spec: Facade.HookRegenBindingRequest) -> Facade.HookRegenView | None:
+            """Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing."""
     class _SelfBrowserVerbs:
         def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.BrowserObservationPage:
             """Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."""
