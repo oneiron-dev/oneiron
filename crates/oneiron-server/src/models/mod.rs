@@ -41,6 +41,10 @@ mod decision_read;
 mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
+// FIX 14975: each trained drafter version evaluated, activated and rolled
+// back, on evaluator incarnations of the vault's own row.
+#[cfg(unix)]
+mod drafter_evaluator;
 mod drafter_serving;
 mod drafter_training;
 mod driven;
@@ -131,6 +135,15 @@ pub use drafter_serving::VaultLoadSet;
 pub(crate) use drafter_serving::{drafter_retrain_target, install_drafter_serving};
 // FIX 14974: a drafter training job's place on its target's device work line.
 pub(crate) use drafter_training::DrafterTrainingSlot;
+// FIX 14975: each trained version evaluated, activated and rolled back.
+#[cfg(unix)]
+pub(crate) use drafter_evaluator::start_drafter_evaluations;
+
+/// Off Unix no worker answers the evaluator op (FIX 14975): nothing is
+/// evaluated, and nothing activates.
+#[cfg(not(unix))]
+pub(crate) fn start_drafter_evaluations(_vault: &Arc<oneiron::Vault>) {}
+
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{

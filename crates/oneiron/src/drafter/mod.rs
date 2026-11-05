@@ -41,11 +41,24 @@
 //! draft, and records the transition once the new incarnation proves the
 //! draft's identity. Every door that moves a binding tells the host after
 //! commit.
+//!
+//! A host evaluates each trained version on the vault's held-out turns
+//! (FIX 14975, `evaluation`): it replays them through the target alone, the
+//! head that serves now and the version, on evaluator incarnations of the
+//! serving worker, and records what it measured; the engine decides. A
+//! version token-identical to the target alone, up to ties within the
+//! recipe's logit epsilon, qualifies; one that also beats the serving head
+//! with no measured slowdown goes into service on its own
+//! ([`crate::Vault::try_activate_drafter`]), and any slowdown, output
+//! violation or worker error the host then observes on its serving
+//! incarnation rolls it back ([`crate::Vault::observe_drafter_serving`]).
+//! The recipe names every number.
 
 mod corpus;
 mod custody;
 mod doors;
 mod erase;
+mod evaluation;
 mod load_set;
 mod nightly;
 mod policy;
@@ -71,6 +84,17 @@ pub use doors::{
     list_drafters_as_owner, revert_drafter_as_agent, revert_drafter_as_owner,
 };
 pub(crate) use erase::{erase_drafter_actor_in_txn, erase_drafters_for_source_in_txn};
+pub use evaluation::{
+    DRAFTER_QUALIFICATION_KEY, DrafterActivation, DrafterActivationRefusal,
+    DrafterActivationServing, DrafterArmIdentity, DrafterCaseMeasure, DrafterEvaluation,
+    DrafterEvaluationArm, DrafterEvaluationCorpus, DrafterEvaluationDecision,
+    DrafterEvaluationEvidence, DrafterEvaluationPlan, DrafterFailReason, DrafterHeldOutCase,
+    DrafterMeasurementSchedule, DrafterObservation, DrafterObservationVerdict,
+    DrafterObserveOutcome, DrafterQualificationRule, DrafterSampleRule, DrafterSlowdownRule,
+    DrafterSpeedComparison, DrafterSpeedMetric, DrafterSpeedOutcome, DrafterSpeedStatistic,
+    DrafterSpeedVerdict, DrafterTieEvidence, DrafterTokenIdentity, DrafterUnknownReason,
+    compare_speed,
+};
 pub use load_set::{SEALED_CHUNK_BYTES, drafter_file_name_is_plain, drafter_load_set_blake3};
 pub use nightly::DrafterNightStep;
 pub use policy::{DrafterPolicy, DrafterPolicySetRequest, set_drafter_policy_as_owner};

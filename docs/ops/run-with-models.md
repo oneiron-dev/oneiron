@@ -3432,9 +3432,9 @@ Each vault retrains its own small draft model at night on its own
 conversations, rooms with other people included. The drafter never leaves the
 vault. Retraining is on by default and the owner can switch it off. Today the
 engine holds the records, the doors, the erase path, the corpus export, the
-nightly job, the trainer and its job interface, and the serving binding. A
-trained version waits for its qualification: no evaluator exists yet, so no
-trained version serves.
+nightly job, the trainer and its job interface, the serving binding, and the
+evaluator with automatic activation and rollback. No recipe ships, so nothing
+trains until the owner sets one.
 
 What exists now:
 
@@ -3662,8 +3662,95 @@ What exists now:
   trained nothing are counted by outcome and reason (`held:no_trainer_recipe`,
   `skipped:policy_off`) and ride a digest that is due anyway. The owner's own
   policy changes are not reported back.
+- **Evaluation rule.** The recipe names the rule under
+  `settings.qualification`. The engine supplies none of its numbers. The
+  rule has four parts, and each one is required:
+  - `logit_epsilon`: the largest gap between the target's top two raw logits
+    at which a divergence is an allowed tie (finite, 0 or more);
+  - `sample`: `min_cases` (1 or more) and `min_output_tokens`, the fewest
+    cases every arm answered and the fewest tokens the target alone made
+    over them;
+  - `schedule`: `warmup_cases` (answered unmeasured on each incarnation),
+    `blocks` (the drafted arms in order, `incumbent` and `candidate`, each at
+    least once; for example `["incumbent", "candidate", "candidate",
+    "incumbent"]`) and `observation_cases` (1 or more, replayed after an
+    activation);
+  - `slowdown`: `metrics` (`native_decode_rate`, `time_to_first_token`,
+    `end_to_end`; the first one must improve, each one at most once) and
+    `statistic` (`pooled`, or `median_paired_ratio` over the cases).
+  With no rule, or a rule that does not read or hold together, the
+  evaluation is `unknown` and nothing activates.
+- **Evaluation.** A version that a trainer returned (state `returned`) is
+  evaluated when the nightly retrain next runs. The held-out side is read
+  before that night's corpus work. The server rebuilds each held-out case as
+  the request its rung sent (the provider's body, output cap and response
+  format), asks it solo, and pins a seed where the request names none. It
+  replays the cases on evaluator incarnations of the vault's own serving
+  row. Each incarnation is a managed launch of the same row with one arm's
+  draft: the incumbent (stock or the version that serves), the candidate, or
+  no draft (the target alone). Each runs on the same target, quant, runtime,
+  template, settings and draft depth. An evaluator incarnation is never a
+  hosted row, so no route and no other vault reaches it. It has its own row
+  id (`<row>-drafter-eval`), its own loopback port and its own socket, and
+  device admission treats it as any managed worker. Each block of the
+  schedule is one incarnation; the target alone runs last. Each incarnation
+  answers its warm-up cases, then every case once, by the worker's
+  evaluator op `eval.generate` (`deploy/house-model/exl3_evaluator.py`). The
+  op returns the exact token ids of every pass (reasoning, tool calls,
+  answer and terminators) and the call's receipt. On the target alone it
+  also returns each position's top two raw logits. No serving path calls
+  the op.
+- **Token identity.** Each case's candidate output is compared, token by
+  token, with the target alone's. At a divergence, the two tokens must be
+  the target alone's top two on the shared prefix, within `logit_epsilon`.
+  The evaluator records that tie (case, pass, position and the two logits,
+  never the tokens). Then the target alone runs again, forced to the
+  candidate's prefix through that token, and the continuation is compared
+  under that actual prefix. The evaluator follows at most 8 ties per case.
+  Any other divergence fails the version (`rejected`, `output_mismatch`).
+  Every candidate block must give the same ids. A divergence with no logit
+  evidence, more ties than are followed, a case that one arm answered and
+  another did not, a mismatched target, tokenizer, runtime or template, or a
+  draft that is not the one given leaves the evaluation `unknown`.
+- **Evaluation record.** `DrafterEvaluation` keeps the incumbent,
+  candidate and target-only identities (draft digest, model, tokenizer,
+  runtime, template, epoch and launch manifest), the corpus pin and the
+  cases opened, each run's raw token counts, native prefill and generate
+  time, queue waits, first-token time, end-to-end time and drafts proposed
+  and accepted, the exact, tied and mismatched case counts with the tie
+  evidence, each metric's comparison, the error counts, the policy and
+  recipe revision, and the decision. It holds a BLAKE3 of each run's token
+  ids, never the ids. The engine decides from this evidence, never from the
+  trainer. A qualified version is `qualified`; an unknown one stays
+  `returned` and is evaluated again on a later night. A `qualify` event
+  records the outcome. An erase of a version drops every evaluation that
+  names it.
+- **Activation.** A version that qualified and beat the incumbent under the
+  rule, with no metric worse, goes into service on its own. In one write the
+  engine checks again that the version is qualified and keeps its key, that
+  no ancestor is erased, that the policy is on at the same revision with no
+  excluded world in the ancestry, and that the binding is at the generation
+  the evaluation read. Then it moves the binding by compare-and-swap (an
+  `activate` event), and the serving host restarts the worker with the
+  version. A revert, an erase or a policy set that landed meanwhile wins.
+- **Rollback.** Once the serving worker proves the version's draft
+  identity, the server replays the first `observation_cases` cases on it as
+  background work. Each answer must be the qualified output, and their speed
+  is compared with the incumbent's evaluation runs under the same rule. Any
+  slowdown, any other output, any error, an unmeasured metric, or a worker
+  that does not serve the version within 30 minutes rolls the binding back
+  to its previous clean head (stock where there is none), with a `rollback`
+  event and its reason. There is no tolerated regression. Traffic is never
+  read as a speed comparison. The observation stays on the evaluation, and
+  the morning report shows the rollback. After a rollback no candidate
+  activates for that target until the owner sets the policy or someone
+  reverts the target.
+- **Plaintext.** Each head an evaluator incarnation loads is opened into
+  `drafter-evaluation/<random>/` under the vault (mode 0700). The server
+  removes that directory when an evaluation starts and ends. A vault lock
+  retires the evaluator incarnations and removes it before the key drops.
 
-What does not exist yet: the held-out evaluator with its token-identity
-check, automatic activation and rollback (FIX 14975), a binding for managed
-workers that one hosted process serves to several vaults (FIX 15258), a
-recipe qualified on the house target, and the corpus sweep at housekeeping.
+What does not exist yet: a shipped recipe qualified on the house target (the
+recipe carries every training and qualification number, and none has a
+default), a binding for managed workers that one hosted process serves to
+several vaults (FIX 15258), and the corpus sweep at housekeeping (FIX 15259).

@@ -1251,15 +1251,22 @@ class Scheduler:
                 work=req.work,
                 execution=req.execution,
             )
+            # An evaluator's call (exl3_evaluator.py, FIX 14975) records what
+            # its Jobs take; every other call runs as before.
+            evaluation = getattr(req, "evaluation", None)
             if req.branch is not None and self.sessions is not None:
                 # A working branch's Job, attached where its session's state
                 # matches these ids; a thinking call's reasoning pass leaves
                 # its answer pass a carry.
                 plan = self.sessions.plan(req.branch, ids, carry=phase == "reason")
                 job = FrontierJob(plan=plan, **fields)
+            elif evaluation is not None:
+                job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
             serial = self.generator.enqueue(job)
+            if evaluation is not None:
+                evaluation.enqueued(job, phase)
         except Exception as e:
             self._fail(req, e)
             return

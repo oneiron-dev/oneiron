@@ -25,7 +25,10 @@
 //! A vault's own drafter (FIX 14976) is handed to a managed EXL3 worker by
 //! the same row replacement, with the vault's private load set as the
 //! draft, and only where this process launches the worker for its one vault
-//! (`drafter_binding`). The hosted row stays the configured one.
+//! (`drafter_binding`). The hosted row stays the configured one. The
+//! drafter evaluator launches incarnations of that row with each arm's
+//! draft, never hosted, so no route reaches them (`evaluator_incarnation`,
+//! FIX 14975).
 //!
 //! The media workers, VoxCPM2 speech and local ASR, are supervised the same
 //! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
@@ -34,6 +37,9 @@
 //! time.
 mod bundle;
 mod drafter_binding;
+// FIX 14975: the drafter evaluator's incarnations of the vault's own row.
+#[cfg(unix)]
+mod evaluator_incarnation;
 mod install;
 mod launch_manifest;
 mod launcher;
@@ -71,6 +77,11 @@ use serde_json::Value as JsonValue;
 pub(super) use drafter_binding::{
     DraftSeat, clear_vault_drafts, draft_seat, drafter_training_work, launch_records,
     replace_draft, retrain_target, vault_drafts,
+};
+#[cfg(unix)]
+pub(super) use evaluator_incarnation::{
+    EvaluatorDraft, EvaluatorIncarnation, EvaluatorSeat, evaluator_seat, launch_evaluator,
+    retire_vault_evaluators,
 };
 #[cfg(unix)]
 pub(super) use session::open_turn;

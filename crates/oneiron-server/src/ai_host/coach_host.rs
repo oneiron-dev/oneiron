@@ -275,10 +275,16 @@ fn run_one(
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
-        // FIX 12569: the night exports its corpus (FIX 14973) for the drafter
-        // target this process serves (FIX 14976) and trains it on this
-        // host's drafter trainer (FIX 14974), or holds with its reason.
-        COACH_DRAFTER_RETRAIN_FACET => super::drafter::run(server, admitted, now),
+        // FIX 12569: a version a trainer returned is evaluated first (FIX
+        // 14975), its held-out side read before the night's corpus sweep, and
+        // activated and observed on its own task. The night then exports its
+        // corpus (FIX 14973) for the drafter target this process serves (FIX
+        // 14976) and trains it on this host's drafter trainer (FIX 14974), or
+        // holds with its reason.
+        COACH_DRAFTER_RETRAIN_FACET => {
+            crate::models::start_drafter_evaluations(vault);
+            super::drafter::run(server, admitted, now)
+        }
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
