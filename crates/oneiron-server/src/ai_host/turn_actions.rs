@@ -278,6 +278,9 @@ async fn act(
     if let Some(rows) = &board_rows {
         today_sources.add(Some(rows));
     }
+    // The requester's board rode today's call, so the conversation's next
+    // turn reads one too: a published successor gets its tail prepared.
+    let board_rode = board_rows.is_some();
     let today_sources = today_sources.rows();
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
@@ -398,7 +401,10 @@ async fn act(
         None => answering,
     };
     let answering = match action_session {
-        Some(session) => session.commit_on_answer(answering),
+        Some(session) => session.commit_on_answer(
+            answering,
+            server.filter(|_| board_rode).and_then(Weak::upgrade),
+        ),
         None => answering,
     };
     drop(answering.subscription);
