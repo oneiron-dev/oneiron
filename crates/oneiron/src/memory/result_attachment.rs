@@ -7,7 +7,7 @@
 
 mod restore;
 
-pub(crate) use restore::retire_message_results_in_rows;
+pub(crate) use restore::{retire_message_result_in_row, retire_message_results_in_rows};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
