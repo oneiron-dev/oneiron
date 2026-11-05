@@ -175,18 +175,20 @@ pub use self::triage::{
     FEEDBACK_TRIAGE_FINDING_PREDICATE, FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE,
     FeedbackTriageBinding, FeedbackTriageBindingRequest, FeedbackTriageChild,
     FeedbackTriageContinuation, FeedbackTriageErased, FeedbackTriageFinding, FeedbackTriageHandoff,
-    FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob,
-    FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob, FeedbackTriageOutput,
-    FeedbackTriageParkOutcome, FeedbackTriagePending, FeedbackTriagePin, FeedbackTriageProgress,
-    FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceError,
-    FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault, FeedbackTriageSourceRef,
-    FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus, FeedbackTriageStatusRequest,
-    FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork, FeedbackTriageWorkNode,
-    GithubIssueKind, GithubIssuePage, GithubIssueRevision, GithubSweepContinuation,
+    FeedbackTriageHandoffSource, FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem,
+    FeedbackTriageJob, FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob,
+    FeedbackTriageOutput, FeedbackTriageParkOutcome, FeedbackTriagePending, FeedbackTriagePin,
+    FeedbackTriageProgress, FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest,
+    FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
+    FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus,
+    FeedbackTriageStatusRequest, FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork,
+    FeedbackTriageWorkNode, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
+    GithubSweepContinuation,
 };
 pub(crate) use self::triage::{
-    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_in_txn,
-    job_handoff_in_txn, job_target, node_target,
+    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_actor_in_txn,
+    erase_handoff_as_in_txn, erase_handoff_in_txn, erased_queue_input_in_txn, job_handoff_in_txn,
+    job_target, node_target, refuse_erased_in_txn,
 };
 
 #[cfg(test)]
