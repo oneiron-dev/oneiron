@@ -20,6 +20,10 @@
 //! native id an earlier group reported back — never a guess. Each applied
 //! group's order is verified against its body state before the next group
 //! runs; any divergence refuses the export and nothing lands.
+//!
+//! DOCX allows one formatting revision per run, with no nested rPrChange.
+//! Overlapping authors keep their exact in-engine commits; export uses the
+//! whole-window default-author fallback. Disjoint spans stay native.
 
 use super::author_token::DOCX_AUTHOR_TOKEN_MARKER;
 use super::*;
@@ -288,6 +292,10 @@ impl Vault {
             .map_err(|error| {
                 docx_error(&error, "the body could not be projected onto its package")
             })?;
+        // Existing deletions and move sources stay locked in the body, but
+        // are absent from accept-all order. Read that visibility without
+        // resolving any source revisions in the exported package.
+        let source_visible: HashSet<String> = session.accepted_id_order().into_iter().collect();
         // Native ids stay stable in memory: imported ids address themselves
         // until a move replaces one with its copy's id.
         let mut native: HashMap<String, String> = HashMap::new();
@@ -579,7 +587,9 @@ impl Vault {
                     let mut expected = Vec::with_capacity(state.blocks.len());
                     for block in &state.blocks {
                         let id = block.id.as_str();
-                        if !block.imported && !surviving.contains(id) {
+                        if (block.imported && !source_visible.contains(id))
+                            || (!block.imported && !surviving.contains(id))
+                        {
                             continue;
                         }
                         expected.push(native_id(&native, id)?);
@@ -597,7 +607,9 @@ impl Vault {
                 let mut expected = Vec::with_capacity(state.blocks.len());
                 for block in &state.blocks {
                     let id = block.id.as_str();
-                    if !block.imported && !surviving.contains(id) {
+                    if (block.imported && !source_visible.contains(id))
+                        || (!block.imported && !surviving.contains(id))
+                    {
                         continue;
                     }
                     expected.push(native_id(&native, id)?);
@@ -674,6 +686,7 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -683,7 +696,6 @@ impl Vault {
                 recalc: None,
                 recalc_zone: Some(request.zone.clone()),
                 effects: Vec::new(),
-                rebind_frontier: None,
             };
             let export_key = version_key(artifact, version.version);
             EXPORTS.put(&self.store, wtxn, &export_key, &record)?;

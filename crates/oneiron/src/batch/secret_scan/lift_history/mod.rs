@@ -38,8 +38,8 @@ mod side_rows;
 mod sync_text;
 
 pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn};
-pub(crate) use self::sync_text::propose_sync_text_in_txn;
 pub use self::projection::secret_lift_as_owner_toward;
+pub(crate) use self::sync_text::propose_sync_text_in_txn;
 
 use std::borrow::Cow;
 use std::ops::Bound;

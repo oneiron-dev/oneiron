@@ -303,8 +303,13 @@ fn validate_tsa_chain(
     at_unix: u64,
     memory: &MemoryLedger,
 ) -> Result<(), TokenError> {
+    let slots = chain_ders
+        .len()
+        .saturating_mul(std::mem::size_of::<x509_cert::Certificate>());
+    let _slots_held = memory.hold(slots)?;
     let chain = parse_certs(chain_ders)?;
-    let _chain_held = memory.hold(held_bytes::certificates(&chain, chain_ders))?;
+    let _chain_held =
+        memory.hold(held_bytes::certificates(&chain, chain_ders).saturating_sub(slots))?;
     pkix_chain::verify_time_stamper(
         &chain,
         anchors,
@@ -381,9 +386,14 @@ pub(crate) fn validate_token_for_verify(
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
+    let slots = chain_ders
+        .len()
+        .saturating_mul(std::mem::size_of::<x509_cert::Certificate>());
+    let _slots_held = memory.hold(slots)?;
     let trust = match parse_certs(&chain_ders) {
         Ok(chain) => {
-            let _chain_held = memory.hold(held_bytes::certificates(&chain, &chain_ders))?;
+            let _chain_held = memory
+                .hold(held_bytes::certificates(&chain, &chain_ders).saturating_sub(slots))?;
             match pkix_chain::verify_time_stamper(
                 &chain,
                 anchors,
