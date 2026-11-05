@@ -52,7 +52,7 @@ mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
-pub(crate) use lmdb_entity::{indexes_named_entity, reindex_named_entities};
+pub(crate) use lmdb_entity::{BodyReadError, indexes_named_entity, reindex_named_entities};
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
@@ -97,7 +97,7 @@ pub(crate) use time::{
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
-pub(crate) use lmdb_visibility::removed_in_txn;
 pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
+pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;
