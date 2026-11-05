@@ -10,7 +10,7 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::model_step_context::StepOutcome;
+use crate::model_step_context::{StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
@@ -225,6 +225,7 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
 /// settles identically whichever arm accounts it (FIX 12487 round 1).
 pub(super) enum SliceFate {
     Finished {
+        binding: StepEffectBinding,
         response: LlmResponse,
         failure_policy: Option<DreamerFailureDecision>,
     },
@@ -239,19 +240,24 @@ pub(super) enum SliceFate {
 /// every paid outcome must pass here exactly once.
 pub(super) fn tally_slice_outcome(
     vault: &Vault,
-    attempt_id: AttemptId,
-    step_hash: [u8; 32],
     outcome: DurableStepResult<StepOutcome>,
     charges: &mut StepChargeTally,
 ) -> Result<SliceFate> {
     Ok(match outcome {
         Ok(StepOutcome::Finished {
+            binding,
             response,
             failure_policy,
             ..
         }) => {
-            charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+            charges.record_terminal(
+                vault,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
             SliceFate::Finished {
+                binding,
                 response,
                 failure_policy,
             }
@@ -282,14 +288,13 @@ pub(super) fn tally_slice_outcome(
 /// (FIX 12487 round 2).
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
-    attempt_id: AttemptId,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
 ) -> Result<bool> {
     let mut trapped = false;
-    for SliceStep { step_hash, outcome } in extracted.steps {
+    for SliceStep { outcome, .. } in extracted.steps {
         if matches!(
-            tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?,
+            tally_slice_outcome(vault, outcome, charges)?,
             SliceFate::Trapped
         ) {
             trapped = true;
