@@ -29,6 +29,35 @@ use zeroize::Zeroizing;
 /// through the image's build floor, not through `CONTRACT_VERSION`.
 pub const VM_PROVISION_REVISION: u32 = 2;
 
+/// One provision-2 line, newline included: the existing binding/reply budget
+/// plus the exact public recipient geometry (1616 ONHB bytes in base64,
+/// 32 fingerprint bytes in hex, and the JSON field names and delimiters).
+/// Other boot/lifecycle frames keep their existing bound.
+pub const MAX_VM_PROVISION_FRAME: usize = crate::vm::MAX_VM_FRAME
+    + 4 * 1616_usize.div_ceil(3)
+    + 32 * 2
+    + r#","checkpoint_host_holds_recipient":{"bundle_b64":"","fingerprint":""}"#.len();
+
+/// Encodes a provision prelude or reply under that family's frame bound.
+pub fn encode_vm_provision_frame(frame: &impl Serialize) -> anyhow::Result<String> {
+    let mut line = serde_json::to_string(frame)?;
+    line.push('\n');
+    anyhow::ensure!(
+        line.len() <= MAX_VM_PROVISION_FRAME,
+        "vm provision frame over its cap"
+    );
+    Ok(line)
+}
+
+/// Decodes a provision line, including its revision peek and final echo.
+pub fn decode_vm_provision_frame<T: for<'de> Deserialize<'de>>(line: &str) -> anyhow::Result<T> {
+    anyhow::ensure!(
+        line.len() <= MAX_VM_PROVISION_FRAME,
+        "vm provision frame over its cap"
+    );
+    Ok(serde_json::from_str(line.trim_end_matches(['\r', '\n']))?)
+}
+
 /// The fscrypt v2 master key's length, the key frame's exact size.
 pub const VM_FSCRYPT_KEY_LEN: usize = 64;
 
