@@ -1,7 +1,7 @@
 //! Owned final-put data carried past the lower apply, not admission.
 
-use super::{FixedPut, NativeSkillPostGate};
-use crate::error::Result;
+use super::FixedPut;
+use crate::error::{Error, Result};
 use crate::skill::SkillRecord;
 use crate::{EntityId, WriteActor};
 
@@ -22,15 +22,28 @@ impl PendingNativeSkillPut {
         fixed: &FixedPut<'_>,
         final_body: &[u8],
     ) -> Result<Option<Self>> {
-        Ok(
-            NativeSkillPostGate::capture(store, txn, fixed, final_body)?.map(|input| Self {
-                entity: input.entity(),
-                record: input.record,
-                final_body: input.final_body,
-                actor: input.actor,
-                recorded_at: input.recorded_at,
-            }),
-        )
+        let Some(request) = fixed.skill_state_write else {
+            return Ok(None);
+        };
+        let context = fixed.native_publication.ok_or(Error::InvariantViolation(
+            "native SKILL state request has no applying Vault",
+        ))?;
+        if !std::ptr::eq(store, &context.vault.store)
+            || fixed.entity_type != crate::registry::ENTITY_TYPE_SKILL
+            || fixed.replicated
+        {
+            return Err(Error::InvariantViolation(
+                "native SKILL state request differs from its applying put",
+            ));
+        }
+        let record = request.recheck_final(store, txn, &fixed.id, final_body)?;
+        Ok(Some(Self {
+            entity: request.entity(),
+            record,
+            final_body: final_body.to_vec(),
+            actor: context.actor,
+            recorded_at: fixed.mutation_recorded_at,
+        }))
     }
 
     pub(in crate::batch) fn entity(&self) -> EntityId {

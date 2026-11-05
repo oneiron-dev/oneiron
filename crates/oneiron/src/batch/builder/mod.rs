@@ -4,6 +4,8 @@ mod apply;
 mod claims;
 mod commit;
 mod edges;
+#[cfg(feature = "sync")]
+mod native_skill;
 mod ops;
 mod preflight;
 mod puts;
@@ -17,6 +19,8 @@ use crate::off_record::PromoteReplayGrant;
 use super::BaseWriteOrigin;
 use super::vad_postcommit;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::native_skill::NativeSkillFinalInput;
 pub(crate) use self::ops::BatchOp;
 use self::puts::CommitCheck;
 

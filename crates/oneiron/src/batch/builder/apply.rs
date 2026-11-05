@@ -213,8 +213,18 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
-        // These owned inputs reach the caller's final point together. Native
-        // publication remains off until its source admission is complete.
+        // Construct the local final input only after every original check.
+        // Publication stays off until native source admission is complete.
+        #[cfg(feature = "sync")]
+        let native_input = super::native_skill::NativeSkillFinalInput::finish(
+            vault,
+            wtxn,
+            native_outputs,
+            content_writes,
+        )?;
+        #[cfg(feature = "sync")]
+        drop(native_input);
+        #[cfg(not(feature = "sync"))]
         drop((native_outputs, content_writes));
         Ok(())
     }
