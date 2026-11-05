@@ -114,3 +114,11 @@ mode resolves the same tracked replacement after applying these marks. Ordinary
 header/footer edits without the mode retain their current inheritance, identity
 checks and word-diff dispatch. No new serializer, format reader, version constant,
 refusal, default or cap is added.
+
+The complex-script exact-run correction (2026-11-05, FIX 14300 R2) touches
+`src/edit/verbs/headers_footers.rs` only. The same new Inserted text nodes now
+set `bold_cs` / `italic_cs` and their authored flags to the requested bold /
+italic values, with explicit OFF for absence. Word uses these complex-script
+slots instead of `b` / `i` when `cs` or `rtl` is enabled. Those script selectors,
+fonts and deleted source history remain unchanged; the shared materializer and
+all ordinary edits remain unchanged.
