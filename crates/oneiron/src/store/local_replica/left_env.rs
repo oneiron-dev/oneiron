@@ -112,6 +112,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,
     &side_table::SHORT_ID_COUNTER,
+    &side_table::SHORT_ID_KIND_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
     &side_table::COMPACTION_EPOCH_FLOOR,
