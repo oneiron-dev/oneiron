@@ -11,6 +11,7 @@ use crate::managed::host::ManagedHost;
 #[derive(Default)]
 pub(super) struct StartingHandles {
     pub(super) host: Option<ManagedHost>,
+    pub(super) host_legal: Option<crate::managed::host_legal::HostLegalService>,
     pub(super) server: Option<Arc<SyncServer>>,
     pub(super) state: Option<Arc<ManagedState>>,
     pub(super) ledger: Option<WakeLedger>,
@@ -47,6 +48,9 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         Some(host) => host.on_stop(),
         None => Ok(()),
     };
+    if let Some(legal) = handles.host_legal {
+        legal.stop().await;
+    }
     if let Some(task) = handles.ctl_task {
         let _ = task.await;
     }

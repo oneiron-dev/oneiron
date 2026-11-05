@@ -41,6 +41,7 @@ mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
+mod host_legal;
 mod isolation;
 pub mod key_sync;
 mod ledger;
