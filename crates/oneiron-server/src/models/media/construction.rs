@@ -147,6 +147,7 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            replay_runs: Default::default(),
             store: None,
             job_rungs: BTreeMap::new(),
             rests: None,
