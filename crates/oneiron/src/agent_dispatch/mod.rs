@@ -65,6 +65,7 @@ mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod planner_live;
+pub(crate) use planner_live::seat_model_rates_in_txn;
 mod project_conversation;
 mod project_proposal;
 mod requester;
@@ -76,6 +77,7 @@ pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+mod skill_default;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;

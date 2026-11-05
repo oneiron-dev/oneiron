@@ -42,6 +42,7 @@ import type {
   HostRootProfile,
   MemoryPack,
   MemoryExport,
+  NativeLimitQuestion,
   OpenOptions,
   RecallOptions,
   WitnessReceipt,
@@ -395,6 +396,16 @@ export class Oneiron {
   }
 
   /**
+   * The engine `[limits]` rows this client's own vault crossed, latest per
+   * row: the row's key plus what it stood at and what the work measured,
+   * both exact (`bigint`, never `number`). `null` on a remote, attached, or
+   * rebound view; an empty list where no row crossed yet.
+   */
+  nativeLimitQuestions(): NativeLimitQuestion[] | null {
+    return this.#call(() => this.#client.nativeLimitQuestions()) ?? null
+  }
+
+  /**
    * Resends the call a `PENDING_ASK` refusal answered, under the invocation
    * its `hook` names (ARCH-0080 §3): pass the caught `OneironError`, the
    * verb's SDK name (`vault.claims.upsert`) and the same input. While the ask
@@ -502,7 +513,7 @@ export class Oneiron {
         /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
         result: (input: Facade.OfferPassRef): Facade.OfferPassResult | null => this.#call(() => this.#client.vaultCoachTrainingOffersResult(input) as Facade.OfferPassResult | null),
         /** Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice. */
-        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerRecord => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerRecord),
+        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerReply => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerReply),
         /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
         undo: (input: Facade.OfferRef): Facade.OfferUndoReceipt => this.#call(() => this.#client.vaultCoachTrainingOffersUndo(input) as Facade.OfferUndoReceipt),
         /** Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination. */

@@ -386,6 +386,14 @@ class ExportReceipt(TypedDict):
     # BLAKE3 of the archive, lowercase hex.
     digest: str
 
+class NativeLimitQuestion(TypedDict):
+    # The [limits] row key that asked.
+    row: str
+    # What the row stood at for the work, exact.
+    bound: int
+    # What the work measured, exact.
+    measured: int
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -441,6 +449,8 @@ class Oneiron:
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
     def with_read_credential(self, credential: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
+    def native_limit_questions(self) -> list[NativeLimitQuestion] | None:
+        """The engine-limit crossings this client's own vault kept; None on a remote, attached, or rebound view."""
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
     def lens_frame_event(self, card_id: str, request: LensFrameEventRequest) -> LensFrameEventReply:
@@ -820,7 +830,7 @@ class Oneiron:
             """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
         def result(self, spec: Facade.OfferPassRef) -> Facade.OfferPassResult | None:
             """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
-        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerRecord:
+        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerReply:
             """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
         def undo(self, spec: Facade.OfferRef) -> Facade.OfferUndoReceipt:
             """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
