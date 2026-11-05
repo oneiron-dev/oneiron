@@ -72,6 +72,12 @@ fn peer_rows(entities: &LoroMap) -> Vec<(EntityId, [u8; 32])> {
     rows
 }
 
+/// Reads the peer-origin rows of already-admitted bytes without changing
+/// their document. Staged confirmation uses the same kind and digest rule.
+pub(in crate::sync) fn admitted_peer_rows(admitted: &LoroDoc) -> Vec<(EntityId, [u8; 32])> {
+    peer_rows(&admitted.get_map("entities"))
+}
+
 /// [`peer_rows`] of a part window admission copied, each also carried in
 /// the part's [`PEER_ORIGIN_MAP`] before it commits. The map is minted here
 /// from the copied rows, never taken from the sender.
