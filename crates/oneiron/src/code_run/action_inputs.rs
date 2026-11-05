@@ -36,7 +36,14 @@ pub(crate) fn self_call_inputs(vault: &Vault, call: &SelfCall) -> Result<Option<
         return Ok(None);
     }
     let mut named = BTreeSet::new();
-    entity_refs(&self_call_request_value(call)?, &mut named);
+    if let SelfCall::AgentVerb(call) = call
+        && crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&call.verb.as_str())
+    {
+        // Replay keeps no custody input; version pins still observe the live call.
+        entity_refs(&Value::from(call.input.to_string()), &mut named);
+    } else {
+        entity_refs(&self_call_request_value(call)?, &mut named);
+    }
     vault.action_inputs(&named)
 }
 

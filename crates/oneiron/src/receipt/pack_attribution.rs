@@ -12,6 +12,12 @@ use crate::store::Store;
 const ATTEMPT_ATTRIBUTION: SideTable<[u8; 16], PackAttributionFields, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_ATTRIBUTION);
 
+/// Whether a masked copy of a `ATTEMPT_PACK_ATTRIBUTION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn attempt_pack_attribution_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<PackAttributionFields, Named>(bytes)
+}
+
 /// A contribution check is distinct from loading or citing an input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContributionCheck {
