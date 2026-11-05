@@ -5,6 +5,17 @@ row holds the admitted transcript pointer, tool cursor and settled meter. It
 is not a read grant: the workflow still uses its native lease, actor, scope
 and retained-hook checks.
 
+## Retained terminal answers
+
+A retained terminal answer keeps the response and the model binding of the
+completed call. Resume reads it under the same claimed attempt's checkpoint
+checks. It does not call the model again, resample the response, replay tools,
+or admit a second model budget.
+
+Model-role authorization binds a new request to its configured route and host.
+The policy budget guard meters new spend. Neither is a read grant for retained
+answer bytes or their sources.
+
 ## Historical body sources
 
 A successful checkpoint publication records the actual actor, every known
