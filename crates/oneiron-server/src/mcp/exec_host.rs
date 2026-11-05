@@ -791,7 +791,8 @@ fn run_engine_native_code_mode(
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
-        .with_agent_verb_door(verbs);
+        .with_agent_verb_door(verbs)
+        .with_bound_run(config.run_id);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }
