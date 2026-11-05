@@ -320,6 +320,7 @@ impl SyncServer {
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
+            seat_helpers: Default::default(),
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),

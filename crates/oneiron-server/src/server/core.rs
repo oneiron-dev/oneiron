@@ -168,6 +168,10 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// The credential-helper registrations each seat run's host made for it
+    /// (FIX 10624 step 2): `POST /v1/seat/credential-helper` answers into
+    /// them.
+    pub(crate) seat_helpers: crate::runtime::SeatHelperRuns,
     /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
