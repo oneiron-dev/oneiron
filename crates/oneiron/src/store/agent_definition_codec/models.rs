@@ -21,7 +21,7 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDefBody(reason))
 }
 
-/// The `models` value: each entry the [`super::AGENT_MODEL_KEYS`] in pinned
+/// The `models` value: each entry the [`crate::store::agent_record::AGENT_MODEL_KEYS`] in pinned
 /// order, in the owner's list order.
 pub(crate) fn encode_agent_models(models: &[AgentModel]) -> Value {
     Value::Array(

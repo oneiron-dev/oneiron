@@ -51,6 +51,13 @@ pub(crate) trait SideTableDbs {
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         None
     }
+
+    /// The key a per-recall memo keeps an answer read from this target's
+    /// committed snapshot under ([`crate::ports::recall_memo_key`]), or
+    /// `None` for a target whose reads no such memo keeps.
+    fn side_recall_memo_key(&self, _txn: &RoTxn<'_>) -> Option<(u64, usize, usize)> {
+        None
+    }
 }
 
 impl<T: ManifestDbs> SideTableDbs for T {
@@ -60,6 +67,10 @@ impl<T: ManifestDbs> SideTableDbs for T {
 
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         Some(self.sync_state())
+    }
+
+    fn side_recall_memo_key(&self, txn: &RoTxn<'_>) -> Option<(u64, usize, usize)> {
+        crate::ports::recall_memo_key(self, txn)
     }
 }
 
@@ -108,6 +119,10 @@ impl SideTableDbs for crate::Vault {
 
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         Some(CustodyWrite::of(self))
+    }
+
+    fn side_recall_memo_key(&self, txn: &RoTxn<'_>) -> Option<(u64, usize, usize)> {
+        self.store.side_recall_memo_key(txn)
     }
 }
 
