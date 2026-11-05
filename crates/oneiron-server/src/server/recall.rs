@@ -47,6 +47,28 @@ use crate::embedder::EmbedQueryRefusal;
 /// rather than recall without it.
 const LIGHT_RECALL_EMBEDS_MEDIA: bool = false;
 
+struct RecallRequestInput {
+    request: RecallRequest,
+    _memory: MemoryLease,
+}
+
+impl RecallRequestInput {
+    fn new(request: RecallRequest, memory: MemoryLease) -> Self {
+        let mut input = Self {
+            request,
+            _memory: memory,
+        };
+        input
+            ._memory
+            .materialized(0, input.request.query.capacity() as u64);
+        input
+    }
+
+    fn into_parts(self) -> (MemoryLease, RecallRequest) {
+        (self._memory, self.request)
+    }
+}
+
 struct RecallMediaInput {
     media: DecodedMediaQuery,
     _memory: MemoryLease,
@@ -335,19 +357,20 @@ impl SyncServer {
         home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
-        let detail = recall_effort_name(input.effort);
+        let input = RecallRequestInput::new(input, self.memory.empty_lease());
+        let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
             let arrived = Instant::now();
             let (effort, budget) = oneiron::memory::resolve_recall_dial(
-                input.effort,
-                input.deadline_ms,
+                input.request.effort,
+                input.request.deadline_ms,
                 self.vault.call_mode_deadline(),
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
-            let media = self.recall_media(&input)?;
-            let ask = HomeRecallAsk::new(&input, room.is_some());
+            let media = self.recall_media(&input.request)?;
+            let ask = HomeRecallAsk::new(&input.request, room.is_some());
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
@@ -356,6 +379,8 @@ impl SyncServer {
             // row it runs on and raises the row's check.
             let job = budget.map(|_| self.vault.admit_deadline_job(actor));
             let work = move || {
+                // Move the whole owner, then bind the request after its lease.
+                let (_request_memory, input) = input.into_parts();
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
