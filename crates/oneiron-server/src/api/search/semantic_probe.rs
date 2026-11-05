@@ -1,20 +1,25 @@
 //! Route-local semantic question and probe custody on one memory lease.
 //!
 //! Text and returned vector storage are charged at their actual capacities.
-//! A ready native slot's non-deadline call first reserves its configured logical
-//! output footprint, then reconciles the actual capacity. Deadline and space
-//! calls remain adoption-only. Provider scratch and device memory are not covered.
+//! A ready native slot's non-deadline call opportunistically pre-grows its
+//! configured logical output footprint on that same lease only when the native
+//! line grants it without a memory-FIFO wait, then reconciles the actual
+//! capacity. Under contention the call keeps the original adoption-only path
+//! with no reservation, so full cover before growth and queueing stay open
+//! here. Deadline and space calls remain adoption-only. Provider scratch and
+//! device memory are not covered.
 
 use std::mem::size_of;
 use std::sync::Arc;
+use std::time::Instant;
 
-use oneiron::host_memory::{MachineMemory, MemoryLease};
+use oneiron::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
 use oneiron::llm::WorkCancel;
 
 use crate::embedder::EmbedQueryRefusal;
 use crate::server::SyncServer;
 
-/// Request-drop cancellation for memory admission, not native inference.
+/// Request-drop pre-call checkpoint, not a memory wait or inference cancellation.
 struct CancelOnDrop(WorkCancel);
 
 impl Drop for CancelOnDrop {
@@ -64,11 +69,22 @@ impl Question {
         }
     }
 
-    /// Reserves a ready slot's output before calling that same slot off-runtime.
+    /// Pre-grows a ready slot's output only when immediately available, then calls that same slot off-runtime.
     ///
-    /// The worker retains the question and lease if the request drops. Request
-    /// drop stops memory admission at its native checkpoints, not an inference
-    /// already running. Native refusals keep the existing generic failure shape.
+    /// The single growth attempt carries an already-due deadline, so the native
+    /// line grants it only on an immediate fit and otherwise drops this
+    /// attempt's own waiter before any Condvar wait. This adds no new
+    /// memory-FIFO wait or hold-and-wait cycle while the question text is
+    /// retained; native mutex acquisition may still contend. Under contention
+    /// the call falls back to the original adoption-only path with zero
+    /// reservation and no retry, queue wait, or new busy refusal. The logical
+    /// minimum is not an allocator-capacity bound; the actual vector capacity
+    /// is reconciled after the call. The worker retains the question and lease
+    /// if the request drops. Request drop is only a pre-call checkpoint here,
+    /// not a new memory wait or an already-running inference cancellation. The
+    /// native floor stays the real dynamic reserve check and keeps the existing
+    /// generic failure shape; no new cap, default, physical-floor constant,
+    /// queue deadline, or timer is added.
     pub(super) async fn embed_off_runtime(
         self,
         server: &Arc<SyncServer>,
@@ -85,15 +101,21 @@ impl Question {
             if slot.admitted_provider().is_none() {
                 return Err(EmbedQueryRefusal::NotReady);
             }
-            let reserved =
+            let output_bytes =
                 (slot.config().dimensions as u64).saturating_mul(size_of::<f32>() as u64);
-            if let Err(refusal) = this
-                .memory
-                .grow_untimed(reserved, &|| worker_stopped.is_cancelled())
-            {
-                tracing::warn!(?refusal, "semantic query output reservation refused");
-                return Err(EmbedQueryRefusal::Failed);
-            }
+            // Opportunistic pre-growth only: the already-due deadline grants on
+            // an immediate fit, else the native line drops this attempt's own
+            // waiter before any Condvar wait. Contention adopts with zero.
+            let reserved = match this.memory.grow(output_bytes, Instant::now(), &|| {
+                worker_stopped.is_cancelled()
+            }) {
+                Ok(()) => output_bytes,
+                Err(MemoryRefusal::WaitedOut { .. }) => 0,
+                Err(refusal @ MemoryRefusal::Floor { .. }) => {
+                    tracing::warn!(?refusal, "semantic query output reservation refused");
+                    return Err(EmbedQueryRefusal::Failed);
+                }
+            };
             if worker_stopped.is_cancelled() {
                 return Err(EmbedQueryRefusal::Failed);
             }
