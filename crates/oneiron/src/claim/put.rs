@@ -303,6 +303,7 @@ impl Vault {
                 "claim is outside the selected save",
             ));
         }
+        crate::memory::guard_existing_claim_in_txn(self, txn, saver, *id)?;
         if is_expression_preference_predicate(&body.predicate) {
             return Err(Error::InvalidClaimBody(
                 "expression preference lifecycle is owned by set_expression_preference",

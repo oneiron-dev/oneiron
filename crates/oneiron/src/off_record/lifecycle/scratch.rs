@@ -228,13 +228,13 @@ impl Selection<'_, '_> {
         {
             return Err(Error::EntityNotFound);
         }
-        if let Some(base) = vault.store.port_entity_raw(txn, &id)? {
-            // A scratch save never overwrites an unrelated durable identity.
-            if base != raw {
-                return Err(Error::InvariantViolation(
-                    "selected scratch id already has another durable row",
-                ));
-            }
+        if header.entity_type != ENTITY_TYPE_CLAIM
+            && let Some(base) = vault.store.port_entity_raw(txn, &id)?
+            && base != raw
+        {
+            return Err(Error::InvariantViolation(
+                "selected scratch id already has another durable row",
+            ));
         }
         let mut edges = Vec::new();
         let mut dependencies = Vec::new();
