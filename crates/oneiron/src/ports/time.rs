@@ -1,12 +1,11 @@
-//! Per-store clock and id source. No process-global clock or counter; the
-//! one process-wide map holds each vault's swap gate (FIX 12772).
-use crate::error::{Error, Result};
+//! Per-store clock and id source. No process-global clock or counter.
+use crate::error::{Error, Result, StoreError};
 use crate::store::{DetachedWrite, StoreCore};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::fs::{File, TryLockError};
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(crate) use oneiron_store::store_clock::AUTHORIZATION_LEASE_SECS;
 use oneiron_store::store_clock::lease_journal;
@@ -128,9 +127,14 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
-        // Past the lease, a decision passes this vault's swap gate, and
-        // waits while a restore swap holds it closed (FIX 12772).
-        let _pass = SwapGate::of(self.canonical_root()).pass();
+        // Past the lease, a decision holds this vault's swap gate shared, in
+        // any process, and waits while a restore swap holds it; a handle
+        // whose directory a swap moved aside judges nothing past its lease
+        // (FIX 12772; REVIEW-5620).
+        let _pass = pass_swap_gate(self.canonical_root())?;
+        if !self.sits_at_its_path()? {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
         let journal = if self.opened_with_writer_lease() {
             clock.lease_journal()
         } else {
@@ -248,18 +252,28 @@ impl crate::store::Store {
     }
 
     /// Closes this vault's authorization decisions past its committed lease
-    /// for a restore swap (FIX 12772; REVIEW-5620 P1): a decision under the
-    /// lease judges at most the lease and goes on; one past it waits from
-    /// now until the returned hold drops, and those already past it are
-    /// waited for, up to `deadline`. So the time the replacement carries,
-    /// read after this, is past every decision this vault takes before the
-    /// exchange. `None`, the gate open again, when those in flight do not end
-    /// by `deadline`.
+    /// for a restore swap, in every process that holds it open (FIX 12772;
+    /// REVIEW-5620): a decision under the lease judges at most the lease and
+    /// goes on; one past it waits from now until the returned hold drops,
+    /// and those already past it are waited for, up to `deadline`. So the
+    /// time the replacement carries, read after this, is past every decision
+    /// any handle on this vault takes before the exchange. `None` when those
+    /// in flight do not end by `deadline`.
     pub(crate) fn close_authorization_for_swap(
         &self,
         deadline: Instant,
-    ) -> Option<AuthorizationSwapHold> {
-        SwapGate::of(self.canonical_root()).close(deadline)
+    ) -> Result<Option<AuthorizationSwapHold>> {
+        let gate = open_swap_gate(self.canonical_root()).map_err(Error::Io)?;
+        loop {
+            match gate.try_lock() {
+                Ok(()) => return Ok(Some(AuthorizationSwapHold { _gate: gate })),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(SWAP_GATE_POLL);
+                }
+                Err(TryLockError::WouldBlock) => return Ok(None),
+                Err(TryLockError::Error(error)) => return Err(Error::Io(error)),
+            }
+        }
     }
 
     /// The latest authorization time this vault has committed or may have
@@ -334,101 +348,36 @@ fn renew_authorization_lease_in_txn(core: &StoreCore, txn: &mut heed::RwTxn<'_>)
     Ok(leased)
 }
 
-/// One vault's gate on authorization decisions past its lease, by the
-/// canonical root every handle on it opened (FIX 12772): a restore swap
-/// closes it from before it reads the vault's authorization time until its
-/// exchange is done, so no decision past the lease judges in between.
-#[derive(Default)]
-struct SwapGate {
-    state: Mutex<SwapGateState>,
-    changed: Condvar,
+/// The file in a vault's root every handle on it, in any process, locks
+/// shared around a decision past the lease, and a restore swap locks
+/// exclusively from before it reads the vault's authorization time until its
+/// exchange is done (FIX 12772). The lock lives on the open file, so it goes
+/// with the handle's close or crash; nothing is registered in memory.
+const SWAP_GATE_FILE: &str = "clock-swap.lock";
+/// How often a swap looks again for the gate while decisions hold it.
+const SWAP_GATE_POLL: Duration = Duration::from_millis(10);
+
+fn open_swap_gate(root: &Path) -> std::io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(root.join(SWAP_GATE_FILE))
 }
 
-#[derive(Default)]
-struct SwapGateState {
-    /// A swap holds the gate closed.
-    closed: bool,
-    /// Decisions past the lease between their pass and their return.
-    passing: usize,
+/// A decision's shared hold on its vault's swap gate, once no swap holds it.
+/// A gate that does not open or lock refuses the decision.
+fn pass_swap_gate(root: &Path) -> Result<File> {
+    let gate = open_swap_gate(root).map_err(Error::Io)?;
+    gate.lock_shared().map_err(Error::Io)?;
+    Ok(gate)
 }
 
-/// Each vault's swap gate, made at its first decision past the lease or its
-/// first swap.
-static SWAP_GATES: LazyLock<Mutex<HashMap<PathBuf, Arc<SwapGate>>>> =
-    LazyLock::new(Default::default);
-
-impl SwapGate {
-    fn of(root: &Path) -> Arc<Self> {
-        let mut gates = SWAP_GATES.lock().unwrap_or_else(PoisonError::into_inner);
-        Arc::clone(gates.entry(root.to_path_buf()).or_default())
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, SwapGateState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A decision's pass, once no swap holds the gate closed.
-    fn pass(self: Arc<Self>) -> SwapGatePass {
-        let mut state = self.lock();
-        while state.closed {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-        state.passing += 1;
-        drop(state);
-        SwapGatePass(self)
-    }
-
-    /// The gate closed for a swap once no decision is passing, or `None`,
-    /// open again, when one still is at `deadline`.
-    fn close(self: Arc<Self>, deadline: Instant) -> Option<AuthorizationSwapHold> {
-        let mut state = self.lock();
-        while state.closed {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-        state.closed = true;
-        while state.passing > 0 {
-            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-                state.closed = false;
-                drop(state);
-                self.changed.notify_all();
-                return None;
-            };
-            state = self
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
-        drop(state);
-        Some(AuthorizationSwapHold(self))
-    }
-}
-
-/// A decision past the lease passing its vault's swap gate.
-struct SwapGatePass(Arc<SwapGate>);
-
-impl Drop for SwapGatePass {
-    fn drop(&mut self) {
-        self.0.lock().passing -= 1;
-        self.0.changed.notify_all();
-    }
-}
-
-/// A restore swap's hold on its vault's swap gate: decisions past the lease
-/// wait until it drops ([`crate::store::Store::close_authorization_for_swap`]).
-pub(crate) struct AuthorizationSwapHold(Arc<SwapGate>);
-
-impl Drop for AuthorizationSwapHold {
-    fn drop(&mut self) {
-        self.0.lock().closed = false;
-        self.0.changed.notify_all();
-    }
+/// A restore swap's exclusive hold on its vault's swap gate: decisions past
+/// the lease, in any process, wait until it drops
+/// ([`crate::store::Store::close_authorization_for_swap`]).
+pub(crate) struct AuthorizationSwapHold {
+    _gate: File,
 }
 
 pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";

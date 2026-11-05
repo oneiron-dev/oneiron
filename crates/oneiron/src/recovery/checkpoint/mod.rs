@@ -568,7 +568,8 @@ impl Vault {
     /// this vault already took, a wall stepped back included; a journal that
     /// does not take it refuses the swap, and nothing moves (FIX 12772).
     /// From before that time is read until the exchange is done, a decision
-    /// here past the committed lease waits, so none judges past it; those
+    /// past the committed lease, by any handle on this vault in any process,
+    /// waits on the vault's `clock-swap.lock`, so none judges past it; those
     /// already past the lease are waited for up to `SWAP_SPEND_DRAIN_WAIT`,
     /// and one still running then refuses the swap, nothing moved.
     ///
@@ -600,7 +601,7 @@ impl Vault {
         // (FIX 12772; REVIEW-5620 P1).
         let Some(_authorization_held) = self
             .store
-            .close_authorization_for_swap(Instant::now() + SWAP_SPEND_DRAIN_WAIT)
+            .close_authorization_for_swap(Instant::now() + SWAP_SPEND_DRAIN_WAIT)?
         else {
             return Err(crate::Error::InvalidConfig(
                 "an authorization decision past this vault's lease did not end in the swap's \
