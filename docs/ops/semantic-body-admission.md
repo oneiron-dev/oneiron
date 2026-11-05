@@ -48,9 +48,9 @@ Beyond the decoded body above, the semantic handler owns its trimmed question
 `String` and the embedded `Vec<f32>` on one process-memory empty lease, adopted
 after each allocates with `materialized(0, actual)`: the string's actual
 capacity, then the vector's actual capacity times `size_of::<f32>()`, the
-physical unit width. This is adoption only, not a preadmission, wait, refusal,
-grow, cap, or default; no dims, byte envelope, or model estimate enters the
-count.
+physical unit width. This is adoption only, not preadmission or an admission
+wait, refusal, grow, cap, or default; no dims, byte envelope, or model estimate
+enters the count. Native accounting still takes a mutex and may contend.
 
 `Question` holds its text before its lease, and `OwnedProbe` holds its
 embedding and question before its lease, so the payloads free before the guard
