@@ -1549,6 +1549,17 @@ exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
 can therefore be shown as waiting or filling while the old index still serves;
 answering the offer does not mean that its new binding is already applied.
 
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its

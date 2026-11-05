@@ -35,7 +35,9 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
-pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
+pub use media::{
+    MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
+};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
     apply_ops_session_projected, finalize_repo_derived_index_copies_in_txn,
