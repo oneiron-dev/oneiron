@@ -19,11 +19,13 @@
 //!
 //! Graph tracks changes per mail folder, so the source's change anchor is a
 //! delta link per folder, as the folders stood when they were read. A
-//! folder's first round lists all its mail the copy setting keeps (mail
-//! received since its cutoff, or all), page by page across steps, so mail
-//! that reaches a copied folder by any path (a move, a copy, an import) is
-//! filed, whatever its age; a message copied already lands as the same. A
-//! folder not copied is read only for the mail that leaves it.
+//! folder's first round lists all its mail, page by page across steps, and
+//! the mail its pages name that the copy setting keeps (received since its
+//! cutoff, or all) is filed, so mail that reaches a copied folder by any
+//! path (a move, a copy, an import) is filed whatever its age; a message
+//! copied already lands as the same. The newest-first copy waits while a
+//! round is mid-way, so nothing it copies sits in a folder whose round has
+//! not begun. A folder not copied is read only for the mail that leaves it.
 //! A message a folder reports removed is looked up: gone, or under Deleted
 //! Items or Junk Email, it is deleted at the provider; anywhere else it only
 //! moved, and one that left a folder not copied for a copied one is filed
@@ -64,6 +66,11 @@ const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
 const GRAPH_PAGE_SIZE: u32 = 100;
 const PREFER_IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";
 const PREFER_TEXT_BODY: &str = "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"";
+/// A change-feed page: immutable ids, up to 100 entries.
+const PREFER_DELTA: &str = "IdType=\"ImmutableId\", odata.maxpagesize=100";
+/// The most attachment pages one message's list is read to; a list longer
+/// than that keeps its first pages' descriptions.
+const MAX_ATTACHMENT_PAGES: usize = 50;
 /// The well-known folders the wire names.
 const WELL_KNOWN_FOLDERS: [&str; 9] = [
     "msgfolderroot",
@@ -405,9 +412,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             if tree.skipped(folder)? {
                 anchor.skipped.insert(folder.clone());
             }
-            anchor
-                .folders
-                .insert(folder.clone(), delta_link(folder, source.newer_than)?);
+            anchor.folders.insert(folder.clone(), delta_link(folder)?);
         }
         encode(&anchor)
     }
@@ -509,7 +514,9 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         let first = [("$select", "id,name,contentType,size,isInline".to_owned())];
         let mut query: &[(&str, String)] = &first;
         let mut link = Some(format!("{url}/attachments"));
-        while let Some(page_url) = link.take() {
+        let mut pages = 0;
+        while let Some(page_url) = link.take().filter(|_| pages < MAX_ATTACHMENT_PAGES) {
+            pages += 1;
             let Some(listed) = self.found(source, &page_url, query, PREFER_IMMUTABLE_IDS)? else {
                 break;
             };
@@ -560,7 +567,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             reads += 1;
             let was_skipped = stood.skipped.contains(folder);
             let link = cursor.link.clone().unwrap_or_else(|| delta.clone());
-            let listed = match self.get(source, &link, &[], PREFER_IMMUTABLE_IDS)? {
+            let listed = match self.get(source, &link, &[], PREFER_DELTA)? {
                 RestAnswer::Found(listed) => listed,
                 RestAnswer::Failed { status, code }
                     if status == 410 || code.as_deref().is_some_and(sync_state_lost) =>
@@ -596,7 +603,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 let provider_id = graph_id(entry.get("id"))?;
                 if entry.get("@removed").is_some() {
                     changes.extend(self.removal(source, provider_id, from_skipped)?);
-                } else if !(was_skipped && now_skipped) {
+                } else if !(was_skipped && now_skipped) && !older_than_kept(entry, source) {
                     changes.push(MailHistoryChange::Added(MailMessageRef {
                         provider_id,
                         thread_id: text_of(entry.get("conversationId")),
@@ -627,9 +634,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                     break;
                 }
                 if !stood.folders.contains_key(folder) && !reached.folders.contains_key(folder) {
-                    reached
-                        .folders
-                        .insert(folder.clone(), delta_link(folder, source.newer_than)?);
+                    reached.folders.insert(folder.clone(), delta_link(folder)?);
                 }
             }
             let held: Vec<String> = reached.folders.keys().cloned().collect();
@@ -651,9 +656,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 if stood.folders.contains_key(&folder) && was_skipped && !now_skipped {
                     // Out from under a folder not copied: its next round
                     // lists all its mail.
-                    reached
-                        .folders
-                        .insert(folder.clone(), delta_link(&folder, source.newer_than)?);
+                    reached.folders.insert(folder.clone(), delta_link(&folder)?);
                 }
                 if now_skipped {
                     reached.skipped.insert(folder);
@@ -829,25 +832,30 @@ fn rfc3339_seconds(value: &str) -> Option<u64> {
         .and_then(|date| u64::try_from(date.timestamp()).ok())
 }
 
-/// The first link of a folder's delta round: its mail received since
-/// `since`, or all its mail.
-fn delta_link(folder: &str, since: Option<u64>) -> Result<String> {
+/// The first link of a folder's delta round: all its mail, each entry with
+/// its receive time, so the copy setting's cutoff is applied as each page is
+/// read, under the setting that stands then.
+fn delta_link(folder: &str) -> Result<String> {
     let mut url = reqwest::Url::parse(&format!(
         "{GRAPH_ME_URL}/mailFolders/{}/messages/delta",
         path_segment(folder)
     ))
     .map_err(|_| refused("graph_mail_folder_link_unreadable"))?;
-    let filter = since
-        .map(|since| graph_time(since).map(|time| format!("receivedDateTime ge {time}")))
-        .transpose()?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("$select", "id");
-        if let Some(filter) = &filter {
-            query.append_pair("$filter", filter);
-        }
-    }
+    url.query_pairs_mut()
+        .append_pair("$select", "id,conversationId,receivedDateTime");
     Ok(url.into())
+}
+
+/// Whether a change-feed entry is mail the copy setting does not keep:
+/// received before its cutoff.
+fn older_than_kept(entry: &Value, source: &MailSyncSource) -> bool {
+    source.newer_than.is_some_and(|cutoff| {
+        entry
+            .get("receivedDateTime")
+            .and_then(Value::as_str)
+            .and_then(rfc3339_seconds)
+            .is_some_and(|received| received < cutoff)
+    })
 }
 
 /// A message's Graph URL, its id escaped as one path segment.
