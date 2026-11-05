@@ -230,8 +230,21 @@ else `{"state": "active", "check": ...}`, a
 check of kind `inspect_connection_pool_pressure` that names the episode, the
 `limits.max_connections` row and the episode's current bound, the credentials holding the most
 open request bodies, the pool's connections and the remedy. The check observes
-only: it pauses, revokes and refuses nothing, and it does not promise that a
-revocation releases a body already open.
+only: it pauses, revokes and refuses nothing.
+
+An explicit revoke does end the revoked credential's already-open counted TCP
+request body at its next read: a verified slip or a delegation parent captured
+at its successful verification must carry a current explicit `SlipRevoke`, or
+the node must receive a punch for the accepted account key. A later colliding
+mint cannot replace that admitted ancestry. The body fails with typed
+`credential_revoked`. When that cut precedes the routed reply, the reply is 401 with that error code and `connection: close`,
+even if a body parser would otherwise report a parse error. A reply already
+streaming cannot change its HTTP headers. The node remembers a punch for each accepted
+body's lifetime, independently of the verdict lease and temporary punch record.
+Expiry, grant changes, cache misses and unreadable revocation state do not end
+an admitted body through this check. Slip reads run off-thread, one received
+frame at a time, and their wait does not consume the network-idle limit. Mesh
+and in-process bodies keep their existing behavior.
 
 ```toml
 [limits]
@@ -380,6 +393,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+codebase_manifest_files = 10000000 # files one legacy codebase snapshot manifest names; past it the manifest is kept whole and the row asks
 requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
 embedding_dimensions = 1048576 # embedding vector dimensions one vault opened with, measured where its host serves it; past it the vault serves as opened and the row asks
 ```
