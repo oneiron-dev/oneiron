@@ -1704,7 +1704,7 @@ export interface FacadeResults {
   "vault.coach.training_offers.get": Facade.OfferView | null;
   "vault.coach.training_offers.trigger": Facade.OfferPassRef;
   "vault.coach.training_offers.result": Facade.OfferPassResult | null;
-  "vault.coach.training_offers.answer": Facade.OfferAnswerRecord;
+  "vault.coach.training_offers.answer": Facade.OfferAnswerReply;
   "vault.coach.training_offers.undo": Facade.OfferUndoReceipt;
   "vault.coach.training_offers.candidates": Facade.OfferCandidateRecord[];
   "vault.coach.training_offers.candidates.prepare": Facade.OfferCandidateRecord;
