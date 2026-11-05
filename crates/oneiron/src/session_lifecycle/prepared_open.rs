@@ -44,6 +44,12 @@ impl PreparedSessionOpen {
     /// Runs the original open post-chain only after the caller's commit.
     pub(crate) fn finish(self, vault: &Vault, outcome: SessionMintOutcome) {
         if let (Some(pre), SessionMintOutcome::Minted(session)) = (self.pre, outcome) {
+            tracing::info!(
+                target: "oneiron::dreamer::stages",
+                session = %session.to_hex(),
+                started_ms = self.timestamp.effective_ms,
+                "dreamer sitting open"
+            );
             let result = json!({
                 "session": session.to_hex(),
                 "started_at": self.timestamp.effective_ms / 1_000,

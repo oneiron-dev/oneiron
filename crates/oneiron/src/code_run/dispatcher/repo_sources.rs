@@ -17,9 +17,7 @@ use crate::error::Result;
 use crate::memory::repo_doors::{REPO_PROVENANCE_REQUIRED, RepoRunSources, RepoRunStamp};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::repo_mutation::REPO_PROVENANCE_PREDICATE;
-use crate::session_lifecycle::SessionMintOutcome;
-use crate::temporal::TimeRange;
-use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{ClaimSubject, EntityId, Vault};
 
 /// The derivation a run's provenance names: the proposal door's own.
@@ -65,11 +63,11 @@ impl RepoRequestWitness {
 }
 
 impl HostSelfDispatcher<'_> {
-    /// The run's attribution for its change `change` in the work `stamp`
-    /// binds: its session, and the provenance claim, gated as any claim the
-    /// run writes. The inner answer is `repo_provenance_required` when the
-    /// host holds no witness of the request; the outer error is a store or
-    /// gate failure, which ends the call as any memory write's does.
+    /// Prepares the run's attribution for its change in the work `stamp`
+    /// binds: its sitting and the provenance claim, gated as any claim the
+    /// run writes. No attribution rows land until the proposal's writer.
+    /// The inner answer is `repo_provenance_required` without a host witness;
+    /// the outer error is a store or gate failure, as any memory write's.
     ///
     /// # Errors
     /// A store failure, or the gate's rejection of the provenance claim.
@@ -98,16 +96,16 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<MemoryResult<RepoRunSources>> {
         let actor = self.actor.entity_ref();
         let key = vault.local_session_key(actor)?;
-        let session = match vault.mint_session(key, vault.now_recorded_at())? {
-            SessionMintOutcome::Minted(session) | SessionMintOutcome::AlreadyOpen(session) => {
-                session
-            }
-        };
-        let provenance_claim =
-            self.repo_provenance_claim(vault, stamp, change, session, witness)?;
+        let open = vault.prepare_session_open(key, vault.now_recorded_at())?;
+        let (provenance_claim, candidate, envelope, at) = self
+            .prepare_repo_provenance_claim(vault, stamp, change, open.session(), witness)
+            .inspect_err(|error| open.reopen_on_storage_error(vault, error))?;
         Ok(Ok(RepoRunSources {
-            session,
+            open,
             provenance_claim,
+            candidate,
+            envelope,
+            at,
             op_provenance: CodeOpProvenance {
                 activity: Some(stamp.task),
                 ..CodeOpProvenance::default()
@@ -124,16 +122,16 @@ impl HostSelfDispatcher<'_> {
         RepoRequestWitness::with_digest(request, sent.digest)
     }
 
-    /// Mints the gated `repo.provenance` claim of one run change, about the
-    /// actor's session, under the run's own envelope.
-    fn repo_provenance_claim(
+    /// Prepares the gated `repo.provenance` claim of one run change, about
+    /// the exact selected sitting, under the run's own envelope.
+    fn prepare_repo_provenance_claim(
         &self,
         vault: &Vault,
         stamp: &RepoRunStamp,
         change: &RepoChange,
         session: EntityId,
         witness: &RepoRequestWitness,
-    ) -> Result<EntityId> {
+    ) -> Result<(EntityId, ClaimCandidate, WriteEnvelope, u64)> {
         let text = |value: String| Value::from(value);
         let value = Value::Map(vec![
             (Value::from("actor"), text(self.actor.entity_ref().to_hex())),
@@ -199,15 +197,8 @@ impl HostSelfDispatcher<'_> {
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
         )?;
         self.check_write_gate(id, &gate_body, &envelope, false)?;
+        crate::batch::reject_family_owned_candidate(&candidate)?;
         let at = vault.now_recorded_at();
-        vault.put_claim_candidate_with_landing(
-            &id,
-            candidate,
-            &envelope,
-            TimeRange { start: at, end: at },
-            at,
-            |_| Ok(()),
-        )?;
-        Ok(id)
+        Ok((id, candidate, envelope, at))
     }
 }

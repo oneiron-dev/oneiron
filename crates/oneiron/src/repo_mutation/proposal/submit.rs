@@ -38,6 +38,31 @@ impl Vault {
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
         crate::repo_mutation::trailer::validate_repo_provenance_request(self, &request)?;
+        self.with_prepared_repo_proposal(request, review, base, run, |mut prepared| {
+            let mut txn = self.store.env.write_txn()?;
+            if let Err(refused) = check(&txn)? {
+                return Ok(Err(refused));
+            }
+            if let Some(opener) = opener {
+                prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
+            }
+            prepared.persist_in_txn(self, &mut txn)?;
+            txn.commit()?;
+            Ok(Ok(prepared.row))
+        })
+    }
+
+    /// Prepares the native row and journal while holding the repository lock.
+    /// `finish` runs before that lock is released. The caller validates the
+    /// operation and either existing provenance or its same-writer source.
+    pub(in crate::repo_mutation) fn with_prepared_repo_proposal<T>(
+        &self,
+        request: RepoMutationRequest,
+        review: RepoProposalReview,
+        base: ProposalBase,
+        run: Option<RepoRunStamp>,
+        finish: impl FnOnce(super::persist::PreparedRepoProposal) -> Result<T>,
+    ) -> Result<T> {
         let (Some(actor), Some(session), Some(provenance_claim)) = (
             request.actor_id,
             request.session_id,
@@ -133,17 +158,8 @@ impl Vault {
             opener_lineage: Vec::new(),
         };
         validate_conflict(self, &row, &repo_root)?;
-        let mut prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
-        let mut txn = self.store.env.write_txn()?;
-        if let Err(refused) = check(&txn)? {
-            return Ok(Err(refused));
-        }
-        if let Some(opener) = opener {
-            prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
-        }
-        prepared.persist_in_txn(self, &mut txn)?;
-        txn.commit()?;
-        Ok(Ok(prepared.row))
+        let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
+        finish(prepared)
     }
 }
 
