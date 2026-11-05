@@ -21,7 +21,9 @@ use loro::checkpoint::{
 use loro::{LoroDoc, LoroValue};
 
 use super::operations::{export_slice, holds_slice};
-use super::owners::{key_fill, root_entry, root_fill, withheld_key, withheld_part_key};
+use super::owners::{
+    key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
+};
 use super::{
     KindPlacement, LoroCarrier, LoroSlot, LoroVerdict, OpenedAtom, OpenedSyncAtoms, Placement,
     SlotCopy, SyncCarrier, SyncPayloadOwners, SyncRestoreRows, SyncUnclassified, WINDOW_ROUND_TRIP,
@@ -226,7 +228,9 @@ fn open_key(
             (key, whole)
         };
         if key.starts_with(KEY_PLACEHOLDER_PREFIX)
-            || (withheld_key(root, &key).is_none() && !withheld_part_key(root, &key))
+            || (withheld_key(root, &key).is_none()
+                && !withheld_part_key(root, &key)
+                && withheld_client_key(root, &key).is_none())
         {
             return Err(bad_part());
         }
@@ -299,7 +303,8 @@ fn open_slot(
         }
         let actors = opened_actors(slot, copy, opened)?;
         let whole = actors.len() == slot.holes.len();
-        let Some(filled) = root_fill(root, key, value, &actors)? else {
+        let holes: BTreeSet<&str> = slot.holes.iter().map(String::as_str).collect();
+        let Some(filled) = root_fill(root, key, value, &actors, &holes)? else {
             return Ok(None);
         };
         check(root, key, &filled)?;
