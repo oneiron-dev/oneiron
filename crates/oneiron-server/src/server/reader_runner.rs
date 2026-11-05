@@ -343,6 +343,7 @@ impl ReaderRunner {
             signals: signals.clone(),
             wakes,
             sessions: BTreeSet::new(),
+            cursors: HashMap::new(),
             recovers,
         };
         let started = std::thread::Builder::new()
@@ -381,6 +382,9 @@ impl ReaderJobRunner for ReaderRunner {
 /// as, whom its children's rows are read as.
 type SessionSeat = (String, EntityId);
 
+/// Position in one store's native enqueue-time/task queue order.
+type QueueCursor = (u64, EntityId);
+
 /// The worker thread's state.
 struct Worker {
     shared: Arc<Shared>,
@@ -389,6 +393,9 @@ struct Worker {
     wakes: Receiver<Signal>,
     /// The live sessions the runner holds children for.
     sessions: BTreeSet<SessionSeat>,
+    /// The next page starts after the last examined job, separately for the
+    /// canonical store and each live session. A restart starts at the head.
+    cursors: HashMap<Option<SessionSeat>, QueueCursor>,
     /// Whether it is its vault's first live runner in this process, which
     /// alone recovers what a stopped one left active.
     recovers: bool,
@@ -444,8 +451,21 @@ impl Worker {
     fn tick(&mut self, vault: &Arc<Vault>) -> Option<u64> {
         let now = unix_millis_now();
         self.shared.seats.forget_before(now);
-        let mut next = match self.drive(vault, &ReaderJobs::canonical(vault), None, now) {
-            Ok((due, _)) => due,
+        let mut next = match self.drive(
+            vault,
+            &ReaderJobs::canonical(vault),
+            None,
+            now,
+            self.cursors.get(&None).copied(),
+        ) {
+            Ok((due, _, cursor)) => {
+                if let Some(cursor) = cursor {
+                    self.cursors.insert(None, cursor);
+                } else {
+                    self.cursors.remove(&None);
+                }
+                due
+            }
             Err(error) => {
                 tracing::warn!(%error, "the reader runner's tick failed; it tries again");
                 None
@@ -463,15 +483,33 @@ impl Worker {
                 done.push(held.clone());
                 continue;
             };
-            match self.drive(vault, &jobs, Some(held), now) {
-                Ok((None, false)) => done.push(held.clone()),
-                Ok((due, _)) => next = earliest(next, due),
+            let store = Some(held.clone());
+            match self.drive(
+                vault,
+                &jobs,
+                Some(held),
+                now,
+                self.cursors.get(&store).copied(),
+            ) {
+                Ok((due, waiting, cursor)) => {
+                    if due.is_none() && !waiting {
+                        done.push(held.clone());
+                    } else {
+                        next = earliest(next, due);
+                    }
+                    if let Some(cursor) = cursor {
+                        self.cursors.insert(store, cursor);
+                    } else {
+                        self.cursors.remove(&store);
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(%error, "the reader runner's session tick failed; it tries again");
                 }
             }
         }
         for held in done {
+            self.cursors.remove(&Some(held.clone()));
             self.sessions.remove(&held);
         }
         self.shared.note_progress();
@@ -480,14 +518,15 @@ impl Worker {
 
     /// One store's pass: the due sweep, then claims of its queued children
     /// while the window has room. Answers when its sweep next has work, and
-    /// whether a child is still queued.
+    /// whether a child is still queued, and the last job examined.
     fn drive(
         &self,
         vault: &Arc<Vault>,
         jobs: &ReaderJobs<'_>,
         session: Option<&SessionSeat>,
         now: u64,
-    ) -> oneiron::Result<(Option<u64>, bool)> {
+        mut cursor: Option<QueueCursor>,
+    ) -> oneiron::Result<(Option<u64>, bool, Option<QueueCursor>)> {
         // The sweep writes, so it runs only once a row is due.
         if jobs.next_due()?.is_some_and(|due| due <= now) {
             jobs.settle_due(now)?;
@@ -495,25 +534,34 @@ impl Worker {
         // A child parked on its payer is queued again once the owners said
         // yes (FIX 3740); while one waits, its session stays held.
         let parked = crate::ai_host::payer_funding::resume_reader_payer_parks(vault, jobs, now);
-        let queued = jobs.queued(QUEUED_PER_TICK)?;
+        let mut queued = jobs.queued(QUEUED_PER_TICK, cursor)?;
+        if queued.is_empty() && cursor.is_some() {
+            cursor = None;
+            queued = jobs.queued(QUEUED_PER_TICK, None)?;
+        }
         let waiting = !queued.is_empty() || parked > 0;
         let host = self.shared.host();
         if let Some(native) = host.as_ref().and_then(|host| host.engine_native()) {
             // Parents whose window is full, or whose scope has nothing left
-            // to hold, wait for the next tick.
+            // to hold, wait for another pass. Advancing past them lets a later
+            // parent's children run instead of hiding behind a full prefix.
             let mut held_back = HashSet::new();
             for job in queued {
                 let parent = job.binding.parent_run;
+                let position = (job.enqueued_at_ms, job.task);
                 if held_back.contains(&parent) {
+                    cursor = Some(position);
                     continue;
                 }
                 if self.shared.running_of(parent) >= self.shared.per_parent {
                     held_back.insert(parent);
+                    cursor = Some(position);
                     continue;
                 }
                 let Some(permit) = native.runs().try_admit_background() else {
                     break;
                 };
+                cursor = Some(position);
                 match jobs.claim(job.task, now) {
                     Ok(ClaimOutcome::Claimed(job)) => {
                         let child = Child {
@@ -538,7 +586,7 @@ impl Worker {
                 }
             }
         }
-        Ok((jobs.next_due()?, waiting))
+        Ok((jobs.next_due()?, waiting, cursor))
     }
 
     /// Runs one claimed child on its own thread. Its active execution
