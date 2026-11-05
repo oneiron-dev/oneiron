@@ -2274,7 +2274,7 @@ class AttemptLanding(TypedDict):
     status: NotRequired[str | None]
 AttemptCancelReceiptKind = Literal["soft_requested", "landing_accepted", "soft_rejected", "resume_point_recorded", "reserve_spent", "landed", "force_cancelled"]
 CancelStanding = Literal["peer_agent", "healer", "automation", "authority", "none"]
-ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality"]
+ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality", "erased_payload"]
 class AttemptResumePoint(TypedDict):
     marker: str
     artifact_ref: NotRequired[str | None]
