@@ -465,6 +465,7 @@ async fn serve_with_handles(
             Arc::clone(&state),
             Arc::clone(&sync_server),
             shutdown.clone(),
+            managed.vm_outbox_companion_admitted,
         );
         // Its carrier as it stands, and the recipients it delivers later.
         super::carrier_watch::spawn(

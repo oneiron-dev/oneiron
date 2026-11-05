@@ -1060,6 +1060,14 @@ impl OffRecordSession<'_> {
         self.vault.known_source()
     }
 
+    /// Run-local output prints from this session's vault, live per frame.
+    pub(crate) fn run_known_source(
+        &self,
+        exec_run: crate::EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        self.vault.run_known_source(exec_run)
+    }
+
     /// The `[limits]` rows of this session's vault.
     pub(crate) fn limit_watch(&self) -> &crate::limit_ask::LimitWatch {
         self.vault.limit_watch()

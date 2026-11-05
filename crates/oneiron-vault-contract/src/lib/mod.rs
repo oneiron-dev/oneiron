@@ -34,6 +34,7 @@ pub mod host;
 pub mod host_adapters;
 /// HOST-private segregated legal-clone capture stream, never tenant ctl.
 pub mod host_legal;
+mod http_headers;
 mod ledger;
 /// The wake ledger's report in bounded pages (FIX 9549).
 mod ledger_pages;
@@ -101,6 +102,7 @@ pub use self::ctl::{
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
     VmOutboxCompanionState,
 };
+pub use self::http_headers::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
     ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport,

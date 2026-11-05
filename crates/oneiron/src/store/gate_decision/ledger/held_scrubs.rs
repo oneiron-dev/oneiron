@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 use super::super::actor_erase::reseal_gate_decision;
@@ -76,6 +76,33 @@ struct Owed {
     kind: OwedScrub,
     source: EntityId,
     redacted_at: u64,
+}
+
+/// The one owed-scrub write, in the decision's own write target.
+fn owe_gate_scrub_in_txn(
+    store: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    kind: OwedScrub,
+    source: &EntityId,
+    decision: GateDecisionId,
+    redacted_at: u64,
+) -> Result<()> {
+    let key = (kind.tag(), *source, decision);
+    if PENDING_SCRUB.contains(store, &*wtxn, &key)? {
+        return Ok(());
+    }
+    PENDING_SCRUB.put(store, wtxn, &key, &PendingScrub { redacted_at })
+}
+
+/// The append's held actor scrub, in the same target and transaction as its row.
+pub(super) fn owe_gate_actor_scrub_in_txn(
+    store: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+    decision: GateDecisionId,
+    at: u64,
+) -> Result<()> {
+    owe_gate_scrub_in_txn(store, wtxn, OwedScrub::Actor, actor, decision, at)
 }
 
 impl Store {
@@ -228,11 +255,7 @@ impl Store {
         decision: GateDecisionId,
         redacted_at: u64,
     ) -> Result<()> {
-        let key = (kind.tag(), *source, decision);
-        if PENDING_SCRUB.contains(self, &*wtxn, &key)? {
-            return Ok(());
-        }
-        PENDING_SCRUB.put(self, wtxn, &key, &PendingScrub { redacted_at })
+        owe_gate_scrub_in_txn(self, wtxn, kind, source, decision, redacted_at)
     }
 
     /// Owes `decision` the clear of erased actor `actor` while a hold keeps

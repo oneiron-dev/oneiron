@@ -74,6 +74,39 @@ pub trait StoreRecordHooks: Send + Sync {
         now: u64,
     ) -> Result<Vec<EntityId>>;
 
+    /// The engine's `comm::record_comm_send_receipt`.
+    fn record_comm_send_receipt(
+        &self,
+        vault: &crate::Vault,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_actor_send_receipt_in_txn`.
+    fn record_comm_actor_send_receipt_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        display_name: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_thread_event`.
+    fn record_comm_thread_event(
+        &self,
+        vault: &crate::Vault,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's soft `comm::run_comm_projector_housekeeping_step`.
+    fn run_comm_projector_housekeeping_step(&self, vault: &crate::Vault);
+
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
 
@@ -186,6 +219,47 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `federation::note_authority_row`.
     fn note_authority_row(&self);
 
+    /// The engine's `skill_attribution::note_direct_derivation_in_txn`.
+    fn note_direct_derivation_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        derived: EntityId,
+        source: EntityId,
+    );
+
+    /// The engine's `memory::erase_stream_seeds_in_txn`, an entity side-row eraser.
+    fn erase_stream_seeds_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::erase_reply_assertions_in_txn`, an entity side-row eraser.
+    fn erase_reply_assertions_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::erase_turn_wake_label_in_txn`, an entity side-row eraser.
+    fn erase_turn_wake_label_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `memory::release_asset_blob_in_txn`, an entity side-row eraser.
+    fn release_asset_blob_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::reject_audience_edit_unlink`.
     fn reject_audience_edit_unlink(
         &self,
@@ -204,6 +278,30 @@ pub trait StoreRecordHooks: Send + Sync {
         id: EntityId,
         actor: EntityId,
     ) -> Result<bool>;
+
+    /// The engine's `comm::erase_skipped_send_receipt_in_txn`.
+    fn erase_skipped_send_receipt_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `counterparty_contact::erase_trusted_contact_rows_in_txn`.
+    fn erase_trusted_contact_rows_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `calendar::inbox_card::erase_inbox_cards_in_txn`.
+    fn erase_inbox_cards_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
 
     /// The engine's `workspace_roster::erase_room_side_rows`, an entity
     /// side-row eraser of `deletion::derived_rows`.
