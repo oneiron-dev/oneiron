@@ -19932,7 +19932,7 @@
      "path": "src/commitment_wake/mod.rs",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -19947,7 +19947,7 @@
      "purpose": "Served reminder delivery for commitment wakes (OF-187): the owner's reminder route, the planner the server…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "struct": 2
      }
@@ -54762,7 +54762,7 @@
      "path": "src/outbound/dispatch_types.rs",
      "purpose": "Outbound dispatch inputs and outcomes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 33,
       "re-export": 2,
@@ -73238,7 +73238,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 154,
+      "crate-vis": 156,
       "mod": 123,
       "re-export": 31
      }
@@ -75445,6 +75445,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/voice_bank_response.rs",
+     "purpose": "The voice reference bank's rows as a store-layer response hook: the bank's seven tables by declaration, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FederationAdmissionRole",
       "ImportTier"
@@ -77259,7 +77269,17 @@
      "path": "src/sync/documents/entity.rs",
      "purpose": "A non-NOTE record's text on the sync plane (FIX 8871): the frames and the local journal around its canonical…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/documents/held_copy.rs",
+     "purpose": "Owner review and exact canonical settlement of a retained document-copy lineage (FIX12419, document-only)",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -77274,7 +77294,7 @@
      "surface": {
       "crate-vis": 18,
       "fn": 15,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -79209,8 +79229,8 @@
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 2
+      "crate-vis": 6,
+      "re-export": 3
      }
     },
     {
@@ -79222,8 +79242,22 @@
      "path": "src/sync/selector/secret_projection/documents.rs",
      "purpose": "A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoCopyEditReview"
+     ],
+     "path": "src/sync/selector/secret_projection/documents/settlement.rs",
+     "purpose": "Owner settlement of a retained document-copy lineage (FIX12419, document-only)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -87314,7 +87348,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault voice reference bank",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 11,
       "re-export": 5
      }
@@ -87337,7 +87371,7 @@
      "path": "src/voice_identity/ref_bank/checkpoint_response.rs",
      "purpose": "The voice reference bank in checkpoint images (FIX 8972, KEY STORE = A): every row of its seven tables (a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -92135,7 +92169,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 490,
+     "files": 491,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92163,7 +92197,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 342,
+     "files": 344,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92375,7 +92409,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6452,
+   "source_files": 6455,
    "test_files": 895
   },
   "oneiron-android": {
@@ -103020,7 +103054,7 @@
       "CommitmentDeadline",
       "DeadlineSource",
       "HintSignal",
-      "SessionHintCarrier",
+      "QueuedSessionHint",
       "Tick",
       "TickSource",
       "WakeSignal"
@@ -103028,7 +103062,7 @@
      "path": "src/tick/model.rs",
      "purpose": "Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "struct": 4,
       "trait": 2
@@ -103052,6 +103086,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AppOpenApplyHandle",
       "HintPusher",
       "PushTick",
       "TickPushError",
@@ -103062,8 +103097,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -103073,7 +103108,7 @@
      "path": "src/tick/queue.rs",
      "purpose": "The ordered SESSION-hint queue (FIX 8602): every lifecycle fact a producer handed in, in arrival order…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -106383,7 +106418,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 13,
+      "fn": 14,
       "struct": 9,
       "type": 1
      }
@@ -110609,7 +110644,7 @@
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
       "crate-vis": 17,
-      "fn": 17
+      "fn": 18
      }
     },
     {
