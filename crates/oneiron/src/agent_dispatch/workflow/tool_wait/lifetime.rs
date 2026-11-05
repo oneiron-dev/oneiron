@@ -161,6 +161,7 @@ fn settle_binding_in_txn(
         body_owner.as_bytes(),
         disposition,
     )
+    .map(|_| ())
 }
 
 /// The independently registered hard-actor erase/restore scrub.

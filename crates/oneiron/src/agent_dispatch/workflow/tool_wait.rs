@@ -105,7 +105,7 @@ pub(crate) struct CheckpointRow {
 #[serde(deny_unknown_fields)]
 struct CheckpointContent {
     actor: EntityId,
-    #[serde(with = "crate::secret_custody::run_bound::actor_class_byte")]
+    #[serde(with = "crate::secret_custody::actor_class_byte")]
     actor_class: EdgeActorClass,
     room: Option<EntityId>,
     progress: WorkflowToolProgress,
