@@ -278,7 +278,9 @@ pub(super) fn apply_ops_with_authority_beside(
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
     native_publication: Option<NativePublicationContext<'_>>,
-    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
 ) -> Result<()> {
     apply_ops_with_authority_beside_collecting(
         store,
@@ -311,7 +313,9 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
     native_publication: Option<NativePublicationContext<'_>>,
-    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
 ) -> Result<PendingNativeSkillBatch> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
