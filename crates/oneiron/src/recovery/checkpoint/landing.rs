@@ -197,9 +197,11 @@ impl Vault {
             }
             // Each compartment that opened lands beside them, through its
             // getter's own restore (KS7-5).
-            if let Some(opened) = opened {
-                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?;
-            }
+            let blob_artifacts = if let Some(opened) = opened {
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?
+            } else {
+                Vec::new()
+            };
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
@@ -249,6 +251,20 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            // Blob versions whose actor retired after the cut can recover
+            // their original actor only from their fully bound native claim.
+            // All getters, custody rows and type indexes are now readable;
+            // the actor sweep below scrubs both copies before this commits.
+            for opened in blob_artifacts {
+                crate::blob_artifact::checkpoint::restore_missing_process_in_txn(
+                    &mut RestoreActorScrubWriter {
+                        vault: &vault,
+                        wtxn: txn,
+                        erased: &erased,
+                    },
+                    opened,
+                )?;
+            }
             // What the live source erased after the cut, read before the
             // sweep below writes anything.
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
