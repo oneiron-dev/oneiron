@@ -59,7 +59,7 @@ DIRECTORIES = ("bin", "sbin", "usr/bin", "lib", "lib64", "usr/lib", "proc", "sys
 BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init", "oneiron-vm-outbox")
 # What /sbin/oneiron-vault-init runs besides the engine's binaries.
 TOOLS = ("sh", "mount", "umount", "cat", "head", "sync", "reboot")
-PROVISION_REVISION = 1
+PROVISION_REVISION = 2
 # The outbox carrier's wire revision (oneiron_vault_contract::vm_outbox): 4
 # adds the notice's action and the host's answer to a removal of its
 # kept-aside copy (FIX 11985), and each end refuses the other's revision 3,

@@ -33,6 +33,7 @@ impl VaultVm {
             revision: VM_PROVISION_REVISION,
             vault: self.vault.clone(),
             binding: self.config.provision.clone(),
+            checkpoint_host_holds_recipient: self.config.checkpoint_host_holds_recipient.clone(),
         };
         stream.write_all(encode_vm_frame(&sent)?.as_bytes()).await?;
         stream.write_all(key.as_bytes()).await?;
@@ -48,7 +49,12 @@ impl VaultVm {
                 revision,
                 vault,
                 binding,
-            } if revision == sent.revision && vault == sent.vault && binding == sent.binding => {
+                checkpoint_host_holds_recipient,
+            } if revision == sent.revision
+                && vault == sent.vault
+                && binding == sent.binding
+                && checkpoint_host_holds_recipient == sent.checkpoint_host_holds_recipient =>
+            {
                 Ok(())
             }
             VmProvisionReply::Provisioned { .. } => {

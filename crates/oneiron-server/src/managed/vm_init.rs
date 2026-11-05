@@ -11,8 +11,10 @@
 //! the host, its copy of the key already wiped, and only then starts the
 //! engine: supplementary groups cleared, then the GID and the UID set to the
 //! binding's, with no environment but `PATH` (and the guests' fence launcher
-//! once their runtime is provisioned) and no descriptor beyond the standard
-//! three. The engine dials its own credential connection and
+//! once their runtime is provisioned). A delivered public checkpoint
+//! recipient uses its own pipe; the restore and custody-anchor pipes below
+//! are also retained explicitly, and no other descriptor is inherited.
+//! The engine dials its own credential connection and
 //! reports its own readiness after the unchanged managed gates; nothing here
 //! stands in for either.
 //!
@@ -59,6 +61,7 @@
 //! off.
 
 mod anchor;
+mod checkpoint_recipient;
 mod config_drive;
 pub(in crate::managed) mod fscrypt;
 mod guest_runtime;
@@ -210,6 +213,7 @@ fn run() -> anyhow::Result<ExitCode> {
             revision: frame.revision,
             vault: frame.vault.clone(),
             binding: frame.binding.clone(),
+            checkpoint_host_holds_recipient: frame.checkpoint_host_holds_recipient.clone(),
         },
         Err(refusal) => VmProvisionReply::refused(refusal.code, &refusal.detail),
     };
@@ -233,13 +237,20 @@ fn run() -> anyhow::Result<ExitCode> {
     let status = match boot {
         VmRestoreBoot::Open => {
             drop(restore_channel);
-            run_engine(&args, provisioned.uid, &provisioned.guest.profile, None)
+            run_engine(
+                &args,
+                provisioned.uid,
+                &provisioned.guest.profile,
+                None,
+                frame.checkpoint_host_holds_recipient.as_ref(),
+            )
         }
         VmRestoreBoot::Restore { .. } => run_engine(
             &args,
             provisioned.uid,
             &provisioned.guest.profile,
             Some(restore_channel),
+            frame.checkpoint_host_holds_recipient.as_ref(),
         ),
         VmRestoreBoot::InspectMarker { identity } => {
             let observation =
@@ -444,6 +455,9 @@ fn run_engine(
     uid: u32,
     profile: &VmManagedProfile,
     restore_channel: Option<File>,
+    checkpoint_host_holds_recipient: Option<
+        &oneiron_vault_contract::checkpoint_recipient::CheckpointHostHoldsRecipient,
+    >,
 ) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
     // it is reaped before the key goes. Any nonzero argument sets it.
@@ -461,20 +475,33 @@ fn run_engine(
     flags.extend(anchor.flags());
     flags.extend(profile.engine_flags());
     flags.extend(runtime.engine_flags());
-    let anchor_fds = anchor.fds();
+    let recipient = checkpoint_recipient::RecipientPipe::prepare(checkpoint_host_holds_recipient);
+    if let Some(recipient) = &recipient {
+        flags.extend(recipient.flags());
+    }
+    let mut engine_fds = anchor.fds();
+    if let Some(recipient) = &recipient {
+        engine_fds.extend(recipient.fds());
+    }
     // A pipe the engine reads that broke before its end comes back here.
     let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
     let mut anchored = None;
     let status = match restore_channel {
-        None => start_engine(args, uid, &flags, &anchor_fds, &runtime).and_then(|mut engine| {
-            anchored = Some(anchor.start(lost_sender)?);
-            restore::supervise(&mut engine, &lost)
-        }),
+        None => {
+            let started = start_engine(args, uid, &flags, &engine_fds, &runtime);
+            drop(recipient);
+            started.and_then(|mut engine| {
+                anchored = Some(anchor.start(lost_sender)?);
+                restore::supervise(&mut engine, &lost)
+            })
+        }
         Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
-            let fds = [fds, &anchor_fds[..]].concat();
+            let fds = [fds, &engine_fds[..]].concat();
             let flags = [&flags[..], restore_flags].concat();
-            start_engine(args, uid, &flags, &fds, &runtime)
+            let started = start_engine(args, uid, &flags, &fds, &runtime);
+            drop(recipient);
+            started
         })
         .and_then(|started| {
             let restoring = restoring.insert(started);

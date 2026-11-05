@@ -113,6 +113,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.custody_anchor_credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "checkpoint-host-holds-recipient-fd",
+        |args| args.checkpoint_host_holds_recipient_fd.is_some(),
+        ArgvUse::Read,
+    ),
     ("restore", |args| args.restore, ArgvUse::Read),
     (
         "restore-input-fd",

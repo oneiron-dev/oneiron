@@ -116,6 +116,16 @@ pub struct ServeArgs {
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
+    /// Supervisor-only pipe carrying one public checkpoint host-order recipient
+    /// object (`bundle_b64`, `fingerprint`), then EOF. Missing or unusable
+    /// material leaves checkpoint receipts at `recipient_missing`; it never
+    /// prevents a managed vault from starting.
+    #[arg(
+        long = "checkpoint-host-holds-recipient-fd",
+        requires = "managed_by_hypnos"
+    )]
+    pub checkpoint_host_holds_recipient_fd: Option<i32>,
+
     /// Managed mode's cold restore start (LC FIX 5384/5385): the vault the
     /// plan on `--restore-input-fd` names is restored into `--data-dir` from
     /// its signed artifact, verified and kept, then served as an ordinary
