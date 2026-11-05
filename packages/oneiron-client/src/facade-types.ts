@@ -3979,7 +3979,7 @@ export type SwitchOwner = string
 /** `oneiron::training_pack::types::TrainingOwner` */
 export type TrainingOwner = string
 /** `oneiron_model::model_binding::ModelRole` */
-export type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner"
+export type ModelRole = "retrieval_embedder" | "media_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "decision_head" | "decision_band" | "decision_escalation" | "policy_safeguard" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner"
 /** `oneiron_model::llm::call::ModelTierRef` */
 export type ModelTierRef = string
 /** `oneiron_model::model_binding::ModelDisposition` */
