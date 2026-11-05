@@ -255,7 +255,17 @@ pub(super) fn run_board_sections(
             .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
-    let mut tasks = rows.render();
+    let budget = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(),
+    );
+    let (tasks_budget_tok, _) = server
+        .vault
+        .select_tasks_layout(actor.entity_ref(), false, budget.cap_tok)
+        .map_err(|error| mcp_engine_error("board tasks layout failed", error))?;
+    let mut tasks = match tasks_budget_tok {
+        None => rows.render(),
+        Some(budget) => rows.render_with_token_budget(budget),
+    };
     tasks.pin_hook_tasks(&rows.intents, pins);
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),

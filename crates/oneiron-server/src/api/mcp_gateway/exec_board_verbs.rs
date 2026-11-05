@@ -775,11 +775,7 @@ pub(crate) async fn execute_run_board_verb_in_session(
             scope: &scope,
             source: &source,
             streams: registry.streams_mut(),
-            budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-                caller_limit_tok: None,
-                explicit_override_tok: None,
-            },
+            budget: run_board_budget_request(),
         };
         oneiron::board_verb::dispatch_board_verb(&mut context, call)
     }
@@ -855,6 +851,16 @@ pub(crate) async fn drop_run_board(
         .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
+/// The native run board's harness cap, shared by section projection and its
+/// final keyframe. Run boards have no caller limit or explicit override.
+pub(super) fn run_board_budget_request() -> oneiron::context_board::BoardBudgetRequest {
+    oneiron::context_board::BoardBudgetRequest {
+        harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+        caller_limit_tok: None,
+        explicit_override_tok: None,
+    }
+}
+
 /// [`mcp_live_board`]'s view of one rendered board.
 fn live_board_view(
     board: &McpBoardState,
@@ -866,11 +872,7 @@ fn live_board_view(
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
         &board.sections,
-        oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
+        run_board_budget_request(),
     )
     .map_err(mcp_board_frame_error)?;
     let mut rows = std::collections::BTreeMap::new();
