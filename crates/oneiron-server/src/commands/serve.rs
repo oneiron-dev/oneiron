@@ -244,6 +244,15 @@ pub(super) async fn serve_anchored(
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
     floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
+    let storage_disk = if mesh_server.transfers.disk.measures(&config.vault_path) {
+        mesh_server.transfers.disk.clone()
+    } else {
+        mesh_server
+            .transfers
+            .disk
+            .on_disk_of(config.vault_path.clone())
+    };
+    floor_vault.lend_storage_disk_floor(Arc::new(storage_disk));
     let owner_judge = Arc::clone(&mesh_server);
     // Each listener's connections are tasks of its set here (FIX 9261).
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());

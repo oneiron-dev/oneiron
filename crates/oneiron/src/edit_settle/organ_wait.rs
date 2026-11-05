@@ -201,6 +201,8 @@ impl Vault {
             failed: None,
         };
         let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
+        let stored_bytes = WAITS.encoded_len(&row)?.saturating_add(row.call_len);
+        let mut disk = None;
         self.with_write_txn_grouped(|wtxn| {
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
@@ -217,9 +219,13 @@ impl Vault {
             if super::artifact_retention_deleted_in_txn(&self.store, wtxn, &wait.artifact_id)? {
                 return Err(Error::EntityNotFound);
             }
+            disk = self.hold_storage_disk(stored_bytes)?;
             CALLS.put_bytes(&self.store, wtxn, &key, &wait.call)?;
             WAITS.put(&self.store, wtxn, &key, &row)
         })?;
+        if let Some(disk) = disk {
+            disk.landed();
+        }
         Ok(row.view(wait.artifact_id))
     }
 

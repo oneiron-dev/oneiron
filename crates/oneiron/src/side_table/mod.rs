@@ -800,6 +800,26 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     }
 }
 
+impl<K: SideKey, V: serde::Serialize + serde::de::DeserializeOwned> SideTable<K, V, Named> {
+    /// Counts this row's actual Named encoding without retaining that encoding.
+    pub(crate) fn encoded_len(&self, value: &V) -> Result<u64> {
+        struct Count(u64);
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.saturating_add(bytes.len() as u64);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut count = Count(0);
+        rmp_serde::encode::write_named(&mut count, value)
+            .map_err(|_| self.decl.row_error(SideTableRowProblem::Unencodable))?;
+        Ok(count.0)
+    }
+}
+
 impl<K: SideKey> SideTable<K, Vec<u8>, Raw> {
     /// Stores a byte value through its declared row wall without first cloning
     /// it through `RawValue::to_raw`.
