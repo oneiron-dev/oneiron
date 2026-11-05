@@ -342,7 +342,9 @@ recorded separately as `cleanupError`, preserving an earlier reason.
 Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld;
 CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
 stdin or credentials. SDK top-level failures also write their error envelope to stderr for
-redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values.
+redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values. Any truncated stdout/stderr
+stream is withheld entirely, with a truncation flag, because a cut secret fragment cannot be
+reliably redacted by matching the original full value.
 Bun receives a redacted error message rather than raw exception properties, so its JUnit
 cannot inspect a failing CLI's private stdout. Process logs are bounded rings; incomplete
 lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any

@@ -97,12 +97,15 @@ export class ManagedProcess {
   readonly settled: Promise<void>;
   private stdout = "";
   private stderr = "";
+  private readonly truncated = { stdout: false, stderr: false };
   private readonly lines: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
   private readonly ring: string[] = [];
   private constructor(readonly child: ChildProcessWithoutNullStreams, readonly options: ProcessOptions, readonly ownerFile?: string) {
     owned.add(this);
     const collect = (kind: "stdout" | "stderr", chunk: Buffer): void => {
-      this[kind] = (this[kind]+chunk.toString("utf8")).slice(-4*1024*1024);
+      const output = this[kind]+chunk.toString("utf8");
+      if (output.length > 4*1024*1024) this.truncated[kind] = true;
+      this[kind] = output.slice(-4*1024*1024);
       if (options.privateOutput) return;
       this.lines[kind] += chunk.toString("utf8");
       const lines = this.lines[kind].split("\n");
@@ -126,8 +129,9 @@ export class ManagedProcess {
           if (this.lines[kind]) this.ring.push(redactor.text(`${kind}: ${this.lines[kind]}`));
         await options.artifacts?.json(`${options.label}.json`, { pid: child.pid, exitCode: result.exitCode,
           signal: result.signal, logs: options.privateOutput ? [] : this.ring,
-          stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : redactor.text(this.stdout).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]"),
-          stderr: redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
+          stdoutTruncated: this.truncated.stdout, stderrTruncated: this.truncated.stderr,
+          stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : this.truncated.stdout ? "[WITHHELD truncated stdout]" : redactor.text(this.stdout).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]"),
+          stderr: this.truncated.stderr ? "[WITHHELD truncated stderr]" : redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
       } finally {
         if (ownerFile) await rm(ownerFile,{force:true});
         owned.delete(this);
