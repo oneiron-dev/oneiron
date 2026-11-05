@@ -2160,6 +2160,7 @@ UNIFFI_RESULTS = {
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
     'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',

@@ -2909,7 +2909,7 @@ export_facade! {
 "vault.claims.review" => fn vault_claims_review(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
     let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.review", input)?;
     let output = client.vault_claims_review(&input)?;
-    crate::codec::lift_record("vault.claims.review", &output)
+    Lift::lift(output)
 };
 "vault.claims.settle" => fn vault_claims_settle(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
     let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.settle", input)?;
@@ -5564,7 +5564,7 @@ export_facade! {
 "vault.claims.vetting" => fn vault_claims_vetting(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
     let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.vetting", input)?;
     let output = client.vault_claims_vetting(&input)?;
-    crate::codec::lift_record("vault.claims.vetting", &output)
+    Lift::lift(output)
 };
 "vault.memory.signal_extraction" => fn vault_memory_signal_extraction(&self, input: SignalExtractionRequest) -> SignalExtractionTicket = |client| {
     let input: oneiron::memory::SignalExtractionRequest = crate::codec::lower_record("vault.memory.signal_extraction", input)?;

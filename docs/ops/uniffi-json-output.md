@@ -51,6 +51,15 @@ existing checked width conversion to the generated `u64` field.
 null still reads as absent, `destructive: Some(false)` remains present, and
 empty reasons still read as absent.
 
+`vault.claims.review` and `vault.claims.vetting` use an owned claim-review
+lift with the same generated `WireClaimView`, not the hand-written claim DTO.
+Both the required value and optional scope move into `WireJson` before any
+encoding error returns. A null scope still reads as absent. The finite claim
+scope, provenance and record reference keep the existing record codec, as do
+confidence and salience so their float widths and non-finite behavior stay
+unchanged. All fields, including unsigned validity times, remain present in
+their existing public types.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
