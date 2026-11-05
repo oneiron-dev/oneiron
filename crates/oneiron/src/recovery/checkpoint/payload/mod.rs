@@ -159,7 +159,7 @@ getters! {
     BlobArtifact = 14 => crate::blob_artifact::checkpoint;
     /// Outbound calls' frozen input.
     OutboundCall = 15 => crate::outbound_intent_ledger::checkpoint;
-    /// Media vectors and device provenance, by source document.
+    /// Media vectors, device provenance and refusals, by source document.
     EmbedMedia = 17 => crate::embed::checkpoint;
 }
 
