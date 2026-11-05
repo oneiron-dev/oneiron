@@ -768,6 +768,37 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
     })
 }
 
+/// One MCP file read on its owned native stack. Hooks stay in the caller's
+/// existing pre/post chain; the worker returns the rows its read listed.
+async fn mcp_graph_fs_read_file(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    surface: McpRowSurface,
+    input: oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+) -> Result<
+    (
+        oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>,
+        Vec<oneiron::EntityId>,
+    ),
+    McpGatewayError,
+> {
+    let (server, actor) = (Arc::clone(server), actor.clone());
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
+    oneiron::batch::read_cooperatively(move |pacing| {
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
+            let memory = surface.memory(&server, &actor, &producers);
+            memory.graph_fs_read_file_with_pacing(input, &pacing)
+        });
+        (output, producers.take())
+    })
+    .await
+    .map_err(|error| mcp_facade_error(oneiron::memory::MemoryError::from(error)))
+}
+
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
 /// takes the person's own proof (OF-417), an attendee ask's answer the
