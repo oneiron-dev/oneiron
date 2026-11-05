@@ -59,6 +59,20 @@ impl SkillStateWrite {
         Ok(record)
     }
 
+    /// The current prior for overwrite validation, after checking the final
+    /// request against this exact writer. `recheck_final` returns the UPDATED
+    /// record; using it as the prior would hide the state change.
+    pub(crate) fn rechecked_prior_body(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        final_body: &[u8],
+    ) -> Result<&[u8]> {
+        self.recheck_final(store, txn, entity, final_body)?;
+        Ok(self.snapshot.logical_prior_body())
+    }
+
     pub(crate) fn snapshot(&self) -> &SkillStateSnapshot {
         &self.snapshot
     }
