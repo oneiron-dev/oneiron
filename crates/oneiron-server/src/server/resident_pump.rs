@@ -52,7 +52,7 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor, agent_dispatch_run_actor,
+    agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -65,6 +65,7 @@ use oneiron::code_run::{
     finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
+use oneiron::context_board::TurnWake;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{
     CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt, outage_park_reason,
@@ -171,6 +172,9 @@ struct Claimed {
     task: String,
     qa_thread_ref: EntityId,
     objectives: Vec<String>,
+    /// What started the run, from its dispatch (FIX 15011); `None` for a
+    /// run no event started.
+    wake: Option<TurnWake>,
 }
 
 impl Claimed {
@@ -508,6 +512,7 @@ fn claim(
                     task: resident_task(&status, &resident, briefing.clone()),
                     agent,
                     qa_thread_ref: resident.home_message_ref,
+                    wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
                 };
@@ -525,6 +530,8 @@ fn claim(
                         task: agent_task(&status, briefing.clone()),
                         agent,
                         qa_thread_ref,
+                        // A TASK's dispatch is its event; a spawn is none.
+                        wake: status.attempt.task_ref.as_ref().map(|_| TurnWake::Task),
                         status,
                         objectives: Vec::new(),
                     };
@@ -564,6 +571,19 @@ fn resident_task(
         ),
     };
     task_text(status, std::iter::once(cause).chain(briefing))
+}
+
+/// What started a resident's run, from its attempt's engine-minted refs and
+/// never its briefing: the TASK it realizes, a diary-read review, else a
+/// message in its inbox.
+fn resident_wake(status: &AgentDispatchStatus, agent: EntityId) -> TurnWake {
+    if status.attempt.task_ref.is_some() {
+        TurnWake::Task
+    } else if resident_attempt_reviews_diary(&status.attempt, agent) {
+        TurnWake::Review
+    } else {
+        TurnWake::Inbox
+    }
 }
 
 /// Another agent's run task: its frozen definition's instructions, then the

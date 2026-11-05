@@ -199,7 +199,9 @@ use crate::failure_ladder::HealerCase;
 use rmpv::Value;
 
 pub use agent_run::AgentRun;
-pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+pub use resident::{
+    ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode, resident_attempt_reviews_diary,
+};
 
 #[cfg(test)]
 mod resident_tests;

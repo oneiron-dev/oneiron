@@ -245,6 +245,23 @@ impl EngineNativeExecutor<'_> {
                 text: executor_turn_instruction(completed_steps, wire_prompt),
             }],
         });
+        // FIX 15011: a run an event started opens with the wake opener after
+        // the turn instruction, on its opening request only, its clock read
+        // here at the request's final boundary. A later step and a resumed
+        // wait are no new birth, and the task text never holds the time.
+        if completed_steps == 0
+            && let Some(wake) = config.wake
+        {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: crate::context_board::turn_wake_line(
+                        self.storage.now_recorded_ms(),
+                        wake,
+                    ),
+                }],
+            });
+        }
 
         let mut request = LlmRequest {
             model: config.model.clone(),

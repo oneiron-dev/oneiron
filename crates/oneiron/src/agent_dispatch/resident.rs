@@ -228,7 +228,7 @@ impl AgentDispatcher<'_> {
                     continue;
                 };
                 let key = format!(
-                    "resident:{}:diary-read:{}",
+                    "resident:{}:{DIARY_READ_WAKE_KEY}:{}",
                     agent.to_hex(),
                     review.request.to_hex()
                 );
@@ -492,6 +492,24 @@ impl AgentDispatcher<'_> {
 /// The run id every inbox wake of `agent` carries.
 pub(super) fn resident_run_id(agent: EntityId) -> String {
     format!("resident:{}", agent.to_hex())
+}
+
+/// The dedupe-key segment that marks a resident's diary-read review wake.
+const DIARY_READ_WAKE_KEY: &str = "diary-read";
+
+/// Whether `attempt`, a run of resident `agent`, was dispatched for a
+/// pending diary-read review: its engine-minted dedupe key says so, never
+/// its briefing. A retry keeps its source's key.
+#[must_use]
+pub fn resident_attempt_reviews_diary(attempt: &AttemptRecord, agent: EntityId) -> bool {
+    let prefix = format!(
+        "{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:{DIARY_READ_WAKE_KEY}:",
+        agent.to_hex()
+    );
+    attempt
+        .dedupe_key
+        .as_deref()
+        .is_some_and(|key| key.starts_with(&prefix))
 }
 
 /// A run a resident's host executes: a top-level dispatch of the resident,
