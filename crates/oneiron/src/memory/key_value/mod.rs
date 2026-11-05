@@ -83,7 +83,7 @@ pub(crate) fn address_parses(address: &KeyValueAddress) -> bool {
     check_address(address).is_ok()
 }
 fn check_page(limit: usize, offset: usize) -> MemoryResult<()> {
-    super::caps::check_limit(limit)?;
+    super::caps::check_limit_nonzero(limit)?;
     if offset > MAX_OFFSET {
         return Err(MemoryError::bad_request("offset exceeds 1000000"));
     }
@@ -340,6 +340,12 @@ impl Memory<'_> {
             }
         }
         let readable = self.key_value_readable()?;
+        // The requested page, measured where no read stands: the readable
+        // snapshot is closed and the page's own opens below.
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::RequestedResultRows,
+            u64::try_from(request.limit).unwrap_or(u64::MAX),
+        );
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let selected = |address: &KeyValueAddress, value: &StoredValue| {
             address.namespace.starts_with(&request.namespace_prefix)
@@ -384,6 +390,12 @@ impl Memory<'_> {
             ));
         }
         let readable = self.key_value_readable()?;
+        // The requested page, measured where no read stands: the readable
+        // snapshot is closed and the page's own opens below.
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::RequestedResultRows,
+            u64::try_from(request.limit).unwrap_or(u64::MAX),
+        );
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         // A conflicted address is live whichever head it keeps: its
         // namespace is listed, as one head's would be.

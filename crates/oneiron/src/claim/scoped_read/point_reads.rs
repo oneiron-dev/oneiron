@@ -316,6 +316,59 @@ impl<'v> ScopedRead<'v> {
         })
     }
 
+    /// Projects bounded row frames and their final reduction under one snapshot,
+    /// policy resolution and held authority. The frame size never limits input.
+    pub(crate) fn read_projected_frames<S, T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut state: S,
+        mut project: impl FnMut(
+            &heed::RoTxn<'_>,
+            usize,
+            Vec<Option<ReadRow>>,
+            &mut S,
+        ) -> std::result::Result<(), E>,
+        finish: impl FnOnce(&heed::RoTxn<'_>, S) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
+        let txn = self.grant_read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let authority = HeldAuthority::for_request(requested);
+        let mut suppressed = 0;
+        let frame_size = crate::request_limits::MAX_BATCH_ENTITIES;
+        for (frame_index, frame) in reads.chunks(frame_size).enumerate() {
+            let mut rows = Vec::with_capacity(frame.len());
+            for read in frame {
+                let (row, withheld) = match read.target {
+                    ReadTarget::Id(id) => {
+                        self.id_row_in(&txn, &policy, &filter, id, read.mode, &authority)?
+                    }
+                    ReadTarget::ShortRef {
+                        short_id,
+                        content_hash,
+                    } => self.short_ref_in(
+                        &txn,
+                        &policy,
+                        &filter,
+                        short_id,
+                        content_hash,
+                        read.mode,
+                        &authority,
+                    )?,
+                };
+                suppressed += withheld;
+                rows.push(row);
+            }
+            project(&txn, frame_index * frame_size, rows, &mut state)?;
+        }
+        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        Ok(ScopedReadResult {
+            value: finish(&txn, state)?,
+            receipt,
+        })
+    }
+
     /// One id at one frontier: the admitted row and whether an existing row
     /// was withheld. Value and denial count come from the same snapshot,
     /// under the authority the read holds for it.
