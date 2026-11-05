@@ -115,6 +115,11 @@ impl ManagedArgs {
             maximum_tier: args.maximum_tier.unwrap_or(MANAGED_MAXIMUM_TIER_DEFAULT),
             artifact_socket: args.artifact_http_socket.clone(),
             preview_socket: args.preview_socket.clone(),
+            broker: crate::config::models::BrokerConfig::from_args(args).map_err(|error| {
+                ManagedError::InvalidBrokerConfig {
+                    reason: error.to_string(),
+                }
+            })?,
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
