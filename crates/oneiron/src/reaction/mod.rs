@@ -36,7 +36,8 @@ pub use channel_adapters::{
     ReactionChannelCapability, reaction_channel_capability,
 };
 pub(crate) use erase::{
-    erase_reaction_claims, person_reaction_claims_in, record_reaction_claims_in,
+    ROOM_RECORD_KINDS, ROOM_RECORD_PAGE, erase_reaction_claims, person_reaction_claims_in,
+    person_reaction_page_in, record_reaction_claims_in,
 };
 pub(crate) use mirror::ensure_conversation_mirror_actor;
 pub use mirror::{ReactionIngress, conversation_mirror_actor_id};
