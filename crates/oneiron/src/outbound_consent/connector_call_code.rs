@@ -175,9 +175,11 @@ impl Vault {
         Ok(self.with_write_txn(|txn| {
             let mut row = pending.clone();
             row.code = None;
-            if let Some((draft, gate_input)) = draft
+            if let Some((mut draft, gate_input)) = draft
                 && row.code_consent_wait.is_none()
             {
+                draft.holder_settlement =
+                    self.freeze_code_consent_settlement_in_txn(txn, &gate_input)?;
                 row.code_consent_wait =
                     mint_code_consent_wait_in_txn(self, txn, draft, |binding_digest| {
                         crate::gate::code_wait_approval_digest(&gate_input, binding_digest)
@@ -245,6 +247,7 @@ impl Vault {
                 principal: principal.clone(),
                 pending: effect,
                 frozen_input_digest: facts.frozen_digest,
+                holder_settlement: None,
                 hold_reasons: reasons.to_vec(),
                 remember_offer,
             },

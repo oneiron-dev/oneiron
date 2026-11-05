@@ -51,10 +51,16 @@ capability and does not mint a marker or a receipt.
 
 ## Integration state
 
-This supplier is not the complete non-Owner answer route. The actual immutable
-code-wait binding must carry and hash the exact frozen value. Connector minting
-must freeze at the native HOLD-TIME producer; browser minting must use its
-closed native facts. The question, word and answer hooks must use that binding.
+This supplier is not the complete non-Owner answer route. The immutable
+code-wait binding carries `holder_settlement`, including the exact policy
+witness, action bound and candidates. Its canonical typed MessagePack bytes
+are length-bound into the binding digest before the effect's own digest is
+composed. Encoding errors propagate; no missing or placeholder policy bytes
+stand in for the value. Connector minting freezes inside the pending call's
+writer while it still holds the native HOLD-TIME input. Browser minting uses
+its engine-stamped facts and the same private pinned-input builder as the
+send's approval digest. The question, word and answer hooks must use that
+binding.
 The native holder receipt projector now writes the real human actor to the
 existing Gate ledger without an Owner stamp. It retains actual grant, policy
 citations and frontier. Its holder-denied reason differs from the Owner-denial
@@ -62,13 +68,27 @@ signal that self-heal consumes. Historical settlement attribution does not
 revalidate or gate an already completed effect. Attribution is data, not a
 credential and not authority to claim an approve-once marker.
 
-The final typed holder act must still keep target, opener lineage, original
-authority, first-answer, admission, once consumption and settlement in the same
-existing writer and ledger. Stop-asking still requires its separate setting
-power. Do not expose an Owner/System shim or treat this evidence reader or
-receipt projector as that act.
+The typed `act_on_code_consent_wait_as_holder_in_txn` entry accepts the
+native answer target and authenticated person, not a supplied approval digest
+or policy proof. It loads the persisted wait, verifies its binding digest and
+schema, parked checkpoint, exact target, first-answer state, the person's
+actual word, opener lineage and original authority. Only then does it resolve
+the current policy and action power in that writer. An approve-once act claims
+the existing marker and writes the human Gate receipt in the same transaction;
+a denial writes its distinct holder receipt without a marker.
 
-No new runtime timeout, count cap or default duration is introduced. The one
-new numeric constant is the shipped row's citation version `1`. No migration
-or old-format reader is provided. No compile, runtime or full-row completion
-claim follows from this source.
+The answer hook must still record the returned decision and actual identity
+in its native first-answer stamp in that same writer. Admission, once
+consumption and settlement retain their existing proof requirements. A later
+holder settlement uses the saved policy/grant basis and the actual answer
+stamp's identity; it does not manufacture an Owner stamp. Stop-asking still
+requires its separate setting power. The existing Owner route remains
+unchanged. Do not expose an Owner/System shim or treat the policy evidence
+reader or receipt projector as that act.
+
+No new runtime timeout, count cap or default duration is introduced. The
+shipped row's citation version is `1`. The binding schema is `6` (was `5`)
+and its hash domain is `oneiron:code-consent-binding:v3` (was `v2`) to cover
+the new frozen field. These are format/identity revisions, not runtime
+policy defaults. No migration or old-format reader is provided. No compile,
+runtime or full-row completion claim follows from this source.

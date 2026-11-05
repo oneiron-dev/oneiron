@@ -177,6 +177,12 @@ pub(crate) struct CodeConsentHolderAttribution {
     pub(crate) policy_frontier: [u8; 32],
 }
 
+/// The receipt and historical basis of one proved held-effect act.
+pub(crate) struct CodeConsentHolderDecision {
+    pub(crate) receipt: super::ConsentReceipt,
+    pub(crate) attribution: CodeConsentHolderAttribution,
+}
+
 impl CodeConsentHolderPolicy {
     pub(crate) fn attribution(&self) -> CodeConsentHolderAttribution {
         CodeConsentHolderAttribution {

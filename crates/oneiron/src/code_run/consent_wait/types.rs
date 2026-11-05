@@ -13,7 +13,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 5;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 6;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -189,6 +189,9 @@ pub(crate) struct CodeConsentBinding {
     /// BLAKE3 of the frozen bytes the held pass prepared: the settle sends
     /// only these bytes.
     pub(crate) frozen_input_digest: [u8; 32],
+    /// The hold-time policy, action requirement and candidates, not authority.
+    pub(crate) holder_settlement:
+        Option<crate::consent::code_settlement::FrozenCodeConsentSettlement>,
     /// BLAKE3 over every stable fact above and the pending effect, never
     /// over the effect digest, the ask, a time or a receipt.
     pub(crate) binding_digest: [u8; 32],

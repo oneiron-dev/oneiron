@@ -310,6 +310,87 @@ fn answer_in_txn(
     })
 }
 
+/// Proves a holder's act from the persisted wait in the acting writer.
+/// The input's digest is a target check, never the act's authority.
+pub(crate) fn prove_code_consent_holder_act_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    holder: &AuthenticatedOwner,
+    input: &CodeConsentAnswerInput,
+) -> Result<
+    Option<(
+        crate::consent::code_settlement::CodeConsentHolderPolicy,
+        EffectDigest,
+    )>,
+> {
+    let Some(row) = read_code_consent_wait_in_txn(vault, txn, input.wait_id)? else {
+        return Err(Error::EntityNotFound);
+    };
+    let actor = holder.revalidate_person_in_txn(vault, txn)?;
+    if let Some(slip) = row.binding.original.opener_slip
+        && holder.answers_from_slip_lineage_in_txn(vault, txn, &[slip])?
+    {
+        return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "the opener lineage never settles its own code consent wait",
+        )));
+    }
+    let Some(sealed) = row.checkpoint.as_ref() else {
+        return Err(Error::EntityNotFound);
+    };
+    if row.binding.wait_id != input.wait_id
+        || row.binding.run_id != input.run_id
+        || sealed.wait_generation != input.wait_generation
+        || sealed.step_hash != input.step_hash
+        || row.binding.effect_digest != input.effect_digest
+        || row.binding.schema_version != super::types::CODE_CONSENT_SCHEMA_VERSION
+        || row.binding.binding_digest != super::binding::binding_digest(&row.binding)?
+    {
+        return Err(Error::ConcurrentWrite("code consent wait target changed"));
+    }
+    if row.answer.is_some() || row.settlement.is_some() {
+        return Ok(None);
+    }
+    if input.choice == CodeConsentChoice::ApproveAndStopAsking {
+        return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "effect settlement power does not change a connector setting",
+        )));
+    }
+    let ask = row.ask.ok_or(Error::EntityNotFound)?;
+    crate::task_verb::code_consent_word_in_txn(
+        vault,
+        txn,
+        ask,
+        input.word_ref,
+        actor,
+        input.choice,
+    )?;
+    if row.binding.pending.browser_action().is_some() && !browser_facts_match_row(&row.binding) {
+        refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
+        return Ok(None);
+    }
+    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+        refuse_code_consent_wait_in_txn(
+            vault,
+            txn,
+            input.wait_id,
+            &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
+        )?;
+        return Ok(None);
+    }
+    let frozen = row.binding.holder_settlement.as_ref().ok_or(Error::Gate(
+        GateError::ConsentUnauthenticatedActor("this wait names no settlement holders"),
+    ))?;
+    let policy = vault
+        .code_consent_holder_policy_in_txn(txn, holder, frozen)?
+        .ok_or(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "the current policy and action power do not admit this settlement holder",
+        )))?;
+    Ok(Some((
+        policy,
+        EffectDigest::from_bytes(row.binding.effect_digest),
+    )))
+}
+
 /// Who may answer a code consent wait (CALLS: owner-only holder subset):
 /// the vault's owner, revalidated in the answering writer, from any surface
 /// the owner is authenticated on, but never from the opener's lineage, that
