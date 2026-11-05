@@ -12,7 +12,7 @@ configuring the HTTP hub.
 The server requires the same authenticated owner proof as the other hub doors.
 The native typed door revalidates that owner before making the request. The HTTP
 client retains the existing hub transport: no proxy, no redirects, no URL
-credentials, a five-second connect timeout and a twenty-second total timeout.
+credentials, a five-second connect timeout and a twenty-second blocking-operation timeout.
 No token is required for the public provider API.
 
 The request names `hub` and `q`. It sends `q` verbatim, with URL query encoding.
@@ -65,8 +65,10 @@ The initial HTTP response uses the existing 32 MiB package budget by default;
 `response_limit_bytes` can override that response budget. Native expanded-archive,
 file, tree and Git process bounds still apply. ZIP parsing uses the existing
 HTTP archive path's sixty-second deadline, measured from before the request.
-The no-proxy/no-redirect HTTP client and its five/twenty-second timeouts are
-unchanged. Provider failures retain status, Retry-After and body and cause no
+That deadline is checked by the archive parser, not by each HTTP body read.
+The no-proxy/no-redirect client and its five-second connect and twenty-second
+blocking-operation timeouts are unchanged. Each progressing body read can get a
+fresh wait, so this is not a twenty- or sixty-second whole-download guarantee. Provider failures retain status, Retry-After and body and cause no
 retry or publisher admission.
 
 Hosted ZIP bytes are parsed by the existing skill archive and frontmatter
