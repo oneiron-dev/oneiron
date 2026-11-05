@@ -729,6 +729,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
+- `vault.code.symbols.neighbors`
 - `vault.code.merge_queue.enqueue`
 - `vault.code.merge_queue.stage`
 - `vault.code.merge_queue.observe`
@@ -760,6 +761,7 @@ both bindings and their export-census tests in one change.
 - `vault.repo.snapshots.get`
 - `vault.repo.snapshots.read`
 - `vault.repo.symbols.definitions`
+- `vault.repo.symbols.neighbors`
 - `vault.repo.views.get`
 - `vault.repo.views.read`
 - `vault.repo.merge_queue.observe`

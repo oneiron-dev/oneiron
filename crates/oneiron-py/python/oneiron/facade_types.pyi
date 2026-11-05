@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4489 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1234 facade rows, 4497 declarations.
+Inputs: 1165 of 1234 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1069 of 1234 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -13398,6 +13398,27 @@ class CodeSnapshotDefinitionsView(TypedDict):
     repo: EntityId
     snapshot: str
     definitions: list[CodeSnapshotDefinition]
+CodeRelationKind = Literal["calls", "imports", "refs"]
+CodeRelationDirection = Literal["in", "out", "both"]
+class CodeSnapshotNeighborsRequest(TypedDict):
+    repo: EntityId
+    snapshot: str
+    symbol: EntityId
+    path: str
+    kinds: NotRequired[list[CodeRelationKind] | None]
+    direction: NotRequired[CodeRelationDirection | None]
+class CodeSnapshotSymbolCitation(TypedDict):
+    definition: CodeSnapshotDefinition
+    content_hash_blake3: str
+class CodeSnapshotNeighbor(TypedDict):
+    kind: CodeRelationKind
+    source: CodeSnapshotSymbolCitation
+    target: CodeSnapshotSymbolCitation
+class CodeSnapshotNeighborsView(TypedDict):
+    repo: EntityId
+    snapshot: str
+    seed: CodeSnapshotSymbolCitation
+    neighbors: list[CodeSnapshotNeighbor]
 class MergeQueueEnqueueRequest(TypedDict):
     repo: EntityId
     proposals: list[EntityId]
@@ -13777,6 +13798,20 @@ class RepoSymbolsDefinitionsOutput(TypedDict):
     ref: str
     snapshot: str
     definitions: list[CodeSnapshotDefinition]
+class RepoSymbolsNeighborsInput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    symbol: EntityId
+    path: str
+    kinds: NotRequired[list[CodeRelationKind] | None]
+    direction: NotRequired[CodeRelationDirection | None]
+class RepoSymbolsNeighborsOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    snapshot: str
+    seed: CodeSnapshotSymbolCitation
+    neighbors: list[CodeSnapshotNeighbor]
 class RepoViewsGetInput(TypedDict):
     work: EntityId
 class RepoWorkFile(TypedDict):
@@ -15542,7 +15577,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue", "RepoCheckoutBind", "RepoExport"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoSymbolsNeighbors", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen", "RepoSymbolsDeclare", "RepoSymbolsRenew", "RepoSymbolsRelease", "RepoProposalSubmit", "RepoMergeQueueEnqueue", "RepoCheckoutBind", "RepoExport"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId

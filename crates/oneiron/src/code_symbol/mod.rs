@@ -31,6 +31,7 @@ pub use self::codec::{
 pub use self::keys::{code_symbol_entity_id, derive_symbol_fingerprint};
 pub use self::rust_source::derive_code_symbol_graph_from_sources;
 pub use self::storage::apply_code_symbol_anchor_transfer;
+pub(crate) use self::storage::code_symbol_manifest_definitions;
 pub use self::text_diff::{
     derive_code_chunks_from_text_diff, derive_code_embedding_inputs_from_text_diff,
     embed_code_chunks,

@@ -95,6 +95,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSnapshotsGet
             | SelfEffect::RepoSnapshotsRead
             | SelfEffect::RepoSymbolsDefinitions
+            | SelfEffect::RepoSymbolsNeighbors
             | SelfEffect::RepoViewsGet
             | SelfEffect::RepoViewsRead
             | SelfEffect::RepoMergeQueueObserve

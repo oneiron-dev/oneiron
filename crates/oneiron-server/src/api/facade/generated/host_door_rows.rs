@@ -65,11 +65,13 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
 //! - `vault.repo.snapshots.get`
 //! - `vault.repo.snapshots.read`
 //! - `vault.repo.symbols.definitions`
+//! - `vault.repo.symbols.neighbors`
 //! - `vault.repo.views.get`
 //! - `vault.repo.views.read`
 //! - `vault.repo.merge_queue.observe`

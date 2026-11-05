@@ -467,6 +467,17 @@ impl Vault {
     }
 }
 
+/// Definitions of this already-loaded manifest, without resolving another revision.
+pub(crate) fn code_symbol_manifest_definitions(
+    manifest: &CodeSymbolManifest,
+) -> Result<Vec<CodeSymbolDefinition>> {
+    manifest
+        .symbols
+        .iter()
+        .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+        .collect()
+}
+
 fn code_symbol_definition(
     repo_ref: &RepoRef,
     symbol: &CodeSymbolRevision,

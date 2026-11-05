@@ -181,6 +181,27 @@ pub(crate) async fn vault_repo_symbols_definitions(
     .await
 }
 
+/// `vault.repo.symbols.neighbors`.
+pub(crate) async fn vault_repo_symbols_neighbors(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsNeighborsInput>,
+) -> Listed<oneiron::memory::repo_doors::RepoSymbolsNeighborsOutput> {
+    on_repo_run(
+        server,
+        auth,
+        session,
+        invocation,
+        "vault.repo.symbols.neighbors",
+        input,
+        |memory, binding, spec| memory.repo_symbols_neighbors_for_run(binding, spec),
+    )
+    .await
+}
+
 /// `vault.repo.views.get`.
 pub(crate) async fn vault_repo_views_get(
     server: &Arc<SyncServer>,

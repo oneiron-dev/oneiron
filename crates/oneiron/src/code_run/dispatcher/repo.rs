@@ -83,6 +83,10 @@ impl HostSelfDispatcher<'_> {
                 effect,
                 memory.repo_symbols_definitions_for_run(&binding, input),
             ),
+            RepoRunCall::SymbolsNeighbors(input) => answered(
+                effect,
+                memory.repo_symbols_neighbors_for_run(&binding, input),
+            ),
             RepoRunCall::ViewsGet(input) => {
                 answered(effect, memory.repo_views_get_for_run(&binding, input))
             }
