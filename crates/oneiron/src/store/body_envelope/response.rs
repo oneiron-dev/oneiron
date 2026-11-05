@@ -236,11 +236,11 @@ pub(crate) enum ResponseFamily {
     /// their centroid, carried whole and owned by every member; a retired
     /// cluster leaves nothing.
     ReportCluster,
-    /// A typed question's copies of one judgment answer (FIX 9918, 11236):
-    /// its answer row, carried whole and owned by the answer claim, its
-    /// unit and its receipt's principal; its outcome labels and closed
-    /// window, owned by the answer claim alone. A retired copy leaves
-    /// nothing, as the owner's erase deletes it live.
+    /// A typed question's copies of one judgment answer (FIX 9918, 11236,
+    /// 11237), carried whole. At bind time, decoded labels and windows
+    /// join their answer's claim, unit and receipt principal; opaque or
+    /// orphan copies keep their claim alone. Existing unchanged bindings
+    /// keep their prior owners. A retired copy leaves nothing.
     TypedQuestion,
 }
 
@@ -516,9 +516,11 @@ impl ResponseFamily {
                     .map(|row| crate::store::media_job_owners(&row))
                     .unwrap_or_default())
             }
-            Self::TypedQuestion => Ok(crate::llm::decision::questions::typed_question_owners(
-                key, value,
-            )),
+            Self::TypedQuestion => {
+                crate::llm::decision::questions::typed_question_copy_owners_in_txn(
+                    store, txn, key, value,
+                )
+            }
         }
     }
 
