@@ -77,17 +77,25 @@ struct Baseline {
     observed_at: u64,
 }
 fn config(vault: &Vault, evaluation: &HarnessEvaluation) -> Result<DreamerTuningConfig> {
+    let txn = vault.store.env.read_txn()?;
+    config_in_txn(vault, &txn, evaluation)
+}
+fn config_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    evaluation: &HarnessEvaluation,
+) -> Result<DreamerTuningConfig> {
     if !evaluation.score.is_finite() || !(0.0..=1.0).contains(&evaluation.score) {
         return Err(invalid());
     }
     let artifact = vault
-        .get_blob_artifact(&evaluation.artifact)?
+        .get_blob_artifact_in_txn(txn, &evaluation.artifact)?
         .ok_or_else(invalid)?;
     if artifact.media_type != DREAMER_TUNING_CONFIG_MEDIA_TYPE {
         return Err(invalid());
     }
     let bytes = vault
-        .read_blob_artifact_version(&evaluation.artifact, evaluation.version)?
+        .read_blob_artifact_version_in_txn(txn, &evaluation.artifact, evaluation.version)?
         .ok_or_else(invalid)?;
     let config: DreamerTuningConfig = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     config.validate()?;
@@ -183,10 +191,38 @@ impl Vault {
         evaluation: &HarnessEvaluation,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        config(self, evaluation)?;
+        self.with_write_txn_grouped(|txn| {
+            self.schedule_harness_evaluation_in_txn(txn, evaluation, now)
+        })
+    }
+    /// Queues the owner's supplied score for an immutable tuning-config version.
+    /// Acceptance validates the input, not the quality of an external evaluator.
+    /// Returns the actual attempt, whether newly queued or already present.
+    pub fn schedule_harness_evaluation_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        evaluation: &HarnessEvaluation,
+        now: u64,
+    ) -> Result<AttemptId> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let outcome = self.schedule_harness_evaluation_in_txn(txn, evaluation, now)?;
+            let (EnqueueDreamerAttemptOutcome::Enqueued(status)
+            | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
+            Ok(status.attempt.id)
+        })
+    }
+    fn schedule_harness_evaluation_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        evaluation: &HarnessEvaluation,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        config_in_txn(self, &*txn, evaluation)?;
         let bytes = serde_json::to_string(evaluation).map_err(|_| invalid())?;
         let key = blake3::hash(bytes.as_bytes()).to_hex().to_string();
-        DreamerRunnerStore::new(self).enqueue_maintenance(
+        DreamerRunnerStore::new(self).enqueue_maintenance_in_txn(
+            txn,
             HARNESS_FACET,
             rmpv::Value::from(bytes),
             key,

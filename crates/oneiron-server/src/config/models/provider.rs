@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
+use oneiron_llm_openai::EmbedShape;
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none
@@ -255,6 +256,7 @@ pub(super) struct ProviderFile {
     response_format: Option<ResponseFormatWire>,
     chat_path: Option<String>,
     prefill_wire: Option<String>,
+    embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
     model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
@@ -300,6 +302,10 @@ pub struct ProviderConfig {
     /// `prefix` sends the trailing assistant's prefix flag when the selected
     /// model declares `AssistantPrefill`. Other values have no effect.
     pub prefill_wire: Option<String>,
+    /// The shape the provider's embedding endpoint speaks (FIX 866):
+    /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
+    /// chat form.
+    pub embed_shape: EmbedShape,
     pub capabilities: Vec<LlmCapability>,
     /// One wire model's own capabilities, in place of `capabilities`, so two
     /// models on one provider can differ (one hears audio, one does not).
@@ -486,6 +492,7 @@ impl ProviderFile {
             response_format: self.response_format.unwrap_or_default(),
             chat_path: self.chat_path,
             prefill_wire: self.prefill_wire,
+            embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
             family: self.family.map(|family| family.trim().to_owned()),

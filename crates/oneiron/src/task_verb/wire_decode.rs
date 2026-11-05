@@ -825,3 +825,30 @@ pub(crate) fn task_binding(body: &[u8]) -> Option<TaskBinding> {
             .collect(),
     })
 }
+
+/// Inverse of [`super::wire_encode::encode_task_realization_input`]: the one
+/// decoder of a queued TASK realization's input, shared by the runner and
+/// admission (FIX 11687). The wrapper is current-only: `spec` and
+/// `requester` are both required keys, `requester` nil for unmarked work,
+/// else the native JSON string both carriers share. A raw spec, or any
+/// wrapper missing a key, is a corrupt input.
+pub(crate) fn decode_task_realization_input(
+    value: &Value,
+) -> Result<(Value, Option<crate::agent_dispatch::QueuedRequester>)> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("tasks.realize.input"));
+    let entries = value.as_map().ok_or_else(invalid)?;
+    let spec = task_body_field(entries, "spec")
+        .map_err(|_| invalid())?
+        .clone();
+    let stored = task_body_field(entries, "requester").map_err(|_| invalid())?;
+    let requester = if matches!(stored, Value::Nil) {
+        None
+    } else {
+        let raw = stored.as_str().ok_or_else(invalid)?;
+        Some(
+            serde_json::from_str::<crate::agent_dispatch::QueuedRequester>(raw)
+                .map_err(|_| invalid())?,
+        )
+    };
+    Ok((spec, requester))
+}

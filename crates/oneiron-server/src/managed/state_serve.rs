@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
@@ -203,10 +203,11 @@ pub struct ManagedState {
     /// row (b)): set once at boot, before ctl serves. `None` until set, which
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
-    /// The vault VM outbox carrier's revision, as every `Ping` reports it
-    /// (FIX 5235): set at boot, then as its companion answers each look
-    /// (FIX 6683); 0 for none, on a node or while no companion answers.
-    vm_outbox_revision: AtomicU32,
+    /// The vault VM outbox carrier's one-word observation, as every `Ping`
+    /// reports it (FIX 5235, FIX 11073): its revision plus whether a probe
+    /// completed, set at boot, then as its companion answers each look (FIX
+    /// 6683); unobserved until one does.
+    vm_outbox_revision: AtomicU64,
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
@@ -438,7 +439,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
-            vm_outbox_revision: AtomicU32::new(0),
+            vm_outbox_revision: AtomicU64::new(0),
             restore: None,
             idle_backup: Arc::default(),
             relay_delete: Arc::default(),
