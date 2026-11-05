@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use zeroize::Zeroize;
 
@@ -199,6 +199,8 @@ fn abort_txn(txn: *mut ffi::MDB_txn) {
 /// You may increase the limit by editing it **at your own risk**: `/Library/LaunchDaemons/sysctl.plist`
 pub struct RwTxn<'p> {
     pub(crate) txn: RoTxn<'p>,
+    // Drops after txn, keeping callbacks alive through implicit abort too.
+    page_account: Option<Arc<crate::page_account::Registration>>,
 }
 
 impl<'p> RwTxn<'p> {
@@ -220,6 +222,7 @@ impl<'p> RwTxn<'p> {
                 stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
+            page_account: None,
         })
     }
 
@@ -242,11 +245,24 @@ impl<'p> RwTxn<'p> {
                 stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
+            page_account: None,
         })
     }
 
     pub(crate) fn env_mut_ptr(&self) -> *mut ffi::MDB_env {
         self.txn.env.env_mut_ptr()
+    }
+
+    /// ONEIRON FORK: attaches nonblocking native heap admission before the
+    /// first write of a fresh root transaction. Children inherit it; buffers
+    /// retain the account until physical free, including while cached.
+    ///
+    /// Returns EINVAL for a child, WRITEMAP, a written or already scoped writer.
+    /// The account must perform real admission outside this transaction.
+    pub fn set_page_account(&mut self, account: Arc<dyn crate::PageAccount>) -> Result<()> {
+        let registration = crate::page_account::Registration::attach(self.txn.txn, account)?;
+        self.page_account = Some(registration);
+        Ok(())
     }
 
     /// Commit all the operations of a transaction into the database.

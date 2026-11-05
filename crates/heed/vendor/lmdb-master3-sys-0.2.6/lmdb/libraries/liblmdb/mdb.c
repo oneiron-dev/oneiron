@@ -1424,6 +1424,11 @@ struct MDB_txn {
 	txnid_t		mt_last_workid;
 
 	MDB_env		*mt_env;		/**< the DB environment */
+	/* ONEIRON: inherited by children; callbacks never wait in the writer. */
+	MDB_page_acquire_func *mt_page_acquire;
+	MDB_page_materialized_func *mt_page_materialized;
+	MDB_page_release_func *mt_page_release;
+	void *mt_page_context;
 	/** The list of pages that became unused during this transaction.
 	 */
 	MDB_IDL		mt_free_pgs;
@@ -2200,6 +2205,30 @@ mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b)
 	return dcmp(a, b);
 }
 
+/* ONEIRON: heap-only prefix. MDB_page supplies its native alignment; none of
+ * this prefix is part of a page written to disk. Cache entries keep the ticket.
+ */
+typedef union MDB_page_buffer {
+	MDB_page alignment;
+	struct {
+		size_t bytes;
+		void *ticket;
+		MDB_page_release_func *release;
+	} account;
+} MDB_page_buffer;
+
+static void
+mdb_page_buffer_free(MDB_page *page)
+{
+	MDB_page_buffer *buffer = (MDB_page_buffer *)page - 1;
+	size_t bytes = buffer->account.bytes;
+	void *ticket = buffer->account.ticket;
+	MDB_page_release_func *release = buffer->account.release;
+	free(buffer);
+	if (release)
+		release(ticket, bytes, 1);
+}
+
 /** Allocate memory for a page.
  * Re-use old malloc'd pages first for singletons, otherwise just malloc.
  * Set #MDB_TXN_ERROR on failure.
@@ -2209,7 +2238,9 @@ mdb_page_malloc(MDB_txn *txn, unsigned num, int init)
 {
 	MDB_env *env = txn->mt_env;
 	MDB_page *ret = env->me_dpages;
-	size_t psize = env->me_psize, sz = psize, off;
+	MDB_page_buffer *buffer;
+	void *ticket = NULL;
+	size_t psize = env->me_psize, sz = psize, off, bytes;
 	/* For ! #MDB_NOMEMINIT, psize counts how much to init.
 	 * For a single page alloc, we init everything after the page header.
 	 * For multi-page, we init the final page; if the caller needed that
@@ -2224,21 +2255,40 @@ mdb_page_malloc(MDB_txn *txn, unsigned num, int init)
 			goto init;
 		}
 	} else {
+		if (num > (size_t)-1 / psize)
+			goto fail;
 		sz *= num;
 		off = sz - psize;
 	}
-	if ((ret = malloc(sz)) != NULL) {
-		VGMEMP_ALLOC(env, ret, sz);
+	if (sz > (size_t)-1 - sizeof(MDB_page_buffer))
+		goto fail;
+	bytes = sz + sizeof(MDB_page_buffer);
+	if (txn->mt_page_acquire &&
+		txn->mt_page_acquire(txn->mt_page_context, bytes, &ticket))
+		goto fail;
+	buffer = malloc(bytes);
+	if (!buffer) {
+		if (txn->mt_page_release)
+			txn->mt_page_release(ticket, bytes, 0);
+		goto fail;
+	}
+	buffer->account.bytes = bytes;
+	buffer->account.ticket = ticket;
+	buffer->account.release = txn->mt_page_release;
+	ret = (MDB_page *)(buffer + 1);
+	if (txn->mt_page_materialized)
+		txn->mt_page_materialized(ticket, bytes);
+	VGMEMP_ALLOC(env, ret, sz);
 init:
-		if (init && !(env->me_flags & MDB_NOMEMINIT)) {
-			memset((char *)ret + off, 0, psize);
-			ret->mp_pad = 0;
-		}
-	} else {
-		txn->mt_flags |= MDB_TXN_ERROR;
+	if (init && !(env->me_flags & MDB_NOMEMINIT)) {
+		memset((char *)ret + off, 0, psize);
+		ret->mp_pad = 0;
 	}
 	ret->mp_flags = 0;
 	return ret;
+fail:
+	txn->mt_flags |= MDB_TXN_ERROR;
+	return NULL;
 }
 /** Free a single page.
  * Saves single pages to a list, for future reuse.
@@ -2261,7 +2311,7 @@ mdb_dpage_free(MDB_env *env, MDB_page *dp)
 	} else {
 		/* large pages just get freed directly */
 		VGMEMP_FREE(env, dp);
-		free(dp);
+		mdb_page_buffer_free(dp);
 	}
 }
 
@@ -2278,7 +2328,7 @@ mdb_dpage_free_n(MDB_env *env, MDB_page *dp, int num)
 	else {
 		/* large pages just get freed directly */
 		VGMEMP_FREE(env, dp);
-		free(dp);
+		mdb_page_buffer_free(dp);
 	}
 }
 #endif
@@ -3352,6 +3402,10 @@ mdb_txn_renew0(MDB_txn *txn)
 		if (txn->mt_txnid == mdb_debug_start)
 			mdb_debug = MDB_DBG_INFO;
 #endif
+		txn->mt_page_acquire = NULL;
+		txn->mt_page_materialized = NULL;
+		txn->mt_page_release = NULL;
+		txn->mt_page_context = NULL;
 		txn->mt_child = NULL;
 		txn->mt_rdonly_child_count = 0;
 		pthread_mutex_init(&txn->mt_child_mutex, NULL);
@@ -3556,6 +3610,10 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 			parent->mt_rdonly_child_count++;
 		}
 		pthread_mutex_unlock(&parent->mt_child_mutex);
+		txn->mt_page_acquire = parent->mt_page_acquire;
+		txn->mt_page_materialized = parent->mt_page_materialized;
+		txn->mt_page_release = parent->mt_page_release;
+		txn->mt_page_context = parent->mt_page_context;
 		txn->mt_parent = parent;
 		txn->mt_numdbs = parent->mt_numdbs;
 #if MDB_RPAGE_CACHE
@@ -3607,6 +3665,24 @@ renew:
 	MDB_TRACE(("%p, %p, %u = %p", env, parent, flags, txn));
 
 	return rc;
+}
+
+/* ONEIRON: attach only to a fresh root writer; children inherit the scope. */
+int
+mdb_txn_set_page_account(MDB_txn *txn, MDB_page_acquire_func *acquire,
+	MDB_page_materialized_func *materialized, MDB_page_release_func *release,
+	void *context)
+{
+	if (!txn || txn->mt_parent ||
+		(txn->mt_flags & (MDB_TXN_RDONLY | MDB_TXN_BLOCKED | MDB_WRITEMAP)) ||
+		txn->mt_u.dirty_list[0].mid || txn->mt_page_acquire ||
+		!acquire || !materialized || !release)
+		return EINVAL;
+	txn->mt_page_acquire = acquire;
+	txn->mt_page_materialized = materialized;
+	txn->mt_page_release = release;
+	txn->mt_page_context = context;
+	return MDB_SUCCESS;
 }
 
 MDB_env *
@@ -4423,7 +4499,7 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 				pn >>= 1;
 				y = mdb_mid2l_search(dst, pn);
 				if (y <= dst[0].mid && dst[y].mid == pn) {
-					free(dst[y].mptr);
+					mdb_page_buffer_free(dst[y].mptr);
 					while (y < dst[0].mid) {
 						dst[y] = dst[y+1];
 						y++;
@@ -4458,7 +4534,7 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 			while (yp < dst[x].mid)
 				dst[i--] = dst[x--];
 			if (yp == dst[x].mid)
-				free(dst[x--].mptr);
+				mdb_page_buffer_free(dst[x--].mptr);
 		}
 		mdb_tassert(txn, i == x);
 		dst[0].mid = len;
@@ -6518,7 +6594,7 @@ mdb_env_close(MDB_env *env)
 	while ((dp = env->me_dpages) != NULL) {
 		VGMEMP_DEFINED(&dp->mp_next, sizeof(dp->mp_next));
 		env->me_dpages = dp->mp_next;
-		free(dp);
+		mdb_page_buffer_free(dp);
 	}
 
 	mdb_env_close_active(env, 0);

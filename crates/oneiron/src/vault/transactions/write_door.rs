@@ -45,6 +45,20 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door_classed_accounted(callback, class, None, f)
+    }
+
+    pub(crate) fn write_txn_door_classed_accounted<F, T, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        attempt: Option<&crate::store::native_write::NativeWriteAttempt>,
+        f: F,
+    ) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // Scan checks raised since the last write are kept first, in a write
         // of their own (no scan opens one). It takes the writer where this
         // write is about to, holding nothing more: no answer exists yet to
@@ -57,21 +71,7 @@ impl Vault {
         // Read on the calling thread: the group may run this closure on
         // another member's (FIX 11607).
         let rederive = !crate::scope_summary::rederive_deferred();
-        let (
-            result,
-            approved_vad_ids,
-            proactivity_changed,
-            (
-                task_ids,
-                rows,
-                room_joins,
-                pad_windows,
-                settled_tasks,
-                notifications_changed,
-                note_document_ids,
-            ),
-            retirement_staged,
-        ) = self.store.group_write_classed(callback, class, |wtxn| {
+        let write = |wtxn: &mut heed::RwTxn<'_>| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                 Ok(staged) => staged,
                 Err(err) => return Rows::Discard(Err(E::from(err))),
@@ -144,7 +144,24 @@ impl Vault {
                 )),
                 Err(err) => Rows::Discard(Err(E::from(err))),
             }
-        })?;
+        };
+        let (
+            result,
+            approved_vad_ids,
+            proactivity_changed,
+            (
+                task_ids,
+                rows,
+                room_joins,
+                pad_windows,
+                settled_tasks,
+                notifications_changed,
+                note_document_ids,
+            ),
+            retirement_staged,
+        ) = self
+            .store
+            .group_write_classed_accounted(callback, class, attempt, write)?;
         // A fence this write's erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
