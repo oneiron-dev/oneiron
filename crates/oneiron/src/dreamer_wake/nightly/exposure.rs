@@ -10,10 +10,10 @@
 //!
 //! A TURN of a private thread also carries the people who read it (FIX
 //! 7730): its thread's whole audience now, when each of them reads it under
-//! the CONTENT rule. Parts of one private thread's thing share a line only
-//! where their TURNs agree on project, relationships and these readers, so
-//! one call never reads words of that thread beside words fewer or other
-//! people read.
+//! the CONTENT rule. Parts of a private thing, including threads grouped
+//! under one PERSON, share a line only where their TURNs agree on project,
+//! relationships and these exact readers, so one call never reads words
+//! beside words fewer or other people read.
 
 use std::collections::{BTreeMap, BTreeSet};
 

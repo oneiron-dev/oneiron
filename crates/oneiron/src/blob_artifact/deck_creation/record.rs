@@ -137,6 +137,10 @@ pub struct DeckCreationRecord {
     pub outline_hash: [u8; 32],
     pub template: ArtifactVersionRef,
     pub template_hash: [u8; 32],
+    /// Bound image inputs, keyed by the outline's asset id.
+    pub asset_inputs: BTreeMap<String, CreatedInput>,
+    /// Font inputs loaded for layout, not proof that each face was used.
+    pub font_inputs: Vec<CreatedInput>,
     pub run_ref: String,
     pub made_by: Option<EntityId>,
     pub slides: Vec<CreatedSlide>,
@@ -146,6 +150,15 @@ pub struct DeckCreationRecord {
     pub fit_unverified: Vec<(String, String, u32)>,
     pub estimates: Vec<CreatedEstimate>,
     pub created_at: u64,
+}
+
+/// One pinned creation input's stored identity and provenance kind.
+/// This records the input, not its license or permission for reuse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CreatedInput {
+    pub source: ArtifactVersionRef,
+    pub content_hash: [u8; 32],
+    pub provenance_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
