@@ -1,4 +1,7 @@
-//! Append-time decision ancestry and retention-policy values.
+//! Core half of `store::gate_decision::retention_policy`: its store-layer items live in `oneiron_store::gate_decision::retention_policy` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::gate_decision::retention_policy::*;
 
 /// Trusted append-time ancestry for a decision's retention evaluation.
 /// Missing levels cannot be asserted later by a caller-selected sweep scope.
@@ -8,13 +11,6 @@ pub(crate) struct GateRetentionContext {
     pub(crate) project: Option<crate::EntityId>,
     pub(crate) sub_project: Option<crate::EntityId>,
     pub(crate) thread: Option<crate::EntityId>,
-}
-
-/// The manifest chooses how child scope rows compose with their ancestors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateRetentionPrecedence {
-    NestedNarrowing,
-    MostSpecific,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,12 +37,6 @@ impl GateRetentionScope {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateRetentionOverrideCeiling {
-    Vault,
-    Parent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -124,8 +124,8 @@ impl ModelRuntime {
     }
 
     #[must_use]
-    pub fn build(config: Option<&ModelsConfig>) -> Self {
-        Self::build_with_keys(config, None)
+    pub fn build(config: Option<&ModelsConfig>, posture: oneiron::HostingPrivacyPosture) -> Self {
+        Self::build_with_keys(config, None, posture)
     }
 
     /// [`build`](Self::build), with the custody door a `key_secret`
@@ -133,11 +133,15 @@ impl ModelRuntime {
     /// providers alone. Without one, or outside a runtime, such a provider is
     /// unavailable.
     #[must_use]
-    pub fn build_with_keys(config: Option<&ModelsConfig>, keys: Option<Arc<dyn KeyDoor>>) -> Self {
+    pub fn build_with_keys(
+        config: Option<&ModelsConfig>,
+        keys: Option<Arc<dyn KeyDoor>>,
+        posture: oneiron::HostingPrivacyPosture,
+    ) -> Self {
         let broker = config
             .zip(keys)
             .and_then(|(config, keys)| BrokerContext::for_providers(keys, config));
-        Self::build_hosted(config, broker.as_ref(), OfferCooldowns::unkept())
+        Self::build_hosted(config, broker.as_ref(), OfferCooldowns::unkept(), posture)
     }
 
     /// [`build`](Self::build), with the vault's one credential-broker
@@ -149,8 +153,15 @@ impl ModelRuntime {
         config: Option<&ModelsConfig>,
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
+        posture: oneiron::HostingPrivacyPosture,
     ) -> Self {
-        Self::build_hosted_on(config, broker, rests, &ModelHostBudgets::unhosted())
+        Self::build_hosted_on(
+            config,
+            broker,
+            rests,
+            &ModelHostBudgets::unhosted(),
+            posture,
+        )
     }
 
     /// [`build_hosted`](Self::build_hosted), its media rungs, clone wires
@@ -163,6 +174,7 @@ impl ModelRuntime {
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
         budgets: &ModelHostBudgets,
+        posture: oneiron::HostingPrivacyPosture,
     ) -> Self {
         let Some(config) = config else {
             // A discovered model's rest outlives a restart here too.
@@ -191,7 +203,16 @@ impl ModelRuntime {
         let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
         let responses = ResponsesContext::default();
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys, &identities, &responses) {
+            match build_provider(
+                name,
+                provider,
+                config,
+                site,
+                keys,
+                &identities,
+                &responses,
+                posture,
+            ) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
