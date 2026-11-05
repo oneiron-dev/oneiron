@@ -103,6 +103,12 @@ impl VerifiedSlip {
         self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
         self
     }
+    /// Meets an authenticated effective view with all six current membership
+    /// axes. The mint's signed claims and caveat provenance stay unchanged.
+    pub(in crate::authority) fn meet_scope(mut self, current: &Scope) -> Self {
+        self.claims.scope = self.claims.scope.meet(current);
+        self
+    }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
