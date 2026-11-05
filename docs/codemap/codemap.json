@@ -64794,7 +64794,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports/checkpoint.rs",
-     "purpose": "Canonical step-capture owner witnesses, carried under each key owner's compartment",
+     "purpose": "Canonical capture owner witnesses, carried under each key owner's compartment",
      "surface": {
       "crate-vis": 3
      }
@@ -64810,13 +64810,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports/source/ownership.rs",
-     "purpose": "One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the capture for, keyed…",
+     "purpose": "One durable capture's owner witnesses (FIX 6734), keyed apart from the capture's bytes so an erase still…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/receipts.rs",
+     "purpose": "Receipt capture and its final reporter witness share the native filing writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90581,7 +90591,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90940,7 +90950,7 @@
    },
    "over_bar": 151,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6366,
+   "source_files": 6367,
    "test_files": 895
   },
   "oneiron-android": {
