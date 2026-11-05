@@ -166,6 +166,8 @@ fn settle_connector_calls(
         tracing::warn!(%error, "paced connector wakes not admitted");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
+    // FIX 11023: the remote tasks providers accepted sends as, polled.
+    crate::connector_call_host::poll_remote_tasks(server);
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0

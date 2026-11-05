@@ -36,6 +36,10 @@ pub(crate) fn defer_record(
             return Ok(record);
         }
     };
+    // FIX 11023: a task its host can poll gets its first poll.
+    super::super::remote_task_poll::schedule_first_poll_in_txn(
+        vault, &mut wtxn, &id, &handle, now_ms,
+    )?;
     keep_remote_task_in_txn(vault, &mut wtxn, &id, handle)?;
     open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
