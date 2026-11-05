@@ -145,9 +145,7 @@ impl SessionWitnessBinding {
             .for_destination(destination)
             .read_key()?;
         let view = context.session.read_view()?;
-        let lane = vault
-            .scoped_read_in_session(key, &view)
-            .with_claim_status(ClaimReadStatus::Recorded);
+        let lane = vault.scoped_read_in_session(key, &view);
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         context.admit_in_txn(&txn)?;
         let mut base_rows = Vec::new();
