@@ -252,6 +252,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
 - `vault.skills.fit.set`
+- `vault.skills.advisory_ask.set`
 - `vault.skills.permissions.approve`
 - `vault.skills.optimize.start`
 - `vault.skills.optimize.result`

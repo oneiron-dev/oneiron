@@ -250,6 +250,7 @@ pub enum AgentVerb {
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
     VaultSkillsFitSet,
+    VaultSkillsAdvisoryAskSet,
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
@@ -1507,6 +1508,7 @@ impl AgentVerb {
         Self::VaultSkillsRulesSet,
         Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsFitSet,
+        Self::VaultSkillsAdvisoryAskSet,
         Self::VaultSkillsPermissionsApprove,
         Self::VaultSkillsOptimizeStart,
         Self::VaultSkillsOptimizeResult,
@@ -2767,6 +2769,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => "vault.skills.rules.set",
             Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsFitSet => "vault.skills.fit.set",
+            Self::VaultSkillsAdvisoryAskSet => "vault.skills.advisory_ask.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
             Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
@@ -4060,6 +4063,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -5346,6 +5350,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -6778,6 +6783,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -7847,6 +7853,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultProjectsGoalIntakeComplete
@@ -8746,6 +8753,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsFitSet => &["spec"],
+            Self::VaultSkillsAdvisoryAskSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -10004,6 +10012,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsFitSet => &["spec"],
+            Self::VaultSkillsAdvisoryAskSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -11746,6 +11755,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsFitSet => {
                 "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."
+            }
+            Self::VaultSkillsAdvisoryAskSet => {
+                "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."
             }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."

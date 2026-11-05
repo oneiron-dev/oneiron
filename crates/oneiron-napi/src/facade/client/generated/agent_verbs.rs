@@ -2121,6 +2121,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_advisory_ask_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.advisory_ask.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_permissions_approve(
         &self,
         input: serde_json::Value,

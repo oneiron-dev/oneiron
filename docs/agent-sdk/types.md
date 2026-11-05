@@ -1941,6 +1941,8 @@ class Oneiron:
         @property
         def fit(self) -> "Oneiron._VaultSkillsFitVerbs": ...
         @property
+        def advisory_ask(self) -> "Oneiron._VaultSkillsAdvisoryAskVerbs": ...
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
@@ -1966,6 +1968,9 @@ class Oneiron:
     class _VaultSkillsFitVerbs:
         def set(self, spec: Facade.SkillFitSetRequest) -> Facade.HubConsentReceipt:
             """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+    class _VaultSkillsAdvisoryAskVerbs:
+        def set(self, spec: Facade.SkillAdvisoryAskRequest) -> Facade.HubConsentReceipt:
+            """The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
