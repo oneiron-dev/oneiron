@@ -3675,9 +3675,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.session_model_heal_count",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+                >(),
+            ),
+            (
                 "vault.code.corrections",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+                >(),
+            ),
+            (
+                "vault.code.step_evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
                 >(),
             ),
             (
@@ -7597,7 +7609,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_settlement",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.session_model_heal_count",
     "vault.code.corrections",
+    "vault.code.step_evidence",
     "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -9469,8 +9483,14 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
+        "vault.code.session_model_heal_count" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunSessionModelHealCountView,
+        >(),
         "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunCorrectionsView,
+        >(),
+        "vault.code.step_evidence" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -15344,7 +15364,21 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.session_model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.step_evidence" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21535,8 +21569,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
                 decode(value.clone())?;
         }
+        "vault.code.session_model_heal_count" => {
+            let _input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest =
+                decode(value.clone())?;
+        }
         "vault.code.corrections" => {
             let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.step_evidence" => {
+            let _input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest =
                 decode(value.clone())?;
         }
         "vault.code.type_diagnostics" => {
@@ -24957,7 +24999,11 @@ pub fn invoke(
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
         }
+        "vault.code.session_model_heal_count" => {
+            encode(vault_code_session_model_heal_count(memory, decode(value)?)?)
+        }
         "vault.code.corrections" => encode(vault_code_corrections(memory, decode(value)?)?),
+        "vault.code.step_evidence" => encode(vault_code_step_evidence(memory, decode(value)?)?),
         "vault.code.type_diagnostics" => {
             encode(vault_code_type_diagnostics(memory, decode(value)?)?)
         }
@@ -31838,11 +31884,26 @@ pub fn vault_code_model_heal_count(
         input,
     )
 }
+pub fn vault_code_session_model_heal_count(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunSessionModelHealCountView> {
+    memory.code_run_session_model_heal_count_as(
+        &memory.embedded_owner("vault.code.session_model_heal_count")?,
+        input,
+    )
+}
 pub fn vault_code_corrections(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
 ) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
     memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
+}
+pub fn vault_code_step_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
+) -> MemoryResult<Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>> {
+    memory.code_run_step_evidence_as(&memory.embedded_owner("vault.code.step_evidence")?, input)
 }
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,

@@ -908,8 +908,9 @@ impl OffRecordSession<'_> {
 
     /// The base and room-overlay components of an additive side-table
     /// counter. Ordinary composed reads intentionally keep shadow semantics;
-    /// only additive counters opt into this explicit merge.
-    #[cfg(test)]
+    /// only additive counters opt into this explicit merge (FIX 4415). A
+    /// stretch found closing or gone once both are read is refused as
+    /// closing: a drained overlay never reads as a zero delta beside base.
     pub(crate) fn side_table_counter_components<K: SideKey, V, C: SideCodec<V>>(
         &self,
         counter: &SideTable<K, V, C>,
@@ -918,7 +919,15 @@ impl OffRecordSession<'_> {
         let overlay = self.overlay_counter_delta(counter, key)?;
         let rtxn = self.vault.store.env.read_txn()?;
         self.participant_in_txn(&rtxn)?;
-        Ok((counter.get(&self.vault.store, &rtxn, key)?, overlay))
+        let base = counter.get(&self.vault.store, &rtxn, key)?;
+        drop(rtxn);
+        let state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone || state.overlay_closed {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            }));
+        }
+        Ok((base, overlay))
     }
 
     /// Composed side-table read over overlay ∪ base. A run's handle reads
