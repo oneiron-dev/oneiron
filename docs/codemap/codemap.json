@@ -8573,13 +8573,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/checkpoint.rs",
      "purpose": "The checkpoint getter of blob artifact versions (KS7-2): each artifact's head record and version records…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
