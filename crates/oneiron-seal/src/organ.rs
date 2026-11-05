@@ -74,7 +74,7 @@ use crate::api::{
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::memory::{
-    AdmittedBytes, AdmittedStr, Lease, MemoryLedger, SealMemory, SealMemoryProvider,
+    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider,
     SealMemoryRefusal,
 };
 use crate::native::NativeSealEngine;
@@ -815,8 +815,7 @@ fn engine(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
-            memory: memory.clone(),
-            identity: Mutex::new(None),
+            algorithm: Mutex::new(None),
         }),
         Arc::new(AskedFetcher { asks, memory }),
         Arc::new(CallClock { now_ms, began }),
@@ -910,23 +909,8 @@ impl SealMemory for AskedMemory {
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
     asks: Arc<CallAsks>,
-    memory: SealMemoryProvider,
-    /// The identity the engine gave, asked once per call.
-    identity: Mutex<Option<CachedIdentity>>,
-}
-
-/// The cache's retained identity, dropped before its service reservation.
-struct CachedIdentity {
-    value: SigningIdentity,
-    _lease: Lease,
-}
-
-impl std::ops::Deref for CachedIdentity {
-    type Target = SigningIdentity;
-
-    fn deref(&self) -> &SigningIdentity {
-        &self.value
-    }
+    /// Assembly owns the identity; signing retries need only its algorithm.
+    algorithm: Mutex<Option<SignatureAlgorithm>>,
 }
 
 #[derive(Deserialize)]
@@ -964,10 +948,7 @@ fn backend_error(refusal: &AskRefusal, rejected: BackendRejectCode) -> BackendEr
 #[async_trait]
 impl SealBackend for AskedBackend {
     fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
-        let mut held = lock(&self.identity);
-        if let Some(identity) = held.as_ref() {
-            return Ok(identity.value.clone());
-        }
+        let mut held = lock(&self.algorithm);
         let reply = self
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
@@ -981,28 +962,7 @@ impl SealBackend for AskedBackend {
             signer_certificate_der: answer.signer_certificate.into_vec(),
             certificate_chain_der: answer.chain.into_iter().map(ByteBuf::into_vec).collect(),
         };
-        let bytes = identity
-            .certificate_chain_der
-            .capacity()
-            .checked_mul(std::mem::size_of::<Vec<u8>>())
-            .and_then(|outer| outer.checked_add(identity.signer_certificate_der.capacity()))
-            .and_then(|bytes| {
-                identity
-                    .certificate_chain_der
-                    .iter()
-                    .try_fold(bytes, |total, der| total.checked_add(der.capacity()))
-            })
-            .ok_or(BackendError::Memory(SealMemoryRefusal::Floor {
-                needed: u64::MAX,
-                available: 0,
-            }))?;
-        let lease = self.memory.lease(bytes).map_err(BackendError::Memory)?;
-        let cached = CachedIdentity {
-            value: identity,
-            _lease: lease,
-        };
-        let identity = cached.value.clone();
-        *held = Some(cached);
+        *held = Some(identity.algorithm);
         Ok(identity)
     }
 
@@ -1021,8 +981,8 @@ impl SealBackend for AskedBackend {
         request: SignRevisionRequest,
     ) -> Result<BackendSignature, BackendError> {
         let cached_algorithm = {
-            let identity = lock(&self.identity);
-            identity.as_ref().map(|identity| identity.algorithm)
+            let algorithm = lock(&self.algorithm);
+            *algorithm
         };
         let algorithm = match cached_algorithm {
             Some(algorithm) => algorithm,
