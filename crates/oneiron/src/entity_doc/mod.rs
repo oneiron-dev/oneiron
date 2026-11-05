@@ -86,7 +86,7 @@ pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use record_carried::{
-    CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation,
+    CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation, RecordDocumentStand,
     RefinementOriginSource, export_skill_record_document_in_txn,
 };
 pub(crate) use registry::EntityDocRegistry;

@@ -9,7 +9,9 @@ mod native_doors;
 mod native_sources;
 mod refinement;
 mod retained;
-pub(crate) use candidate::{RecordDocumentCandidate, RecordDocumentPreparation};
+pub(crate) use candidate::{
+    RecordDocumentCandidate, RecordDocumentPreparation, RecordDocumentStand,
+};
 pub(crate) use refinement::RefinementOriginSource;
 
 use heed::RoTxn;
