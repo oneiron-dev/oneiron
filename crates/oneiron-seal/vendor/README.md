@@ -109,3 +109,9 @@
     dropped layer and the PNG predictor's row buffers. The xref table admits
     a map node share per entry, and the admitted `/Prev`-merge helper per
     entry a merge adds.
+  - CMap reverse-map/fallback allocation (FIX 12777, narrow slice): `src/encodings/cmap.rs`
+    builds the reverse map over borrowed Unicode slices with a per-iteration stack
+    singleton, cloning only new keys and multi-unit incremented ranges, and
+    `get_or_replacement_char` allocates its fallback vector lazily. Key content,
+    push order, missing-code behavior and the forward maps are unchanged; no new API,
+    and no admission/heap/lifecycle claim.
