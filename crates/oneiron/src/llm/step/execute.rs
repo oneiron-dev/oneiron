@@ -695,6 +695,7 @@ fn step_budget_hit(ctx: &DurableStepContext<'_>, guard: &BudgetGuard, request: &
         guard,
         request.model.as_str(),
         Some(ctx.envelope_actor.entity_ref()),
+        crate::runtime_hooks::VerbCallScope::from_model_scope(&request.envelope.scope),
     );
 }
 
