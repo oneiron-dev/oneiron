@@ -6,6 +6,7 @@ pub(crate) fn deindex_project_room(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(&mut heed::RwTxn<'_>, &EntityId) -> Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<(bool, bool, Vec<EntityId>)> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok((false, false, Vec::new()));
@@ -65,7 +66,7 @@ pub(crate) fn deindex_project_room(
         if room.project_id != id.to_hex() {
             return Err(Error::CorruptedIndex("project room collision"));
         }
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &room_id)?;
+        let (_, vector, graph, neighbors) = deindex(txn, &room_id)?;
         ROOM_PROJECT.delete(store, txn, &room_id)?;
         return Ok((vector, graph, neighbors));
     }
