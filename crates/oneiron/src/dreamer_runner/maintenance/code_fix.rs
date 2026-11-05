@@ -229,6 +229,12 @@ pub trait CodeFixHost {
 /// answers are for, the dial and bands they run under, and each question's
 /// own budget.
 pub struct CodeFixDecisions<'a> {
+    /// The question asking whether a replay reproduced the failure.
+    pub reproduced_wording: String,
+    /// The question comparing the replies before and after a fix.
+    pub fixed_wording: String,
+    /// The question checking the invented example before export.
+    pub export_safe_wording: String,
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
