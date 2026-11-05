@@ -1670,6 +1670,9 @@ impl OneironClient {
                 "vault.connectors.calls.approve_once" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
+                "vault.connectors.replies.retry_failed" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorReplyRetryView,
+                >(client, verb, &input),
                 "vault.consent.deny" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
@@ -10400,6 +10403,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.connectors.calls.approve_once", value)
+    }
+    pub fn vault_connectors_replies_retry_failed(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorReplyRetryRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorReplyRetryView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.replies.retry_failed", value)
     }
     pub fn vault_consent_deny(
         &self,

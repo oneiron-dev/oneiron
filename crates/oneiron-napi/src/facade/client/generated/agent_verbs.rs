@@ -4662,6 +4662,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_connectors_replies_retry_failed(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.replies.retry_failed", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consent_deny(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.deny", js_json(input))
