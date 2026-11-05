@@ -1,0 +1,80 @@
+/* ── sign in · the gate (outside the chassis) ────────────────────────
+   The riso plate IS the page: sun-and-flock by day, moon-and-flock by
+   night (--plate-img flips with the room). One small card sits on it,
+   the same idiom as the lost page (.lost / .lost-card in safelight.css,
+   mirrored here, not imported). One field, one verb; the plate does the
+   talking. No toasts: the act settles into a receipt line in place. ── */
+
+.gate {
+  position: fixed; inset: 0;
+  background: var(--bg) var(--plate-img) center / cover no-repeat;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+
+/* the card wears the panel tint so the plate breathes through */
+.gate-card {
+  width: min(380px, calc(100vw - 32px));
+  padding: 18px 20px 16px;
+  background: var(--panel-bg); border-radius: 8px;
+  box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column; gap: 6px;
+  animation: gate-land 240ms ease-out both;
+}
+@keyframes gate-land { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* mark + wordmark on one line · a door home */
+.gate-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--silver-1); align-self: flex-start; margin-bottom: 8px; }
+.gate-brand svg { display: block; }
+.gate-brand .word { font-family: var(--serif); font-size: 15.5px; font-weight: 500; transition: color 160ms ease; }
+.gate-brand:hover .word, .gate-brand:focus-visible .word { color: var(--silver-2); }
+
+.gate-card .label { margin-bottom: 2px; }
+.gate-line { font-family: var(--serif); font-size: 14px; line-height: 1.5; color: var(--silver-2); }
+
+/* the field rides the 6px rung on the well tint; the act sits beside it */
+.gate-form { display: flex; flex-direction: column; margin-top: 8px; }
+.gate-row { display: flex; align-items: center; gap: 12px; }
+.gate-field {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 12.5px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 7px 11px;
+  transition: box-shadow 160ms ease, color 160ms ease;
+}
+.gate-field::placeholder { color: var(--silver-4); }
+.gate-field:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.gate-field:disabled { color: var(--silver-3); cursor: default; }
+
+/* the lead act reads a rung brighter; disabled goes faint, no brackets */
+.gate-card .act.lead { color: var(--silver-1); }
+.gate-card .act.lead:hover, .gate-card .act.lead:focus-visible { color: var(--safelight); }
+.gate-card .act[disabled] { color: var(--silver-4); cursor: default; }
+.gate-card .act[disabled]:hover::before, .gate-card .act[disabled]:hover::after { opacity: 0; }
+
+/* the settled state: the verb is gone, the receipt lands under the field.
+   .gate-out stands even when empty (a live region that is inserted, or
+   hidden, is not reliably announced), so it carries no gap of its own —
+   the receipt brings its own space. */
+.gate-out { display: flex; flex-direction: column; }
+.gate-receipt {
+  display: flex; align-items: baseline; gap: 8px; margin-top: 7px;
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3);
+  animation: gate-land 220ms ease-out both;
+}
+.gate-receipt .throbber { font-size: 12px; }
+
+/* the quiet alternatives · divided by a dot, never a rule */
+.gate-alt { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; }
+.gate-alt .act { color: var(--silver-3); }
+.gate-alt .act:hover, .gate-alt .act:focus-visible { color: var(--safelight); }
+.gate-alt .sep { font-family: var(--mono); font-size: 12px; color: var(--silver-4); }
+
+/* the foot · one quiet sentence. Fable asked for mono silver-4; rule 9
+   (mono never carries prose) keeps a full sentence in serif. Flip the
+   family here if the mono stamp is wanted after all. */
+.gate-foot { font-family: var(--serif); font-size: 12.5px; line-height: 1.5; color: var(--silver-4); margin-top: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-card, .gate-receipt { animation: none; }
+}
