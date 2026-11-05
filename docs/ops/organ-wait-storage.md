@@ -125,9 +125,17 @@ callback; it never retains a borrowed acquire context from an earlier job.
 Lists allocated before an account attaches are not retroactively charged.
 Unaccounted allocations use the same physical layout and ordinary IDL API.
 
-This covers dirty-page, encrypted read-cache and single-ID-list malloc requests
-during the accounted transaction, including their actual heap-only prefixes.
-It does not cover ID2/ID3 control arrays, encryption stash, mmap, every
-metadata/overlay copy or native physical-disk/CoW costs. The disk claim above
-still covers encoded values only. This is not complete FIX8125, whole-heap
-coverage or runtime proof.
+Raw dirty-list arrays allocated by a nested writer also use this account.
+Their original element count, initialization and ID2 layout stay unchanged;
+they do not gain the standalone IDL allocator's capacity slot. The root's
+preallocated array remains an unaccounted environment-startup allocation.
+Child setup failure, abort, successful merge and environment close free each
+physical array before releasing its ticket. Setup cleanup clears a freed child
+array pointer so the outer error cleanup cannot free it a second time.
+
+This covers dirty-page, encrypted read-cache, single-ID-list and raw dirty-list
+malloc requests during the accounted transaction, including their actual
+heap-only prefixes. It does not cover other ID2/ID3 control arrays, startup
+scratch, encryption stash, mmap, every metadata/overlay copy or native
+physical-disk/CoW costs. The disk claim above still covers encoded values only.
+This is not complete FIX8125, whole-heap coverage or runtime proof.

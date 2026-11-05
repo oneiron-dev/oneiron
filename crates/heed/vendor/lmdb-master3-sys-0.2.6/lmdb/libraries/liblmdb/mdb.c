@@ -2215,6 +2215,56 @@ typedef union MDB_page_buffer {
 	} account;
 } MDB_page_buffer;
 
+/* Raw dirty-list arrays have no IDL capacity word. */
+typedef union MDB_dirty_array_buffer {
+	MDB_ID2 alignment;
+	struct {
+		size_t bytes;
+		void *ticket;
+		MDB_page_release_func *release;
+	} account;
+} MDB_dirty_array_buffer;
+
+static MDB_ID2L
+mdb_dirty_array_alloc(size_t count, int clear, const MDB_page_account *account)
+{
+	MDB_dirty_array_buffer *buffer;
+	void *ticket = NULL;
+	size_t bytes;
+	if (count > ((size_t)-1 - sizeof(MDB_dirty_array_buffer)) / sizeof(MDB_ID2))
+		return NULL;
+	bytes = sizeof(MDB_dirty_array_buffer) + count * sizeof(MDB_ID2);
+	if (account && account->acquire &&
+		account->acquire(account->context, bytes, &ticket))
+		return NULL;
+	buffer = clear ? calloc(1, bytes) : malloc(bytes);
+	if (!buffer) {
+		if (account && account->release)
+			account->release(ticket, bytes, 0);
+		return NULL;
+	}
+	buffer->account.bytes = bytes;
+	buffer->account.ticket = ticket;
+	buffer->account.release = account ? account->release : NULL;
+	if (account && account->materialized)
+		account->materialized(ticket, bytes);
+	return (MDB_ID2L)(buffer + 1);
+}
+
+static void
+mdb_dirty_array_free(MDB_ID2L ids)
+{
+	if (ids) {
+		MDB_dirty_array_buffer *buffer = (MDB_dirty_array_buffer *)ids - 1;
+		size_t bytes = buffer->account.bytes;
+		void *ticket = buffer->account.ticket;
+		MDB_page_release_func *release = buffer->account.release;
+		free(buffer);
+		if (release)
+			release(ticket, bytes, 1);
+	}
+}
+
 static void
 mdb_page_buffer_free(MDB_page *page)
 {
@@ -3642,11 +3692,12 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 			txn->mt_u.dirty_list = parent->mt_u.dirty_list;
 			txn->mt_free_pgs = parent->mt_free_pgs;
 		} else {
-			txn->mt_u.dirty_list = malloc(sizeof(MDB_ID2)*MDB_IDL_UM_SIZE);
+			txn->mt_u.dirty_list = mdb_dirty_array_alloc(MDB_IDL_UM_SIZE, 0,
+				&txn->mt_page_account);
 			if (!txn->mt_u.dirty_list ||
 				!(txn->mt_free_pgs = mdb_midl_alloc_accounted(MDB_IDL_UM_MAX, &txn->mt_page_account)))
 			{
-				free(txn->mt_u.dirty_list);
+				mdb_dirty_array_free(txn->mt_u.dirty_list);
 				free(txn);
 				return ENOMEM;
 			}
@@ -3704,7 +3755,7 @@ renew:
 		if (txn != env->me_txn0) {
 			/* mt_rpages belongs to parent */
 			if (!F_ISSET(flags, MDB_RDONLY)) {
-				free(txn->mt_u.dirty_list);
+				mdb_dirty_array_free(txn->mt_u.dirty_list);
 			}
 			free(txn);
 		}
@@ -3859,7 +3910,7 @@ mdb_txn_end(MDB_txn *txn, unsigned mode)
 			txn->mt_parent->mt_flags &= ~MDB_TXN_HAS_CHILD;
 			env->me_pgstate = ((MDB_ntxn *)txn)->mnt_pgstate;
 			mdb_midl_free(txn->mt_free_pgs);
-			free(txn->mt_u.dirty_list);
+			mdb_dirty_array_free(txn->mt_u.dirty_list);
 			txn->mt_u.dirty_list = NULL;
 		}
 
@@ -4573,7 +4624,7 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		}
 		mdb_tassert(txn, i == x);
 		dst[0].mid = len;
-		free(txn->mt_u.dirty_list);
+		mdb_dirty_array_free(txn->mt_u.dirty_list);
 		parent->mt_dirty_room = txn->mt_dirty_room;
 		if (txn->mt_spill_pgs) {
 			if (parent->mt_spill_pgs) {
@@ -6334,7 +6385,7 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 		/* WRITEMAP has a dummy element to match dirty_room = 1 */
 		size_t dl_size = (flags & MDB_WRITEMAP) ? 2 : MDB_IDL_UM_SIZE;
 		if (!((env->me_free_pgs = mdb_midl_alloc(MDB_IDL_UM_MAX)) &&
-			  (env->me_dirty_list = calloc(dl_size, sizeof(MDB_ID2)))))
+			  (env->me_dirty_list = mdb_dirty_array_alloc(dl_size, 1, NULL))))
 			rc = ENOMEM;
 		if (env->me_dirty_list && !(env->me_dirty_nump = malloc(dl_size * sizeof(int))))
 			rc = ENOMEM;
@@ -6472,7 +6523,7 @@ mdb_env_close_active(MDB_env *env, int excl)
 	free(env->me_dbiseqs);
 	free(env->me_dbflags);
 	free(env->me_path);
-	free(env->me_dirty_list);
+	mdb_dirty_array_free(env->me_dirty_list);
 	free(env->me_dirty_nump);
 #if MDB_RPAGE_CACHE
 	if (MDB_REMAPPING(env->me_flags)) {
