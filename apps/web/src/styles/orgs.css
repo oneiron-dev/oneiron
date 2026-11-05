@@ -1,0 +1,324 @@
+/* ── orgs — a ledger of organisations; the dossier in the context column
+   (the glance); the org PAGE replaces the ledger inside the sheet (the
+   record, ruling 11). everything here is page-scoped so the shared sheets
+   stay untouched. ── */
+
+/* the sheet holds the ledger body + the dossier column */
+main.pane.orgs {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+main.pane.orgs .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+/* the dossier column: a calm printed record, tinted (a tinted zone
+   divides, not a line) */
+main.pane.orgs aside.context {
+  width: var(--ctx-w); flex: none;
+  overflow-y: auto;
+  padding: 16px 18px 26px;
+  background: var(--ctx-bg);
+  display: flex; flex-direction: column; gap: 16px;
+}
+main.pane.orgs aside.context[hidden] { display: none; }
+
+/* ── the ledger side ── */
+/* provenance: one quiet meta-line in the head, no eyebrow (ruling 1) */
+main.pane.orgs .pane-tools { align-items: center; }
+main.pane.orgs .pane-tools .meta-line { color: var(--silver-4); }
+/* the quick search: plain typing filters; input radius 6 */
+main.pane.orgs .quick {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+  color: var(--silver-1); background: var(--bg-well);
+  border: 0; border-radius: 6px; padding: 5px 10px; width: 190px;
+  outline: none; transition: box-shadow 160ms ease;
+  -webkit-appearance: none; appearance: none;
+}
+main.pane.orgs .quick::placeholder { color: var(--silver-4); }
+main.pane.orgs .quick:focus { box-shadow: inset 0 0 0 1px var(--rule-strong); }
+main.pane.orgs .quick::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+main.pane.orgs .filters { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; row-gap: 8px; }
+main.pane.orgs .filters .set { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+main.pane.orgs .filters .set > .label { margin-right: 6px; }
+main.pane.orgs .chip {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--silver-3); padding: 3px 9px;
+  border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+main.pane.orgs .chip:hover { color: var(--silver-1); }
+main.pane.orgs .chip.on { color: var(--silver-1); background: var(--bg-well); }
+
+/* NO overflow here: an overflow-x wrapper computes overflow-y:auto and
+   the sticky column heads stop sticking to the scrolling body */
+main.pane.orgs .ledger-wrap { position: relative; }
+main.pane.orgs table.ledger { table-layout: fixed; }
+/* the name column takes the rest and ellipses; the glance spans them all */
+main.pane.orgs table.ledger tbody tr:not(.glance-row) td:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* an accessible name for the wordless watch column */
+main.pane.orgs .sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+/* dividers are SPACE: no hairline between rows; only air under the heads.
+   the heads stick to the top of the scrolling body, on the sheet's own paper */
+main.pane.orgs table.ledger td { border-top: 0; }
+main.pane.orgs table.ledger thead th {
+  padding-bottom: 10px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-elevated);
+}
+main.pane.orgs table.ledger .c-stage { width: 112px; }
+main.pane.orgs table.ledger .c-owner { width: 52px; text-align: center; }
+main.pane.orgs table.ledger .c-touch { width: 96px; }
+main.pane.orgs table.ledger .c-claims { width: 68px; text-align: right; }
+main.pane.orgs table.ledger .c-watch { width: 38px; text-align: center; }
+/* a column head is a door: click cycles ↑ · ↓ · off; a small mono arrow
+   holds the state in reserved space so nothing shifts */
+main.pane.orgs table.ledger th .sort {
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  display: inline-flex; align-items: baseline; gap: 4px;
+  transition: color 160ms ease;
+}
+main.pane.orgs table.ledger th .sort:hover, main.pane.orgs table.ledger th .sort:focus-visible { color: var(--silver-1); }
+main.pane.orgs table.ledger th .sort.on { color: var(--silver-1); }
+main.pane.orgs table.ledger th .arrow { display: inline-block; width: 8px; letter-spacing: 0; }
+main.pane.orgs table.ledger .c-claims .sort { flex-direction: row-reverse; }
+main.pane.orgs table.ledger tbody tr { cursor: pointer; outline: none; }
+/* the row highlight is soft: 5px radius on the run's ends */
+@media (hover: hover) {
+  main.pane.orgs table.ledger tbody tr:not(.glance-row):hover td { background: var(--bg-well); }
+  main.pane.orgs table.ledger tbody tr:not(.glance-row):hover td:first-child { border-radius: 5px 0 0 5px; }
+  main.pane.orgs table.ledger tbody tr:not(.glance-row):hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+main.pane.orgs table.ledger tr.selected td,
+main.pane.orgs table.ledger tbody tr:focus-visible td { background: var(--bg-well); }
+main.pane.orgs table.ledger tr.selected td:first-child,
+main.pane.orgs table.ledger tbody tr:focus-visible td:first-child { border-radius: 5px 0 0 5px; }
+main.pane.orgs table.ledger tr.selected td:last-child,
+main.pane.orgs table.ledger tbody tr:focus-visible td:last-child { border-radius: 0 5px 5px 0; }
+main.pane.orgs table.ledger tbody tr:focus-visible td:first-child { box-shadow: inset 2px 0 0 var(--safelight); }
+/* the selected row keeps its top corners; the glance under it carries the bottom ones */
+main.pane.orgs table.ledger tr.selected td:first-child { border-radius: 5px 0 0 0; }
+main.pane.orgs table.ledger tr.selected td:last-child { border-radius: 0 5px 0 0; }
+
+/* the under-glance (rule 7): the next step + doors, in the row's tint */
+main.pane.orgs table.ledger tr.glance-row { cursor: default; }
+main.pane.orgs table.ledger tr.glance-row td {
+  height: auto; padding: 0 10px 9px 10px; background: var(--bg-well); border-radius: 0 0 5px 5px;
+}
+main.pane.orgs .glance { display: flex; align-items: baseline; gap: 18px; animation: orgs-land 180ms ease-out; }
+main.pane.orgs .glance-line { flex: 1; min-width: 0; font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); }
+main.pane.orgs .glance-acts { display: flex; gap: 12px; flex: none; }
+@keyframes orgs-land { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+
+/* the org column is the voice; everything else is data */
+main.pane.orgs .org-name { font-family: var(--serif); font-size: 14px; line-height: 1.4; color: var(--silver-1); }
+main.pane.orgs .stage, main.pane.orgs .touch, main.pane.orgs .count {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-3);
+  font-feature-settings: "tnum" 1;
+}
+/* every mono token is a door */
+main.pane.orgs a.stage:hover, main.pane.orgs a.count:hover { color: var(--safelight); }
+main.pane.orgs .touch { color: var(--silver-4); }
+main.pane.orgs .touch.today { color: var(--silver-3); }
+
+/* the watch mark: a text-free door. hollow = not watched · filled = watched */
+main.pane.orgs .watch {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  vertical-align: middle;
+}
+main.pane.orgs .watch::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  border: 1.5px solid var(--silver-4);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+main.pane.orgs .watch:hover::before { border-color: var(--silver-2); }
+main.pane.orgs .watch.on::before { background: var(--silver-2); border-color: var(--silver-2); }
+main.pane.orgs .watch.on:hover::before { background: var(--silver-3); border-color: var(--silver-3); }
+
+/* the empty ledger (a filter with nothing behind it): one serif line */
+main.pane.orgs .ledger-empty { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding: 6px 10px 0; }
+
+/* ── the channel glyph · shared by the page rows ── */
+main.pane.orgs .w-chan { flex: none; display: inline-flex; align-items: center; color: var(--silver-3); }
+main.pane.orgs .w-chan svg { width: 13px; height: 13px; display: block; }
+main.pane.orgs .w-chan.chan-research, main.pane.orgs .w-chan.chan-meeting { color: var(--silver-4); }
+/* one mono `when` for the page: hover-tier data */
+main.pane.orgs .when { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em; color: var(--silver-4); font-feature-settings: "tnum" 1; white-space: nowrap; flex: none; }
+/* the receipt: the act cools into a serif line, in place */
+main.pane.orgs .receipt { display: flex; gap: 8px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); }
+main.pane.orgs .receipt .aname { flex: none; }
+
+/* ── the org page · the record ── */
+/* the record takes focus when it lands: a ring on the whole page would shout */
+main.pane.orgs .opage:focus { outline: none; }
+main.pane.orgs .opage { display: flex; flex-direction: column; gap: 22px; max-width: 920px; animation: orgs-land 200ms ease-out; }
+main.pane.orgs .opage-nav { display: flex; }
+main.pane.orgs .opage-nav .back { color: var(--silver-3); }
+main.pane.orgs .opage-head { display: flex; flex-direction: column; gap: 6px; margin-top: -8px; }
+main.pane.orgs .opage-title { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+main.pane.orgs .opage-name { font-family: var(--serif); font-size: 20px; font-weight: 550; color: var(--silver-1); letter-spacing: -0.01em; line-height: 1.3; }
+/* the stage chip: mono, in the well; a door to the board. radius 4 */
+main.pane.orgs .stage-chip {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+  color: var(--silver-2); background: var(--bg-well);
+  padding: 2px 8px; border-radius: 4px; white-space: nowrap;
+  transition: color 160ms ease;
+}
+/* only the chip that IS a door takes the touch colour */
+main.pane.orgs a.stage-chip:hover, main.pane.orgs a.stage-chip:focus-visible { color: var(--safelight); }
+main.pane.orgs .money { font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+main.pane.orgs .opage-head .meta-line { color: var(--silver-4); }
+main.pane.orgs .opage-byline { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+
+/* sections divide by SPACE: a two-column grid, the wide ones span it */
+main.pane.orgs .opage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px 40px; }
+main.pane.orgs .osec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+main.pane.orgs .osec.wide { grid-column: 1 / -1; }
+main.pane.orgs .osec > .label { margin-bottom: 2px; }
+main.pane.orgs .osec > .act { align-self: flex-start; margin-top: 2px; }
+main.pane.orgs .oline { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; min-width: 0; color: var(--silver-2); }
+main.pane.orgs .oline.quiet { color: var(--silver-4); }
+main.pane.orgs a.oline:hover, main.pane.orgs a.oline:focus-visible {
+  text-decoration: underline; text-decoration-color: var(--silver-4);
+  text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+@media (max-width: 1100px) {
+  main.pane.orgs .opage-grid { grid-template-columns: 1fr; }
+}
+
+/* people: seal · name · role · channel glyphs */
+main.pane.orgs .prow { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+main.pane.orgs .prow .seal { align-self: center; }
+main.pane.orgs .pname { font-family: var(--serif); font-size: 14px; line-height: 1.45; }
+main.pane.orgs .prole { font-family: var(--serif); font-size: 13px; color: var(--silver-3); }
+main.pane.orgs .pchans { display: inline-flex; gap: 6px; align-self: center; }
+main.pane.orgs .prow .act.quiet { font-size: 11px; color: var(--silver-3); }
+main.pane.orgs .prow .act.quiet:hover, main.pane.orgs .prow .act.quiet:focus-visible { color: var(--safelight); }
+
+/* pipeline: key · value rows; the chooser settles */
+main.pane.orgs .pipe { display: flex; flex-direction: column; gap: 8px; }
+main.pane.orgs .pipe-row { display: flex; align-items: baseline; gap: 12px; }
+main.pane.orgs .pipe-k { flex: none; width: 72px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--silver-4); }
+main.pane.orgs .pipe-v { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex-wrap: wrap; }
+main.pane.orgs .pipe-v .seal { align-self: center; }
+main.pane.orgs .chooser { position: relative; display: inline-flex; }
+main.pane.orgs .chooser-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 5;
+  min-width: 132px; padding: 6px;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column;
+  animation: orgs-land 160ms ease-out;
+}
+main.pane.orgs .chooser-pop .opt {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; text-align: left;
+  color: var(--silver-2); padding: 5px 9px; border-radius: 5px;
+  transition: background 120ms ease, color 120ms ease;
+}
+main.pane.orgs .chooser-pop .opt:hover, main.pane.orgs .chooser-pop .opt:focus-visible { background: var(--bg-well); color: var(--silver-1); }
+main.pane.orgs .chooser-pop .opt:focus-visible { outline-offset: -2px; }
+main.pane.orgs .chooser-pop .opt.on { color: var(--silver-4); }
+main.pane.orgs .pipe .receipt { padding-top: 2px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em; }
+
+/* timeline: when · glyph · who · what */
+main.pane.orgs .tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+main.pane.orgs .tl-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+main.pane.orgs .tl-row .when { width: 82px; color: var(--silver-4); }
+main.pane.orgs .tl-row .w-chan { align-self: center; }
+main.pane.orgs .tl-who { flex: none; width: 64px; display: inline-flex; align-items: center; align-self: center; }
+main.pane.orgs .tl-who .aname { font-family: var(--serif); font-size: 13.5px; line-height: 1.2; }
+main.pane.orgs .tl-row .oline { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* claims: dot · text in confidence ink · conf · source */
+main.pane.orgs .claims { display: flex; flex-direction: column; gap: 6px; }
+main.pane.orgs .crow { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+main.pane.orgs .crow .dot { align-self: center; }
+main.pane.orgs .crow .oline { flex: 1; font-size: 14px; }
+main.pane.orgs .cconf, main.pane.orgs .csrc { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em; color: var(--silver-4); font-feature-settings: "tnum" 1; white-space: nowrap; flex: none; }
+main.pane.orgs .cconf { width: 32px; text-align: right; }
+main.pane.orgs .csrc { width: 118px; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+
+/* threads · briefs: one-line doors */
+main.pane.orgs .trow, main.pane.orgs .bfrow {
+  display: flex; align-items: baseline; gap: 10px; min-width: 0;
+  padding: 3px 6px; margin: 0 -6px; border-radius: 5px;
+  transition: background 160ms ease;
+}
+main.pane.orgs .trow:hover, main.pane.orgs .bfrow:hover,
+main.pane.orgs .trow:focus-visible, main.pane.orgs .bfrow:focus-visible { background: var(--bg-well); outline-offset: -2px; }
+main.pane.orgs .trow .w-chan { align-self: center; }
+main.pane.orgs .twith { flex: none; font-family: var(--serif); font-size: 13.5px; color: var(--silver-1); white-space: nowrap; }
+main.pane.orgs .tlast { flex: 1; min-width: 0; font-family: var(--serif); font-size: 13px; color: var(--silver-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main.pane.orgs .bfrow .oline { flex: 1; color: var(--silver-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main.pane.orgs .bby { flex: none; display: inline-flex; align-items: center; align-self: center; }
+main.pane.orgs .bby .aname { font-family: var(--serif); font-size: 13px; line-height: 1.2; }
+
+/* tasks: the bullet IS the check, as the tasks page draws it */
+main.pane.orgs .task-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; padding: 2px 0; }
+main.pane.orgs .tbul {
+  flex: none; width: 14px; height: 14px; align-self: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--silver-3); border-radius: 50%;
+}
+main.pane.orgs .tbul::before { content: ""; width: 7px; height: 7px; border-radius: 50%; transition: background 200ms ease, border-color 200ms ease; }
+main.pane.orgs .tbul.mine::before { background: var(--silver-2); }
+main.pane.orgs .tbul.proposed::before { border: 1.5px solid var(--amber); }
+main.pane.orgs .tbul.done::before { display: none; }
+main.pane.orgs .tbul:hover::before { background: var(--silver-3); border-color: var(--silver-3); }
+main.pane.orgs .tbul svg { display: block; width: 11px; height: 11px; }
+main.pane.orgs .task { flex: 1; min-width: 0; font-family: var(--serif); font-size: 14px; line-height: 1.45; color: var(--silver-1); transition: color 200ms ease; }
+main.pane.orgs .task-row.done .task { color: var(--silver-4); }
+main.pane.orgs .twho { flex: none; width: 58px; display: inline-flex; align-items: center; align-self: center; }
+main.pane.orgs .twho .aname { font-family: var(--serif); font-size: 13.5px; line-height: 1.2; }
+main.pane.orgs .task-row .when { width: 44px; text-align: right; }
+
+main.pane.orgs .opage-foot { display: flex; gap: 12px; align-items: baseline; padding-top: 2px; }
+
+/* ── the dossier (the glance) ── */
+main.pane.orgs .ctx-head { display: flex; align-items: center; gap: 12px; }
+main.pane.orgs .ctx-crumb {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+main.pane.orgs .ctx-head .act { color: var(--silver-3); }
+main.pane.orgs .dhead { display: flex; flex-direction: column; gap: 5px; margin-top: -6px; }
+main.pane.orgs .ctx-title { font-family: var(--serif); font-size: 18px; font-weight: 550; color: var(--silver-1); line-height: 1.3; letter-spacing: -0.005em; }
+main.pane.orgs .ctx-byline { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); }
+
+/* sections divide by space; the eyebrow names them */
+main.pane.orgs .dsec { display: flex; flex-direction: column; gap: 7px; }
+main.pane.orgs .dsec > .label { margin-bottom: 1px; }
+main.pane.orgs .drow { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+main.pane.orgs .drow .dot { flex: none; transform: translateY(-1px); }
+main.pane.orgs .drow .seal { align-self: flex-start; margin-top: 2.5px; }
+main.pane.orgs .dline { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; min-width: 0; }
+main.pane.orgs .dline.quiet { color: var(--silver-4); }
+/* a person's door falls under the line, so the column never overflows */
+main.pane.orgs .dstack { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+main.pane.orgs .drow .act.quiet { font-size: 11px; color: var(--silver-3); flex: none; }
+main.pane.orgs .drow .act.quiet:hover, main.pane.orgs .drow .act.quiet:focus-visible { color: var(--safelight); }
+/* a serif line that is a door: hover underlines quietly, never a colour change */
+main.pane.orgs a.dline:hover, main.pane.orgs a.dline:focus-visible {
+  text-decoration: underline; text-decoration-color: var(--silver-4);
+  text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+main.pane.orgs .dsec > .act { align-self: flex-start; margin-top: 2px; }
+main.pane.orgs .dnext { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-2); }
+main.pane.orgs .dacts { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; padding-top: 2px; }
+main.pane.orgs .receipts { display: flex; flex-direction: column; gap: 4px; }
+main.pane.orgs .dfoot { display: flex; gap: 12px; align-items: baseline; padding-top: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  main.pane.orgs .watch::before, main.pane.orgs .chip, main.pane.orgs .quick, main.pane.orgs .tbul::before { transition: none; }
+  main.pane.orgs .glance, main.pane.orgs .opage, main.pane.orgs .chooser-pop { animation: none; }
+}
