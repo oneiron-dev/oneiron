@@ -6,7 +6,7 @@ use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::session::WsSink;
-use super::{LocalUpdate, SyncConnection};
+use super::{LocalUpdate, LoopExit, SyncConnection};
 use crate::artifact_hosting::ArtifactPublicationPart;
 use crate::side_table::HexId;
 use crate::sync::client::{SyncClient, SyncResidenceMode};
@@ -46,7 +46,7 @@ impl SyncConnection {
         documents: &mut Vec<Vec<u8>>,
         publication: &mut Option<ArtifactPublicationPart>,
         turn: &mut NodeBatchTurn,
-    ) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
+    ) -> Result<Option<(ArtifactPublicationPart, bool)>, LoopExit> {
         let opened = client.config.residence_mode == SyncResidenceMode::Opened;
         let mut frames = Vec::new();
         let mut size = 1;
@@ -77,10 +77,19 @@ impl SyncConnection {
             Ok(()) if frames.is_empty() => Ok(()),
             Ok(()) => match transport::encode_node_batch(&frames).into_result() {
                 Err(error) => Err(error.to_string()),
-                Ok(batch) => write
-                    .send(Message::Binary(batch.into()))
-                    .await
-                    .map_err(|error| error.to_string()),
+                Ok(batch) => {
+                    let mut left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        _ = left.wait_for(|left| *left) => {
+                            self.publish_leave_unqueued(&mut full_updates);
+                            return Err(LoopExit::Shutdown);
+                        }
+                        sent = write.send(Message::Binary(batch.into())) => {
+                            sent.map_err(|error| error.to_string())
+                        }
+                    }
+                }
             },
         };
         if sent.is_err() {
@@ -93,8 +102,8 @@ impl SyncConnection {
             }
             // Documents remain in their own durable journal until the home ACK.
         }
-        sent?;
-        send_publication_part(write, client, publication).await
+        sent.map_err(LoopExit::Disconnected)?;
+        send_publication_part(self, write, client, publication).await
     }
 }
 
@@ -247,10 +256,11 @@ fn take_document(
 /// whether the socket took it. A part dropped unsent is a change since
 /// replaced or settled, whose debt stays in the outbox.
 async fn send_publication_part(
+    connection: &SyncConnection,
     write: &mut WsSink,
     client: &SyncClient,
     publication: &mut Option<ArtifactPublicationPart>,
-) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
+) -> Result<Option<(ArtifactPublicationPart, bool)>, LoopExit> {
     let Some(part) = publication.take() else {
         return Ok(None);
     };
@@ -259,10 +269,14 @@ async fn send_publication_part(
     }
     let batch = transport::encode_node_batch(std::slice::from_ref(&part.frame))
         .into_result()
-        .map_err(|error| error.to_string())?;
-    write
-        .send(Message::Binary(batch.into()))
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(Some((part, true)))
+        .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
+    let mut left = connection.left.subscribe();
+    tokio::select! {
+        biased;
+        _ = left.wait_for(|left| *left) => Err(LoopExit::Shutdown),
+        sent = write.send(Message::Binary(batch.into())) => {
+            sent.map_err(|error| LoopExit::Disconnected(error.to_string()))?;
+            Ok(Some((part, true)))
+        }
+    }
 }

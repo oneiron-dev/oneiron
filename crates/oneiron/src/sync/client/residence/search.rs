@@ -1,5 +1,5 @@
-//! A home search for more hits than one page carries (FIX 8865): the device
-//! keeps the caller's whole count and asks the home page after page, each
+//! A home search served in pages (FIX 8865, FIX 196): the device keeps the
+//! caller's whole count and asks the home page after page, each
 //! page a slice of one ranked list the home names by its revision, until it
 //! holds that many hits or the list ends. A list that changed between pages
 //! starts the search over, so the answer never mixes two lists and is never
