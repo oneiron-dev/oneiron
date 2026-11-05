@@ -17,6 +17,7 @@
 )]
 
 mod document;
+mod native;
 
 use heed::{RoTxn, RwTxn};
 
@@ -37,6 +38,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     let frontiers = rows::typed_rows(dbs, txn, FRONTIER, &mut out)?;
     let identities = rows::typed_rows(dbs, txn, IDENTITY, &mut out)?;
     let bindings = document::Bindings::index(&docs, &states, &frontiers, &identities);
+    bindings.check_native_without_doc(dbs, txn)?;
     for row in states {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
@@ -84,7 +86,10 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     } else if at.in_table(DOC.decl()) {
         document::check(at, value)
     } else if at.in_table(FRONTIER.decl()) {
-        rows::check_row(FRONTIER, at, value)
+        rows::check_row(FRONTIER, at, value)?;
+        super::frontier::FrontierEntry::decode(value)
+            .map(|_| ())
+            .map_err(|_| rows::bad_part())
     } else if at.in_table(IDENTITY.decl()) {
         rows::check_row(IDENTITY, at, value)
     } else if at.in_table(REFILL.decl()) {
