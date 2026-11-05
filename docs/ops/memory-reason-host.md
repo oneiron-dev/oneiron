@@ -22,7 +22,10 @@ checks every returned citation.
 
 The explicit request token budget remains the whole read's budget. Its capacity
 lease and native per-rung policy meter have separate state, so native permits
-are not charged twice. `tokensUsed` is derived from reported usage, never from
+are not charged twice. Each native call's reservation is sized to the remaining
+request allowance and nonzero line headroom, not the original full reservation.
+An exhausted paid line still fails its native admission; it is not given a zero
+reservation to bypass the line. `tokensUsed` is derived from reported usage, never from
 reservations, billing-unit conversion or the paid meter's balance. When physical
 reports overlap, the host does not add them twice. When coverage is incomplete,
 `tokensUsageComplete` is false and `tokensUsed` is a lower bound from the reports.
