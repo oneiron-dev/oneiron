@@ -2,8 +2,6 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::scan_check::{EngineScan, ScanCount};
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::store::conversation_body::{ConversationBody, ConversationKind, RoomRole};
 
