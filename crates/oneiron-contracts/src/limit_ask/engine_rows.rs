@@ -376,14 +376,14 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
-            // The batch, principal, image byte and image count ceilings the
-            // e-sign sweeps, principals and signature upload refused past
-            // before Rule 5.
+            // The old sweep and principal refusal ceilings remain ask points.
             Self::EsignSweepDocuments => 100,
             Self::EsignSigningPrincipals => 256,
-            Self::EsignSignatureInputBytes => 2 << 20,
-            Self::EsignSignaturePngBytes => 2 << 20,
-            Self::EsignSignatureDocumentBytes => 64 << 20,
+            // The owner's signature-image byte ask points (ABC 57, 60, 61).
+            Self::EsignSignatureInputBytes => 256 << 20,
+            Self::EsignSignaturePngBytes => 256 << 20,
+            Self::EsignSignatureDocumentBytes => 4 << 30,
+            // The former recipient-image count ceiling is only an ask point.
             Self::EsignSignatureRecipientImages => 16,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).

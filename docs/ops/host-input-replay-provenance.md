@@ -33,10 +33,28 @@ honour that exact occurrence status. Privileged raw shared-byte APIs do not gain
 an occurrence authority or a content-hash-wide withdrawal. Later replay writes
 of the same withdrawn occurrence cannot restore its preview or body hold.
 
-FIX9348 remains partial. This covers decodable, already-persisted manifests.
-`commit_host_inputs` still publishes a body before its final replay-record write
-in a separate transaction. An erase during that gap, a publication that never
-links its record, and a new late capture after the erase remain open; this slice
-does not claim a cohort that was never persisted. It also does not claim generic
-source closure or runtime proof. There is no new format, default, cap, migration
-or old-format reader.
+## Atomic live publication
+
+Each new host input or staged host output commits its owned body, replay
+membership, and existing erase-fence result in one write transaction. Bodies
+finish and stay pinned before that writer opens. The writer reads the current
+parent record and preserves all of its other outputs, rather than replacing it
+with the caller's earlier snapshot. Host actors are stamped before the native
+replay fence; staged outputs keep their existing actor stamp.
+
+A reused path keeps its first stored output and source rows. Its unused caller
+bytes are not scanned or finished. An empty first input commit still creates the
+host's stamped record, but never overwrites a concurrent publication. Separate
+inputs can commit separately; this is not an all-or-fail batch transaction.
+Returned output metadata comes from the stored, post-fence record, including an
+erased preview when the native fence erased it.
+
+This closes the publication-to-membership gap for these two host APIs. It does
+not prove that every newly captured source was still live at publication, and it
+does not add a hard-versus-soft source-deletion predicate or complete source-erase
+coverage for other publishers.
+
+FIX9348 remains partial. The source-erase path covers decodable, already-persisted
+manifests. A new late capture after the erase remains open; this slice does not
+claim a cohort that was never persisted, generic source closure, or runtime proof.
+There is no new format, default, cap, migration or old-format reader.

@@ -236,8 +236,7 @@ fn adopted_context_in_txn(
     Option<std::sync::Arc<VerifiedAuthorityCheckpoint>>,
     Option<std::sync::Arc<AdoptedEvidence>>,
 )> {
-    let Some((adopted, evidence)) =
-        super::checkpoint_adopt::adopted_image_view_in_txn(store, txn)?
+    let Some((adopted, evidence)) = super::checkpoint_adopt::adopted_image_view_in_txn(store, txn)?
     else {
         return Ok((None, None));
     };
