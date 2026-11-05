@@ -53543,15 +53543,16 @@
      "kind": "src",
      "notable": [
       "RepoManifest",
+      "RepoManifestWriter",
       "RepoPortableId"
      ],
      "path": "src/origin/repo_manifest.rs",
      "purpose": "FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 6,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -53561,7 +53562,7 @@
      "path": "src/origin/repo_manifest/refresh.rs",
      "purpose": "Refresh of a standing manifest's refs (FIX 6870 phase 1, rulings 7-8)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -53577,7 +53578,7 @@
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 8,
       "struct": 2
