@@ -100,7 +100,7 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
+        crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
             &vault.store,
             txn,
             id,
