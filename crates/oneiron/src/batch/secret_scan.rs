@@ -3,6 +3,10 @@
 //! Child modules own masking, container handling, lift history and read-release rules.
 
 mod container;
+mod cooperative;
+
+pub use self::cooperative::read_cooperatively;
+pub use oneiron_store::batch::secret_scan::container::ReadPacing;
 mod lift_history;
 mod mask;
 mod message_parts;

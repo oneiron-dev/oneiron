@@ -1474,6 +1474,12 @@ def facade_dispatch(facade_rows):
                 ).into())
             }\n'''
             continue
+        if name == 'graph_fs.read_file':
+            dispatch += f"""async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{
+                super::graph_fs_doors::graph_fs_read_file(server, call, input).await
+            }}
+"""
+            continue
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into
             # same-snapshot engine admission, never generic actor-only invoke.

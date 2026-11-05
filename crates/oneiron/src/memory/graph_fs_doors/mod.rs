@@ -128,17 +128,46 @@ impl Memory<'_> {
         self.graph_fs_bytes(input, "graph_fs.read_file")
     }
 
+    /// The same file read, with cooperative snapshot-mask checkpoints.
+    /// Pacing carries no authority and changes no mount or cursor selection.
+    pub fn graph_fs_read_file_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::secret_scan::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            "graph_fs.read_file",
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
     pub fn graph_fs_cat(&self, input: GraphFsPathRequest) -> MemoryResult<GraphFsOutput> {
         self.graph_fs_bytes(input, "graph_fs.cat")
     }
 
     fn graph_fs_bytes(&self, input: GraphFsPathRequest, verb: &str) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            verb,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    fn graph_fs_bytes_with_reader(
+        &self,
+        input: GraphFsPathRequest,
+        verb: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key(verb, &input.path)?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.cat(&input.path, cursor.as_deref())?;
+        let result = tree.cat_with_reader(&input.path, cursor.as_deref(), reader)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
 

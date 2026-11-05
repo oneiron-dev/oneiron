@@ -20823,22 +20823,7 @@ async fn graph_fs_read_file(
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
-    let auth = call.auth();
-    auth.require(CoreScope::Read)?;
-    auth.require_lane_record_scope()?;
-    let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "graph_fs.read_file",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    super::graph_fs_doors::graph_fs_read_file(server, call, input).await
 }
 async fn graph_fs_read_link(
     server: &Arc<SyncServer>,

@@ -156,10 +156,18 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// A file and any scoped-read receipt behind it. Fixed files and paths
     /// that name no file make no scoped read and carry no receipt.
     pub fn read_file(&self, path: &str) -> Result<GraphFsFileRead> {
+        self.read_file_with_reader(path, &crate::batch::secret_scan::ContainerReader::default())
+    }
+
+    pub(super) fn read_file_with_reader(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsFileRead> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         if self.snapshot.is_some() {
-            return self.snapshot_file(&normalized);
+            return self.snapshot_file_with_reader(&normalized, reader);
         }
         match components.as_slice() {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self

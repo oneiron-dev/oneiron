@@ -383,12 +383,37 @@ pub(crate) fn read_asset_blob_sighted_in_txn(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
+    read_asset_blob_sighted_in_txn_with_reader(
+        vault,
+        txn,
+        content_hash,
+        sight,
+        &crate::batch::secret_scan::ContainerReader::default(),
+    )
+}
+
+pub(crate) fn read_asset_blob_sighted_in_txn_with_reader(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+    sight: SecretSight,
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<Vec<u8>> {
     let asset_id = codebase_asset_entity_id(content_hash)?;
-    if let Some(bytes) = vault.sighted_body_file_in_txn(txn, &asset_id, content_hash, sight)? {
+    if let Some(bytes) =
+        vault.sighted_body_file_in_txn_with_reader(txn, &asset_id, content_hash, sight, reader)?
+    {
         return Ok(bytes);
     }
     let bytes = inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)?;
-    crate::secret_custody::sighted_bytes_in_txn(&vault.store, txn, bytes, Some(content_hash), sight)
+    crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
+        &vault.store,
+        txn,
+        bytes,
+        Some(content_hash),
+        sight,
+        reader,
+    )
 }
 
 /// The body ASSET `asset_id`'s row holds, checked against `content_hash`.
