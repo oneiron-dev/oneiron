@@ -34997,7 +34997,7 @@
      "path": "src/entity_doc/summary.rs",
      "purpose": "Scope-summary documents: retained derivations, purpose and editor `keep` memo",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -63269,7 +63269,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 26,
       "fn": 5,
       "struct": 1
      }
@@ -74361,7 +74361,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "StoreRecordHooks"
@@ -92754,7 +92754,18 @@
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
       "fn": 10,
-      "mod": 2
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limit_questions.rs",
+     "purpose": "The host's own engine-limit questions for a raw-opened vault (FIX 75)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -92777,6 +92788,13 @@
      "layout": "file",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
     },
+    "limit_questions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's own engine-limit questions for a raw-opened vault (FIX 75)"
+    },
     "reads": {
      "files": 1,
      "impl_vault": false,
@@ -92787,7 +92805,7 @@
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -103677,10 +103695,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/lib/limit_questions.rs",
+     "purpose": "The host's own engine-limit questions for a raw-opened vault (FIX 75)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -103740,7 +103769,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "struct": 10
      }
@@ -103748,7 +103777,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -103757,7 +103786,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 1
   },
   "oneiron-guest": {
