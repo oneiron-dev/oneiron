@@ -295,13 +295,15 @@ impl Vault {
         // here among them (FIX 7402), leaves its carrier pending.
         let opened: Vec<_> = match (carriers.is_empty(), vault_id) {
             (false, Some(vault_id)) => match self.machine_secret_outside_txn() {
-                Ok(secret) => carriers
-                    .into_iter()
-                    .filter_map(|held| {
-                        let value = self.open_custody_value(&held, &vault_id, &secret)?;
-                        Some((held, value))
-                    })
-                    .collect(),
+                Ok(secret) => {
+                    let mut opened = Vec::new();
+                    for held in carriers {
+                        if let Some(value) = self.open_custody_value(&held, &vault_id, &secret)? {
+                            opened.push((held, value));
+                        }
+                    }
+                    opened
+                }
                 Err(_) => Vec::new(),
             },
             _ => Vec::new(),

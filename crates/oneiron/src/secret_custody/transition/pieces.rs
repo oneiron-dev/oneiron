@@ -315,13 +315,16 @@ impl CustodyPieces {
     /// The value sealed to `machine`, opened from the pieces that carry it,
     /// its numbered envelopes joined in order (FIX 7953,
     /// [`CustodyTransition::open_value`]).
+    ///
+    /// # Errors
+    /// Envelope parsing's working-memory allocation fault.
     #[cfg(feature = "sync")]
     pub(crate) fn open_value(
         &self,
         vault_id: &[u8; 32],
         machine: EntityId,
         secret: &oneiron_crypto::HybridSecretKey,
-    ) -> Option<zeroize::Zeroizing<Vec<u8>>> {
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
         CustodyTransition::open_value(&self.0, vault_id, machine, secret)
     }
 

@@ -524,7 +524,7 @@ fn apply_carriers(
     // one of the owner's machines has no secret, and keeps every value sealed.
     let secret = vault.machine_secret_outside_txn().ok();
     let outcome = (|| -> Result<usize> {
-        let (arrived, whole) = {
+        let (arrived, whole, open_error) = {
             let rtxn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
             let mut arrived = Vec::new();
@@ -548,6 +548,7 @@ fn apply_carriers(
             // A piece alone has no custody effect: only a group the pieces
             // make with those kept here, whole and standing as one, does.
             let mut whole = Vec::new();
+            let mut open_error = None;
             for group in completed_custody_groups_in_txn(vault, &rtxn, &arrived)? {
                 if group.verify(&fold).is_err() {
                     continue;
@@ -556,37 +557,52 @@ fn apply_carriers(
                 // that key is answered here; until then the group is kept.
                 let value = match (&secret, fold.vault_id) {
                     (Some(secret), Some(vault_id)) => {
-                        vault.open_custody_value(&group, &vault_id, secret)
+                        match vault.open_custody_value(&group, &vault_id, secret) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                // Keep admitted pieces before reporting an
+                                // allocation fault opening their value.
+                                if open_error.is_none() {
+                                    open_error = Some(error);
+                                }
+                                None
+                            }
+                        }
                     }
                     _ => None,
                 };
                 whole.push((group, value));
             }
-            (arrived, whole)
+            (arrived, whole, open_error)
         };
         if arrived.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            // Every piece that stands is kept first, the rest of its
-            // transition owed; a piece an admitted revoke of its id refused,
-            // or that no longer stands on this transaction's fold, is not
-            // kept, so it is never relayed from here (WILL L04 row 04).
-            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-            for piece in &arrived {
-                keep_custody_piece_in_txn(vault, wtxn, &fold, piece)?;
-            }
-            let mut written = 0;
-            for (group, value) in &whole {
-                let value = value.as_ref().map(|value| value.as_slice());
-                let at = group.lead().signed_at;
-                let applied = apply_custody_transition_in_txn(vault, wtxn, group, value, at)?;
-                if applied == CustodyApplied::Written {
-                    written += 1;
+        vault
+            .with_write_txn_grouped(|wtxn| {
+                // Every piece that stands is kept first, the rest of its
+                // transition owed; a piece an admitted revoke of its id refused,
+                // or that no longer stands on this transaction's fold, is not
+                // kept, so it is never relayed from here (WILL L04 row 04).
+                let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+                for piece in &arrived {
+                    keep_custody_piece_in_txn(vault, wtxn, &fold, piece)?;
                 }
-            }
-            Ok(written)
-        })
+                let mut written = 0;
+                for (group, value) in &whole {
+                    let value = value.as_ref().map(|value| value.as_slice());
+                    let at = group.lead().signed_at;
+                    let applied = apply_custody_transition_in_txn(vault, wtxn, group, value, at)?;
+                    if applied == CustodyApplied::Written {
+                        written += 1;
+                    }
+                }
+                Ok(written)
+            })
+            .and_then(|written| match open_error {
+                Some(error) => Err(error),
+                None => Ok(written),
+            })
     })();
     match outcome {
         Ok(written) if written > 0 => {
