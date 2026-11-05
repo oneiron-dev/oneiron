@@ -823,6 +823,8 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
   const versions = await Promise.all(data.sharedBlobs.versions.map(id => catalog.readArchive(id)));
   for (const bytes of versions) redactor.add(new TextDecoder().decode(bytes));
   const engine = await EngineFixture.start({ id: "PRIVACY-04", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     await engine.requireHttpDoor("/v1/owner/maintain", "POST");
     // Two independent records upload both versions, not an alias of A's handle.
@@ -865,8 +867,17 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
         await expectBlobGone(engine.client, record.id_hex, index + 1);
       }
     }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    await engine.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -877,6 +888,8 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
   const bytes = await catalog.readArchive("privacy-blob-v1");
   redactor.add(new TextDecoder().decode(bytes));
   const engine = await EngineFixture.start({ id: "PRIVACY-05", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     const record = await uploadVersions(engine.client, spec.name, [bytes]);
     const hold = await engine.client.call("vault.legal_holds.place", {
@@ -954,8 +967,17 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     if (status.state !== "erased") throw new Error("Owner confirm did not erase the held record");
     await readAudit(engine.client, status.receipt_ref, record.id_hex,
       [spec.name, new TextDecoder().decode(bytes)]);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    await engine.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
