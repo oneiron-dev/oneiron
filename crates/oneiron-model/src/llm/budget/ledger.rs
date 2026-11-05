@@ -6,7 +6,7 @@ use super::dispatch::DispatchBinding;
 use super::policy::BudgetPolicyRow;
 use super::state::BudgetState;
 use super::types::BudgetThreshold;
-use crate::llm::LlmUsage;
+use crate::llm::{LlmUsage, ProviderTokenMeasurement};
 
 /// Per-row bookkeeping inside the one meter. `used_units`/`reserved_units`
 /// carry the full charge of every call matching the row — those are the cap
@@ -64,6 +64,9 @@ pub(super) struct LeaseRecord {
     /// Set once by `begin_dispatch`: bytes may have left under this lease, so
     /// it can no longer be released untouched.
     pub(super) dispatched: bool,
+    /// The final native provider report on this exact started lease, apart
+    /// from its metered or unmetered charge. Missing remains unknown.
+    pub(super) provider_tokens: Option<ProviderTokenMeasurement>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

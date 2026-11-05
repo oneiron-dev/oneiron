@@ -328,6 +328,14 @@ impl RunAdmission {
         self.inner.guard.read()
     }
 
+    /// Provider token reports on this run's shared meter, separate from
+    /// budget charges. This is a current meter observation, not proof that
+    /// a spend scope has ended or that other guards were covered.
+    #[must_use]
+    pub fn provider_token_observation(&self) -> super::super::ProviderTokenObservation {
+        self.inner.guard.provider_token_observation()
+    }
+
     #[must_use]
     pub fn revision(&self) -> u32 {
         self.inner.lock_declaration().revision

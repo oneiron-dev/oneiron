@@ -73,6 +73,13 @@ impl RunInner {
                 permit.facts.reserved_units,
             )
         });
+        if let CallOutcome::Answered(usage) = outcome {
+            // Observation failure leaves the report unknown; it never changes
+            // whether the already-admitted call can settle its budget.
+            let _ = self
+                .guard
+                .observe_provider_tokens(&permit.lease, usage.provider_token_measurement());
+        }
         let settled = match line_units {
             Some(units) => self.guard.settle_usage(&permit.lease, units),
             // A started call's abort charges its reservation; an unstarted
