@@ -291,7 +291,7 @@ pub(crate) fn write_custody_transition_in_txn(
         signed_at,
         leaf.as_ref(),
     )?;
-    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, id)?;
+    carrier_leaf::retire_held_carrier_in_txn(&vault.store, wtxn, id)?;
     TRANSITIONS.put(&vault.store, wtxn, &HexId(id), &pieces.encode())?;
     Ok(pieces)
 }
@@ -329,7 +329,7 @@ pub(crate) fn remember_custody_transition_in_txn(
         _ => CustodyPieces::single(transition.clone()),
     };
     if replaces {
-        carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, transition.id)?;
+        carrier_leaf::retire_held_carrier_in_txn(&vault.store, wtxn, transition.id)?;
     }
     TRANSITIONS.put(&vault.store, wtxn, &key, &kept.encode())?;
     Ok(true)
@@ -375,7 +375,7 @@ pub(crate) fn drop_sealed_carrier_in_txn(
     if !holds_sealed_carrier_in_txn(vault, wtxn, id)? {
         return Ok(false);
     }
-    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, *id)?;
+    carrier_leaf::retire_held_carrier_in_txn(&vault.store, wtxn, *id)?;
     TRANSITIONS.delete(&vault.store, wtxn, &HexId(*id))
 }
 

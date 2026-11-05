@@ -657,7 +657,7 @@ pub(crate) fn drop_inputs_for_in_txn(
         .iter()
         .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
         .collect();
-    retire_input_carriers_in_txn(vault, wtxn, &carriers);
+    retire_input_carriers_in_txn(&vault.store, wtxn, &carriers);
     for (key, _) in &doomed {
         INPUTS.delete(&vault.store, wtxn, key)?;
     }
@@ -722,7 +722,7 @@ impl Vault {
             return Ok(0);
         }
         let forgot = self.with_write_txn(|txn| {
-            retire_input_carriers_in_txn(self, txn, &carriers);
+            retire_input_carriers_in_txn(&self.store, txn, &carriers);
             for (key, _) in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
