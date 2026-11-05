@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use super::landing::{LandOutcome, Landing};
 use super::pack::require_pack_active_in;
-use super::provider_delete::{ProviderDeleteOutcome, apply_provider_delete, update_labels};
+use super::provider_delete::{
+    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, update_labels,
+};
 use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key};
 use super::wire::{
@@ -169,6 +171,19 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// A message out of the provider's trash or spam: a kept copy is live
+    /// again, and one that never landed lands now, under the copy setting.
+    fn restore(&mut self, provider_id: &str) -> MemoryResult<()> {
+        if self.known(provider_id)? {
+            restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
+            return Ok(());
+        }
+        if self.row.copy != MailCopySetting::SearchOnly {
+            self.land_headers(provider_id)?;
+        }
+        Ok(())
+    }
+
     fn delete(&mut self, provider_id: &str) -> MemoryResult<()> {
         let outcome =
             apply_provider_delete(self.vault, self.source, &self.row, provider_id, self.at)?;
@@ -216,6 +231,7 @@ impl Step<'_> {
                             self.delete(&provider_id)?;
                         } else {
                             update_labels(self.vault, self.source, &provider_id, &labels, self.at)?;
+                            self.restore(&provider_id)?;
                         }
                     }
                 }
