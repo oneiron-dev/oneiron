@@ -109,3 +109,4 @@
     dropped layer and the PNG predictor's row buffers. The xref table admits
     a map node share per entry, and the admitted `/Prev`-merge helper per
     entry a merge adds.
+  - `src/parser/cmap_parser.rs` (FIX 12777 codespace metadata): validates every codespace range with the same one-or-more grammar without collecting the discarded range payload. Keeps the private empty `CsRange` marker consumed by `ToUnicodeCMap`, which ignores that payload. Mapping data, accepted input and public error classes are unchanged; sections, maps and admission plumbing remain separate. No new cap, refusal or format.
