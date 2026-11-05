@@ -224,9 +224,10 @@ only: it pauses, revokes and refuses nothing.
 An explicit revoke does end the revoked credential's already-open counted TCP
 request body at its next read: a verified slip or its delegation parent must
 carry an explicit `SlipRevoke`, or the node must receive a punch for the accepted
-account key. The body fails with typed `credential_revoked`; its HTTP reply is
-401 with that error code and `connection: close`, even if a body parser would
-otherwise report a parse error. The node remembers a punch for each accepted
+account key. The body fails with typed `credential_revoked`. When that cut precedes the
+routed reply, the reply is 401 with that error code and `connection: close`,
+even if a body parser would otherwise report a parse error. A reply already
+streaming cannot change its HTTP headers. The node remembers a punch for each accepted
 body's lifetime, independently of the verdict lease and temporary punch record.
 Expiry, grant changes, cache misses and unreadable revocation state do not end
 an admitted body through this check. Slip reads run off-thread, one received
