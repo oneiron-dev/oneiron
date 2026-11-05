@@ -77,15 +77,17 @@ pub use pending_act::{
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
-    AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind,
-    EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization,
-    REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive, ReceivedRemovalArchiveState,
-    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
-    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
-    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
-    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, DetachRemainder,
+    DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus,
+    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
+    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
+    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
+    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
+    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
+pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
@@ -119,10 +121,10 @@ pub(crate) use self::coreference::{
     put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
-    FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
-    FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS, decode_federation_grant_body,
-    encode_federation_grant_body,
+    ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
+    FederationGrant, FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole,
+    FederationGrantScope, MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS,
+    decode_federation_grant_body, encode_federation_grant_body,
 };
 pub use self::guest::{
     GUEST_SHARE_ENVELOPE_BODY_KEYS, GUEST_SHARE_ENVELOPE_KEYS, GUEST_SHARE_ENVELOPE_SCHEMA_VERSION,

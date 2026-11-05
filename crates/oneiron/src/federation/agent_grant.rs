@@ -191,6 +191,7 @@ impl Vault {
                 repo_bounds,
                 kind: super::FederationGrantKind::Access,
                 git_push_bounds: None,
+                detach_on_member_leave: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
