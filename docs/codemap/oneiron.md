@@ -1404,7 +1404,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 6 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
 | `src/code_run/dispatcher/mod.rs` | src | s | 1 struct · 1 type · 5 re-export · 7 crate-vis | HostSelfDispatcher | State and export seam for the host-bound first-party dispatcher |
 | `src/code_run/dispatcher/program_step.rs` | src | s | 11 crate-vis | — | A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its… |
-| `src/code_run/dispatcher/read_worlds.rs` | src | s | 1 fn · 11 crate-vis | — | A run's read-world capture as its host serves it (FIX 6130) |
+| `src/code_run/dispatcher/read_worlds.rs` | src | m | 1 fn · 12 crate-vis | — | A run's read-world capture as its host serves it (FIX 6130) |
 | `src/code_run/dispatcher/reader_spawn.rs` | src | m | 3 fn · 15 crate-vis | — | Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn… |
 | `src/code_run/dispatcher/repo.rs` | src | m | 2 fn · 1 crate-vis | — | `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows |
 | `src/code_run/dispatcher/repo_sources.rs` | src | s | 2 crate-vis | — | The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL "FIX 6867 review policy and provenance")… |
@@ -2934,7 +2934,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/pending_act/policy_change.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | SharedActPoliciesView, SharedActPolicyChange, SharedActPolicyChangeState | Shared-act policy reads and durable changes (DOOR-129) |
 | `src/federation/pending_act/tests.rs` | test | L | — | — | — |
 | `src/federation/queue_reconciliation.rs` | src | s | 7 crate-vis | — | The sealed admission of a merge queue reconciliation (FIX 6868, G2 PR2, L02 authority seam) |
-| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 17 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
+| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 18 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
 | `src/federation/record_scope/asset_body.rs` | src | s | 1 crate-vis | — | What a scoped door hands out for a row it admitted (FIX 3677, FIX 5397): a file-plane ASSET leaves as its… |
 | `src/federation/record_scope/asset_text.rs` | src | s | 4 crate-vis | — | Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is… |
 | `src/federation/record_scope/delete.rs` | src | s | 1 fn | — | The scoped delete door: selection and delete in one write transaction |
@@ -3854,7 +3854,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/message_parts.rs` | src | s | 1 crate-vis | — | Reasoning leaves a MESSAGE read whole or not at all |
 | `src/memory/message_presence.rs` | src | s | 2 struct | MessagePresenceScope, ScopedPresenceFrame | Scope and wire bytes of a live MESSAGE partial |
 | `src/memory/message_result.rs` | src | m | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 40 mod · 69 re-export · 31 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 40 mod · 69 re-export · 32 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 4 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/external_import.rs` | src | s | 1 enum · 4 fn | ExternalImportProof | The outside import doors (FIX 6871, G7 PR1): `vault.code.imports.create` and `vault.code.imports.get` |
@@ -3892,6 +3892,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/query_records/mod.rs` | src | s | 1 mod · 3 re-export | — | Standing-query definition and filter values used by core memory |
 | `src/memory/query_records/surface.rs` | src | m | 14 struct · 2 enum · 5 crate-vis | SavedQueryArchiveRequest, SavedQueryCreateRequest, SavedQueryDefinitionView, SavedQueryEvalSpec, SavedQueryEvaluateRequest, SavedQueryFilterSpec, SavedQueryMatcherSpec, SavedQueryMembersRequest +8 | Wire request, record, membership and memo values for standing queries |
 | `src/memory/query_records/verdict.rs` | src | s | 1 re-export | — | Standing-query verdict tokens defined with the stored memo |
+| `src/memory/read_capture.rs` | src | s | 9 crate-vis | — | Per-call evidence from the actual admitted read, not a later row lookup |
 | `src/memory/read_lane.rs` | src | m | 4 fn · 24 crate-vis | — | The bound actor's one read lane |
 | `src/memory/read_selection.rs` | src | s | 1 enum · 2 crate-vis | RecallWorlds | Caller-selected world and project filters |
 | `src/memory/reads.rs` | src | m | 5 struct · 9 fn · 1 re-export · 5 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
@@ -3971,7 +3972,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/structural/raw_prose.rs` | src | s | 1 crate-vis | — | Prose admission for a bound raw write's NOTE and keyed-value bodies (OF-063, FIX 3734): the one link read… |
 | `src/memory/structural/types.rs` | src | s | 8 struct · 1 enum · 1 re-export | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput +1 | Read-facing views and per-verb inputs for structural puts |
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
-| `src/memory/support.rs` | src | m | 3 struct · 4 fn · 1 type · 1 re-export · 11 crate-vis | HostWriteOrigin, Memory, SigningRequestTransport | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
+| `src/memory/support.rs` | src | m | 3 struct · 4 fn · 1 type · 1 re-export · 13 crate-vis | HostWriteOrigin, Memory, SigningRequestTransport | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
 | `src/memory/support/actors.rs` | src | s | 1 fn · 6 crate-vis | — | Actor verification: store-truth bindings, the folded owner binding and deletion authority |
 | `src/memory/support/builders.rs` | src | m | 23 fn · 15 crate-vis | — | Handle binders: the `with_*` methods and the accessors that read back what a binder set |
 | `src/memory/support/constructors.rs` | src | s | 5 fn · 1 crate-vis | — | Handle construction: the vault's `Memory` openers and the room-turn and task rebinders |
@@ -5106,7 +5107,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/verb/chain/session.rs` | src | s | 9 crate-vis | — | A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view… |
 | `src/runtime_hooks/verb/chain/storage.rs` | src | s | 6 crate-vis | — | A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and… |
 | `src/runtime_hooks/verb/credential.rs` | src | m | 6 struct · 5 enum · 1 trait · 9 fn · 14 crate-vis | VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource, VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope +4 | A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3… |
-| `src/runtime_hooks/verb/mod.rs` | src | m | 2 struct · 10 fn · 1 type · 9 re-export · 12 crate-vis | VerbCall, VerbHookPre | Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb |
+| `src/runtime_hooks/verb/mod.rs` | src | m | 2 struct · 10 fn · 1 type · 9 re-export · 13 crate-vis | VerbCall, VerbHookPre | Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb |
 | `src/runtime_hooks/verb/plain_resume.rs` | src | m | 5 crate-vis | — | A plain call's resume target (ARCH-0080 §3 Ask): a call no credential came in on, which settlement runs… |
 | `src/runtime_hooks/verb/record.rs` | src | s | 4 crate-vis | — | A verb hook run's saved copy (ARCH-0080 §6 Replay): the exact input its body saw, the reads it made and what… |
 | `src/runtime_hooks/verb/redact.rs` | src | s | 1 crate-vis | — | A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result |
