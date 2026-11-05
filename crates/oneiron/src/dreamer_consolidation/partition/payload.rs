@@ -30,21 +30,81 @@ const KEY_PARTS: &str = "parts";
 /// absent on a part of line zero.
 const KEY_LINE: &str = "line";
 
+/// A private thing's grouping identity, never a read authority. A thread
+/// stays separate unless its whole current audience names one live PERSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PartitionAudience {
+    Thread(EntityId),
+    Person(EntityId),
+}
+
+impl PartitionAudience {
+    pub(crate) fn entity(self) -> EntityId {
+        match self {
+            Self::Thread(id) | Self::Person(id) => id,
+        }
+    }
+
+    pub(crate) fn kind(self) -> &'static str {
+        match self {
+            Self::Thread(_) => "thread",
+            Self::Person(_) => "person",
+        }
+    }
+
+    pub(crate) fn hash_into(self, hasher: &mut blake3::Hasher) {
+        hasher.update(&[match self {
+            Self::Thread(_) => 1,
+            Self::Person(_) => 2,
+        }]);
+        hasher.update(self.entity().as_bytes());
+    }
+
+    fn encode(self) -> Value {
+        Value::Map(vec![(
+            Value::from(self.kind()),
+            Value::Binary(self.entity().as_bytes().to_vec()),
+        )])
+    }
+
+    fn decode(value: &Value) -> Result<Self> {
+        let entries = expect_map(value, "partition audience must name one grouping identity")?;
+        let [(kind, value)] = entries.as_slice() else {
+            return Err(invalid_consolidation(
+                "partition audience must name one grouping identity",
+            ));
+        };
+        let id = entity_ref_from_value(value).ok_or(invalid_consolidation(
+            "partition audience ref must be 16-byte binary",
+        ))?;
+        match expect_key(kind)? {
+            "thread" => Ok(Self::Thread(id)),
+            "person" => Ok(Self::Person(id)),
+            _ => Err(invalid_consolidation(
+                "partition audience kind is not pinned",
+            )),
+        }
+    }
+}
+
 /// The thing a nightly child is cut for (OF-498c, FIX 7497), carried in its
 /// payload: the entity a span's reading bound (`None`: the partition's
-/// structural topic) and the private thread its turns are of (`None`: off
-/// any private thread). Its world and facet are the branch's.
+/// structural topic) and its private grouping identity (`None`: public).
+/// Its world and facet are the branch's; actual readers stay per part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PartitionThing {
     pub(crate) entity: Option<EntityId>,
-    pub(crate) audience: Option<EntityId>,
+    pub(crate) audience: Option<PartitionAudience>,
 }
 
 impl PartitionThing {
     fn encode(self) -> Value {
         Value::Map(vec![
             (Value::from("entity"), reference(self.entity)),
-            (Value::from("audience"), reference(self.audience)),
+            (
+                Value::from("audience"),
+                self.audience.map_or(Value::Nil, PartitionAudience::encode),
+            ),
         ])
     }
 
@@ -55,17 +115,25 @@ impl PartitionThing {
             audience: None,
         };
         for (key, value) in entries {
-            let slot = match expect_key(key)? {
-                "entity" => &mut thing.entity,
-                "audience" => &mut thing.audience,
+            match expect_key(key)? {
+                "entity" => {
+                    thing.entity = optional_reference(
+                        value,
+                        "partition payload thing refs must be 16-byte binary",
+                    )?;
+                }
+                "audience" => {
+                    thing.audience = match value {
+                        Value::Nil => None,
+                        _ => Some(PartitionAudience::decode(value)?),
+                    };
+                }
                 _ => {
                     return Err(invalid_consolidation(
                         "partition payload thing key is not pinned",
                     ));
                 }
-            };
-            *slot =
-                optional_reference(value, "partition payload thing refs must be 16-byte binary")?;
+            }
         }
         Ok(thing)
     }
