@@ -132,8 +132,20 @@ impl GeminiAccumulator {
                 } else if part.as_object().is_some_and(|fields| fields.len() == 1)
                     && part.get("thoughtSignature").is_some_and(Value::is_string)
                 {
-                    // Signature-only metadata is not unsupported content.
-                    continue;
+                    // Keep the standalone signature at its own position, without
+                    // assigning it to or overwriting an earlier part's signature.
+                    self.end_text(&mut events)?;
+                    let part_id = self.text_part(true, &mut events)?;
+                    events.extend(
+                        self.assembly.reasoning(
+                            &part_id,
+                            "",
+                            part.get("thoughtSignature")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        )?,
+                    );
+                    self.end_text(&mut events)?;
                 } else {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }

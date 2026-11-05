@@ -9,6 +9,7 @@ use oneiron::attempt_queue::{
     ClaimAttempt, ClaimOutcome, CompleteAttempt, FinishAttemptLanding, LandingTrigger,
     RetryAttempt,
 };
+use oneiron::code_run::model_call::{ModelCallDigests, model_call_digests};
 use oneiron::commitment_wake::{
     COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND, CommitmentReminderWordingPayload,
     CommitmentReminderWordingRead, CommitmentReminderWordingRequest,
@@ -17,7 +18,7 @@ use oneiron::commitment_wake::{
 use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -28,6 +29,37 @@ use crate::server::blocking;
 
 const LEASE_OWNER: &str = "oneiron-server-commitment-reminder-wording";
 const PURPOSE: &str = "commitment_reminder_wording";
+
+/// The new automatic wording execution, minted only by the native claim loop.
+/// Its actor is this executor, not the historical commitment's caller.
+struct WordingExecution<'a> {
+    vault: &'a Vault,
+    attempt: &'a AttemptRecord,
+    actor: WriteActor,
+    no_record_at_arrival: bool,
+}
+
+impl<'a> WordingExecution<'a> {
+    fn from_claim(vault: &'a Vault, attempt: &'a AttemptRecord) -> Result<Self, &'static str> {
+        let actor =
+            blocking(|| vault.dreamer_authority()).map_err(|_| "wording_budget_unavailable")?;
+        let no_record_at_arrival =
+            blocking(|| vault.model_call_keeps_no_record_for(None, Some(actor.entity_ref())));
+        Ok(Self {
+            vault,
+            attempt,
+            actor,
+            no_record_at_arrival,
+        })
+    }
+
+    fn keeps_no_record(&self) -> bool {
+        self.no_record_at_arrival
+            || self
+                .vault
+                .model_call_keeps_no_record_for(None, Some(self.actor.entity_ref()))
+    }
+}
 
 pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle, models: &ModelsConfig) {
     if ai.chat_seat().is_none() {
@@ -46,7 +78,10 @@ pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle, models: &ModelsConfig) {
             while !*stopped.borrow() {
                 let Some(vault) = vault.upgrade() else { return };
                 let Some(attempt) = claim(&vault) else { break };
-                let result = word(&vault, &ai, &wording, &attempt, stopped.clone()).await;
+                let result = match WordingExecution::from_claim(&vault, &attempt) {
+                    Ok(execution) => word(&execution, &ai, &wording, stopped.clone()).await,
+                    Err(reason) => Err(reason),
+                };
                 blocking(|| settle(&vault, &attempt, result, backoff));
             }
             tokio::select! {
@@ -114,12 +149,13 @@ fn run_id(attempt: &AttemptRecord) -> String {
 }
 
 async fn word(
-    vault: &Vault,
+    execution: &WordingExecution<'_>,
     ai: &AiHandle,
     wording: &DreamerWording,
-    attempt: &AttemptRecord,
     mut stopped: watch::Receiver<bool>,
 ) -> Result<(), &'static str> {
+    let vault = execution.vault;
+    let attempt = execution.attempt;
     if !active(vault, attempt) {
         return Err("wording_attempt_stopped");
     }
@@ -170,13 +206,12 @@ async fn word(
         .map_err(|_| "wording_role_refused")?;
     let id = run_id(attempt);
     let meter = blocking(|| {
-        let actor = vault.dreamer_authority()?;
         vault.policy_budget_guard(
             id.clone(),
             ai.chat_settings().turn_budget_units,
             oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
             BudgetExhaustionPolicy::Suspend,
-            actor,
+            execution.actor,
         )
     })
     .map_err(|_| "wording_budget_unavailable")?;
@@ -189,13 +224,14 @@ async fn word(
         persona,
         stopped: stopped.clone(),
         sent: Mutex::new(None),
+        captured_request: Mutex::new(None),
     };
     let mut signals = AttemptQueue::new(vault).subscribe();
     let generation = call
         .ladder
-        .generate_admitted(&run, call.request, None, &sources);
+        .generate_admitted_recorded(&run, call.request, None, &sources);
     tokio::pin!(generation);
-    let response = loop {
+    let (response, binding) = loop {
         tokio::select! {
             biased;
             _ = stopped.wait_for(|stop| *stop) => return Err("wording_host_stopped"),
@@ -206,6 +242,28 @@ async fn word(
             }
         }
     };
+    let captured_request = sources
+        .captured_request
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some((digests, tools_present)) = captured_request
+        && !blocking(|| execution.keeps_no_record())
+    {
+        blocking(|| {
+            super::model_call_capture::record_generated_response(
+                vault,
+                None,
+                digests,
+                tools_present,
+                &response,
+                &binding,
+                attempt,
+                execution.actor,
+                false,
+            );
+        });
+    }
     let text: String = response
         .message
         .content
@@ -249,6 +307,7 @@ struct ReminderSources<'a> {
     persona: Option<&'a str>,
     stopped: watch::Receiver<bool>,
     sent: Mutex<Option<(ReadDestination, CommitmentReminderWordingSource)>>,
+    captured_request: Mutex<Option<(ModelCallDigests, bool)>>,
 }
 
 impl ReminderSources<'_> {
@@ -275,6 +334,20 @@ impl ReminderSources<'_> {
 }
 
 impl SourceAdmission for ReminderSources<'_> {
+    fn capture_request(&self, request: &LlmRequest) {
+        let captured = match model_call_digests(request) {
+            Ok(digests) => Some((digests, !request.tools.is_empty())),
+            Err(error) => {
+                tracing::warn!(%error, "reminder wording model-call digests failed");
+                None
+            }
+        };
+        *self
+            .captured_request
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = captured;
+    }
+
     fn offer(&self, request: &LlmRequest, destination: &ReadDestination) -> SourceOffer {
         let source = match self.admitted(destination) {
             Ok(source) => source,
