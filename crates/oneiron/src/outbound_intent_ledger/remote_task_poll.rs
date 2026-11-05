@@ -60,11 +60,10 @@ impl fmt::Debug for RemoteTaskPoll {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteTaskCredential {
-    /// The send presented nothing.
-    Nothing,
     /// The custody record the call named (`self.use`).
     Record(EntityId),
-    /// The connector route's own secret, resolved again at each poll.
+    /// What the connector route presents of its own (its secret, resolved
+    /// again at each poll, or nothing when it names none).
     Route,
 }
 
