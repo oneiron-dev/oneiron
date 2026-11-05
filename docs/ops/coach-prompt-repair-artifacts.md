@@ -12,7 +12,7 @@ a decline or an empty prompt leaves the heal route-only with a reason. Prompt
 bytes are not trimmed or rewritten. No new text cap or policy setting is added.
 
 The heal's writer revalidates the exact durable case and its Failed attempt,
-TASK/run bindings and dispatched agent through the existing case check. A case
+TASK binding and dispatched agent through the existing case check. A case
 that moved while the author worked leaves the heal route-only. Storage errors
 still abort the writer.
 
