@@ -59,3 +59,23 @@ was covered. Other guards, future calls, children, failed partial reports, and
 local, peer or BYOA suppliers still need their real source and coverage proof.
 No scope persistence or RSI settlement consumes this snapshot yet. Ordinary
 `BudgetRead` and the admission hot path are unchanged.
+
+## Guard generations
+
+`BudgetGuard::provider_token_snapshot` and
+`RunAdmission::provider_token_snapshot` pair that same observation with the
+actual guard's opaque 16-byte generation. Every fresh `BudgetState` mints one
+identifier. Guard and run clones retain it because they share that state. A
+restarted guard mints another even if its attempt and lease strings repeat.
+The identifier is observation data, not an entity reference or authority.
+
+The generation is immutable. The snapshot getter copies it, drops that short
+lock, then reads the provider observation on the same guard. It does not add
+another observation fold to ordinary budget reads or admission. Existing
+provider observations, charges and the old snapshot-free getter are unchanged.
+
+This identifies a source for future durable guard-to-scope records; it does
+not write those records. Reading every row that happens to be present would
+still not prove that a crashed or unrecorded generation was covered. No
+whole-scope completeness or RSI settlement is inferred from the generation,
+lease strings, scope closure or a successful charged-spend flush.
