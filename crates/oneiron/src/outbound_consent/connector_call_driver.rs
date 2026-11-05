@@ -261,7 +261,9 @@ impl Vault {
         // A row that stops waiting on its owner (it settles, or meets its
         // connector's questions) withdraws the owner questions it named in
         // the same write, and their waiters wake once it committed (FIX 2551).
-        let put_row = |call_ref: &EntityId, row: &PendingConnectorCall| {
+        let put_row = |call_ref: &EntityId,
+                       row: &PendingConnectorCall,
+                       outcome: Option<&ConnectorCallOutcome>| {
             let mut row = row.clone();
             let withdrawn = self.with_write_txn(|txn| {
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
@@ -270,6 +272,19 @@ impl Vault {
                     Vec::new()
                 };
                 put_pending_call_in_txn(&self.store, txn, call_ref, &row)?;
+                // A terminal live outcome settles the code consent wait the
+                // actual row names in this same writer (FIX 4518): the wait's
+                // reply, receipt and trap delivery commit with the held row,
+                // so no crash between them strands or receipt-strips the wait.
+                if let (Some(wait_id), Some(outcome)) = (row.code_consent_wait, outcome) {
+                    crate::code_run::settle_code_consent_wait_listing_in_txn(
+                        self,
+                        txn,
+                        wait_id,
+                        outcome,
+                        row.source_rows.as_deref(),
+                    )?;
+                }
                 Ok(withdrawn)
             })?;
             self.signal_withdrawn_call_asks(&withdrawn);
@@ -277,16 +292,18 @@ impl Vault {
         };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            put_row(&call_ref, pending)?;
+            put_row(&call_ref, pending, None)?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
-        let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
+        let settle = |call_ref: Option<EntityId>,
+                      settled: SettledConnectorCall,
+                      outcome: &ConnectorCallOutcome| {
             if let Some(call_ref) = call_ref {
                 let row = PendingConnectorCall {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                put_row(&call_ref, &row)?;
+                put_row(&call_ref, &row, Some(outcome))?;
             }
             Ok::<_, IntentLedgerError>(())
         };
@@ -297,13 +314,18 @@ impl Vault {
                 result_absence,
                 budget_steering,
             } => {
-                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
-                ConnectorCallOutcome::Delivered {
+                let outcome = ConnectorCallOutcome::Delivered {
                     intent,
                     result,
                     result_absence,
                     budget_steering,
-                }
+                };
+                settle(
+                    call_ref,
+                    SettledConnectorCall::Delivered { intent },
+                    &outcome,
+                )?;
+                outcome
             }
             // The call reached the connector, which asked for input: the
             // call's row, kept for a first call too, holds the round for its
@@ -317,17 +339,24 @@ impl Vault {
                     )),
                     ..pending.clone()
                 };
-                match keep(call_ref, &row) {
-                    Ok(call_ref) => {
-                        host.bind_awaiting_call(&input.handle, call_ref);
-                        ConnectorCallOutcome::AwaitingInput {
-                            call_ref,
-                            intent,
-                            input,
-                        }
+                // Terminal for a code consent wait too (FIX 4518): the ref is
+                // resolved once and the row plus the live outcome commit in
+                // one writer, so the wait settles with the actual questions.
+                // The host binds after the commit, or abandons on its error.
+                let resolved = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
+                let handle = input.handle.clone();
+                let outcome = ConnectorCallOutcome::AwaitingInput {
+                    call_ref: resolved,
+                    intent,
+                    input,
+                };
+                match put_row(&resolved, &row, Some(&outcome)) {
+                    Ok(()) => {
+                        host.bind_awaiting_call(&handle, resolved);
+                        outcome
                     }
                     Err(error) => {
-                        host.abandon_awaiting_input(&input.handle);
+                        host.abandon_awaiting_input(&handle);
                         return Err(error);
                     }
                 }
@@ -336,31 +365,29 @@ impl Vault {
                 decision_ref,
                 reasons,
             } => {
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Refused {
-                        decision_ref: decision_ref.clone(),
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::Refused {
+                let settled = SettledConnectorCall::Refused {
+                    decision_ref: decision_ref.clone(),
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::Refused {
                     decision_ref,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
             Step::Unsettled { intent, reasons } => {
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Unsettled {
-                        intent,
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::PendingDelivery {
+                let settled = SettledConnectorCall::Unsettled {
+                    intent,
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::PendingDelivery {
                     intent,
                     call_ref: None,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
             Step::Held {
                 decision_ref,
@@ -442,17 +469,16 @@ impl Vault {
                     IntentEscalationReason::BindingInvalid,
                     now_ms(),
                 )?;
-                settle(
-                    call_ref,
-                    SettledConnectorCall::Refused {
-                        decision_ref: None,
-                        reasons: reasons.clone(),
-                    },
-                )?;
-                ConnectorCallOutcome::Refused {
+                let settled = SettledConnectorCall::Refused {
+                    decision_ref: None,
+                    reasons: reasons.clone(),
+                };
+                let outcome = ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons,
-                }
+                };
+                settle(call_ref, settled, &outcome)?;
+                outcome
             }
         };
         Ok((outcome, rows))
