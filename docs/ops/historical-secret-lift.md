@@ -19,12 +19,16 @@ There is no old-format reader or migration.
 
 On-device status includes all contributions. Off-device status uses the existing
 source-entity destination filter. The source is established only for ordinary entity
-records, typed-body documents, typed-body forks, codebase snapshots and note proposals whose
+records, typed-body documents, typed-body forks, office-body forks, codebase snapshots and note proposals whose
 producer keys name the actual source entity. A codebase snapshot's source is the
 CODE_ARTIFACT entity id that its native writer validates and uses as the table key.
 A typed-body fork's source is the first entity id in its native `(entity, fork)` key:
 its writer validates that entity's live typed-body head before storing the fork
 snapshot. Both key ids must decode; the fork nonce is not treated as a source.
+An office-body fork's source is the first entity id in its native `(artifact, fork)` key:
+its deck writer validates that artifact's live headed typed body before storing the fork
+row, and its checkpoint owner is that artifact. Both key ids must decode; the fork nonce
+is not treated as a source.
 A note proposal's source is the first entity id in its native `hex32(note):hex32(head)`
 ASCII key: its writer validates that NOTE's live core before storing the proposal
 document. Both key ids must decode; the fork head is not treated as a source.

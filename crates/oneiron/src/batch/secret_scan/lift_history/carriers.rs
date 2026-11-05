@@ -144,14 +144,15 @@ pub(super) fn path(key: &[u8]) -> String {
 /// Typed-body documents and codebase snapshots are keyed by their actual
 /// source entity; a typed-body fork pairs that entity with its fork id.
 /// A note proposal pairs its owning NOTE with its fork head; its source is
-/// the first. No source is inferred for other carrier formats.
+/// the first. An office-body fork pairs its artifact with its fork id; its
+/// source is the first. No source is inferred for other carrier formats.
 pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
     let (decl, row_key) = carrier_of(key)?;
     source_of(decl, row_key)
 }
 
 fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
-    if std::ptr::eq(decl, &t::TYPED_BODY_FORK_DOC) {
+    if std::ptr::eq(decl, &t::TYPED_BODY_FORK_DOC) || std::ptr::eq(decl, &t::OFFICE_BODY_FORK) {
         let (entity, _): (EntityId, EntityId) =
             SideKey::decode_key(row_key.strip_prefix(decl.prefix)?)?;
         return Some(entity);
