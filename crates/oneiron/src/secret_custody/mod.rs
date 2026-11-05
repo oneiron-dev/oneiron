@@ -121,10 +121,11 @@ pub use self::control::{
     SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
 };
 pub(crate) use self::doors::{
-    CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
-    read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
+    CustodyWrite, SecretCustodyAdmission, message_part_original_matches_in_txn,
+    put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
-    restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
+    restore_secret_custody_in_txn, revoke_message_part_custody_in_txn,
+    revoke_side_row_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored form, its value sealed under its custody key.
@@ -213,7 +214,8 @@ pub use self::types::{
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 pub use self::use_handle::{
-    KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
+    BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply, KeptSentValue,
+    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_BROKER_MODELS, SECRET_USE_CLEAR_VALUE_SOURCE,
     SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
     SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
     SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
