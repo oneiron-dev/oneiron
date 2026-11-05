@@ -462,17 +462,15 @@ pub(crate) fn restore_with_source(
     let slot = DocumentSlot::from_hex(&head.document)?;
     let canonical = native.map(|source| source.rebuild()).transpose()?;
     let ordinary;
-    let (doc, frontiers) = if let Some(rebuilt) = &canonical {
-        (rebuilt.document(), rebuilt.frontiers())
+    let rebuilt = if let Some(rebuilt) = &canonical {
+        rebuilt
     } else {
-        ordinary = rebuild_canonical_document(row, None)?;
-        (&ordinary.0, ordinary.1.as_slice())
+        ordinary = super::native_skill_state::CanonicalRebuiltDocument::ordinary(row)?;
+        &ordinary
     };
-    if let Some(rebuilt) = &canonical {
-        storage::persist_canonical_skill(vault, txn, &entity, &mut head, rebuilt)?;
-    } else {
-        storage::persist(vault, txn, &entity, &mut head, doc, None)?;
-    }
+    let doc = rebuilt.document();
+    let frontiers = rebuilt.frontiers();
+    storage::persist_canonical_skill(vault, txn, &entity, &mut head, rebuilt)?;
     match &row.history {
         None => {
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
