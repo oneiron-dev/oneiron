@@ -46,9 +46,10 @@ Ops, host to worker, and what each gets back:
 
 Codec v1.1 adds the session ops (DESIGN-V2 R2, `exl3_session/ops.py`),
 advertised as `capabilities.sessions` `{minor: 1, ops}` only when the server
-loaded its session layer: `session.create`, `session.fork` and
-`session.append` (each with an input region), `session.suffix_commit`,
-`session.checkpoint`, `session.drop`, each answered by a frame of its own
+loaded its session layer: `session.create`, `session.fork`,
+`session.append` and `session.prepare` (each with an input region; I1 = C
+adds the last), `session.suffix_commit`, `session.checkpoint`,
+`session.drop`, each answered by a frame of its own
 name or `refused`; and `session.generate`, a `generate` whose `session`
 field names the working branch it runs on, with the same events. A
 connection's close cancels its calls, never its sessions: a session lives
@@ -75,7 +76,8 @@ the session minor staying 1 or 2 on its own. A `generate` or
 or 1), `deadline` (null, or the microseconds left at send, converted once
 to this process's monotonic clock) and `admission` (`{grant_id, revision,
 resource_class, profile_id, envelope_mib}`); a `session.suffix_commit`,
-`session.export` or `session.import` body may name the first three. A
+`session.prepare`, `session.export` or `session.import` body may name the
+first three. A
 field this worker cannot read, a grant for another resource class, or a
 grant revision below one it holds for that grant is refused before any
 work (`invalid_request`, `invalid_grant`, `stale_grant`); a call with no
