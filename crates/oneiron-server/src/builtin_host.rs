@@ -54,6 +54,9 @@ pub(crate) fn install_served_transports(server: &SyncServer) {
             }
         }
     }
+    if let (Some(broker), Some(models)) = (server.broker_context(), server.config.models.as_ref()) {
+        transports = transports.with_broker_model_listing(broker.secret_use_models(models));
+    }
     server
         .vault()
         .install_served_transports(Arc::new(transports));
