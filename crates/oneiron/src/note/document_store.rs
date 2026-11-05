@@ -127,10 +127,7 @@ fn persist_structural(
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    vault
-        .batch_in()
-        .text(&doc.id, &[("markdown", markdown.as_str())])
-        .apply(txn)?;
+    super::revision::index_stored_note_in_txn(vault, txn, doc.id, None)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
@@ -593,6 +590,7 @@ impl Memory<'_> {
                     slot,
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
                 )?;
+                super::revision::index_stored_note_in_txn(self.vault(), txn, note, None)?;
                 let applied = through.encode();
                 let receipt = PurgeReceipt {
                     receipt: receipt_id.to_hex(),
