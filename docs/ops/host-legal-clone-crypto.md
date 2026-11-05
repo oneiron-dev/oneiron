@@ -38,10 +38,16 @@ The gate-ledger family and its named sidecars keep component tags 1 through 5:
 whole-family capture is claim-free, while explicit native decision-key selection
 can also open claim-bound rows under their actual native custody. Neither path
 exports or retains an ordinary claim key. Live-session body and metadata use
-tags 6 and 7. The metadata member encrypts the actual raw file row separately
-from the body; descriptor metadata alone is not that member. Published live
-bodies are only the consumer's stated capture extent, not proof that an active
-writer or a partial file has no written bytes.
+tags 6 and 7. The metadata member encrypts a closed `LiveSpillMetadata` value
+separately from the body. `Published` carries the actual native raw key and file
+row. `NativeFile` carries the exact frozen filename, native-finish flag and
+physical file length; these are not producer path, kind or completion facts.
+Its shared source-key/family helpers distinguish those variants. Both members
+bind the hash of the exact encoded metadata as their revision. Descriptor
+metadata alone is not this separate encrypted member. The native supplier
+covers final published rows and frozen written files of the exact session
+instance; `WrittenLiveSessionSpill` and its actual body count describe that
+extent, not all session content or future writes.
 
 This is one unpublished format. All gate, live-session and host-reader binding
 constructors must change in the same consumer feature pack. There is no default

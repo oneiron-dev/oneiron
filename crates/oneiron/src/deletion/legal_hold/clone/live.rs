@@ -107,6 +107,7 @@ impl Attempt {
         })();
         state.ready = true;
         if let Err(error) = outcome {
+            let _ = self.shutdown.shutdown(Shutdown::Both);
             state.stream.take();
             state.outcome = Some(Err(error.kind()));
             self.changed.notify_all();
@@ -149,6 +150,28 @@ impl Attempt {
                 .map_err(|_| poisoned())?
                 .0;
         }
+    }
+
+    /// A failed connection still owns an admitted standing. Keep this SAME
+    /// managed worker until retry, release, stop or its actual order term, so
+    /// the original native source guard never outlives an unobserved expiry.
+    fn wait_standing(&self, vault: &Vault) -> Result<()> {
+        let mut state = self.state.lock().map_err(|_| poisoned())?;
+        while !self.cancelled.load(Ordering::Acquire) {
+            let remaining = self
+                .request
+                .ends_at
+                .saturating_sub(vault.store.clock.now_recorded_at());
+            if remaining == 0 {
+                break;
+            }
+            state = self
+                .changed
+                .wait_timeout(state, Duration::from_secs(remaining))
+                .map_err(|_| poisoned())?
+                .0;
+        }
+        Ok(())
     }
 
     fn start(self: &Arc<Self>, vault: &Vault) -> Result<CaptureAttempt> {
@@ -199,6 +222,9 @@ struct CaptureAttempt {
 
 impl CaptureAttempt {
     fn finish(&mut self, outcome: &Result<()>) -> Result<()> {
+        if outcome.is_err() {
+            let _ = self.attempt.shutdown.shutdown(Shutdown::Both);
+        }
         let mut state = self.attempt.state.lock().map_err(|_| poisoned())?;
         state.capturing = false;
         state.outcome = Some(if outcome.is_ok() {
@@ -214,6 +240,9 @@ impl CaptureAttempt {
 
 impl Drop for CaptureAttempt {
     fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.attempt.shutdown.shutdown(Shutdown::Both);
+        }
         if !self.finished
             && let Ok(mut state) = self.attempt.state.lock()
         {
@@ -327,22 +356,12 @@ impl HostLegalCaptures {
         )
     }
 
-    fn complete(&self, order: &Arc<LiveOrder>, captured: &Arc<Attempt>) -> Result<()> {
-        let mut registry = self.registry.lock().map_err(|_| poisoned())?;
-        order.completed.store(true, Ordering::Release);
-        if registry
-            .orders
-            .get(&order.key)
-            .is_some_and(|current| Arc::ptr_eq(current, order))
+    fn complete(&self, vault: &Vault, order: &Arc<LiveOrder>) -> Result<()> {
         {
-            registry.orders.remove(&order.key);
+            let _registry = self.registry.lock().map_err(|_| poisoned())?;
+            order.completed.store(true, Ordering::Release);
         }
-        for attempt in order.attempts()? {
-            if !Arc::ptr_eq(&attempt, captured) {
-                attempt.cancel(io::ErrorKind::Interrupted)?;
-            }
-        }
-        Ok(())
+        self.prune_ended(vault)
     }
 
     fn release(&self, vault: &Vault, release: &ReleaseLiveOrder) -> Result<()> {
@@ -370,6 +389,38 @@ impl HostLegalCaptures {
         }
         for attempt in &attempts {
             let _ = attempt.wait(vault);
+        }
+        Ok(())
+    }
+
+    fn prune_ended(&self, vault: &Vault) -> Result<()> {
+        let mut registry = self.registry.lock().map_err(|_| poisoned())?;
+        let now = vault.store.clock.now_recorded_at();
+        let ended: Vec<_> = registry
+            .orders
+            .values()
+            .filter(|order| order.completed.load(Ordering::Acquire) || order.ends_at <= now)
+            .cloned()
+            .collect();
+        for order in ended {
+            let attempts = order.attempts()?;
+            // Cancel before inspecting capturing: no attempt may start after
+            // this cut. Keep an aborting capture discoverable by Release,
+            // whose receipt promises that its collectors have returned.
+            for attempt in &attempts {
+                attempt.cancel(if order.completed.load(Ordering::Acquire) {
+                    io::ErrorKind::Interrupted
+                } else {
+                    io::ErrorKind::TimedOut
+                })?;
+            }
+            let mut capturing = false;
+            for attempt in &attempts {
+                capturing |= attempt.state.lock().map_err(|_| poisoned())?.capturing;
+            }
+            if !capturing {
+                registry.orders.remove(&order.key);
+            }
         }
         Ok(())
     }
@@ -404,8 +455,12 @@ impl super::HostLegalConnection {
     ) -> Result<()> {
         let attempt = Arc::new(Attempt::new(request, public, self.stream)?);
         vault.host_legal_captures.register(vault, &attempt)?;
-        attempt.pending()?;
-        attempt.wait(vault)
+        let outcome = attempt.pending().and_then(|()| attempt.wait(vault));
+        if outcome.is_err() {
+            attempt.wait_standing(vault)?;
+        }
+        vault.host_legal_captures.prune_ended(vault)?;
+        outcome
     }
 
     pub(super) fn release_live(mut self, vault: &Vault, release: ReleaseLiveOrder) -> Result<()> {
@@ -450,17 +505,21 @@ impl Vault {
             session_ref: session_ref.to_owned(),
             instance: instance.as_bytes(),
         };
+        self.host_legal_captures.prune_ended(self)?;
         let now = self.store.clock.now_recorded_at();
-        let mut registry = self
+        let registry = self
             .host_legal_captures
             .registry
             .lock()
             .map_err(|_| poisoned())?;
-        registry.orders.retain(|_, order| order.ends_at > now);
         let orders: Vec<_> = registry
             .orders
             .values()
-            .filter(|order| order.key.target == target)
+            .filter(|order| {
+                !order.completed.load(Ordering::Acquire)
+                    && order.ends_at > now
+                    && order.key.target == target
+            })
             .cloned()
             .collect();
         Ok((!orders.is_empty()).then_some(LiveSpillCaptures { orders }))
@@ -584,7 +643,7 @@ impl LiveSpillCaptures {
             })();
             capture.finish(&outcome)?;
             outcome?;
-            vault.host_legal_captures.complete(order, &attempt)?;
+            vault.host_legal_captures.complete(vault, order)?;
         }
         Ok(())
     }
