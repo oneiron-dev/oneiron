@@ -670,6 +670,26 @@ cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
 
+On the house EXL3 server a chat conversation keeps a native session: the
+canonical history stays computed between turns. Once a reply's successor is
+published, the session also prepares the part of the next turn already known,
+the state-only board rendered for that turn's reader, as background work beside
+it (I1 = C). When the next turn arrives, the worker compares its own tokens with
+the prepared ones and reuses only their identical beginning; everything after
+the first token that differs, the fresh recall included, is computed as
+before, and a preparation still running stops. `[models.sessions]` holds the
+policy:
+
+```toml
+[models.sessions]
+prepare_tail = true   # the fixed policy, on by default
+planner = "off"       # "learned": skip a conversation's preparation once its tails gave too little
+```
+
+`GET /v1/ai/status` lists `prepared_tails`: prepares started, ready and
+stopped, publishes skipped by reason, forks that attached to a tail or missed
+it, and the tokens computed, reused and wasted.
+
 ### Managed native-worker accounting
 
 Device tickets and executor activity for a managed native worker use the actual
@@ -1196,6 +1216,19 @@ summary. A mark that fails its pass keeps why and waits for the next
 `self.compact`. A run whose compaction is off answers its marks with
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
+
+A fold can also take one kind of content over a span:
+`self.fold({kind: "repl_output", before: "t40", note?})` (or `from` and
+`through`; with no bound it reaches the current step). Each step in the span
+keeps its program, and with it its speech calls; its console shows one stub
+in place of the output: `⟨f3 · repl_output folded⟩`, the output's read
+handle, a read handle to each stored result the output names, and the ids it
+names. The engine writes these stubs from the steps' outputs, with no model
+call. A kind mark lands in the same batch as every other mark, and a batch of
+kind marks alone lands at once. A folded output is never read into the
+request, so it no longer counts against the window. `self.unfold({fold})`
+appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
+fold may lie over a whole-step fold; that fold still hides its steps.
 
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
