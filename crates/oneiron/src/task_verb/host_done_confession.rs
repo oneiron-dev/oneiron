@@ -99,10 +99,13 @@ pub(crate) fn host_done_confession_in_txn(
     {
         return Ok(None);
     }
-    Ok(Some(AttemptConfession {
+    let confession = AttemptConfession {
         attempt: record.id,
         subject: context.subject,
         type_ref: context.type_ref.clone(),
         objectives,
-    }))
+    };
+    Ok(crate::self_heal::audit::validate_confession(&confession)
+        .is_ok()
+        .then_some(confession))
 }
