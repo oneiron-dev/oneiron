@@ -296,6 +296,23 @@ pub(crate) async fn context_board_hydrate(
     ),
     EnvelopedApiError,
 > {
+    let (served, response, _) = hydrate_inner(auth, State(server), payload, false).await?;
+    Ok((served, response))
+}
+
+async fn hydrate_inner(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ContextBoardRequest>, JsonRejection>,
+    defer_rider_ack: bool,
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        Json<ContextBoardResponse>,
+        Option<ChatRiderAck>,
+    ),
+    EnvelopedApiError,
+> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
@@ -651,6 +668,7 @@ pub(crate) async fn context_board_hydrate(
         .collect();
     delivered.extend(hits_of(response.pack.as_ref()));
     delivered.extend(parts.named.iter().copied());
+    let mut rider_key = None;
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads
             .observe_rows(&read, &delivered)
@@ -665,9 +683,13 @@ pub(crate) async fn context_board_hydrate(
             reads.served_on_board(&row.id, tier, row.hook.as_deref());
         }
         reads.observe_pack_inventory(&installed_packs);
-        // The response is final: the rider it carries is delivered, and a
-        // committed prefix now holds the current connector state.
-        if prefix_committed {
+        // Chat defers only the rider's acknowledgement until its answer
+        // admits this board. Other board callers deliver it here as before.
+        if defer_rider_ack {
+            rider_key = session_id
+                .as_deref()
+                .map(|session| memories_cursor_key(&server.vault, caller, session));
+        } else if prefix_committed {
             reads.keyframe_committed(&changed_line);
         } else {
             reads.acknowledge(&changed_line);
@@ -719,6 +741,10 @@ pub(crate) async fn context_board_hydrate(
             sources: standing_claims,
         }),
         Json(response),
+        rider_key.map(|key| ChatRiderAck {
+            key,
+            line: changed_line,
+        }),
     ))
 }
 
@@ -835,6 +861,23 @@ pub(crate) struct ChatBoard {
     pub(crate) context: Option<ChatContextCapture>,
     /// What each section of `block` was read from (DESIGN-V2 R2).
     pub(crate) sections: Vec<BoardSectionSource>,
+    /// The rider's delivery, owed only if an admitted answer carries this board.
+    pub(crate) rider_ack: Option<ChatRiderAck>,
+}
+
+pub(crate) struct ChatRiderAck {
+    key: String,
+    line: oneiron::context_board::ChangedLine,
+}
+
+impl ChatRiderAck {
+    pub(crate) async fn commit(self, server: &SyncServer) {
+        let mut store = server.memories_cursors.lock().await;
+        // Use the resolved session only; never create or select a new one.
+        if let Some(reads) = store.read_sets.get_mut(&self.key) {
+            reads.acknowledge(&self.line);
+        }
+    }
 }
 
 /// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
@@ -851,6 +894,27 @@ pub(crate) async fn chat_board(
     reader: oneiron::EntityId,
     query: &str,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
+    chat_board_inner(server, auth, conversation, reader, query, false).await
+}
+
+pub(crate) async fn chat_board_deferred(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    chat_board_inner(server, auth, conversation, reader, query, true).await
+}
+
+async fn chat_board_inner(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+    defer_rider_ack: bool,
+) -> Result<ChatBoard, axum::http::StatusCode> {
     let request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
             "conversation_id": conversation.map(|id| id.to_hex()),
@@ -860,14 +924,19 @@ pub(crate) async fn chat_board(
         },
     }))
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let (served, Json(context)) =
-        context_board_hydrate(auth, State(Arc::clone(server)), Ok(Json(request)))
-            .await
-            .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
+    let (served, Json(context), rider_ack) = hydrate_inner(
+        auth,
+        State(Arc::clone(server)),
+        Ok(Json(request)),
+        defer_rider_ack,
+    )
+    .await
+    .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
     Ok(ChatBoard {
         block: context.board,
         rows: served.0.rows,
         context: context.chat_context,
         sections: context.chat_sources,
+        rider_ack,
     })
 }

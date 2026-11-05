@@ -308,7 +308,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // deliveries. FIX 8133: the newcomer mark still precedes this read; FIX
     // 6794: the board still rides the dynamic tail, before anything the turn
     // witnesses.
-    let board = recall::turn_board(
+    let mut board = recall::turn_board(
         server,
         auth,
         &request.text,
@@ -333,6 +333,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let read_board = board.as_ref().ok().and_then(Option::as_ref);
     let board_view = read_board.map(|board| (board.block.clone(), board.sections.clone()));
     let board_rows = read_board.map(|board| board.rows.clone());
+    let rider_ack = board
+        .as_mut()
+        .ok()
+        .and_then(Option::as_mut)
+        .and_then(|board| board.rider_ack.take());
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
@@ -524,6 +529,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
             refused(StatusCode::PAYMENT_REQUIRED, "turn_not_admitted", reason)
         }
     })?;
+    if recalled && let Some(rider_ack) = rider_ack {
+        rider_ack.commit(server).await;
+    }
     let answering = after_turn(hooks_vault, generating, answering);
     // FIX 6921: the answer's context records, kept once it is handed on.
     let answering = crate::api::context_board::record_chat_answer(
