@@ -71,9 +71,13 @@ fn whole_pads_in(
     {
         return Ok(None);
     }
-    Ok(SealedKeyPads::from_bytes(&bytes)
-        .ok()
-        .filter(|pads| pads.generation() == entry.generation))
+    match SealedKeyPads::from_bytes(&bytes) {
+        Ok(pads) => Ok(Some(pads).filter(|pads| pads.generation() == entry.generation)),
+        Err(error) if matches!(&error, crate::Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) => {
+            Err(error)
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 /// The entry of `generation` when the home holds its pad object whole in
