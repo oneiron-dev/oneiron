@@ -10,6 +10,10 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v26 (FIX 10898): attempt record v4 requires each requeue-history entry
+/// to carry its failure count and latest instant. No old-format reader or
+/// migration is provided.
+///
 /// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
 /// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
 /// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is
@@ -127,7 +131,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 25;
+pub const STORAGE_ABI_VERSION: u16 = 26;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
