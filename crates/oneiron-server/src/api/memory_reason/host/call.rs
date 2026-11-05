@@ -169,9 +169,19 @@ impl Backend {
             kept: Arc::clone(&kept),
             request: Arc::clone(&self.receipts),
         });
+        let available = self.meter.read();
+        let mut reserve_units = self.meter.reserve_units();
+        if let Some(budget) = budget {
+            reserve_units = reserve_units.min(budget);
+        }
+        if available.remaining_units > 0 {
+            reserve_units = reserve_units.min(available.remaining_units);
+        }
+        // At zero remaining, keep native paid admission rejecting a positive
+        // reservation; a zero reservation would evade the exhausted line.
         let declaration = RunDeclaration::undeclared(BudgetLine {
-            limit_units: self.meter.read().limit_units,
-            reserve_units: self.meter.reserve_units(),
+            limit_units: available.limit_units,
+            reserve_units,
             unit: LeaseUnit::tokens(),
         });
         // The capture lives behind the terminal privacy check, not outside it.
