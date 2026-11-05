@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/authority/agent_grant_act.rs` | src | s | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
+| `src/authority/agent_grant_act.rs` | src | m | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
 | `src/authority/agent_grant_act/git_push.rs` | src | s | 6 crate-vis | — | The owner's mint of a `git_push` Grant in his one signed Grant act (FIX 6867, G1-PUSH): the same… |
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
