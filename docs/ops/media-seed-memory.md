@@ -17,9 +17,9 @@ using the concrete `InputKind` size. The native pipeline's copies of the
 borrowed fields are outside these charges. The returned seeds and their guards
 keep the same drop order.
 
-The context-pack charge also includes the returned embedding-vector backing,
-using each vector's actual capacity and `size_of::<f32>()`. The MCP and
-core-query vector backings are not covered by their current charges.
+All three consumers' initial charges also include the returned embedding-vector
+backing, using each vector's actual capacity and `size_of::<f32>()`, once on the
+same lease as the other retained seed storage.
 
 The MCP door keeps its original fallback and error handling. It drains the
 returned seeds into the existing `EmbeddedMediaSeed` result vector, keeping the
@@ -30,9 +30,10 @@ The MCP consumer separately records the returned `Vec<EmbeddedMediaSeed>`
 backing, using its actual capacity and element size. Its local charge stays
 through native reads and the existing observation wait. That buffer drops before
 its charge, including errors, unwinding and cancellation of the consumer future.
-The same consumer charge also counts each seed's owned space-string capacity
-and kind-filter-vector capacity, once. The kind-filter backing uses its actual
-capacity and `size_of::<InputKind>()`. Explicit media decoding clones these
+The same consumer charge also counts each seed's owned space-string capacity,
+embedding-vector capacity and kind-filter-vector capacity, once. The vector
+backings use their actual capacities and `size_of::<f32>()` or
+`size_of::<InputKind>()`, respectively. Explicit media decoding clones these
 fields; the text-slot space is decoded into an owned string. These allocations
 move into the consumed seeds without adding another charge for their headers.
 This is adoption at the consumer; construction and return-time storage are not
@@ -47,8 +48,8 @@ new configuration field is introduced.
 
 This is post-allocation accounting, not admission before allocation. It adds
 no memory-admission wait, refusal, configured limit, timeout or sparse fallback.
-Provider internals, the MCP and core-query embedding-vector backings, other
-query storage and a full working-set bound remain outside these charges. This does not prove queue
-fairness, pre-growth admission, runtime performance or a
-machine-derived embedding-width floor. The shared embedding producer, paid-call
+Provider internals, native pipeline copies, construction and return gaps,
+other query storage and a full working-set bound remain outside these charges.
+This does not prove queue fairness, pre-growth admission, runtime performance
+or a machine-derived embedding-width floor. The shared embedding producer, paid-call
 policy, authority, results and receipts are unchanged.
