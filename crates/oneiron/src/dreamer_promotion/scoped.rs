@@ -563,6 +563,7 @@ fn attach_ref(
             actor_class: run.agent_actor.actor_class(),
             learned_at: run.now_ms,
             explicit_prior: None,
+            scope_project: None,
             imported_evidence: None,
             generated_evidence: Some(super::resolved_outputs::with_answers(
                 derived_evidence,
