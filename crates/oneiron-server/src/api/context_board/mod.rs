@@ -619,6 +619,9 @@ pub(crate) async fn context_board_hydrate(
         if let Some(run) = runs.get_mut(&key) {
             if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
                 let mut candidate = run.render.clone();
+                // The prefix roster re-lays out only here, at an epoch
+                // boundary: the `people` share of the agent's layout.
+                candidate.set_people_budget_tok(layout.layout.share_tok("people", cap_tok));
                 let card = if run.emitted_epoch.is_none() {
                     candidate.turn_one(&server.vault, &run.state, &observed_reads, Some(&people))
                 } else {

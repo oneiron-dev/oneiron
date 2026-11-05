@@ -344,7 +344,7 @@ pub(super) fn run_board_sections(
         .map_err(mcp_facade_error)?;
     let tasks_section = oneiron::context_board::assemble_tasks_section(
         &tasks,
-        oneiron::context_board::fanout_action_rows(&launches),
+        oneiron::context_board::fanout_action_rows_for(&launches, layout, budget.cap_tok),
     )
     .map_err(mcp_board_frame_error)?
     .with_fold_summary(tasks_summary)

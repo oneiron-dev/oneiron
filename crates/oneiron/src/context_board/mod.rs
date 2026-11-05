@@ -13,7 +13,7 @@ pub use children::{
 mod explain;
 mod fanout;
 pub use explain::{GateExplanation, MemoryExplanation};
-pub use fanout::fanout_action_rows;
+pub use fanout::{fanout_action_rows, fanout_action_rows_for};
 mod people;
 pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,

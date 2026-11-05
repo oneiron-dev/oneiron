@@ -9,7 +9,8 @@ harness sets the board cap; the agent lays its board out inside it.
 One layout per actor (`context_board.layout.v1:`, keyed by the actor id). It
 names sections by their layout key: the first word of the section's name,
 lower case (`tasks`, `memories`, `worlds`, `skills`, `inbox`, `scratchpad`,
-`readers`, `packs`, or a plugin section's first name word). Every world's
+`readers`, `packs`, `room`, `people` for the prefix roster, or a plugin
+section's first name word). Every world's
 MEMORIES section shares the one `memories` layout.
 
 Each section may have:
@@ -105,6 +106,13 @@ default layout, else the engine's own sizing of every section.
   the 100-row cap. An explicit per-request `tasks_budget_tok` still wins.
 - WORLDS and INBOX: a share lifts their 16-row producer caps to the share's
   token count; the frame then fits the rows to the share exactly.
+- TASKS fan-out rows: a TASKS share lifts their 8-row cap the same way.
+- ROOM: ROOM is pinned and takes no fold or fit, but a `room` share lifts
+  the `invite?:` hint's 5-person cap.
+- PEOPLE: the cached prefix's people roster, 512 tokens by default, takes a
+  `people` share of the cap. The prefix re-lays out only at an epoch
+  boundary (turn one or a fold of the self brief), so a `people` change
+  waits for the next boundary and never breaks the cached prefix between.
 - Every other section: the frame fits its rows to the share, ending with an
   additive `+N more` row.
 
@@ -115,7 +123,5 @@ sections the layout folded or fitted.
 
 - An owner override of one agent's layout alone (the override applies to
   every agent).
-- Share-driven sizes for the ROOM invite hints, the TASKS fan-out rows and
-  the PEOPLE prefix roster (the prefix re-lays out at the epoch boundary).
 - Filters beyond TASKS, and the connector board's TASKS share, filter and
   full fold counts (its fold line counts its scoped rows only).
