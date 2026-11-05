@@ -395,12 +395,22 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
                 )
             }
         };
+        // A new document asserts its initial gitlink mode, not an equal-state edit.
+        // Replays reproduce that assertion and still pass the native receipt checks.
         let metadata_edit = if metadata_edit.is_none()
             && state.expected.mode == Some(MODE_GITLINK)
             && state.replacement.mode == Some(MODE_GITLINK)
-            && vault.code_document_frontier(&scope, &file.path)?.is_none()
         {
-            Some(state.clone())
+            let initial_mode = CodeFileMetadataEdit::between(
+                &file.path,
+                CodeFilePresence::absent(),
+                CodeFilePresence::file(MODE_GITLINK),
+            );
+            let initializes = match vault.code_file_edit_receipt(row.file_operation(index)?)? {
+                Some(receipt) => receipt.metadata_edit.as_ref() == Some(&initial_mode),
+                None => vault.code_document_frontier(&scope, &file.path)?.is_none(),
+            };
+            initializes.then_some(initial_mode)
         } else {
             metadata_edit
         };

@@ -171,7 +171,8 @@ pub(super) fn capture_repo_snapshot(
         total_bytes: 0,
     };
     let gitlinks = gitlink_index_entries(repo_root)?;
-    let mut linked_paths: BTreeSet<_> = gitlinks.keys().cloned().collect();
+    let indexed_paths: BTreeSet<_> = gitlinks.keys().cloned().collect();
+    let mut linked_paths = indexed_paths.clone();
     if let Some(head) = &head {
         linked_paths.extend(gitlink_paths_at(repo_root, head)?);
     }
@@ -184,6 +185,7 @@ pub(super) fn capture_repo_snapshot(
         repo_root,
         repo_root,
         &custody,
+        &indexed_paths,
         &linked_paths,
         &mut entries,
         &mut stats,
@@ -204,7 +206,8 @@ fn collect_snapshot_entries(
     repo_root: &Path,
     dir: &Path,
     custody: &SnapshotCustody,
-    gitlinks: &BTreeSet<String>,
+    indexed_paths: &BTreeSet<String>,
+    linked_paths: &BTreeSet<String>,
     entries: &mut Vec<StoredRepoSnapshotEntry>,
     stats: &mut SnapshotStats,
 ) -> Result<()> {
@@ -215,20 +218,26 @@ fn collect_snapshot_entries(
             continue;
         }
         let path = child.path();
-        if path
-            .strip_prefix(repo_root)
-            .ok()
-            .and_then(Path::to_str)
-            .is_some_and(|relative| gitlinks.contains(relative))
-        {
+        let relative = repo_relative_path(repo_root, &path)?;
+        if indexed_paths.contains(&relative) {
             continue;
         }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
-            collect_snapshot_entries(repo_root, &path, custody, gitlinks, entries, stats)?;
+            if linked_paths.contains(&relative) || nested_repository(&path)? {
+                continue;
+            }
+            collect_snapshot_entries(
+                repo_root,
+                &path,
+                custody,
+                indexed_paths,
+                linked_paths,
+                entries,
+                stats,
+            )?;
             continue;
         }
-        let relative = repo_relative_path(repo_root, &path)?;
         if metadata.file_type().is_symlink() {
             let target = fs::read_link(&path)?;
             let target = path_arg(&target)?;
@@ -286,7 +295,15 @@ pub(super) fn restore_repo_snapshot(
     let mut current = BTreeSet::new();
     let mut dirs = Vec::new();
     let current_gitlinks = gitlink_index_entries(repo_root)?;
-    let mut linked_paths: BTreeSet<_> = current_gitlinks.keys().cloned().collect();
+    let mut opaque_paths: BTreeSet<_> = current_gitlinks.keys().cloned().collect();
+    opaque_paths.extend(
+        snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == StoredRepoSnapshotEntryKind::Gitlink)
+            .map(|entry| entry.path.clone()),
+    );
+    let mut linked_paths = opaque_paths.clone();
     if let Some(head) = git_output_optional(
         repo_root,
         &[
@@ -300,15 +317,15 @@ pub(super) fn restore_repo_snapshot(
             &utf8_trimmed(head, "git HEAD must be UTF-8")?,
         )?);
     }
-    linked_paths.extend(
-        snapshot
-            .entries
-            .iter()
-            .filter(|entry| entry.kind == StoredRepoSnapshotEntryKind::Gitlink)
-            .map(|entry| entry.path.clone()),
-    );
     let removed_links: Vec<_> = linked_paths.difference(&desired).cloned().collect();
-    collect_restore_inventory(repo_root, repo_root, &linked_paths, &mut current, &mut dirs)?;
+    collect_restore_inventory(
+        repo_root,
+        repo_root,
+        &opaque_paths,
+        &linked_paths,
+        &mut current,
+        &mut dirs,
+    )?;
 
     // The paths this restore changes: only their index entries are reset.
     let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
@@ -543,7 +560,8 @@ pub(super) fn snapshot_recorded_for_repo(
 fn collect_restore_inventory(
     repo_root: &Path,
     dir: &Path,
-    gitlinks: &BTreeSet<String>,
+    opaque_paths: &BTreeSet<String>,
+    linked_paths: &BTreeSet<String>,
     files: &mut BTreeSet<String>,
     dirs: &mut Vec<PathBuf>,
 ) -> Result<()> {
@@ -554,20 +572,19 @@ fn collect_restore_inventory(
             continue;
         }
         let path = child.path();
-        if path
-            .strip_prefix(repo_root)
-            .ok()
-            .and_then(Path::to_str)
-            .is_some_and(|relative| gitlinks.contains(relative))
-        {
+        let relative = repo_relative_path(repo_root, &path)?;
+        if opaque_paths.contains(&relative) {
             continue;
         }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
+            if linked_paths.contains(&relative) || nested_repository(&path)? {
+                continue;
+            }
             dirs.push(path.clone());
-            collect_restore_inventory(repo_root, &path, gitlinks, files, dirs)?;
+            collect_restore_inventory(repo_root, &path, opaque_paths, linked_paths, files, dirs)?;
         } else if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-            files.insert(repo_relative_path(repo_root, &path)?);
+            files.insert(relative);
         } else {
             return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo restore supports only files, directories, and symlinks",
@@ -575,6 +592,15 @@ fn collect_restore_inventory(
         }
     }
     Ok(())
+}
+
+/// A nested checkout stays opaque even after its outer gitlink is removed.
+fn nested_repository(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path.join(".git")) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn remove_empty_dirs(mut dirs: Vec<PathBuf>) -> Result<()> {
