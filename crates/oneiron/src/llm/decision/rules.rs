@@ -9,7 +9,10 @@
 
 use std::sync::Arc;
 
-use super::ladder::{DecisionCall, DecisionProvider, ProviderDecision, validate_pin};
+use super::ladder::{
+    CapturedDecision, CapturedDecisionPack, DecisionCall, DecisionCallContext, DecisionPack,
+    DecisionProvider, DecisionReadOutcome, ProviderDecision, validate_pin,
+};
 use super::types::invalid;
 use super::{
     AnswerActor, AnswerContract, DecisionAnswer, DecisionAsk, DecisionQuestion, DecisionRung,
@@ -230,6 +233,33 @@ impl DecisionProvider for HostRuleProvider {
                 person: None,
                 served: None,
             },
+        })
+    }
+
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        Some(CapturedDecision {
+            result: self.decide(call).map(DecisionReadOutcome::Answered),
+            receipts: Vec::new(),
+        })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        Some(CapturedDecisionPack {
+            result: self.decide_pack(pack).map(|answers| {
+                answers
+                    .into_iter()
+                    .map(DecisionReadOutcome::Answered)
+                    .collect()
+            }),
+            receipts: Vec::new(),
         })
     }
 

@@ -9560,7 +9560,7 @@ class PairedReading(TypedDict):
     question: str
     question_version: int
     probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
+StopCause = Literal["done", "deadline", "generation_allowance", "provider_failure"]
 ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
 class ReasoningNotNeeded(TypedDict):
     state: Literal["not_needed"]
@@ -10430,7 +10430,7 @@ class DecisionAnswerPoint(TypedDict):
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
 DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "generation_allowance", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
