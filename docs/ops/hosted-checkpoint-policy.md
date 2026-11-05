@@ -23,7 +23,8 @@ No supervisor or customer sends seed material through these arguments.
 
 A fresh Hosted bootstrap records its root as `CloudCustodial` with `ROLE_CLOUD`.
 An explicitly hosted start must have a usable issuer before workers start or
-ready is signaled. A missing issuer returns the existing typed error, rather
+ready is signaled. This includes ordinary Hosted serving as well as managed
+startup. Hosted issuer provisioning does not require a customer's auth secret. A missing issuer returns the existing typed error, rather
 than serving rootless as normal hosted checkpoint service. A normal hosted
 issuer must also be eligible under the effective checkpoint policy. This does
 not relabel an existing Software root, change a pairing pin, or reseed authority.
