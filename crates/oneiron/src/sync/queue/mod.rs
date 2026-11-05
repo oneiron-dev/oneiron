@@ -97,7 +97,7 @@ pub(crate) use self::scrub::{
 };
 pub(crate) use self::seq::{
     clear_embed_job_home_claim_copy_in_txn, delete_embed_job_in_txn, push_delete_bearing_in_txn,
-    push_embed_job_in_txn,
+    push_embed_job_in_txn, retain_embed_job_home_claim_copy_in_txn,
 };
 
 #[cfg(test)]

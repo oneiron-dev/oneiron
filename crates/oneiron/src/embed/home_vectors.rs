@@ -2,6 +2,7 @@
 //! never through a canonical window's retained operation history.
 
 mod pending;
+pub(crate) mod retained;
 mod sealed;
 pub(crate) mod source;
 
