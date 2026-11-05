@@ -4,7 +4,10 @@
 //! native tokens are priced at the model its launch plan resolved, a pinned
 //! model included, when the launch carries one (FIX 3043); else at the model
 //! that role binds: the manifest's pin at the slot's route, else the role's
-//! seat. A plan's model with no registry row quotes nothing; it never falls
+//! seat. An unregistered seat with no manifest is priced at its sole engine
+//! model only when every rung and every possible owner fallback uses that
+//! model; a multi-model seat stays unknown. A plan's model with no registry
+//! row quotes nothing; it never falls
 //! back to the role's price. An AGENT_DEF names no model or route of its
 //! own: its tier is recorded on the call and never picks another model. The
 //! rate is the model's highest catalog rate per token, so the dollar figure
@@ -95,6 +98,25 @@ impl LaunchUsdPrices for LaunchUsdQuote {
                 ModelRole::GenerativeReasoner,
                 &self.seat,
             ) {
+                Ok(model)
+                    if model == self.seat
+                        && matches!(vault.model_manifest_in_txn(txn), Ok(None))
+                        && matches!(vault.model_registry_row_in_txn(txn, &model), Ok(None)) =>
+                {
+                    let Some(runtime) = self.runtime.upgrade() else {
+                        return Ok(None);
+                    };
+                    let Some(seat) = runtime
+                        .seat(ModelRole::GenerativeReasoner)
+                        .filter(|seat| seat.model == self.seat)
+                    else {
+                        return Ok(None);
+                    };
+                    let Some(model) = seat.ladder.single_reachable_model() else {
+                        return Ok(None);
+                    };
+                    model
+                }
                 Ok(model) => model,
                 Err(_) => return Ok(None),
             },
