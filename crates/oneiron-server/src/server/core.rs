@@ -334,7 +334,7 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() || session_id.len() > 256 {
+        if state.self_ref != actor || session_id.is_empty() {
             return Err(oneiron::Error::InvariantViolation(
                 "self brief actor or session mismatch",
             ));
