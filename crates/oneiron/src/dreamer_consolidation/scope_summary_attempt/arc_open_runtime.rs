@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::super::executor::{ConsolidationDecisions, Decider, ScopedRead};
 use super::super::roles::{DREAMER_VERDICT_ROLE, RoleCall, bind_reasoning};
+use super::super::settle::decision_pages::measure_state;
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_open_backend::FreshBackend;
@@ -102,6 +103,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 Ok(Some(pack)) => pack,
                 _ => continue,
             };
+            measure_state(ctx.vault, &pack.state);
             let mut labels = pack.labels;
             for question in decisions
                 .ladder

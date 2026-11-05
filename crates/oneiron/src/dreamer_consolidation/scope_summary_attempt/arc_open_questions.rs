@@ -1,11 +1,10 @@
 //! Typed Arc line-versus-claim questions over one complete narrative input.
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
-use super::super::support::invalid_consolidation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::model_decision::catalogue::ARC_OPEN_TURN;
-use crate::model_decision::{AnswerContract, DecisionQuestion, MAX_DECISION_STATE_BYTES};
+use crate::model_decision::{AnswerContract, DecisionQuestion};
 
 pub(super) struct OpenQuestion {
     pub(super) turn: EntityId,
@@ -15,7 +14,7 @@ pub(super) struct OpenQuestion {
 }
 
 impl OpenQuestion {
-    /// An oversized whole context remains the narrative reader's; no value is cut.
+    /// The complete input, without cutting values to a generic state-size default.
     pub(super) fn of(
         wording: &str,
         work: &[u8],
@@ -37,11 +36,6 @@ impl OpenQuestion {
             "input": input,
             "opening": {"question": question_label.to_string(), "turn": turn_label.to_string()},
         });
-        let bytes = serde_json::to_vec(&state)
-            .map_err(|_| invalid_consolidation("arc opening input encoding"))?;
-        if bytes.len() > MAX_DECISION_STATE_BYTES {
-            return Ok(None);
-        }
         Ok(Some(Self {
             turn,
             question,
