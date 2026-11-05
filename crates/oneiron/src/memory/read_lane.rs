@@ -580,6 +580,7 @@ impl Memory<'_> {
         row: ReadRow,
         mode: ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
+        let read_candidate = self.read_world_candidate(lane, txn, &row);
         let Some(body) = row.body else {
             return Ok(None);
         };
@@ -612,7 +613,7 @@ impl Memory<'_> {
         {
             super::message_parts::withhold_modified_reasoning_parts(&stored_body, value);
         }
-        Ok(Some(EntityView {
+        let view = EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
             kind: kind_string_for_type(row.entity_type),
@@ -621,7 +622,11 @@ impl Memory<'_> {
             learned_at: row.learned_at,
             made_by: self.made_by_in_lane(lane, txn, &row.id)?,
             body,
-        }))
+        };
+        if let Some(candidate) = read_candidate {
+            candidate.served();
+        }
+        Ok(Some(view))
     }
 }
 
