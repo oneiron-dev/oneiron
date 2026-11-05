@@ -4383,7 +4383,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/intent/projection.rs` | src | s | 6 crate-vis | — | The receive seams of a projection-bound push (FIX 7608 slice 2b-ii-B2) |
 | `src/origin/smart_http/intent/push_admission.rs` | src | s | 2 crate-vis | — | The push authority on a receive-pack intent (FIX 6867, G1-PUSH): the final writer takes the stamp's… |
 | `src/origin/smart_http/intent/record.rs` | src | s | 1 crate-vis | — | The receive-pack intent's recorder: the one write that journals an admitted push while pre-receive still… |
-| `src/origin/smart_http/intent_erase.rs` | src | s | 2 crate-vis | — | An erased actor out of the receive-pack intent journal (FIX 3877) |
+| `src/origin/smart_http/intent_erase.rs` | src | s | 3 crate-vis | — | An erased actor out of the receive-pack intent journal (FIX 3877) |
 | `src/origin/smart_http/intent_recovery_tests.rs` | test | m | — | — | Crash/recovery contract: pre-outcome crash, declined effects, partial resume, supersede, delete-only… |
 | `src/origin/smart_http/landing.rs` | src | m | 2 struct · 1 enum · 3 fn | ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding | The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping |
 | `src/origin/smart_http/landing_lfs.rs` | src | s | 3 crate-vis | — | LFS pointer admission and the per-ref tree walk that attaches pointers to the refs that carry them |
