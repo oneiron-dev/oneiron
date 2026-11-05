@@ -19,6 +19,8 @@ use std::rc::Rc;
 
 mod authorize;
 mod component;
+mod view;
+pub(crate) use view::visible_project_in_read;
 
 #[cfg(test)]
 thread_local! {

@@ -99,7 +99,7 @@ pub(crate) use leader_chat::{
 };
 pub(crate) use proof::validate_transition as validate_project_transition;
 pub use read::{ProjectQuarantine, ProjectVerdict};
-pub(crate) use read::{ProjectReader, room_facets_in};
+pub(crate) use read::{ProjectReader, room_facets_in, visible_project_in_read};
 pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
@@ -996,10 +996,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: EntityId,
     ) -> Result<Option<ProjectRecord>> {
-        match ProjectReader::new(&self.store, txn, self.privacy_posture())? {
-            Some(reader) => reader.visible(id),
-            None => Ok(None),
-        }
+        visible_project_in_read(&self.store.read(), txn, self.privacy_posture(), id)
     }
     pub(crate) fn project_in_txn(
         &self,
