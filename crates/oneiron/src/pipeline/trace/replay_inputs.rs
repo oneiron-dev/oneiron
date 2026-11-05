@@ -18,29 +18,11 @@ pub(in crate::pipeline) struct ReplayInputsMemory {
 }
 
 impl ReplayInputsMemory {
-    pub(in crate::pipeline) fn track_config(&mut self, config: &serde_json::Value) {
-        let bytes = replay_config_bytes(config);
+    pub(in crate::pipeline) fn track_config(&mut self, inputs: &RetrievalReplayInputs) {
+        let bytes = inputs.known_config_backing_bytes();
         self.lease.materialized(0, bytes);
         self.lease.shrink(self.config_bytes);
         self.config_bytes = bytes;
-    }
-}
-
-// Object map storage and number internals are not measured here.
-fn replay_config_bytes(value: &serde_json::Value) -> u64 {
-    match value {
-        serde_json::Value::String(value) => value.capacity() as u64,
-        serde_json::Value::Array(values) => values.iter().fold(
-            (values.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
-            |bytes, value| bytes.saturating_add(replay_config_bytes(value)),
-        ),
-        serde_json::Value::Object(values) => values.iter().fold(0_u64, |bytes, (key, value)| {
-            bytes
-                .saturating_add(key.capacity() as u64)
-                .saturating_add(replay_config_bytes(value))
-        }),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
     }
 }
 
@@ -416,7 +398,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         "kinds": kinds.unwrap_or_default(),
     });
     if let Some(memory) = replay_inputs_memory.as_mut() {
-        memory.track_config(&inputs.config);
+        memory.track_config(&inputs);
     }
     inputs
 }

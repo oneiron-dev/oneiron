@@ -102,15 +102,19 @@ the replaced value drops. It records the new extent before releasing the old
 tracked extent, so repeated patches neither release live backing early nor
 accumulate stale charges. Reference-string charges stay separate within the
 same lease. No config walk or new memory line is added to an unbound capture.
-The detached record clone's config remains separate and uncharged by this owner.
+The detached record clone's config remains separate from this original owner.
 
 The canonical provisional writer separately records those same two reference
-capacities on its deep-cloned record, using the same optional supplied line.
-Its private owner keeps the whole cloned record before that separate lease and
-moves by value into the detached write. Staging consumes the whole owner, so
-neither an unstarted write nor a write error can release the lease before the
-cloned payload. This still covers only those two strings, not the clone's
-config JSON or its other record fields. Existing queue behavior is unchanged.
+capacities and the config's known backing on its deep-cloned record, using the
+same optional supplied line. Both config owners use the replay-data type's
+shared capacity calculation, but each measures its own actual buffers after
+construction or cloning. The cloned config's charge does not inherit the
+original's capacities or lease. Its private owner keeps the whole cloned
+record before that separate lease and moves by value into the detached write.
+Staging consumes the whole owner, so neither an unstarted write nor a write
+error can release the lease before the cloned payload. The clone's object-map
+storage, number internals and other record fields remain outside that charge.
+Existing queue behavior is unchanged.
 
 The detached clone also records the actual slot capacities of its signal,
 result-ID and score-breakdown vectors on that same private lease. Each uses

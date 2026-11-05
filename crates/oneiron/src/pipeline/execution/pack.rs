@@ -447,7 +447,7 @@ impl PipelineBuilder<'_> {
                 inputs.config["retrieval_policy"] = serde_json::to_value(&*policy)
                     .map_err(|_| Error::InvariantViolation("retrieval policy replay encode"))?;
                 if let Some(memory) = replay_inputs_memory.as_mut() {
-                    memory.track_config(&inputs.config);
+                    memory.track_config(inputs);
                 }
             }
             if let Some(trace) = retrieval_trace.as_mut() {
