@@ -77,7 +77,17 @@ impl DeferredBornTouches {
             {
                 continue;
             }
-            let id = born_touch_event_id(touch.id, &row.encode(), &touch.birth)?;
+            let body = crate::claim::decode_claim_body(&row.body, false)?;
+            let claim = CommClaim::from_claim_body(&body)
+                .map_err(super::generic_put_routing::source_event_error)?;
+            let (id, source_position) = touch_event_binding(
+                touch.id,
+                &row.encode(),
+                &touch.birth,
+                &body,
+                &claim.value,
+            )
+            .map_err(super::generic_put_routing::source_event_error)?;
             let mut event = touch.event;
             event.channel_class = event
                 .channel_class
@@ -103,11 +113,13 @@ impl DeferredBornTouches {
                     thread_ref: None,
                     occurred_at,
                     original_head: Some(original_head),
+                    source_position: resident_source,
                     ..
                 }) if party_ref == event.party_ref
                     && channel_class == event.channel_class
                     && occurred_at == event.occurred_at
-                    && original_head == touch.id => {}
+                    && original_head == touch.id
+                    && resident_source == source_position => {}
                 Some(_) => return Err(Error::InvalidClaimBody("comm touch source id collision")),
                 None => {
                     let record = CommRecord::Event {
@@ -120,7 +132,7 @@ impl DeferredBornTouches {
                         occurred_at: event.occurred_at,
                         projected: false,
                         original_head: Some(touch.id),
-                        source_position: None,
+                        source_position,
                     };
                     put_comm_record_in_txn(vault, txn, id, &record)
                         .map_err(super::generic_put_routing::source_event_error)?;
@@ -142,6 +154,7 @@ pub(super) fn adopt_born_touch_head_in_txn(
     source_event_id: EntityId,
     id: EntityId,
     value: &CommClaimValue,
+    source_position: Option<&crate::write_envelope::communication_record::ScopedTouchSource>,
 ) -> CommResult<Option<EntityId>> {
     let row = vault
         .store
@@ -183,7 +196,9 @@ pub(super) fn adopt_born_touch_head_in_txn(
     }
     // A pending source must not adopt a later scope/envelope/header revision
     // merely because that revision still states the same touch value.
-    if born_touch_event_id(id, &row.encode(), &birth)? != source_event_id {
+    let (bound_id, bound_source) =
+        touch_event_binding(id, &row.encode(), &birth, &body, &claim.value)?;
+    if bound_id != source_event_id || bound_source.as_ref() != source_position {
         return Err(CommError::InvalidRecord);
     }
     if !vault
@@ -202,4 +217,36 @@ fn born_touch_event_id(id: EntityId, row: &[u8], birth: &RowBirth) -> Result<Ent
     let birth_bytes = rmp_serde::to_vec_named(birth)
         .map_err(|_| Error::InvariantViolation("comm touch birth encoding failed"))?;
     EntityId::derive(COMM_BORN_TOUCH_EVENT, &[id.as_bytes(), row, &birth_bytes])
+}
+
+fn touch_event_binding(
+    id: EntityId,
+    row: &[u8],
+    birth: &RowBirth,
+    body: &crate::claim::ClaimBody,
+    value: &CommClaimValue,
+) -> CommResult<(
+    EntityId,
+    Option<crate::write_envelope::communication_record::ScopedTouchSource>,
+)> {
+    if body.world.unwrap_or_else(crate::claim::base_world_id) == crate::claim::base_world_id() {
+        return Ok((born_touch_event_id(id, row, birth)?, None));
+    }
+    let CommClaimValue::LastTouch {
+        party_ref,
+        channel_class,
+        occurred_at,
+    } = value
+    else {
+        return Err(CommError::InvalidRecord);
+    };
+    let source = super::scoped_touch::capture_scoped_touch_source(body, row, birth)?;
+    let event = super::scoped_touch::scoped_touch_event_id(
+        id,
+        &source,
+        *party_ref,
+        channel_class,
+        *occurred_at,
+    )?;
+    Ok((event, Some(source)))
 }

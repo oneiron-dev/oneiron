@@ -1,7 +1,9 @@
 # Explicitly born communication touches
 
 A reader-bound or actor-bound batch can project a canonical `comm.last_touch`
-Put with an explicit `RowBirth` without replacing its original claim id.
+Put with an explicit `RowBirth` without replacing its original claim id. It can
+also project one whose only noncanonical context is a non-base world, using
+the scoped source described in `comm-scoped-touch-source.md`.
 
 The batch keeps that Put, its `ClaimOf` edges, and its birth in the ordinary
 native write. Its existing input, caller-envelope, source, policy, actor or
@@ -27,14 +29,16 @@ keep that source record. Retrying an original Put
 still reconciles its current live head even if the source already projected;
 `minted = false` is not used to skip this reconciliation.
 
-This applies only to canonical, explicit-born touches admitted through these
-bound batch paths. Other explicit births, STOPs, thread events, noncanonical
-scope/context, and other unsupported cases retain the fully gated raw path.
-Ordinary no-birth source projection is unchanged.
+This applies only to the canonical and world-only explicit-born touches
+admitted through these bound batch paths. Other explicit births, STOPs,
+thread events, other noncanonical scope/context, and unsupported cases retain
+the fully gated raw path. Ordinary no-birth source creation is unchanged.
+LastTouch slot selection compares the full context for every source, so a
+base event and a world-bearing head cannot supersede each other.
 
 `COMM_RECORD` has the required `original_head` key: an entity id for this
 TouchAsserted case, `nil` otherwise. Its required `source_position` key remains
-`nil` on this canonical path; the scoped source foundation is described in
+`nil` on this canonical path; the scoped source format is described in
 `comm-scoped-touch-source.md`. Deploy matching engine/server binaries
 at the normal authorized release. There is no migration, old-format reader,
 new configuration, policy cap, or numeric default.

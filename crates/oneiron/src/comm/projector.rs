@@ -541,6 +541,7 @@ fn project_event_in_txn(
         rule: *rule,
         source_event_id: event_id,
         original_head,
+        source_position: source_position.as_ref(),
         party_ref,
         channel_class: recipient_class.as_deref(),
         thread_ref: thread_ref.as_deref(),
@@ -589,6 +590,7 @@ fn apply_projector_rule_in_txn(
         rule,
         source_event_id,
         original_head,
+        source_position,
         party_ref,
         channel_class,
         thread_ref: _,
@@ -597,23 +599,18 @@ fn apply_projector_rule_in_txn(
     match rule.action {
         ProjectorAction::UpsertLastTouch => {
             let channel = channel_class.ok_or(CommError::InvalidRecord)?;
-            let active = matching_claims_in_txn(
-                vault,
-                &*wtxn,
-                party_ref,
-                rule.predicate,
-                Some(channel),
-                None,
-                true,
-            )?;
             let value = CommClaimValue::LastTouch {
                 party_ref,
                 channel_class: channel.to_owned(),
                 occurred_at,
             };
+            let expected = super::scoped_touch::touch_slot_body(&value, source_position)?;
+            let active = super::scoped_touch::matching_touch_heads_in_txn(
+                vault, &*wtxn, party_ref, channel, &expected,
+            )?;
             let new_id = if let Some(id) = original_head {
                 let Some(id) = super::born_touch::adopt_born_touch_head_in_txn(
-                    vault, wtxn, source_event_id, id, &value,
+                    vault, wtxn, source_event_id, id, &value, source_position,
                 )? else {
                     return Ok(ProjectorIndexDelta::default());
                 };
