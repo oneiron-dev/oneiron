@@ -121,6 +121,7 @@ pub(super) async fn bind(
         browser: Arc::clone(&browser),
         caller: None,
         listed: Vec::new(),
+        request_observer: None,
     });
     let model_call_backend: ModelCallBackend = {
         let backend = Arc::clone(&backend);
@@ -160,7 +161,8 @@ pub(super) async fn bind(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
                   lease: Option<LiveLeaseState>,
-                  listed: Vec<AgentModel>| {
+                  listed: Vec<AgentModel>,
+                  request_observer: Option<crate::mcp::ReaderRequestObserver>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
@@ -171,6 +173,7 @@ pub(super) async fn bind(
                     browser: Arc::clone(&browser),
                     caller: None,
                     listed,
+                    request_observer,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -203,6 +206,7 @@ pub(super) async fn bind(
                     browser: Arc::clone(&browser),
                     caller: None,
                     listed,
+                    request_observer: None,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -430,6 +434,7 @@ struct CodeModeBackend {
     /// The bound run's actual frozen list. Other backend paths retain
     /// their existing unconstrained routing until they carry one too.
     listed: Vec<AgentModel>,
+    request_observer: Option<crate::mcp::ReaderRequestObserver>,
 }
 
 #[derive(Clone)]
@@ -564,9 +569,21 @@ impl CodeModeBackend {
                 true
             };
             let answered = if seat_bound {
-                call.ladder
-                    .generate_exact_recorded_while(&run, call.request, None, &may_send)
-                    .await
+                if let Some(observer) = &self.request_observer {
+                    call.ladder
+                        .generate_exact_observed_while(
+                            &run,
+                            call.request,
+                            None,
+                            &may_send,
+                            observer.as_ref(),
+                        )
+                        .await
+                } else {
+                    call.ladder
+                        .generate_exact_recorded_while(&run, call.request, None, &may_send)
+                        .await
+                }
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
