@@ -498,5 +498,8 @@ pub(crate) fn erase_actor_in_txn(
             ROOTS.delete(&vault.store, txn, &id)?;
         }
     }
+    // The declared hard-erase scrub also runs for marker-only upgrades and
+    // checkpoint restore, where no active source body reaches the tear doors.
+    bridge::erase_source_bridges_in_txn(vault, txn, actor)?;
     bridge::erase_owner_bridges_in_txn(&vault.store, txn, actor)
 }
