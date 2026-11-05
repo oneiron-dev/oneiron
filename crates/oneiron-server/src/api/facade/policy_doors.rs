@@ -119,6 +119,7 @@ async fn run_action_answer(
                 owner_surface,
                 live_run: None,
                 planner: None,
+                slip_issuer: None,
             },
         )?;
         PolicyActionOutcome::from_dispatch(&dispatch)
