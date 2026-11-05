@@ -69551,6 +69551,12 @@ pub struct MailSourceConnectRequest {
     #[serde(rename = "members", default, skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<String>>,
     #[serde(
+        rename = "for_person",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub for_person: Option<String>,
+    #[serde(
         rename = "channel_identity_ref",
         default,
         skip_serializing_if = "Option::is_none"
