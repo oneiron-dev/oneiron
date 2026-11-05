@@ -8378,7 +8378,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -56115,7 +56115,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/budget/selection.rs",
@@ -76707,7 +76707,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/search.rs",
-     "purpose": "A home search for more hits than one page carries (FIX 8865): the device keeps the caller's whole count and…",
+     "purpose": "A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the…",
      "surface": {
       "crate-vis": 1
      }
@@ -78647,7 +78647,7 @@
       "ResidenceSearchCursor"
      ],
      "path": "src/sync/residence/search.rs",
-     "purpose": "A residence search served in pages (FIX 8865)",
+     "purpose": "A residence search served in pages (FIX 8865, FIX 196), from one final grant-selected ranked list read at…",
      "surface": {
       "const": 1,
       "crate-vis": 1,
@@ -81900,17 +81900,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/training_offer_ask.rs",
      "purpose": "A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SwapAskState",
@@ -83586,7 +83586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault/transactions/write_door.rs",
@@ -84930,7 +84930,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1263
+      "fn": 1264
      }
     },
     {
@@ -86180,6 +86180,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "SkillAdvisoryAskRequest",
       "SkillCapabilityView",
       "SkillCodeAutoInstallRequest",
       "SkillConvertReceipt",
@@ -86214,9 +86215,9 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1,
-      "struct": 25
+      "struct": 26
      }
     },
     {
@@ -89260,7 +89261,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -89655,6 +89656,16 @@
       "crate-vis": 4,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/side_row.rs",
+     "purpose": "Private-world side-table content, bound to the caller's exact row identity",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92173,16 +92184,16 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 143,
+   "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6435,
+   "source_files": 6436,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106420,7 +106431,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1231
+      "fn": 1232
      }
     },
     {
@@ -108173,7 +108184,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1232
+      "fn": 1233
      }
     },
     {
@@ -110651,9 +110662,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/stewardship/draft.rs",
-     "purpose": "One follow-up draft: its call over every eligible source and, when that fails, its rescue over the newest…",
+     "purpose": "Follow-up drafting with destination-bound sources",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/stewardship/draft/fold.rs",
+     "purpose": "Provider-failure-driven evidence splitting and pairwise draft synthesis",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -110673,7 +110694,7 @@
      "path": "src/ai_host/stewardship/sources.rs",
      "purpose": "What each model a follow-up draft goes to may read of its sources (FIX 8714)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -110809,9 +110830,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_pack/parity.rs",
-     "purpose": "The host's Candle-side reproduction of a question head's receipt (FIX 7568), before the head may serve",
+     "purpose": "Reproduce the trainer's question-head probes on the native Candle stack",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/question_evaluation.rs",
+     "purpose": "Held-out measurements for the worker's exported binary question head",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/question_evaluation/calibration.rs",
+     "purpose": "One positive temperature fitted without the held-out answers",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -114109,7 +114150,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -118831,13 +118872,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key/unlocked_open.rs",
      "purpose": "The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -121683,9 +121724,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence.rs",
-     "purpose": "Grant-scoped home-node reads for opened-item devices",
+     "purpose": "Home-node reads for opened-item devices and proved machines",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -121785,7 +121826,7 @@
      "path": "src/livequery/residence/pad_custody.rs",
      "purpose": "`residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -123910,7 +123951,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CallDeadline"
@@ -123918,7 +123959,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7
      }
@@ -125066,7 +125107,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -125077,6 +125118,16 @@
      "purpose": "Bidirectional extraction backbones",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/local/classifier.rs",
+     "purpose": "The frozen binary question head exported by training_pack/worker.py",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -125176,7 +125227,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -127935,7 +127986,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 107,
+     "files": 110,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128313,7 +128364,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -128455,7 +128506,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1545,
+   "source_files": 1549,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -135119,6 +135170,7 @@
       "SiteSkillErrorCode",
       "SiteSkillMatch",
       "SizeRepresents",
+      "SkillAdvisoryAskRequest",
       "SkillAuthoringReceipt",
       "SkillCallInput",
       "SkillCapabilityView",
@@ -135834,7 +135886,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1108,
-      "struct": 3373
+      "struct": 3374
      }
     },
     {

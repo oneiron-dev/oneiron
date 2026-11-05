@@ -733,7 +733,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/vectors_embeddings.rs` | test | s | — | — | Pending-embedding markers, vector fill and vector row codec |
 | `src/batch/thread_claim_index.rs` | src | s | 1 crate-vis | — | Thread claims reuse the existing ClaimOf index at every storage door |
 | `src/batch/types.rs` | src | s | 9 crate-vis | — | — |
-| `src/batch/vad_postcommit.rs` | src | m | 20 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
+| `src/batch/vad_postcommit.rs` | src | m | 21 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/verified_claim_transition.rs` | src | m | 20 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/bin/deck-gate-engine.rs` | src | s | — | — | `deck-gate-engine`: the OF-510 deck gate's engine half with the engine's own Loro body |
@@ -4521,7 +4521,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/authority_tests.rs` | test | m | 1 crate-vis | — | ONE-1388 adapter tests |
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | m | 13 crate-vis | — | — |
-| `src/pipeline/budget/selection.rs` | src | s | 5 crate-vis | — | Critical-first selection of a pack run's scored rows under its existing budgets (FIX 9760): every cut is… |
+| `src/pipeline/budget/selection.rs` | src | m | 5 crate-vis | — | Critical-first selection of a pack run's scored rows under its existing budgets (FIX 9760): every cut is… |
 | `src/pipeline/builder/mod.rs` | src | L | 1 struct · 43 fn · 17 crate-vis | PipelineBuilder | — |
 | `src/pipeline/builder/terminal.rs` | src | s | 5 fn | — | — |
 | `src/pipeline/builder_capture.rs` | src | s | 7 fn · 8 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
@@ -6226,7 +6226,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/pad_custody.rs` | src | m | 2 crate-vis | — | Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine… |
 | `src/sync/client/residence/promoted_pads.rs` | src | s | 5 crate-vis | — | The pads of a promoted window's world (FIX 3789) |
 | `src/sync/client/residence/rpc.rs` | src | m | 8 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
-| `src/sync/client/residence/search.rs` | src | s | 1 crate-vis | — | A home search for more hits than one page carries (FIX 8865): the device keeps the caller's whole count and… |
+| `src/sync/client/residence/search.rs` | src | s | 1 crate-vis | — | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
 | `src/sync/client/residence/search_client.rs` | src | s | 1 fn · 1 crate-vis | — | Home search orchestration |
 | `src/sync/client/residence/windows.rs` | src | m | 3 fn · 2 crate-vis | — | Window promote, retain, and demote lifecycle |
 | `src/sync/client/sync_frames.rs` | src | m | 4 fn · 5 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
@@ -6392,7 +6392,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/policy.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | DeviceSyncPreference | This machine's residence choice: sync every window it may read, or sync what it opened |
 | `src/sync/residence/prune.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
 | `src/sync/residence/recall_scope.rs` | src | s | 1 re-export | — | Resolved recall scope and signing transcript, defined by the recall layer |
-| `src/sync/residence/search.rs` | src | s | 1 struct · 3 fn · 1 const · 1 crate-vis | ResidenceSearchCursor | A residence search served in pages (FIX 8865) |
+| `src/sync/residence/search.rs` | src | s | 1 struct · 3 fn · 1 const · 1 crate-vis | ResidenceSearchCursor | A residence search served in pages (FIX 8865, FIX 196), from one final grant-selected ranked list read at… |
 | `src/sync/residence/tests.rs` | test | m | — | — | — |
 | `src/sync/residence_operation_budgets.rs` | src | s | 1 struct · 1 fn | ResidenceOperationBudgets | Resolved holder-side residence operation budgets |
 | `src/sync/room_facts.rs` | src | L | 16 crate-vis | — | FIX 1794 (OF-522): a room's side rows on the window plane |
@@ -6668,8 +6668,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/tests/mod.rs` | test | s | 1 crate-vis | — | — |
 | `src/task_verb/tests/presence_scan.rs` | test | m | — | — | Task verb tests: Presence paging, scan caps, board-scan resilience and dangling-job rendering |
 | `src/task_verb/tests/support.rs` | test | L | 59 crate-vis | — | Shared fixtures and helpers for the task_verb tests |
-| `src/task_verb/training_offer_ask.rs` | src | m | 16 crate-vis | — | A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856) |
-| `src/task_verb/training_swap_ask.rs` | src | m | 1 struct · 1 enum · 1 fn · 11 crate-vis | SwapAskState, TrainingSwapAskView | A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857) |
+| `src/task_verb/training_offer_ask.rs` | src | L | 17 crate-vis | — | A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856) |
+| `src/task_verb/training_swap_ask.rs` | src | L | 1 struct · 1 enum · 1 fn · 11 crate-vis | SwapAskState, TrainingSwapAskView | A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857) |
 | `src/task_verb/training_swap_ask/question.rs` | src | s | 2 crate-vis | — | What a training swap question says and which results get one: the result in brief, and the expectation and… |
 | `src/task_verb/verb_hook_boundary.rs` | src | L | 1 struct · 25 fn · 1 const · 1 crate-vis | HookSession | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_hook_boundary/session.rs` | src | s | 3 crate-vis | — | The row boundary of a read a run serves in an off-record room (WILL L11-01 S01-2c): the sibling of… |
@@ -6808,7 +6808,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/transactions/sync_state_page.rs` | src | s | 1 fn | — | One page of a host table's rows, read in key order through the generic host door (FIX 10863, FIX 10866): the… |
 | `src/vault/transactions/sync_state_reclaim.rs` | src | s | 1 fn | — | One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no… |
 | `src/vault/transactions/telemetry_if_absent.rs` | src | s | 1 fn | — | A host's telemetry rows put only where none rests (FIX 10300, 9392): a wire window's first call-volume… |
-| `src/vault/transactions/write_door.rs` | src | s | 2 fn · 2 crate-vis | — | The vault's classed write door: one logical write in the single writer's group commit, and the work its… |
+| `src/vault/transactions/write_door.rs` | src | m | 2 fn · 2 crate-vis | — | The vault's classed write door: one logical write in the single writer's group commit, and the work its… |
 | `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
 | `src/vault_cleanup/attempt_retention.rs` | src | m | 3 fn · 13 crate-vis | — | Reversible retention for private queue records; the serialized attempt is never changed |
 | `src/vault_cleanup/cleanup_types.rs` | src | m | 7 struct · 3 enum · 7 fn · 15 const · 18 crate-vis | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture +2 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
@@ -6899,7 +6899,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1263 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1264 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
@@ -6960,7 +6960,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/skill_execution.rs` | src | s | 5 struct · 3 fn | SkillPackCreditRequest, SkillPackOutcomeProjection, SkillPackOutcomeRequest, SkillPackReceipt, SkillPackReceiptRequest | Typed owner observations and reads over the existing pack attribution projector |
 | `src/verbs/skill_fit.rs` | src | s | 1 struct · 1 enum · 1 fn | SkillFitChoice, SkillFitSetRequest | The owner's marketplace skill-fit setting (FIX 11089): the rule fit or the owner-asked fit for ordinary… |
 | `src/verbs/skill_fork.rs` | src | s | 2 fn | — | Skill forks through the one fork law (`fork_skill_record_in_txn`): the owner's, and a caller's own within… |
-| `src/verbs/skills.rs` | src | L | 25 struct · 3 enum · 15 fn · 1 re-export · 2 crate-vis | SkillCapabilityView, SkillCodeAutoInstallRequest, SkillConvertReceipt, SkillConvertRequest, SkillForkLineage, SkillGovernanceSetRequest, SkillGovernanceView, SkillHashRuleRequest +20 | Owner-bound library doors over the existing conversion, lifecycle and admission engines |
+| `src/verbs/skills.rs` | src | L | 26 struct · 3 enum · 16 fn · 1 re-export · 2 crate-vis | SkillAdvisoryAskRequest, SkillCapabilityView, SkillCodeAutoInstallRequest, SkillConvertReceipt, SkillConvertRequest, SkillForkLineage, SkillGovernanceSetRequest, SkillGovernanceView +21 | Owner-bound library doors over the existing conversion, lifecycle and admission engines |
 | `src/verbs/standing.rs` | src | m | 10 struct · 1 enum · 9 fn | AgentDreamingRequest, AgentDreamingSetRequest, AgentDreamingView, DreamingModeInput, OwnStandingBlockRequest, StandingBlockConfigureRequest, StandingBlockEditReceipt, StandingBlockEditRequest +3 | Standing-block configuration, gated self-edits and per-agent dreaming choice (BOARD-04) |
 | `src/verbs/support_grant.rs` | src | m | 7 struct · 6 fn | SupportGrantList, SupportGrantListRequest, SupportGrantMintAnswer, SupportGrantMintRequest, SupportGrantRevokeAnswer, SupportGrantRevokeRequest, SupportGrantView | The inputs and answers of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and… |
 | `src/verbs/sync_quarantine.rs` | src | s | 1 struct · 1 fn | SyncHeldEditEvidence | Owner-only retained held-edit evidence from the sync quarantine |
@@ -7198,7 +7198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/kit/settle.rs` | src | s | 1 crate-vis | — | A world kit's settle (FIX 11977, 12046, 12135, 12136): once a confirm commits, the confirmed kit's pending… |
 | `src/world_keys/kit_piece.rs` | src | s | 3 fn · 4 crate-vis | — | This machine's own kit pieces on the vault handle (FIX 1957, 2063) |
 | `src/world_keys/machine.rs` | src | s | 3 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
-| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 22 re-export · 24 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 22 re-export · 25 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `src/world_keys/owner_signing.rs` | src | s | 1 struct · 4 fn | OwnerRootSigner | This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key… |
 | `src/world_keys/owner_work/diagnostics.rs` | src | m | 8 struct · 8 enum · 3 fn · 5 crate-vis | BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead, OwnerWorkDiagnostics, PublicationDiagnostics +8 | What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)… |
 | `src/world_keys/owner_work/diagnostics/key_plan.rs` | src | s | 2 crate-vis | — | A world's keys and its ensure step on their executor, through the holder's own read checks and the writer's… |
@@ -7229,6 +7229,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/root_work/execute.rs` | src | m | 1 fn | — | The target's door for a root request and the material its change needs ([`Vault::run_root_request`]): the… |
 | `src/world_keys/root_work/mod.rs` | src | m | 3 enum · 4 fn · 5 crate-vis | RootMaterial, RootSecret, RootWorkDone | Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is… |
 | `src/world_keys/session.rs` | src | s | 1 struct · 1 fn · 1 const · 4 crate-vis | WorldKeyFrontierCheck | What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys… |
+| `src/world_keys/side_row.rs` | src | s | 4 crate-vis | — | Private-world side-table content, bound to the caller's exact row identity |
 | `src/world_keys/state.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | WorldPadAvailability, WorldRecoveryState | The no-kit warning (ruling fix 10): a typed state |
 | `src/world_keys/tests.rs` | test | m | — | — | P6b done-means checks on the key core |
 | `src/world_keys/vault_doors.rs` | src | s | 6 fn · 4 crate-vis | — | The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing… |
