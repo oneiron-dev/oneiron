@@ -320,7 +320,10 @@ impl Budget {
     fn of(mode: ContainerReadMode) -> Self {
         Self {
             mode,
-            floor: std::cell::Cell::new(None),
+            // bench-only (L15-LEAD, never merge): L15_TRY=no_lazy_floor reads the floor at the walk's start, as before.
+            floor: std::cell::Cell::new(
+                crate::stage_timing::try_on("no_lazy_floor").then(expanded_floor),
+            ),
             spent: 0,
             hidden: false,
             ancestors: Vec::new(),
