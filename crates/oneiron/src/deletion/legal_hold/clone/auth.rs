@@ -5,6 +5,8 @@
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// One genuinely inherited HOST listener, consumed once by managed startup.
 /// This owns the socket; there is no public raw-identity/proof constructor.
@@ -17,6 +19,8 @@ pub struct HostLegalChannel {
 /// fields or constructor; neither a request nor an owner credential makes one.
 pub struct HostLegalConnection {
     pub(super) stream: UnixStream,
+    /// Set once this connection carries a prospective order.
+    pub(super) prospective: Arc<AtomicBool>,
 }
 
 impl HostLegalChannel {
@@ -74,6 +78,7 @@ impl HostLegalChannel {
         }
         Ok(HostLegalConnection {
             stream: stream.into_std()?,
+            prospective: Arc::default(),
         })
     }
 }
@@ -83,6 +88,14 @@ impl HostLegalConnection {
     /// not a cloned listener or authority that admits another connection.
     pub fn shutdown_handle(&self) -> io::Result<UnixStream> {
         self.stream.try_clone()
+    }
+
+    /// True once this connection carries a prospective order. Managed
+    /// teardown shuts every other accepted stream at its stop trigger and
+    /// leaves this one open for the final drain
+    /// ([`crate::Vault::finish_host_legal_prospective`]).
+    pub fn prospective_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.prospective)
     }
 }
 

@@ -489,6 +489,14 @@ pub struct CaptureSummary {
     /// (`MessageResultBody`), revision the BLAKE3 of that message's full
     /// stored entity row. Empty for every other capture.
     pub absent_result_bodies: Vec<[u8; 16]>,
+    /// Only on a prospective order's last batch of one source process, sent
+    /// after every writer of that process stopped: `Some(n)`, the order's
+    /// next ordinal. No entry at or after `n` exists, and this process writes
+    /// none; the batch's range ends at `n` (an empty final batch has
+    /// `batch_first_ordinal` `n` and no entries). It is not the order's
+    /// release or end: the standing stays for a later start. `None` on every
+    /// other summary.
+    pub final_next_ordinal: Option<u64>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
