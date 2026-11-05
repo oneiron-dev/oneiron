@@ -446,13 +446,21 @@ impl Vault {
     /// The resident a dreaming attempt runs as, by its own stamp.
     pub fn resident_actor_for_attempt(&self, id: AttemptId) -> Result<WriteActor> {
         let txn = self.store.env.read_txn()?;
-        let stamp = RESIDENT_ATTEMPT
-            .get(&self.store, &txn, &id)?
-            .ok_or_else(invalid)?;
-        if stamp.attempt_id != *id.as_bytes() {
-            return Err(invalid());
-        }
-        Ok(WriteActor::new(stamp.resident, EdgeActorClass::Agent))
+        self.resident_actor_for_attempt_in_txn(&txn, id)?
+            .ok_or_else(invalid)
+    }
+
+    /// The native stamped resident at the caller's revision, when the stamp
+    /// names this attempt. No stamp or a mismatched one binds no resident.
+    pub(crate) fn resident_actor_for_attempt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<WriteActor>> {
+        Ok(RESIDENT_ATTEMPT
+            .get(&self.store, txn, &id)?
+            .filter(|stamp| stamp.attempt_id == *id.as_bytes())
+            .map(|stamp| WriteActor::new(stamp.resident, EdgeActorClass::Agent)))
     }
 }
 #[cfg(test)]
