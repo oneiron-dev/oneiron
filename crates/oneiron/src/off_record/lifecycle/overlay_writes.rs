@@ -22,7 +22,7 @@ use crate::memory::CreateNoteRequest;
 use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, SessionReadContext};
 use crate::ports::EntityStoreRead;
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, SessionWriteRoute};
-use crate::store::GateDecisionRecord;
+use crate::store::RoomGateDecision;
 use crate::task_verb::sdk::AgentVerb;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
@@ -183,7 +183,7 @@ impl OffRecordSession<'_> {
         id: EntityId,
         body: &ClaimBody,
         envelope: &WriteEnvelope,
-    ) -> Result<Option<GateDecisionRecord>> {
+    ) -> Result<Option<RoomGateDecision>> {
         let vault = self.vault;
         let mut wtxn = vault.store.env.write_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;

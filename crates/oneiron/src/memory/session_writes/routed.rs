@@ -31,14 +31,14 @@ use crate::note::{NoteBody, encode_note_body};
 use crate::off_record::{OffRecordSession, RoomRowAttachments};
 use crate::provenance::birth::room::SuppliedEvidence;
 use crate::session_overlay::{JournalEntry, SessionWriteRoute};
-use crate::store::GateDecisionRecord;
+use crate::store::RoomGateDecision;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use oneiron_contracts::affect::Vad;
 
 /// One claim candidate's rows in a room: its ops, the rows the room must
 /// read for them, and the decision its gate judged (FIX 9967).
-type SessionClaimRows = (Vec<BatchOp>, Vec<EntityId>, Option<GateDecisionRecord>);
+type SessionClaimRows = (Vec<BatchOp>, Vec<EntityId>, Option<RoomGateDecision>);
 
 /// A room write's receipt, which names the room's short id for its row once
 /// the row is staged.

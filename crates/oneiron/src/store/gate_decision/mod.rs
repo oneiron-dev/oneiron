@@ -60,7 +60,7 @@ pub(in crate::store) use self::keys::{
 };
 #[cfg(feature = "sync")]
 pub(in crate::store) use self::leave::HeldGateRows;
-pub(crate) use self::ledger::stage_room_gate_decision_in_txn;
+pub(crate) use self::ledger::{RoomGateDecision, stage_room_gate_decision_in_txn};
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

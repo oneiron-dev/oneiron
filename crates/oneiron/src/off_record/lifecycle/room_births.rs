@@ -26,7 +26,7 @@ use crate::provenance::made_by::MadeByClass;
 use crate::scan_check::EngineScan;
 use crate::session_overlay::OverlayKeyspace;
 use crate::side_table::{self, SideKey};
-use crate::store::{GateDecisionRecord, SessionStoreView};
+use crate::store::{RoomGateDecision, SessionStoreView};
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 /// The door identity of a claim a room's run stages for its executor
@@ -49,7 +49,7 @@ pub(crate) struct RoomRowAttachments {
     sources: Vec<EntityId>,
     evidence: Vec<SuppliedEvidence>,
     note_document: bool,
-    gate_decision: Option<GateDecisionRecord>,
+    gate_decision: Option<RoomGateDecision>,
 }
 
 impl RoomRowAttachments {
@@ -112,7 +112,7 @@ impl RoomRowAttachments {
     /// These attachments with `decision`, the decision the claim's gate
     /// judged (FIX 9967): it stages beside the claim, in its segment, never
     /// in base, and evaporates with the room.
-    pub(crate) fn with_gate_decision(self, decision: Option<GateDecisionRecord>) -> Self {
+    pub(crate) fn with_gate_decision(self, decision: Option<RoomGateDecision>) -> Self {
         Self {
             gate_decision: decision,
             ..self
@@ -158,7 +158,7 @@ impl OffRecordSession<'_> {
         );
         stamp_room_birth_in_txn(&view, wtxn, &row, &birth)?;
         if let Some(decision) = &attachments.gate_decision {
-            if decision.claim_id != Some(*row.as_bytes()) {
+            if decision.record.claim_id != Some(*row.as_bytes()) {
                 return Err(Error::InvariantViolation(
                     "a room's gate decision judged another claim",
                 ));

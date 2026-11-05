@@ -743,22 +743,45 @@ enum RowSeal {
     Room,
 }
 
-/// Stages `record`, the write-path decision an off-record room's claim was
-/// judged by (FIX 9967), through `room`, the room's own session view, in the
-/// transaction and segment that stage the claim: the same row and indexes a
-/// base write appends, under the id it was judged with, so it commits or
-/// aborts with the claim and evaporates with the room. Base gets no row.
+/// The write-path decision an off-record room's claim was judged by, and the
+/// retention scope that claim names (FIX 9967), for the room to stage beside
+/// the claim.
+#[derive(Debug, Clone)]
+pub(crate) struct RoomGateDecision {
+    pub(crate) record: GateDecisionRecord,
+    pub(crate) context: super::GateRetentionContext,
+}
+
+/// Stages `decision` through `room`, the room's own session view, in the
+/// transaction and segment that stage its claim: the same row, indexes and
+/// retention scope a base write keeps, under the id it was judged with, so
+/// it commits or aborts with the claim and evaporates with the room. Base
+/// gets no row.
 ///
 /// # Errors
 ///
-/// A record the ledger refuses, an id the room or base already holds, or
-/// the room's own refusal (its budget, a closed segment).
+/// A record that names no claim or that the ledger refuses, an id the room
+/// or base already holds, or the room's own refusal (its budget, a closed
+/// segment).
 pub(crate) fn stage_room_gate_decision_in_txn(
     room: &crate::store::SessionStoreView<'_>,
     wtxn: &mut RwTxn<'_>,
-    record: &GateDecisionRecord,
+    decision: &RoomGateDecision,
 ) -> Result<()> {
-    append_gate_decision_row_in_txn(room, wtxn, record, RowSeal::Room, record.created_at)
+    let record = &decision.record;
+    let Some(claim) = record.claim_id else {
+        return Err(Error::InvariantViolation(
+            "a room's gate decision names no claim",
+        ));
+    };
+    append_gate_decision_row_in_txn(room, wtxn, record, RowSeal::Room, record.created_at)?;
+    super::retention_scope::stamp_room_claim_context_in_txn(
+        room,
+        wtxn,
+        record.decision_id,
+        &claim,
+        decision.context,
+    )
 }
 
 pub(in crate::store) fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {
