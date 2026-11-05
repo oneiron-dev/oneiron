@@ -4006,6 +4006,22 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.advisory_ask.set",
+      "description": "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way.",
+      "input": "SkillAdvisoryAskRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_advisory_ask_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.advisory_ask.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",
@@ -5740,6 +5756,23 @@
       "host_door_lists": true,
       "rust_feature": "sync",
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.quarantine.held_edits",
+      "description": "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>",
+      "call": "crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.quarantine.held_edits\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -12611,6 +12644,7 @@
       "name": "vault.artifacts.propose_output",
       "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
       "refs": [
+        "/read_rows/*",
         "/made_by/inputs/*/row",
         "/made_by/trigger/task",
         "/made_by/trigger/ask",

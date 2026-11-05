@@ -39,8 +39,8 @@ use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::{
-    McpQuickJsProvider, ModelCallBackend, PlannedMeter, PlannedModel, PlannedRoute,
-    RunCompactionSeat,
+    McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
+    PlannedRoute, RunCompactionSeat,
 };
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
@@ -131,6 +131,15 @@ pub(super) async fn bind(
             }) as Arc<dyn LlmBackend>
         })
     };
+    let model_list_backend: ModelListBackend = {
+        let backend = Arc::clone(&backend);
+        Arc::new(move |listed| {
+            Arc::new(CodeModeBackend {
+                listed,
+                ..backend.as_ref().clone()
+            }) as Arc<dyn LlmBackend>
+        })
+    };
     // Each run's compaction seat reads the rung its step's call is admitted
     // on, at the breakpoint, through this same admission (FIX 4465 C).
     let live_admission = Arc::new(LiveStepAdmission {
@@ -182,7 +191,8 @@ pub(super) async fn bind(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
                   planned: &PlannedModel,
-                  lease: Option<LiveLeaseState>| {
+                  lease: Option<LiveLeaseState>,
+                  listed: Vec<AgentModel>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
@@ -192,7 +202,7 @@ pub(super) async fn bind(
                     lease,
                     browser: Arc::clone(&browser),
                     caller: None,
-                    listed: Vec::new(),
+                    listed,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -212,6 +222,7 @@ pub(super) async fn bind(
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
             .with_model_call_backend(model_call_backend)
+            .with_model_list_backend(model_list_backend)
             .with_clock_from_first_start()
             .with_reader_meter(reader_meter)
             .with_planned_models(planned_route, planned_meter)
@@ -416,7 +427,7 @@ struct CodeModeBackend {
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
     caller: Option<CodeModeCaller>,
-    /// A reader child's actual frozen list. Other backend paths retain
+    /// The bound run's actual frozen list. Other backend paths retain
     /// their existing unconstrained routing until they carry one too.
     listed: Vec<AgentModel>,
 }
