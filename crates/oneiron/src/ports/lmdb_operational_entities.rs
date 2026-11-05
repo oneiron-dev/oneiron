@@ -201,6 +201,7 @@ impl EntityStoreMaintenance for Store {
                 end: learned_at,
             },
             learned_at,
+            row_version: 0,
             body: body.to_vec(),
         };
         self.entities.put(txn, id.as_bytes(), &row.encode())?;
