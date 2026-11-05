@@ -3,12 +3,16 @@
 //! files, and the queue its work is pinned under. Lists and bytes are the
 //! paths the Grant reads now; nothing else of the snapshot, the work or the
 //! queue is shown.
+//!
+//! FIX 4300 (CODE-CUSTODY-01): a snapshot, file or definition read stands on
+//! one read join ([`super::read_join`]): the anchor, the pinned snapshot,
+//! the path and its ASSET or symbol rows, judged in one read snapshot before
+//! anything is shown.
 
 use sha2::{Digest, Sha256};
 
-use super::work::{
-    RepoOwnWork, repo_ref_pin, resolve_repo_queue_target, same_folder, snapshot_file, work_view,
-};
+use super::read_join::{DefinitionRows, FileRow, SnapshotRows, file_absent};
+use super::work::{RepoOwnWork, resolve_repo_queue_target, snapshot_file, work_view};
 use super::{
     NO_PATHS, RepoMergeQueueObserveInput, RepoMergeQueueObserveOutput, RepoRunAdmitted,
     RepoRunAnswer, RepoRunBinding, RepoSnapshotView, RepoSnapshotsGetInput, RepoSnapshotsGetOutput,
@@ -19,14 +23,13 @@ use super::{
 use crate::EdgeActorClass;
 use crate::EntityId;
 use crate::code_view::CodeViewSet;
-use crate::codebase::{CodebaseSnapshotMount, snapshot_asset_entity_id};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
-use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::reveal::RepoReadDoor;
-use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
+use oneiron_authority::federation::RepoAccessIntent;
 
 impl Memory<'_> {
     /// `self.code.snapshots.get` for a run: the manifest of the named
@@ -38,15 +41,15 @@ impl Memory<'_> {
         input: RepoSnapshotsGetInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsGetOutput>> {
         let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        let (mount, commit) =
-            self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
-        let bounds = &admitted.membership.bounds;
+        let join = self.repo_read_join_for_run(binding, &target, &input.snapshot, SnapshotRows)?;
+        let bounds = &join.admitted.membership.bounds;
         // A run reads repo bytes masked (FIX 7608): each marked file names
         // the copy its read returns.
-        let mut views =
-            mount.projected_file_views(|path| bounds.admits_path(RepoAccessIntent::Read, path))?;
-        let files = mount
+        let mut views = join
+            .mount
+            .projected_file_views(|path| bounds.admits_path(RepoAccessIntent::Read, path))?;
+        let files = join
+            .mount
             .snapshot()
             .files
             .iter()
@@ -58,88 +61,74 @@ impl Memory<'_> {
             })
             .collect();
         Ok(RepoRunAnswer {
-            rows: vec![input.repo, mount.code_artifact_id()],
             output: RepoSnapshotView {
                 repo: input.repo,
                 git_ref: input.git_ref,
-                commit,
+                commit: join.commit,
                 snapshot: input.snapshot,
-                artifact: mount.code_artifact_id(),
+                artifact: join.mount.code_artifact_id(),
                 files,
             },
+            rows: join.rows,
         })
     }
 
     /// `self.code.snapshots.read` for a run: one file of such a snapshot,
     /// read from its stored blob, which the run's lane must read. A path the
-    /// Grant does not read is refused before the snapshot resolves.
+    /// Grant does not read is refused before the snapshot resolves. The
+    /// join reads the anchor, the snapshot and the file's ASSET in one
+    /// snapshot before a byte is read (FIX 4300).
     pub fn repo_snapshots_read_for_run(
         &self,
         binding: &RepoRunBinding,
         input: RepoSnapshotsReadInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsReadOutput>> {
         let target = repo_target(input.repo, &input.git_ref, [input.path.as_str()]);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        let (mount, _) =
-            self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
-        let absent = || MemoryError::not_found("the file is absent or withheld in this snapshot");
+        let join =
+            self.repo_read_join_for_run(binding, &target, &input.snapshot, FileRow(&input.path))?;
+        let mount = &join.mount;
         // A run reads repo bytes masked (FIX 7608): a marked file's
         // projection, its opaque residue found before a byte is read. A read
         // that says why asks only after its lane admits the file (FIX 8960).
-        let early = match input.why {
-            None => Some(mount.read_file_projected(&input.path)?.ok_or_else(absent)?),
-            Some(_) => None,
-        };
-        let entry = mount
-            .snapshot()
-            .files
-            .iter()
-            .find(|entry| entry.path == input.path)
-            .ok_or_else(absent)?;
-        let asset = snapshot_asset_entity_id(&entry.content_hash)?;
-        self.repo_lane_reads(binding, &[asset])
-            .map_err(|_| absent())?;
-        let (read, byte_route) = match early {
-            Some(read) => (read, None),
-            None => {
+        let (read, byte_route) = match input.why {
+            None => (
+                mount
+                    .read_file_projected(&input.path)?
+                    .ok_or_else(file_absent)?,
+                None,
+            ),
+            Some(_) => {
                 let changed = || Error::ConcurrentWrite("the run's repo read admission changed");
                 let artifact = mount.code_artifact_id();
                 let readmit = || -> crate::error::Result<()> {
-                    let txn = self.vault.store.env.read_txn()?;
-                    let again = self.vault.admit_repo_run_in_txn(
-                        &txn,
-                        binding,
-                        &target,
-                        RepoAccessIntent::Read,
-                    )?;
-                    drop(txn);
-                    let again = again
-                        .ok()
-                        .filter(|again| again.same_lease(&admitted))
-                        .ok_or_else(changed)?;
-                    let (pinned, _) = self
-                        .repo_pinned_snapshot(binding, &again, &input.git_ref, &input.snapshot)
+                    let again = self
+                        .repo_read_join_under(
+                            binding,
+                            &join.admitted,
+                            &target,
+                            &input.snapshot,
+                            FileRow(&input.path),
+                        )
                         .map_err(|_| changed())?;
-                    if pinned.code_artifact_id() != artifact {
+                    if again.mount.code_artifact_id() != artifact {
                         return Err(changed());
                     }
-                    self.repo_lane_reads(binding, &[asset])
-                        .map_err(|_| changed())
+                    Ok(())
                 };
-                let read = run_reveal_reader(self, binding, &admitted)
+                let read = run_reveal_reader(self, binding, &join.admitted)
                     .snapshot_file_read_with_why(
-                        &mount,
+                        mount,
                         input.repo,
                         &input.path,
                         input.why.as_deref(),
                         RepoReadDoor::Text,
                         readmit,
                     )?
-                    .ok_or_else(absent)?;
+                    .ok_or_else(file_absent)?;
                 (read.projection, read.byte_route)
             }
         };
-        let mut file = snapshot_file(entry);
+        let mut file = snapshot_file(&join.joined.entry);
         file.projection = read.view();
         // CALL 4: granted bytes that are not text keep the masked reply,
         // which names the byte route.
@@ -151,7 +140,7 @@ impl Memory<'_> {
         let content = String::from_utf8(bytes)
             .map_err(|_| MemoryError::bad_request("the pinned file is not UTF-8 text"))?;
         Ok(RepoRunAnswer {
-            rows: vec![input.repo, mount.code_artifact_id(), asset],
+            rows: join.rows,
             output: RepoSnapshotsReadOutput {
                 repo: input.repo,
                 git_ref: input.git_ref,
@@ -165,43 +154,29 @@ impl Memory<'_> {
 
     /// `self.code.symbols.definitions` for a run: the exact-name Rust
     /// definitions such a snapshot's symbol manifest records, in its order,
-    /// on the paths the Grant reads only.
+    /// on the paths the Grant reads only. The join reads the anchor, the
+    /// snapshot and each symbol row in one snapshot before any definition
+    /// is shown; spans and fingerprints are that manifest's (FIX 4300).
     pub fn repo_symbols_definitions_for_run(
         &self,
         binding: &RepoRunBinding,
         input: RepoSymbolsDefinitionsInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSymbolsDefinitionsOutput>> {
         let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        let (mount, _) =
-            self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
-        let artifact = mount.code_artifact_id();
-        if let Some(manifest) = self.vault.get_code_symbol_manifest(&artifact)? {
-            let pinned = mount.snapshot();
-            if manifest.repo_ref != pinned.repo_ref || manifest.commit_hash != pinned.commit_hash {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_INVALID_STATE,
-                    "the symbol manifest is not of the pinned snapshot",
-                    &[],
-                ));
-            }
-        }
-        let bounds = &admitted.membership.bounds;
-        let definitions: Vec<_> = self
-            .vault
-            .code_symbol_definitions(&artifact, &input.name)?
-            .into_iter()
-            .filter(|definition| bounds.admits_path(RepoAccessIntent::Read, &definition.path))
-            .collect();
-        let mut rows = vec![input.repo, artifact];
-        rows.extend(definitions.iter().map(|definition| definition.entity_id));
+        let join = self.repo_read_join_for_run(
+            binding,
+            &target,
+            &input.snapshot,
+            DefinitionRows(&input.name),
+        )?;
         Ok(RepoRunAnswer {
-            rows,
+            rows: join.rows,
             output: RepoSymbolsDefinitionsOutput {
                 repo: input.repo,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
-                definitions: definitions
+                definitions: join
+                    .joined
                     .into_iter()
                     .map(|definition| CodeSnapshotDefinition {
                         symbol: definition.entity_id,
@@ -348,11 +323,13 @@ impl Memory<'_> {
         why: &str,
     ) -> MemoryResult<Option<Vec<u8>>> {
         let snapshot = bytes_to_hex_lower(&own.stamp.base_snapshot);
-        let Ok((mount, _)) =
-            self.repo_pinned_snapshot(binding, &own.admitted, &own.stamp.git_ref, &snapshot)
+        let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
+        let Ok(join) =
+            self.repo_read_join_under(binding, &own.admitted, &target, &snapshot, SnapshotRows)
         else {
             return Ok(None);
         };
+        let mount = join.mount;
         let Some(masked) = mount.read_file_projected(path)? else {
             return Ok(None);
         };
@@ -392,62 +369,6 @@ impl Memory<'_> {
             .filter(|read| read.proof.is_some())
             .map(|read| read.projection.into_bytes()))
     }
-
-    /// The snapshot `snapshot` names of the admitted repo, at the commit the
-    /// run's full ref names now, with that commit (CALLS "FIX 6867 run-only
-    /// ref contract"): no snapshot of another commit or another repo is
-    /// served under an admitted ref. The run's lane must read the repo and
-    /// the snapshot's artifact.
-    fn repo_pinned_snapshot(
-        &self,
-        binding: &RepoRunBinding,
-        admitted: &RepoRunAdmitted,
-        git_ref: &str,
-        snapshot: &str,
-    ) -> MemoryResult<(CodebaseSnapshotMount<'_>, String)> {
-        let fork_hash = parse_fork_hash(snapshot)?;
-        let membership = &admitted.membership;
-        let Some(commit) = repo_ref_pin(self.vault, &membership.repo_ref, git_ref) else {
-            return Err(refusal_error(RepoAccessRefusal::WrongRef));
-        };
-        let mut pinned = None;
-        for artifact in self.vault.codebase_snapshots_by_fork_hash(&fork_hash)? {
-            let Some(mount) = self.vault.mount_codebase_snapshot(&artifact)? else {
-                continue;
-            };
-            let held = mount.snapshot();
-            if held.commit_hash.as_deref() == Some(commit.as_str())
-                && same_folder(&held.repo_ref, &membership.repo_ref)
-            {
-                pinned = Some(mount);
-                break;
-            }
-        }
-        let Some(mount) = pinned else {
-            return Err(refusal_error(RepoAccessRefusal::WrongRef));
-        };
-        self.repo_lane_reads(binding, &[membership.bounds.repo, mount.code_artifact_id()])?;
-        Ok((mount, commit.as_str().to_owned()))
-    }
-}
-
-/// A snapshot selector: its fork hash in 64 lower-hex characters.
-fn parse_fork_hash(snapshot: &str) -> MemoryResult<[u8; 32]> {
-    let invalid =
-        || MemoryError::bad_request("snapshot must be the fork hash, 64 lower-hex characters");
-    if snapshot.len() != 64
-        || !snapshot
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(invalid());
-    }
-    let mut hash = [0_u8; 32];
-    for (index, slot) in hash.iter_mut().enumerate() {
-        *slot =
-            u8::from_str_radix(&snapshot[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
-    }
-    Ok(hash)
 }
 
 /// A run's handle for a per-file read that may ask for real bytes (FIX
