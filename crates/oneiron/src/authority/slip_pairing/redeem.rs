@@ -28,6 +28,37 @@ fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) ->
 }
 
 impl Vault {
+    /// Whether this outstanding share-view link names this holder without
+    /// requiring a resident entity. This is transport preflight only;
+    /// redemption rechecks the link and live share with the holder's signature
+    /// in the transaction that mints the credential and consumes the code.
+    pub fn share_view_pairing_allows_holder(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+    ) -> Result<bool> {
+        let holder = canonical_id(holder_ref)?;
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let row_key = pairing_row_key(issuer, code)?;
+        let Some(pending) = PAIRING_PENDING.get(&self.store, &txn, &row_key)? else {
+            return Ok(false);
+        };
+        let Some(share) = pending.share_ref else {
+            return Ok(false);
+        };
+        if now >= pending.expires_at
+            || pending.host_key != issuer.binding_key()
+            || pending.machine.is_some()
+            || pending.principal.org_ref.is_some()
+            || pending.principal.holder_ref.as_deref() != Some(holder_ref)
+        {
+            return Ok(false);
+        }
+        Ok(crate::share::live_share_for_holder_in_txn(self, &txn, &share, &holder, now)?.is_some())
+    }
+
     /// No prior bearer is required. The link is the one-use enrollment grant;
     /// the binding signature proves possession of the receiving connection key.
     /// Consuming the link and appending SlipMint are one LMDB transaction.

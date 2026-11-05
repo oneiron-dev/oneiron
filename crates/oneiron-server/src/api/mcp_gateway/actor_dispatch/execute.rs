@@ -47,6 +47,11 @@ pub(crate) async fn execute_mcp_tool(
     headers: &HeaderMap,
     connection: &Extensions,
 ) -> Result<Value, McpGatewayError> {
+    let share_context = match &args {
+        McpValidatedToolArgs::Verb(verb) => mcp_share_view_context(actor, verb.tool.name),
+        _ => None,
+    };
+    let actor = share_context.as_ref().unwrap_or(actor);
     match &args {
         McpValidatedToolArgs::Verb(verb) => {
             mcp_verb_gate(server, verb.tool, &verb.payload.arguments, actor)?;
