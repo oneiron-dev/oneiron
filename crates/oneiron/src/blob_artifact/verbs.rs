@@ -1084,20 +1084,21 @@ impl Memory<'_> {
         input: &DeckProposeRequest,
     ) -> MemoryResult<DeckProposeOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        match self.vault().propose_blob_artifact_deck_edit(
+        let (outcome, read_rows) = self.vault().propose_blob_artifact_deck_edit_with_reads(
             &artifact,
             &input.transaction.canonical(),
             &input.run_ref,
             input.context.clone(),
-        )? {
+        )?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
-                proposed: Some(self.vault().retain_edit_proposal(
+                proposed: Some(self.vault().retain_edit_proposal_with_reads(
                     &artifact,
                     &proposal,
                     input.made_by.as_ref(),
                     self.made_by_reader(input.made_by.as_ref())?,
-                    self.artifact_actor(),
-                    self.vault().now_recorded_at(),
+                    (self.artifact_actor(), self.vault().now_recorded_at()),
+                    &read_rows,
                 )?),
                 rejected: None,
             }),

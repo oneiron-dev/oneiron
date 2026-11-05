@@ -368,6 +368,20 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle whose every read runs under the credential a
+   * delegated reader presented (FIX 647): the paired credential `pair`
+   * returned, verified once against this vault as the server's door verifies
+   * a served request's. Reads refuse when the slip's holder is not this
+   * handle's actor; rebindings keep the same proof, so every read still
+   * checks it against the bound actor. A handle without one reads as before.
+   * On a connected handle this fails with `FORBIDDEN`: it already reads
+   * under the credential it connected with.
+   */
+  withReadCredential(credential: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.withReadCredential(credential)))
+  }
+
+  /**
    * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
    * whether it answered or refused; `vault.receipts.get` resolves it for the
    * same actor or the vault's owner.
@@ -2193,8 +2207,8 @@ export class Oneiron {
           preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
-      /** Appends one version of bytes to a blob artifact's append-only chain. */
-      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
+      /** Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep. */
+      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionAppendOutcome => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionAppendOutcome),
       /** Reads one version of a blob artifact's bytes. */
       read: (input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null => this.#call(() => this.#client.vaultArtifactsRead(input) as Facade.BlobContent | null),
     },
