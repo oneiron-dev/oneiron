@@ -58,6 +58,13 @@ pub struct SnapshotMergePlan {
 }
 
 impl OverlaySnapshot {
+    fn retain(&self) -> Result<Self> {
+        Ok(Self {
+            state: Arc::clone(&self.state),
+            lease: self.lease.retain()?,
+        })
+    }
+
     /// Borrows a row this snapshot stages, without copying its body or reading base.
     pub fn staged_value(&self, keyspace: OverlayKeyspace, key: &[u8]) -> Option<&[u8]> {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
@@ -401,6 +408,7 @@ impl OverlaySnapshot {
             turn,
             conversation,
             appends,
+            source_snapshot: self.retain()?,
             charge: None,
         };
         // The copies are the room's memory while the promotion runs.
