@@ -7,6 +7,7 @@ pub struct EntityRecord {
     pub entity_type: u8,
     pub occurred: TimeRange,
     pub learned_at: u64,
+    pub row_version: u64,
     pub body: Vec<u8>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,11 +54,13 @@ impl EntityRecord {
     /// Canonical entity wire envelope for existing signed/hash-bound codecs.
     /// This encodes a value; it exposes neither a database nor a storage cursor.
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(25 + self.body.len());
+        let mut bytes =
+            Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + self.body.len());
         bytes.push(self.entity_type);
         bytes.extend_from_slice(&self.occurred.start.to_be_bytes());
         bytes.extend_from_slice(&self.occurred.end.to_be_bytes());
         bytes.extend_from_slice(&self.learned_at.to_be_bytes());
+        bytes.extend_from_slice(&self.row_version.to_be_bytes());
         bytes.extend_from_slice(&self.body);
         bytes
     }
