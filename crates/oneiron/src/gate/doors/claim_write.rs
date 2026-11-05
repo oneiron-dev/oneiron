@@ -190,8 +190,9 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
 /// (FIX 9967): the same judgment under base policy, which keeps the decision
 /// it judged for the room to stage beside the claim, in the claim's own
 /// overlay segment. It appends nothing, records no metric and touches no key
-/// custody, whatever `mode` says of recording. The decision is the caller's
-/// only once the check passes; `None` when no policy verdict was reached.
+/// custody, whatever `mode` says of recording. The decision, with the
+/// retention scope its claim names, is the caller's only once the check
+/// passes; `None` when no policy verdict was reached.
 pub(crate) fn capture_claim_policy_for_write(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -199,7 +200,14 @@ pub(crate) fn capture_claim_policy_for_write(
     write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
-) -> Result<Option<GateDecisionRecord>> {
+) -> Result<Option<crate::store::RoomGateDecision>> {
+    // The scope a base write stamps beside its decision, as it does.
+    let context = crate::gate::GateRetentionContext {
+        world: Some(write.body.world.unwrap_or_else(crate::claim::base_world_id)),
+        project: Some(write.body.scope_project),
+        sub_project: None,
+        thread: None,
+    };
     let mut captured = None;
     check_claim_policy_for_write_with_record_inner(
         store,
@@ -219,7 +227,12 @@ pub(crate) fn capture_claim_policy_for_write(
         None,
         true,
     )?;
-    Ok(captured.map(RecordedClaimGateDecision::into_record))
+    Ok(captured.map(
+        |recorded: RecordedClaimGateDecision| crate::store::RoomGateDecision {
+            record: recorded.into_record(),
+            context,
+        },
+    ))
 }
 
 /// The isolation class of a Dreamer candidate's predicate: a prefix a trusted

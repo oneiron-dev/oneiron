@@ -42,7 +42,7 @@ use crate::memory::Memory;
 use crate::off_record::OffRecordSession;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
-use crate::store::{GateDecisionRecord, SessionStoreView};
+use crate::store::{RoomGateDecision, SessionStoreView};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use oneiron_contracts::affect::Vad;
@@ -352,7 +352,7 @@ impl Memory<'_> {
         &self,
         session: &OffRecordSession<'_>,
         put: RawEntityPut<'_>,
-    ) -> MemoryResult<Option<GateDecisionRecord>> {
+    ) -> MemoryResult<Option<RoomGateDecision>> {
         crate::batch::validate_staged_raw_put(put.entity_type, put.data, put.learned_at)?;
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && let Some(envelope) = self.raw_claim_envelope(put.data)?
