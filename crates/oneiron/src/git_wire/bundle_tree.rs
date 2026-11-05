@@ -1,25 +1,15 @@
-//! Exact bundle bytes and modes staged through the existing Git bridge.
+//! Core half of `git_wire::bundle_tree`: its store-layer items live in `oneiron_store::git_wire::bundle_tree` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+pub(crate) use oneiron_store::git_wire::bundle_tree::*;
 
 use super::mutation_commands::{path_arg, run_git, utf8_trimmed};
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::store::code_tree_blob::MODE_GITLINK;
-
-static BUNDLE_BLOB_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// One entry of a bundle's tree change: its path, its exact new
-/// bytes (`None` removes it) and its Git mode once present. For a gitlink,
-/// the bytes are its OID, not content from the linked repository.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BundleTreeEdit {
-    pub(crate) path: String,
-    pub(crate) content: Option<Vec<u8>>,
-    pub(crate) mode: u32,
-}
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque gitlinks in the current index, without opening their repositories.
 pub(crate) fn gitlink_index_entries(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
@@ -94,12 +84,6 @@ pub(crate) fn gitlink_paths_at(
         paths.insert(path.to_owned());
     }
     Ok(paths)
-}
-
-fn gitlink_oid(content: &[u8]) -> Result<String> {
-    let oid = std::str::from_utf8(content)
-        .map_err(|_| Error::InvalidClaimBody("gitlink OID must be UTF-8"))?;
-    Ok(GitOid::parse_hex(oid)?.as_str().to_owned())
 }
 
 /// Applies `edits` to the index of the checkout at `root`, and, when
@@ -189,21 +173,6 @@ pub(crate) fn stage_bundle_tree_edits(
         }
     }
     Ok(())
-}
-
-/// The empty directory standing at `path` in the working tree at `root`,
-/// reached through no symlink; `None` for anything else, which Git's own
-/// checkout judges.
-fn empty_directory_in_tree(root: &Path, path: &str) -> Result<Option<std::path::PathBuf>> {
-    let mut at = root.to_path_buf();
-    for part in path.split('/') {
-        at.push(part);
-        match std::fs::symlink_metadata(&at) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) | Err(_) => return Ok(None),
-        }
-    }
-    Ok(std::fs::read_dir(&at)?.next().is_none().then_some(at))
 }
 
 /// Writes `content` as a blob of the repository at `root`, exactly: no

@@ -205,6 +205,11 @@ pub struct ManagedArgs {
     pub derivation_owner: DerivationOwner,
     pub organization_owner: Option<DerivationOwner>,
     pub member_vault: bool,
+    /// Explicit operator declaration from `--privacy-posture`; supervision
+    /// and delivered custody alone do not mean cloud hosting.
+    pub privacy_posture: oneiron::HostingPrivacyPosture,
+    /// Per-vault enterprise/advanced capability from managed operator argv.
+    pub allow_host_checkpoint_opt_out: bool,
     pub data_dir: PathBuf,
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,

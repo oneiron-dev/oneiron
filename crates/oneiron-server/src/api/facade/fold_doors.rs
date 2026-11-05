@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::http::{Extensions, HeaderMap};
 use oneiron::code_run::SelfDispatchOutcome;
-use oneiron::code_run::actions::{ActionArgument, ActionJson};
+use oneiron::code_run::actions::{ActionArgument, ActionJson, PreHookedFold};
 use oneiron::code_run::fold_api::{
     FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest,
     RunAttachRequest, RunAttached,
@@ -66,19 +66,24 @@ async fn fold_action<T: DeserializeOwned>(
     verb: &'static str,
     live_run: String,
     args: serde_json::Value,
+    pre_hooked_fold: Option<PreHookedFold>,
 ) -> MemoryResult<FoldReply<T>> {
     let key = match invocation {
         Some(invocation) => invocation.to_hex(),
         None => server.vault().new_entity_id()?.to_hex(),
     };
     let args = ActionJson::new(args)?;
+    let mut extensions = Extensions::new();
+    if let Some(pre) = pre_hooked_fold {
+        extensions.insert(pre);
+    }
     // No request reaches this door, so the verb rows the action posts run
     // as its caller, as a held card's event does.
     let dispatch = invoke_action_dispatch(
         server,
         auth,
         HeaderMap::new(),
-        Extensions::new(),
+        extensions,
         Some(auth.clone()),
         verb.to_owned(),
         ActionRequest {
@@ -111,6 +116,7 @@ pub(crate) async fn self_fold(
     _caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: FoldMarkRequest,
+    pre_hooked_fold: Option<PreHookedFold>,
 ) -> Listed<FoldReply<FoldMarked>> {
     let answer = fold_action(
         server,
@@ -118,7 +124,16 @@ pub(crate) async fn self_fold(
         invocation,
         "self.fold",
         input.live_run,
-        json!([[input.from, input.through], {"note": input.note}]),
+        match input.kind {
+            Some(kind) => json!({
+                "kind": kind,
+                "from": input.from,
+                "through": input.through,
+                "note": input.note,
+            }),
+            None => json!([[input.from, input.through], {"note": input.note}]),
+        },
+        pre_hooked_fold,
     )
     .await;
     (answer, Vec::new())
@@ -141,6 +156,7 @@ pub(crate) async fn self_compact(
         "self.compact",
         input.live_run,
         json!({"note": input.note}),
+        None,
     )
     .await;
     (answer, Vec::new())
@@ -163,6 +179,7 @@ pub(crate) async fn self_unfold(
         "self.unfold",
         input.live_run,
         json!({"fold": input.fold}),
+        None,
     )
     .await;
     (answer, Vec::new())
@@ -186,6 +203,7 @@ pub(crate) async fn self_folds(
         "self.folds",
         input.live_run,
         json!({}),
+        None,
     )
     .await;
     (answer, Vec::new())

@@ -273,6 +273,7 @@ pub(super) fn reconcile_system_agent_definitions_in(
                             end: SEEDED_AGENT_DEFINITION_TIMESTAMP,
                         },
                         learned_at: SEEDED_AGENT_DEFINITION_TIMESTAMP,
+                        row_version: None,
                         data,
                         allow_maintenance: false,
                         allow_reserved_predicate: false,

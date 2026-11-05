@@ -19,10 +19,11 @@ pub(crate) type EntitySideRowEraser = fn(&Store, &mut heed::RwTxn<'_>, &EntityId
 
 /// Every per-entity eraser, one line per module.
 const ERASERS: &[EntitySideRowEraser] = &[
+    crate::agent_dispatch::erase_workflow_tool_source_in_txn,
     crate::typed_body::erase_in_txn,
     crate::office_body::erase_in_txn,
     crate::edit_roundtrip::deck_create::erase_in_txn,
-    crate::memory::erase_stream_seeds_in_txn,
+    erase_stream_seeds_in_txn,
     crate::conversation::erase_chat_breakpoints_in_txn,
     crate::store::legal_hold::erase_in_txn,
     erase_room_side_rows,
@@ -41,9 +42,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10466: every inference snapshot whose dependency set reaches it.
     crate::store::snapshot_catalog::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
-    crate::memory::erase_reply_assertions_in_txn,
+    erase_reply_assertions_in_txn,
     // FIX 9970: a TURN's unpersisted-wake label.
-    crate::memory::erase_turn_wake_label_in_txn,
+    erase_turn_wake_label_in_txn,
     // FIX 7608 S3F: a derived text's index copy, and the copies derived from it.
     crate::embed::retire_repo_derived_index_copies_in_txn,
     // FIX 9752: a fitted section install's receipt, with the skill or the
@@ -52,7 +53,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 6870: a CODE anchor's repo manifests, aliases and minted markers.
     crate::origin::erase_repo_manifests_in_txn,
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
-    crate::memory::release_asset_blob_in_txn,
+    release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
     erase_voice_recognition_for_subject_in_txn,
     // FIX 9805: a reviewed claim's teaching copies in the miner.
@@ -77,6 +78,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     erase_skipped_send_receipt_in_txn,
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     erase_inbox_cards_in_txn,
+    // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
+    crate::mail_pack::erase_occurrence_rows_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
@@ -87,6 +90,46 @@ const ERASERS: &[EntitySideRowEraser] = &[
     #[cfg(feature = "sync")]
     erase_retained_copies_in_txn,
 ];
+
+fn erase_stream_seeds_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_stream_seeds_in_txn(store, wtxn, id)
+}
+
+fn erase_reply_assertions_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_reply_assertions_in_txn(store, wtxn, id)
+}
+
+fn erase_turn_wake_label_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_turn_wake_label_in_txn(store, wtxn, id)
+}
+
+fn release_asset_blob_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .release_asset_blob_in_txn(store, wtxn, id)
+}
 
 /// The room side-row eraser slot: the engine's, through the store's hooks.
 fn erase_room_side_rows(store: &Store, wtxn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
@@ -176,6 +219,7 @@ pub(crate) fn tear_derived_rows_in_txn(
             .record_hooks
             .forget_claim_reassignments_in_txn(store, wtxn, id)?;
         crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
+        crate::ingest::erase_connector_archive_occurrence_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }

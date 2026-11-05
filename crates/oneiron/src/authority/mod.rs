@@ -70,6 +70,7 @@ mod current_scope;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
+mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
@@ -193,11 +194,11 @@ pub use oneiron_authority::authority::{
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
-    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
-    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    TrustedContactSlipBinding, WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord,
+    WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
+    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
+    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };

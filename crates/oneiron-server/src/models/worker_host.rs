@@ -65,8 +65,8 @@ use serde_json::Value as JsonValue;
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, rung_admitted, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, rung_admitted, turn_admitted,
 };
 
 /// The process's one worker host, made when the first worker is configured
@@ -424,6 +424,9 @@ pub(super) fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
 /// Takes a device ticket for one bound call before its worker acquire. No
 /// device means the route keeps its existing unmediated path. `envelope` is
 /// the call's incremental charge beyond the worker's steady declaration.
+/// Only the row's hosted instance takes a ticket (FIX 13845): a replaced
+/// row's old clone takes none, so its booking never lands on the
+/// replacement's device.
 pub(super) fn admit_bound_work(
     worker: &InferenceWorker,
     context: WorkContext,
@@ -431,7 +434,9 @@ pub(super) fn admit_bound_work(
 ) -> BoundWork {
     let ticket = HOST.get().and_then(|host| {
         let hosted = host.lock();
-        let hosted = hosted.get(&worker.spec().worker_id)?;
+        let hosted = hosted
+            .get(&worker.spec().worker_id)
+            .filter(|hosted| hosted.worker.same_instance(worker))?;
         let device = hosted.row.launch.as_ref()?.device.as_deref()?;
         let admission = host.admission(device);
         let mut request = WorkRequest::new(
@@ -478,17 +483,24 @@ pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCal
 
 /// Registers or refreshes one executor's idle row. Managed custody exists
 /// only when this process may launch that worker; other work is recorded as
-/// external and is never an unload target.
-pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
+/// external and is never an unload target. Only the row's hosted instance
+/// registers (FIX 13845): a replaced row's old clone registers nothing.
+pub(super) fn register_device_executor(worker: &InferenceWorker, idle: bool) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let Some((device, external)) = host.lock().get(worker_id).and_then(|hosted| {
-        let device = hosted.row.launch.as_ref()?.device.clone()?;
-        let managed =
-            hosted.row.mode == WorkerMode::Managed && host.launch_permitted.load(Ordering::SeqCst);
-        Some((device, !managed))
-    }) else {
+    let worker_id = worker.spec().worker_id.as_str();
+    let workers = host.lock();
+    let Some((device, external)) = workers
+        .get(worker_id)
+        .filter(|hosted| hosted.worker.same_instance(worker))
+        .and_then(|hosted| {
+            let device = hosted.row.launch.as_ref()?.device.clone()?;
+            let managed = hosted.row.mode == WorkerMode::Managed
+                && host.launch_permitted.load(Ordering::SeqCst);
+            Some((device, !managed))
+        })
+    else {
         return;
     };
     host.admission(&device)
@@ -502,20 +514,24 @@ pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
 /// Publishes one worker-reported activity snapshot to both admission and
 /// the supervisor without deriving either side from the other.
 pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
-    register_device_executor(&worker.spec().worker_id, activity.is_idle());
+    register_device_executor(worker, activity.is_idle());
     worker.report(activity);
 }
 
 /// Cross-checks a worker's own device capacity report with the pre-load
 /// query. The first valid report fills an unknown; a mismatch keeps the
-/// device query and logs rather than silently rewriting capacity.
-pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
+/// device query and logs rather than silently rewriting capacity. Only the
+/// row's hosted instance reports (FIX 13884): a replaced row's old clone
+/// fills nothing.
+pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let Some(device) = host
-        .lock()
+    let worker_id = worker.spec().worker_id.as_str();
+    let workers = host.lock();
+    let Some(device) = workers
         .get(worker_id)
+        .filter(|hosted| hosted.worker.same_instance(worker))
         .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
     else {
         return;
@@ -546,6 +562,23 @@ pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
         }
         Some(_) => {}
     }
+}
+
+/// Takes up the configured `[models.sessions]` policy (I1 = C).
+pub(super) fn prepare_policy(policy: crate::config::models::sessions::SessionPreparePolicy) {
+    #[cfg(unix)]
+    session::set_prepare_policy(policy);
+    #[cfg(not(unix))]
+    let _ = policy;
+}
+
+/// The next turn's prepared tails as this process stands; `None` off Unix.
+pub(super) fn prepared_tail_status() -> Option<super::status::PreparedTailStatus> {
+    #[cfg(unix)]
+    let status = Some(session::prepared_tail_status());
+    #[cfg(not(unix))]
+    let status = None;
+    status
 }
 
 /// Sealed snapshot parking as this process stands; `None` off Unix.

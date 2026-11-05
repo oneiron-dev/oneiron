@@ -190,7 +190,14 @@ binds the gate-decision key custody the restored vault keeps, so it is archived:
 reads, but refuses every write, erase and key retirement, which would otherwise reach the
 restored vault's keys. A restore that stops part-way through the swap (a crash, a power cut)
 leaves the same rule: whichever vault sits at the vault's path is the live one, and the other
-opens archived. To use the archived vault again, activate it:
+opens archived. On a later restore, sealed staging left by an interrupted swap is claimed
+as the previous vault only when both page-seal mirrors identify the post-swap state. After
+that rename, the archive mirror is narrowed to the previous vault's verified incarnation,
+keeping its carried key wraps. A mirror rewrite failure is logged and does not undo the
+claim; the archive's next sealed open can still narrow it. Plain, ambiguous, or locked
+staging stays whole and is named in the restore's `staging_notes`.
+
+To use the archived vault again, activate it:
 
 ```sh
 oneiron restore --activate /path/to/vault.pre-restore-<UTC time>

@@ -2,7 +2,6 @@
 
 use rmpv::Value;
 
-use super::consent::OPT_OUT_REASONS;
 use super::records::{
     elided_string, elided_u64, invalid_claim, required_bool, required_entity_ref, required_string,
     required_u64, validate_channel_class, validate_key_string, validate_keys,
@@ -13,6 +12,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::communication::COMM_OPT_OUT_REASONS as OPT_OUT_REASONS;
 use crate::write_envelope::communication::{
     KEY_ISSUED_AT, KEY_JOINED, KEY_REACHABLE, KEY_REASON, KEY_SCOPE, KEY_SEND_REF, KEY_VALID_TO,
 };

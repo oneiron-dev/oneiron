@@ -91,6 +91,9 @@ pub enum Shape {
     /// A Gemini model listing: `GET …/v1beta/models`, no body,
     /// `x-goog-api-key`.
     GeminiModels,
+    /// An Anthropic-compatible model listing: `GET …/v1/models`, no body,
+    /// `x-api-key`.
+    AnthropicModels,
 }
 
 struct Row {
@@ -343,6 +346,18 @@ const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, f
 
 const GEMINI_MODELS: Row = gemini("GET", &["v1beta", "models"], Body::Empty, Selector::Binding);
 
+const ANTHROPIC_MODELS: Row = Row {
+    method: "GET",
+    endpoint: &["v1", "models"],
+    query: None,
+    body: Body::Empty,
+    model: Selector::Binding,
+    auth_header: "x-api-key",
+    auth_prefix: "",
+    streams: false,
+    redirect: None,
+};
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -372,6 +387,7 @@ impl Shape {
             Self::OpenAiModels => &OPENAI_MODELS,
             Self::Health => &HEALTH,
             Self::GeminiModels => &GEMINI_MODELS,
+            Self::AnthropicModels => &ANTHROPIC_MODELS,
         }
     }
 

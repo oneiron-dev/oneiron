@@ -58,6 +58,7 @@ pub(crate) fn canonical_outbound_blob(raw: &[u8]) -> Result<Option<Vec<u8>>> {
     out.extend_from_slice(&header.occurred_start.to_be_bytes());
     out.extend_from_slice(&header.occurred_end.to_be_bytes());
     out.extend_from_slice(&header.learned_at.to_be_bytes());
+    out.extend_from_slice(&header.row_version.to_be_bytes());
     out.extend_from_slice(&wire_body);
     Ok(Some(out))
 }

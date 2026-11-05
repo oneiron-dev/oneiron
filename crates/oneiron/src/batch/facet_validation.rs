@@ -148,9 +148,8 @@ fn validate_facet_of_edge_at(
                 | ENTITY_TYPE_CLAIM
                 | ENTITY_TYPE_TURN
                 | ENTITY_TYPE_EVENT
-        )
-            && crate::federation::record_scope::birth_facet(store, rtxn, src)?
-                .is_some_and(|stamp| stamp != tgt)
+        ) && crate::federation::record_scope::birth_facet(store, rtxn, src)?
+            .is_some_and(|stamp| stamp != tgt)
         {
             return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
         }

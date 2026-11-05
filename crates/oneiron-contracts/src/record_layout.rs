@@ -1,5 +1,5 @@
 //! Byte layout of the entity metadata header that starts every stored entity row: the type
-//! byte, the occurred interval and the learned-at stamp, then the msgpack body.
+//! byte, the occurred interval, learned-at stamp and row version, then the msgpack body.
 //!
 //! `pub` so the engine's row codecs and retrieval's fusion (which reads salience and
 //! confidence out of the body) agree on one layout across the crate line. Offsets and the
@@ -13,8 +13,10 @@ pub const ENTITY_OCCURRED_START_OFFSET: usize = 1;
 pub const ENTITY_OCCURRED_END_OFFSET: usize = 9;
 /// Offset of the big-endian `learned_at` stamp.
 pub const ENTITY_LEARNED_AT_OFFSET: usize = 17;
+/// Offset of the big-endian row version.
+pub const ENTITY_ROW_VERSION_OFFSET: usize = 25;
 /// Offset of the msgpack body.
-pub const ENTITY_BODY_OFFSET: usize = 25;
+pub const ENTITY_BODY_OFFSET: usize = 33;
 /// Length of the metadata header: everything before the body.
 pub const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
 
@@ -29,6 +31,8 @@ pub struct EntityMetadataHeader {
     pub occurred_end: u64,
     /// The `learned_at` stamp.
     pub learned_at: u64,
+    /// The origin-write version of a CLAIM; zero on other native entity kinds.
+    pub row_version: u64,
 }
 
 impl EntityMetadataHeader {
@@ -52,7 +56,13 @@ impl EntityMetadataHeader {
                 .ok()?,
         );
         let learned_at = u64::from_be_bytes(
-            raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_BODY_OFFSET]
+            raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_ROW_VERSION_OFFSET]
+                .try_into()
+                .ok()?,
+        );
+
+        let row_version = u64::from_be_bytes(
+            raw[ENTITY_ROW_VERSION_OFFSET..ENTITY_BODY_OFFSET]
                 .try_into()
                 .ok()?,
         );
@@ -62,6 +72,7 @@ impl EntityMetadataHeader {
             occurred_start,
             occurred_end,
             learned_at,
+            row_version,
         })
     }
 }

@@ -79,6 +79,25 @@ impl CanonicalSnapshot {
                 break;
             }
         }
+        let pin_rows: std::collections::BTreeMap<_, _> = next
+            .document_pins
+            .iter()
+            .map(|row| (row.key.as_str(), row.row.as_slice()))
+            .collect();
+        for row in &next.document_pins {
+            if crate::room_codec::carrier_parts::is_part_key(&row.key) {
+                continue;
+            }
+            let pin =
+                crate::room_codec::document_pins::carried_pin_from(&row.key, &row.row, |key| {
+                    pin_rows.get(key).copied()
+                })?
+                .ok_or(invalid("redaction citation unresolved"))?;
+            if pin.anchor.quote().contains(&span) {
+                entity_copy = true;
+                break;
+            }
+        }
         if entity_copy
             || next.doc_snapshots.iter().any(|row| {
                 row.text.contains(&span)

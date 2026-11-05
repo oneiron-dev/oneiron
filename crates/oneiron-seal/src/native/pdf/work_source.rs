@@ -50,9 +50,7 @@ fn name<'a>(
         .ok()
         .map(|value| {
             let object = resolved(doc, value, limits)?;
-            object
-                .as_name()
-                .map_err(|err| lopdf_error(limits, err))
+            object.as_name().map_err(|err| lopdf_error(limits, err))
         })
         .transpose()
 }
@@ -163,8 +161,7 @@ pub(super) fn pages<'a>(
             let before = out.len();
             let kids = resolved(
                 doc,
-                node.get(b"Kids")
-                    .map_err(|err| lopdf_error(limits, err))?,
+                node.get(b"Kids").map_err(|err| lopdf_error(limits, err))?,
                 limits,
             )?
             .as_array()
@@ -284,14 +281,20 @@ impl VisualCopy<'_> {
                     content.push(b'\n');
                     check_content(&content, limits)?;
                 }
-                limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(stream.content.len())
+                    .map_err(WorkError::Memory)?;
                 Object::Stream(Stream::new(
                     self.dictionary(out, &stream.dict, depth, limits)?,
                     stream.content.clone(),
                 ))
             }
             Object::Name(bytes) | Object::String(bytes, _) => {
-                limits.ledger.admit_len::<u8>(bytes.len()).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(bytes.len())
+                    .map_err(WorkError::Memory)?;
                 value.clone()
             }
             _ => value.clone(),
@@ -315,7 +318,10 @@ impl VisualCopy<'_> {
         for (kind, members) in resources {
             if kind == b"ProcSet" {
                 let object = self.copy(out, members, depth + 1, limits)?;
-                limits.ledger.admit_len::<u8>(kind.len()).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(kind.len())
+                    .map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 copied.set(kind.clone(), object);
                 continue;
@@ -349,11 +355,17 @@ impl VisualCopy<'_> {
                     }
                 }
                 let object = self.copy(out, object, depth + 1, limits)?;
-                limits.ledger.admit_len::<u8>(key.len()).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(key.len())
+                    .map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 map.set(key.clone(), object);
             }
-            limits.ledger.admit_len::<u8>(kind.len()).map_err(WorkError::Memory)?;
+            limits
+                .ledger
+                .admit_len::<u8>(kind.len())
+                .map_err(WorkError::Memory)?;
             btree::<Vec<u8>, Object>(limits.ledger, 1)?;
             copied.set(kind.clone(), map);
         }
@@ -430,7 +442,10 @@ impl VisualCopy<'_> {
                         glyph_content(self.source, glyph, &mut content, 0, limits)?;
                         check_content(&content, limits)?;
                         let object = self.copy(out, glyph, depth + 1, limits)?;
-                        limits.ledger.admit_len::<u8>(glyph_name.len()).map_err(WorkError::Memory)?;
+                        limits
+                            .ledger
+                            .admit_len::<u8>(glyph_name.len())
+                            .map_err(WorkError::Memory)?;
                         btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                         glyphs.set(glyph_name.clone(), object);
                     }
@@ -438,7 +453,10 @@ impl VisualCopy<'_> {
                 } else {
                     self.copy(out, value, depth + 1, limits)?
                 };
-                limits.ledger.admit_len::<u8>(key.len()).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(key.len())
+                    .map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 copied.set(key.clone(), object);
             }
@@ -560,7 +578,10 @@ impl PageContents {
             content.push(b'\n');
         }
         check_content(&content, limits)?;
-        limits.ledger.admit_len::<ObjectId>(streams.len()).map_err(WorkError::Memory)?;
+        limits
+            .ledger
+            .admit_len::<ObjectId>(streams.len())
+            .map_err(WorkError::Memory)?;
         btree::<Vec<ObjectId>, ()>(limits.ledger, 1)?;
         self.checked.insert(streams.clone());
         Ok(streams)
@@ -676,8 +697,7 @@ pub(super) fn page_geometry(
 ) -> Result<PageGeometry> {
     let media = pdf_box(
         doc,
-        page
-            .get(b"MediaBox".as_slice())
+        page.get(b"MediaBox".as_slice())
             .ok_or(WorkError::Invalid(InputInvalidCode::MalformedPdf))?,
         limits,
     )?;
@@ -736,11 +756,7 @@ fn layout_bytes<T>(len: usize) -> Option<usize> {
 
 /// Fallibly grow one vector under the call's operation ledger, with the
 /// same double-capacity growth and old-buffer release as `admitted`.
-fn reserve<T>(
-    ledger: &MemoryLedger,
-    output: &mut Vec<T>,
-    additional: usize,
-) -> Result<()> {
+fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> Result<()> {
     let needed = output
         .len()
         .checked_add(additional)
@@ -750,8 +766,7 @@ fn reserve<T>(
     }
     let old_capacity = output.capacity();
     let target = old_capacity.saturating_mul(2).max(needed);
-    let bytes =
-        layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
+    let bytes = layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
     output
         .try_reserve_exact(target - output.len())

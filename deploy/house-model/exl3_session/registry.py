@@ -14,6 +14,15 @@ stops serving while pinned is retired, and released when the last pin goes.
 Each op's id is remembered with its answer for the session's current and
 previous generation: a retry gets the same answer, never a second act.
 
+Prepared tails (I1 = C). `session.prepare` prefills, without sampling, the
+turn the host expects next as far as it knows it (the published path, then
+the state-only board) on the published checkpoint, as a commit does, and
+keeps the result as the session's one prepared anchor (`Prepared`): never
+published, never canonical. The next fork attaches to it only where the real
+turn's own tokens equal its tokens, and it ends at that fork, at the next
+publish, or when the session stops serving; a prepare still running when the
+fork arrives stops there.
+
 Snapshots (R3). An export names the published checkpoint exactly, and its
 answer is kept with the region it passed (`Retained`): a retry passes the
 same bytes again, and the region closes when the answer is forgotten, the
@@ -99,6 +108,19 @@ class Staged:
         self.generation = generation
 
 
+class Prepared:
+    """A prepared tail: an unpublished checkpoint over the published path and
+    the state-only board after it, the published checkpoint it extends, and
+    the tokens its prepare computed."""
+
+    __slots__ = ("checkpoint", "base", "computed_tokens")
+
+    def __init__(self, checkpoint, base, computed_tokens):
+        self.checkpoint = checkpoint
+        self.base = base
+        self.computed_tokens = computed_tokens
+
+
 class Branch:
     """A working branch: the checkpoint it forked from (pinned; None for a
     cold one), how far its turn's canonical path reaches (`cap`), and the
@@ -121,8 +143,11 @@ class Commit:
     and a pad), the pages it reserves, its scheduling (exl3_executor), and
     its answer."""
 
-    def __init__(self, session, op_id, staged, plan, ids, need, work):
+    def __init__(self, session, op_id, staged, plan, ids, need, work, prepare=False):
         self.session = session
+        # A `session.prepare`'s: its result is the session's prepared tail,
+        # never its successor.
+        self.prepare = prepare
         self.op_id = op_id
         self.staged = staged
         self.base = staged.base
@@ -150,6 +175,9 @@ class Session:
         self.retired = []
         self.branches = {}
         self.commit = None
+        # The prepared tail (I1 = C), and the prepare that computes one.
+        self.prepared = None
+        self.preparing = None
         self.answers = {}
         self.lost = False
         self.dropping = False
@@ -164,6 +192,8 @@ class Session:
         """Every anchor this session holds pages through."""
         held = [checkpoint.anchor for checkpoint in (self.published, self.successor) if checkpoint is not None]
         held += [checkpoint.anchor for checkpoint in self.retired]
+        if self.prepared is not None:
+            held.append(self.prepared.checkpoint.anchor)
         held += [branch.carry for branch in self.branches.values() if branch.carry is not None]
         if self.importing is not None:
             held.append(self.importing)
@@ -314,6 +344,14 @@ class Registry:
             return []
         return [checkpoint.anchor]
 
+    def unprepare(self, session):
+        """The session's prepared tail stops serving; the anchors to release
+        now (none while a branch pins it)."""
+        prepared, session.prepared = session.prepared, None
+        if prepared is None:
+            return []
+        return self.retire(session, prepared.checkpoint)
+
     def close_branch(self, branch):
         """Ends `branch`; the anchors to release now."""
         if branch.ended:
@@ -340,6 +378,7 @@ class Registry:
         for checkpoint in (session.published, session.successor):
             release += self.retire(session, checkpoint)
         session.published = session.successor = session.staged = None
+        release += self.unprepare(session)
         if session.importing is not None:
             release.append(session.importing)
             session.importing = None

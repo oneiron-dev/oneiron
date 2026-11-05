@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The fixture UI needs no renderer access to native commands.",
+  "windows": [
+    "main"
+  ],
+  "permissions": []
+}

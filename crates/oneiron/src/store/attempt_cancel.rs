@@ -69,6 +69,8 @@ pub enum ForceCancelGrounds {
     LeaseExpiry,
     /// A criticality stop.
     Criticality,
+    /// An accepted hard erase or authenticated restore erased the payload's source.
+    ErasedPayload,
 }
 
 /// The exact point a successor resumes from after a designed landing.

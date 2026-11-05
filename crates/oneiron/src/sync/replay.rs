@@ -9,6 +9,7 @@ pub struct ReplicatedEntity<'a> {
     pub entity_type: u8,
     pub occurred: TimeRange,
     pub learned_at: u64,
+    pub row_version: u64,
     pub body: &'a [u8],
 }
 
@@ -40,6 +41,7 @@ pub fn replay_entity_with_birth(
                 entity.entity_type,
                 entity.occurred,
                 entity.learned_at,
+                Some(entity.row_version),
                 entity.body,
             )
             .apply(txn)?;

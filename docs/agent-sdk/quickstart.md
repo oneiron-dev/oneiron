@@ -15,7 +15,7 @@ Node 20 or newer. The package ships prebuilt native artifacts for macOS
 SDKs, embedded `Oneiron.open()` is currently supported only on Unix
 (macOS/Linux). On other targets, including Windows, use `Oneiron.connect()`
 to reach a server on a supported host; embedded open fails closed because
-writer locking is unsupported.
+writer locking is unsupported. One verb is narrower: `putCodebaseSnapshot` refuses SharedArrayBuffer-backed inputs on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing.
 
 ## Quickstart
 

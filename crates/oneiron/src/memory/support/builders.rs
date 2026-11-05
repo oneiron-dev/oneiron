@@ -183,6 +183,25 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the current request's transport observations for signing audit
+    /// records. Only the host supplies these; they grant no authority and
+    /// are not retained as context for a future request.
+    #[must_use]
+    pub fn with_signing_request_transport(mut self, transport: SigningRequestTransport) -> Self {
+        self.signing_request_transport = Some(transport);
+        self
+    }
+
+    pub(crate) fn signing_request_transport(&self) -> (Option<String>, Option<String>) {
+        match &self.signing_request_transport {
+            Some(transport) => (
+                transport.peer_ip.map(|ip| ip.to_string()),
+                transport.user_agent.clone(),
+            ),
+            None => (None, None),
+        }
+    }
+
     /// Whether the in-process host itself holds this surface: no transport
     /// reached it and no credential (slip, read proof or task grant) is
     /// bound to it.

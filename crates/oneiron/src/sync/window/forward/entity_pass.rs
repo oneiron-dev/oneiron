@@ -7,7 +7,9 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::EntityId;
+use crate::batch::EntityMetadataHeader;
 use crate::error::Result;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::secret_custody::moves_custody_floor;
 use crate::sync::ingest::{
     EntityStep, IngestCtx, RefusalRetry, Residence, TaskComponents, authority_parent_order,
@@ -126,6 +128,7 @@ pub(super) fn run_page(
             .iter()
             .map(|(key, _)| EntityId::from_hex(key).ok().filter(|id| watches(vault, id)))
             .collect();
+        let mut claims_written = false;
         let steps = match vault.with_write_txn_grouped(|wtxn| {
             let mut unborn = Vec::with_capacity(rows.len());
             for watched in &watched {
@@ -140,6 +143,8 @@ pub(super) fn run_page(
             for (&(_, value), step) in rows.iter().zip(&steps) {
                 if let (Some(id), Some(blob)) = (step.written(), value) {
                     note_delivered_in_txn(vault, wtxn, id, blob)?;
+                    claims_written |= EntityMetadataHeader::parse(blob)
+                        .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
                 }
             }
             Ok(steps.into_iter().zip(unborn).collect::<Vec<_>>())
@@ -150,6 +155,9 @@ pub(super) fn run_page(
                 return;
             }
         };
+        if claims_written {
+            vault.verb_hook_bindings_changed();
+        }
         for (&(_, value), (step, unborn)) in rows.iter().zip(steps) {
             if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
                 note_born(vault, id, blob);

@@ -344,6 +344,14 @@ pub struct ReaderFindingRef {
     pub rows: Option<Vec<EntityId>>,
 }
 
+impl ReaderFindingRef {
+    /// The exact child occurrence the parent reads, independent of shared bytes.
+    pub(crate) fn reference(&self) -> Result<String> {
+        let occurrence = super::ResultOccurrence::owned(self.owner, &self.path)?;
+        Ok(format!("occurrence:{}", occurrence.id().to_hex()))
+    }
+}
+
 /// `self.spawn(...)`: the guest's source, ask and key. `bound` is the source
 /// as the host resolved it in the parent run; it is the host's, never the
 /// guest's, and the run's record keeps the guest's call without it.
@@ -395,8 +403,8 @@ pub struct ReaderSpawnReceipt {
     pub replay: bool,
 }
 
-/// What a child's report answers: its task, its finding's handle, and
-/// whether the same finding was already its latest.
+/// What a child's report answers: its task, its finding's occurrence ref,
+/// and whether the same finding was already its latest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReaderReportReceipt {
     pub task: EntityId,
@@ -405,9 +413,8 @@ pub struct ReaderReportReceipt {
     pub replay: bool,
 }
 
-/// A child whose finding a wait counts: its task, its finding's handle (the
-/// `ref` the parent reads it by) and size, and why it settled short, for a
-/// partial one.
+/// A child whose finding a wait counts: its task, its finding's occurrence
+/// ref and size, and why it settled short, for a partial one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWaitFinding {
     pub task: EntityId,
@@ -745,7 +752,7 @@ pub(crate) fn reduce_task_wait_set(
     set: &TaskWaitSet,
     jobs: &[(EntityId, Option<ReaderJob>)],
     now_ms: u64,
-) -> TaskWaitSetResult {
+) -> Result<TaskWaitSetResult> {
     let mut result = TaskWaitSetResult {
         ready: Vec::new(),
         partial: Vec::new(),
@@ -756,13 +763,17 @@ pub(crate) fn reduce_task_wait_set(
         until: set.until_ms,
         program_steps: Vec::new(),
     };
-    let finding =
-        |task: EntityId, finding: &ReaderFindingRef, reason: Option<&str>| TaskWaitFinding {
+    let finding = |task: EntityId,
+                   finding: &ReaderFindingRef,
+                   reason: Option<&str>|
+     -> Result<TaskWaitFinding> {
+        Ok(TaskWaitFinding {
             task,
-            finding: finding.handle.clone(),
+            finding: finding.reference()?,
             bytes: finding.bytes,
             reason: reason.map(str::to_owned),
-        };
+        })
+    };
     for (task, job) in jobs {
         let failed = |reason: &str| TaskWaitFailure {
             task: task.to_hex(),
@@ -777,11 +788,11 @@ pub(crate) fn reduce_task_wait_set(
         };
         match (&job.state, &job.finding) {
             (ReaderJobState::Queued | ReaderJobState::Active, _) => result.pending.push(*task),
-            (ReaderJobState::Done, Some(found)) => result.ready.push(finding(*task, found, None)),
+            (ReaderJobState::Done, Some(found)) => result.ready.push(finding(*task, found, None)?),
             (ReaderJobState::Partial { reason }, Some(found)) => {
                 result
                     .partial
-                    .push(finding(*task, found, Some(reason.as_str())));
+                    .push(finding(*task, found, Some(reason.as_str()))?);
             }
             (ReaderJobState::Done, None) => result.failed.push(failed("no_finding")),
             (ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason }, _) => {
@@ -800,5 +811,5 @@ pub(crate) fn reduce_task_wait_set(
     };
     result.done = reason.is_some();
     result.reason = reason.map(str::to_owned);
-    result
+    Ok(result)
 }

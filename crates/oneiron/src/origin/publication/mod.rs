@@ -89,7 +89,7 @@ mod publication_tests_a;
 mod publication_tests_b;
 #[cfg(test)]
 mod publication_tests_c;
-mod publication_types;
+use oneiron_store::origin::publication::publication_types;
 
 pub(crate) use self::publication_codec::erase_publication_actor_in_txn;
 pub use self::publication_codec::{
