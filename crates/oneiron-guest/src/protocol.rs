@@ -47,6 +47,10 @@ enum HostFrame {
     Receipt {
         accepted: bool,
     },
+    Failure {
+        code: String,
+        detail: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -244,13 +248,18 @@ impl<T: Read + Write> Session<T> {
         Ok(())
     }
 
-    /// One frame of the open file. Frames are not requests: the host answers
-    /// none, and a file of any size spends no request budget.
-    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+    /// One frame of the open file. Wait for its receipt without spending a
+    /// logical request, so a file's size never spends the request budget.
+    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<std::result::Result<(), String>> {
         if self.finished || bytes.len() > MAX_CHUNK {
             return Err(Error::Protocol("proposal frame bounds"));
         }
-        self.send(&GuestFrame::WriteChunk { bytes })
+        self.send(&GuestFrame::WriteChunk { bytes })?;
+        match self.read()? {
+            HostFrame::Receipt { accepted: true } => Ok(Ok(())),
+            HostFrame::Failure { code, detail } => Ok(Err(format!("{code}: {detail}"))),
+            _ => Err(Error::Protocol("expected proposal chunk receipt")),
+        }
     }
 
     pub(crate) fn close_write(&mut self) -> Result<()> {
