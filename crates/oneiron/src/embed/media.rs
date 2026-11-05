@@ -162,6 +162,7 @@ impl Vault {
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, space_id)? else {
                 return Err(Error::InvalidConfig(format!(
