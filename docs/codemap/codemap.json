@@ -3853,6 +3853,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/device_succession.rs",
+     "purpose": "Folds the owner's namings of a device key's successor (FIX 11135, Engine 11-06 06:58 = A), and signs one…",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
@@ -3977,7 +3988,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/fold_project.rs",
@@ -4067,7 +4078,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActorBindingRejection",
@@ -25310,13 +25321,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/receipt_origin.rs",
      "purpose": "Whether this device attested an erase receipt (FIX 2596, OF-470)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -89286,7 +89297,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 252,
+     "files": 253,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90798,9 +90809,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 152,
+   "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6374,
+   "source_files": 6375,
    "test_files": 895
   },
   "oneiron-android": {
@@ -91033,6 +91044,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeviceSuccession"
+     ],
+     "path": "src/authority/device_succession.rs",
+     "purpose": "The owner's naming of a device key's successor (FIX 11135, Engine 11-06 06:58 = A), and its wire codec",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExportActRecord"
      ],
      "path": "src/authority/export_act.rs",
@@ -91184,7 +91210,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 34
+      "re-export": 35
      }
     },
     {
@@ -91830,7 +91856,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91895,7 +91921,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 60,
+   "source_files": 61,
    "test_files": 1
   },
   "oneiron-base": {
@@ -97096,7 +97122,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 74,
+      "const": 75,
       "crate-vis": 1
      }
     },
