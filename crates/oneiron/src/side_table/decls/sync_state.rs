@@ -354,19 +354,26 @@ side_tables! {
     /// claim, checked when read (FIX 5554): 1 (checked) or 0 (claim) ‖ that machine (16) ‖ the
     /// generation (24) ‖ the bundle's digest (32), a ciphertext digest. It outlives the
     /// generation's retirement and goes once the request has its result here. Key: hex64 (the
-    /// request's entry hash) ":" hex32 (the committing machine).
+    /// request's entry hash) ":" hex32 (the committing machine). Work records use
+    /// "work:" hex64 with JSON immutable binding, detached source headers, phase,
+    /// prepared/source/cleanup cursors and terminal receipt. "generation:" hex48
+    /// stores the exact32-byte work id reserving unpublished stored parts.
+    /// "stage-identity:" hex32 stores one zero byte until ordinary deletion
+    /// or the work's whole cleanup finishes; an empty partial-cleanup prefix
+    /// is not a reusable identity.
     SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw;
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
-    /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
+    /// (32) ‖ u64be bytes staged ‖ immutable part identity (16),96 bytes total.
+    /// Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
     /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
     /// the holder's turn runs from ‖ u64be count of machines whose turn lapsed ‖ each (FIX 4405):
     /// u64be slot it holds first ‖ that machine (16) ‖ each machine that asked for it (16), the
     /// holder first. Key: ().
     SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
-    /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
-    /// (offset).
+    /// One immutable upload part. Key: hex32 (the header's part identity) ":" hex16
+    /// (offset). Detached work retains its parts independently of active handles.
     SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
     /// The exact attempt this machine made to publish the vault's sealed bundle for one owner's
     /// request (FIX 4787), persisted before its commit: the home (16) ‖ this machine, the
@@ -496,6 +503,11 @@ side_tables! {
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
     USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named;
+    /// One frozen automatic settlement awaiting its final ledger write (FIX 737).
+    /// Same named envelope as USAGE_EVENT. Key: hex ":" hex ":" hex
+    /// (vault, billing owner, idempotency-key); vault-first covers room-paid owners.
+    USAGE_SETTLEMENT_PENDING: SyncState b"usage:retry:" Named
+        => crate::store::erase_pending_usage_source_in_txn;
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
