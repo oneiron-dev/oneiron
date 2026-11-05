@@ -108,6 +108,7 @@ pub(super) fn put_comm_record_in_txn(
                 end: occurred_at,
             },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: encode_comm_record(record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,

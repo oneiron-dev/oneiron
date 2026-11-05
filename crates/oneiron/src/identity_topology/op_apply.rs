@@ -494,6 +494,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: {
                     let body = rmpv::Value::Map(vec![
                         ("label".into(), spec.label.clone().into()),
@@ -565,6 +566,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_identity_topology_event_body(&record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -608,6 +610,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_identity_topology_event_body(&disposition_record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
