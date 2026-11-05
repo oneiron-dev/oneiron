@@ -73,6 +73,14 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `federation::validate_federation_grant_body_bytes`.
     fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()>;
 
+    /// The engine's `counterparty_contact::fold_party_opt_out_heads_for_store_in_txn`.
+    fn fold_party_opt_out_heads_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+    ) -> Result<()>;
+
     /// The engine's `federation::guard_ruling_overwrite`.
     #[allow(clippy::too_many_arguments)]
     fn guard_ruling_overwrite(
@@ -138,11 +146,12 @@ pub trait StoreRecordHooks: Send + Sync {
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
 
-    /// The engine's `counterparty_contact::fold_party_opt_out_heads_for_store_in_txn`.
-    fn fold_party_opt_out_heads_in_txn(
+    /// The engine's `affect::state_inputs::spoke_in`.
+    fn spoke_in(
         &self,
         vault: &crate::Vault,
-        rtxn: &RoTxn<'_>,
-        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
-    ) -> Result<()>;
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool>;
 }

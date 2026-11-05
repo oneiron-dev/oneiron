@@ -70,6 +70,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::federation::validate_federation_grant_body_bytes(bytes)
     }
 
+    fn fold_party_opt_out_heads_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+    ) -> Result<()> {
+        crate::counterparty_contact::fold_party_opt_out_heads_for_store_in_txn(vault, rtxn, record)
+    }
+
     fn guard_ruling_overwrite(
         &self,
         store: &Store,
@@ -144,12 +153,13 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
 
-    fn fold_party_opt_out_heads_in_txn(
+    fn spoke_in(
         &self,
         vault: &crate::Vault,
-        rtxn: &RoTxn<'_>,
-        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
-    ) -> Result<()> {
-        crate::counterparty_contact::fold_party_opt_out_heads_for_store_in_txn(vault, rtxn, record)
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool> {
+        crate::affect::state_inputs::spoke_in(vault, txn, subject, turn)
     }
 }

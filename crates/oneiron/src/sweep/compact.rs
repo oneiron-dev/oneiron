@@ -503,7 +503,14 @@ pub(super) fn compact_window_with(
             wtxn,
             &crate::store::legal_hold::HoldActor::TIMER,
         ) {
-            held.set(super::holds::refused_by_hold(&refused));
+            let missing_hold = matches!(&refused, Error::CorruptedIndex("legal hold target"));
+            if missing_hold {
+                tracing::warn!(
+                    error = %refused,
+                    "sweep: indexed legal hold row missing — compaction deferred"
+                );
+            }
+            held.set(super::holds::refused_by_hold(&refused) || missing_hold);
             return Err(refused);
         }
 
