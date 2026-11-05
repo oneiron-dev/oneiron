@@ -164,7 +164,7 @@ impl Memory<'_> {
     /// whether someone may search across mailboxes right now.
     pub fn mail_compliance_setting(&self) -> MemoryResult<MailComplianceSettingView> {
         let vault = self.vault();
-        let txn = vault.store.env.read_txn()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let row = SETTING.get(&vault.store, &txn, &())?;
         Ok(MailComplianceSettingView {
             enabled: row.as_ref().is_some_and(|row| row.enabled),
@@ -231,7 +231,7 @@ impl Memory<'_> {
     /// every search made under it. The vault's Owner and its Admins read it.
     pub fn mail_compliance_log(&self) -> MemoryResult<Vec<MailComplianceEventView>> {
         let vault = self.vault();
-        let txn = vault.store.env.read_txn()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         if !manages_in(vault, &txn, self.actor())? {
             return Err(MemoryError::not_found("no compliance log for this reader"));
         }
