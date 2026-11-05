@@ -1160,8 +1160,15 @@ impl SealFetcher for AskedFetcher {
                 AskCode::Cancelled => FetchError::Timeout,
                 _ => FetchError::Unavailable,
             })?;
-        let answer: FetchAnswer =
-            from_value(&reply.value, "fetch").map_err(|_| FetchError::InvalidResponse)?;
+        let memory = AskedMemory {
+            asks: Arc::clone(&self.asks),
+        };
+        let answer: FetchAnswer = memory
+            .read_value(&reply.value)
+            .map_err(|error| match error {
+                ValueReadError::Codec(_) => FetchError::InvalidResponse,
+                ValueReadError::Memory(refusal) => FetchError::Memory(refusal),
+            })?;
         if !(200..300).contains(&answer.status) {
             return Err(FetchError::InvalidResponse);
         }
