@@ -101,9 +101,12 @@ pub(crate) fn root_entry(
         "edges" => match parse_edge_key(key) {
             // An authored_by edge is its source's: the actor it names rides
             // in its withheld key alone (FIX 10279, `withheld_key`), so the
-            // edge goes with that actor.
+            // edge goes with that actor. Its value must be the kind's own
+            // layout, which holds no actor.
             Some((source, EdgeKind::AuthoredBy, actor))
-                if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key =>
+                if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key
+                    && crate::edge::decode_edge_value_for_kind(EdgeKind::AuthoredBy, value)
+                        .is_ok() =>
             {
                 Placement::owned(OwnerRef::entity(&source), Vec::new())
             }
