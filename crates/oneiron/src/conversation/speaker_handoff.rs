@@ -41,8 +41,8 @@ pub struct SpeakerHandoff {
     pub actor: WriteActor,
 }
 
-/// What a handoff did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a handoff did, retained on the new membership's ledger row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpeakerHandoffReceipt {
     pub entry_ref: EntityId,
     pub container: EntityId,
@@ -101,15 +101,7 @@ impl Vault {
                 SpeakerHandoffBoundary::JoinTime => joined_at,
                 SpeakerHandoffBoundary::EntryEnteredAt => fact.entered_at.min(joined_at),
             };
-            self.join_member_from_in_txn(
-                txn,
-                fact.container,
-                request.person,
-                request.actor,
-                joined_at,
-                visible_from,
-            )?;
-            Ok(SpeakerHandoffReceipt {
+            let receipt = SpeakerHandoffReceipt {
                 entry_ref: request.entry_ref,
                 container: fact.container,
                 contact,
@@ -117,7 +109,9 @@ impl Vault {
                 boundary: request.boundary,
                 visible_from,
                 joined_at,
-            })
+            };
+            self.join_member_from_in_txn(txn, &receipt, request.actor)?;
+            Ok(receipt)
         })
     }
 }
