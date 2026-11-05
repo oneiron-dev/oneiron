@@ -66,7 +66,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             attempt.public_authority.as_ref(),
         ),
         BookingVerbRequest::Reschedule(spec) => {
-            let receipt = execute_reschedule(
+            let mut receipt = execute_reschedule(
                 vault,
                 oracle,
                 spec,
@@ -77,34 +77,37 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             // the same grant, gate and intent ledger as the confirm's (FIX
             // 7850). As there, the writer has returned, and a dispatch failure
             // never fails a move that is already committed.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
-                && let Err(error) = dispatch_booking_revision_invite_outcome(
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink) {
+                match dispatch_booking_revision_invite_outcome(
                     vault,
                     actor,
                     &receipt.calendar,
                     sink,
                     now_utc,
-                )
-            {
-                tracing::debug!(%error, "booking move sent no revised invite");
+                ) {
+                    Ok(invite) => receipt.invite_retry_at = invite.retry_at,
+                    Err(error) => tracing::debug!(%error, "booking move sent no revised invite"),
+                }
             }
             Ok(BookingVerbReceipt::Rescheduled(receipt))
         }
         BookingVerbRequest::Cancel(spec) => {
-            let receipt = execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
+            let mut receipt =
+                execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
             // The cancel carries its `CANCEL` to the booker under the bumped
             // SEQUENCE (FIX 7850), on the grant that covered the booking, and
             // a dispatch failure never fails the committed cancel.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
-                && let Err(error) = dispatch_booking_cancel_invite_outcome(
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink) {
+                match dispatch_booking_cancel_invite_outcome(
                     vault,
                     actor,
                     &receipt.calendar,
                     sink,
                     now_utc,
-                )
-            {
-                tracing::debug!(%error, "booking cancel sent no cancel invite");
+                ) {
+                    Ok(invite) => receipt.invite_retry_at = invite.retry_at,
+                    Err(error) => tracing::debug!(%error, "booking cancel sent no cancel invite"),
+                }
             }
             Ok(BookingVerbReceipt::Cancelled(receipt))
         }
@@ -256,6 +259,7 @@ pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
                     dispatch_confirm_booking_invite_outcome(vault, actor, &receipt, sink, now_utc)
             {
                 receipt.approval_digest = invite.approval_digest;
+                receipt.invite_retry_at = invite.retry_at;
             }
             Ok(BookingVerbReceipt::Confirmed(receipt))
         }
@@ -320,6 +324,7 @@ fn confirm_in_writer(
             reschedule_token: revision_token(&spec.hold_token, LifecycleTokenScope::Reschedule),
             cancel_token: revision_token(&spec.hold_token, LifecycleTokenScope::Cancel),
             approval_digest: None,
+            invite_retry_at: None,
             reads,
         }));
     }
@@ -442,6 +447,7 @@ fn confirm_in_writer(
         reschedule_token,
         cancel_token,
         approval_digest: None,
+        invite_retry_at: None,
         reads,
     }))
 }
@@ -507,7 +513,11 @@ pub(crate) fn execute_reschedule(
                 && let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)?
             {
                 let (calendar, reads) = recorded.into_revision_and_reads();
-                return Ok(RevisionReceipt { calendar, reads });
+                return Ok(RevisionReceipt {
+                    calendar,
+                    invite_retry_at: None,
+                    reads,
+                });
             }
 
             let context = booking
@@ -573,6 +583,7 @@ pub(crate) fn execute_reschedule(
             )?;
             Ok(RevisionReceipt {
                 calendar: revision,
+                invite_retry_at: None,
                 reads,
             })
         },
@@ -611,7 +622,11 @@ pub(crate) fn execute_cancel(
             let receipt_key = revision_receipt_key(&event_ref, None);
             if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
                 let (calendar, reads) = recorded.into_revision_and_reads();
-                return Ok(RevisionReceipt { calendar, reads });
+                return Ok(RevisionReceipt {
+                    calendar,
+                    invite_retry_at: None,
+                    reads,
+                });
             }
             let booking = read_booking_facts_to_cancel(vault, &*wtxn, &event_ref)?;
             let reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
@@ -664,6 +679,7 @@ pub(crate) fn execute_cancel(
             )?;
             Ok(RevisionReceipt {
                 calendar: revision,
+                invite_retry_at: None,
                 reads,
             })
         },

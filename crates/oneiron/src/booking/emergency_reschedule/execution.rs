@@ -193,7 +193,7 @@ pub(super) fn dispatch_item_effect(
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
-                resets_at: Vec::new(),
+                resets_at: result.retry_at().into_iter().collect(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
             },
