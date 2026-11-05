@@ -1,8 +1,11 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::claim::decode_claim_body;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
 };
@@ -111,7 +114,12 @@ impl Vault {
             return Ok(rows);
         }
         for clip in self.claims_for_subject_in_txn(txn, &world)? {
-            let entry = self.clipboard_claim_in_txn(txn, clip).and_then(|body| {
+            let body = if active_only {
+                self.clipboard_claim_in_txn(txn, clip)
+            } else {
+                self.clipboard_claim_raw_in_txn(txn, clip)
+            };
+            let entry = body.and_then(|body| {
                 body.filter(|body| !active_only || body.lifecycle == ClaimLifecycleStatus::Active)
                     .map(|body| clipboard_entry(clip, &body))
                     .transpose()
@@ -137,14 +145,26 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         clip: EntityId,
     ) -> Result<Option<ClaimBody>> {
-        let world = clipboard_world_id()?;
-        let Some(body) = self.get_claim_in_txn(txn, &clip)? else {
+        clipboard_family_claim(self.get_claim_in_txn(txn, &clip)?)
+    }
+
+    // Erasure must reach stored words even when a source withdrawal makes
+    // them unreadable. This port validates the envelope and CLAIM body, but
+    // does not turn raw membership into permission to display the text.
+    pub(super) fn clipboard_claim_raw_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        clip: EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(row) = self.store.port_entity_record(txn, &clip)? else {
             return Ok(None);
         };
-        Ok((body.predicate == PREDICATE_CLIPBOARD_CAPTURED
-            && body.world == Some(world)
-            && body.subject == ClaimSubject::Entity(world))
-        .then_some(body))
+        if row.entity_type != ENTITY_TYPE_CLAIM
+            || (row.body.is_empty() && self.port_deletion_state(txn, &clip)?.deleted)
+        {
+            return Ok(None);
+        }
+        clipboard_family_claim(Some(decode_claim_body(&row.body, true)?))
     }
 
     pub(super) fn clipboard_entry_in_txn(
@@ -157,6 +177,15 @@ impl Vault {
         };
         clipboard_entry(clip, &body).map(Some)
     }
+}
+
+fn clipboard_family_claim(body: Option<ClaimBody>) -> Result<Option<ClaimBody>> {
+    let world = clipboard_world_id()?;
+    Ok(body.filter(|body| {
+        body.predicate == PREDICATE_CLIPBOARD_CAPTURED
+            && body.world == Some(world)
+            && body.subject == ClaimSubject::Entity(world)
+    }))
 }
 
 fn clipboard_entry(clip: EntityId, body: &ClaimBody) -> Result<ClipboardEntry> {

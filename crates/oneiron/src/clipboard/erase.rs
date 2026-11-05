@@ -41,7 +41,7 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             match selection {
                 ClipboardErase::Clip { clip } => {
-                    if self.clipboard_claim_in_txn(&txn, clip)?.is_some() {
+                    if self.clipboard_claim_raw_in_txn(&txn, clip)?.is_some() {
                         vec![(clip, None)]
                     } else {
                         Vec::new()
@@ -56,7 +56,7 @@ impl Vault {
                 ClipboardErase::All => {
                     let mut clips = Vec::new();
                     for clip in self.claims_for_subject_in_txn(&txn, &clipboard_world_id()?)? {
-                        if self.clipboard_claim_in_txn(&txn, clip)?.is_some() {
+                        if self.clipboard_claim_raw_in_txn(&txn, clip)?.is_some() {
                             clips.push((clip, None));
                         }
                     }
@@ -108,7 +108,7 @@ impl Vault {
             Ok(())
         };
         let selected = |txn: &heed::RoTxn<'_>| {
-            let Some(current) = self.clipboard_claim_in_txn(txn, clip)? else {
+            let Some(current) = self.clipboard_claim_raw_in_txn(txn, clip)? else {
                 return Err(Error::ConcurrentWrite("Clipboard selection changed"));
             };
             if let Some(expected) = copied_at {
