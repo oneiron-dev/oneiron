@@ -25887,7 +25887,7 @@
      "path": "src/dispatch_byoa/official_seats.rs",
      "purpose": "Official subscription seats (OF-375): the owner's own vendor login, reached only through the vendor's…",
      "surface": {
-      "const": 5,
+      "const": 7,
       "enum": 5,
       "fn": 23,
       "struct": 14,
@@ -53543,15 +53543,16 @@
      "kind": "src",
      "notable": [
       "RepoManifest",
+      "RepoManifestWriter",
       "RepoPortableId"
      ],
      "path": "src/origin/repo_manifest.rs",
      "purpose": "FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 6,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -53561,7 +53562,7 @@
      "path": "src/origin/repo_manifest/refresh.rs",
      "purpose": "Refresh of a standing manifest's refs (FIX 6870 phase 1, rulings 7-8)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -53577,7 +53578,7 @@
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -117060,14 +117061,17 @@
      "notable": [
       "SeatCommand",
       "SeatLoginPlanArgs",
-      "SeatRunnerPolicyArgs"
+      "SeatRunnerPolicyArgs",
+      "SiwcCredentialArgs",
+      "SiwcLoginArgs",
+      "SiwcRevokeArgs"
      ],
      "path": "src/cli/seat_args.rs",
      "purpose": "`oneiron seat …` arguments: the official-seat sign-in surface (OF-375)",
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 2
+      "struct": 5
      }
     },
     {
@@ -117864,7 +117868,7 @@
      "path": "src/commands/seat.rs",
      "purpose": "`oneiron seat …`: the owner's official-seat sign-in surface (OF-375)",
      "surface": {
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -118533,7 +118537,8 @@
       "RequestCodec",
       "RequestCompression",
       "ResponseFormatWire",
-      "ResponsesSocket"
+      "ResponsesSocket",
+      "SiwcProvider"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
@@ -118541,7 +118546,7 @@
       "crate-vis": 5,
       "enum": 4,
       "fn": 7,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -122962,7 +122967,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -123585,6 +123590,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/models/siwc_responses.rs",
+     "purpose": "Configured SIWC Responses calls through the normal model/run admission",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/soniox.rs",
      "purpose": "Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung",
      "surface": {
@@ -123946,7 +123961,7 @@
      "path": "src/oauth_relay.rs",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -125130,6 +125145,7 @@
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "re-export": 1,
       "struct": 9
@@ -125153,6 +125169,76 @@
      "purpose": "The Dreamer executor's runner work (FIX 9238): each admitted attempt's step is bound to its runner seat…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/credential.rs",
+     "purpose": "One selected local registration, reopened before each physical send",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/identity.rs",
+     "purpose": "Verify the vendor's ID token, never an OAuth relay or cloud credential",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/login.rs",
+     "purpose": "One explicit local sign-in attempt",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/logout.rs",
+     "purpose": "Explicit local credential clearing and renewable-session revocation",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/mod.rs",
+     "purpose": "Runtime-local Sign in with ChatGPT",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/record.rs",
+     "purpose": "Protected, runtime-local credentials for one issued registration",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/refresh.rs",
+     "purpose": "Refresh one already-verified issued registration",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -127451,7 +127537,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 118,
+     "files": 119,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127514,7 +127600,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 22,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -127607,7 +127693,7 @@
    },
    "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1574,
+   "source_files": 1582,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
