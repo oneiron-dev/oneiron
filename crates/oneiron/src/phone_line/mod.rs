@@ -2,7 +2,7 @@
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::channel_identity::{ChannelIdentity, InboundDisposition};
+use crate::channel_identity::{ChannelIdentityFacts, InboundDisposition};
 use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -104,27 +104,35 @@ fn line_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
-) -> Result<(ChannelIdentity, EntityId, EntityId)> {
+) -> Result<(ChannelIdentityFacts, InboundDisposition, EntityId, EntityId)> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, identity_ref)?.is_live() {
         return Err(invalid());
     }
     let identity = vault
         .get_channel_identity_in_txn(txn, identity_ref)?
         .ok_or_else(invalid)?;
-    if identity.channel() != "voice" || identity.is_delegated() {
+    if identity.is_delegated() {
         return Err(invalid());
     }
-    let agent = identity.binding().actor_ref().ok_or_else(invalid)?;
-    let bridge = identity.reputation_ref().ok_or_else(invalid)?;
+    // The body supplies custody; live claim heads own channel, address and binding.
+    let facts =
+        crate::channel_identity::channel_identity_facts_in_txn(&vault.store, txn, identity_ref)?
+            .ok_or_else(invalid)?;
+    if facts.channel != "voice" {
+        return Err(invalid());
+    }
+    let inbound = facts.inbound_with_custody(identity.custody());
+    let agent = facts.binding.actor_ref().ok_or_else(invalid)?;
+    let bridge = facts.reputation_ref.ok_or_else(invalid)?;
     if !live_kind(vault, txn, &agent, ENTITY_TYPE_AGENT_DEF)?
         || !live_kind(vault, txn, &bridge, ENTITY_TYPE_MACHINE)?
         || vault
-            .channel_identity_by_assignment_in_txn(txn, "voice", identity.address_or_handle())?
+            .channel_identity_by_assignment_in_txn(txn, &facts.channel, &facts.address_or_handle)?
             .is_none_or(|(actual, _)| actual != *identity_ref)
     {
         return Err(invalid());
     }
-    Ok((identity, agent, bridge))
+    Ok((facts, inbound, agent, bridge))
 }
 
 impl Vault {
@@ -143,7 +151,7 @@ impl Vault {
         let (agent_ref, bridge_actor) = match prior {
             Some(prior) if !desired.enabled => (prior.agent_ref, prior.bridge_actor),
             _ => {
-                let (_, agent, bridge) = line_in_txn(self, &txn, &identity_ref)?;
+                let (_, _, agent, bridge) = line_in_txn(self, &txn, &identity_ref)?;
                 (agent, bridge)
             }
         };
@@ -223,24 +231,24 @@ pub(crate) fn admitted_line_in_txn(
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
     identity_ref: EntityId,
-) -> Result<(PhoneLineState, ChannelIdentity)> {
+) -> Result<(PhoneLineState, ChannelIdentityFacts)> {
     let state = LINES
         .get(&vault.store, txn, &identity_ref)?
         .ok_or_else(invalid)?;
-    let (identity, agent, bridge) = line_in_txn(vault, txn, &identity_ref)?;
+    let (facts, inbound, agent, bridge) = line_in_txn(vault, txn, &identity_ref)?;
     if !state.enabled
         || state.identity_ref != identity_ref
         || state.agent_ref != agent
         || state.bridge_actor != bridge
         || EntityId::from_hex(read.actor_key().actor_ref())? != bridge
         || !matches!(
-            identity.inbound(),
+            inbound,
             InboundDisposition::Deliver | InboundDisposition::DeliverRetiring
         )
     {
         return Err(invalid());
     }
-    Ok((state, identity))
+    Ok((state, facts))
 }
 
 pub(crate) fn arrival_key(identity_ref: EntityId, call_id: &str) -> [u8; 32] {

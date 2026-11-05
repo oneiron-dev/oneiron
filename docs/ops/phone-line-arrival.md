@@ -21,8 +21,12 @@ The phone-specific transport accepts call-arrival metadata in a JSON body: a pro
 call id and optional opaque caller label. Neither value appears in the request URL. The
 authenticated request must carry the existing holder-bound verified slip, not a legacy shared secret, and the native scoped
 reader must name the same live MACHINE as the line's actual and owner-pinned channel
-actor. The native writer rechecks the enabled setting, identity assignment, live receiving
-agent, current read policy and exact channel actor before admitting the event. A caller
+actor. Configuration and admission resolve the current channel, address and receiver
+from the identity's live claim heads, as the ordinary inbound router does; the body
+supplies custody only. Reconfiguring after a supported claim correction pins the current
+receiver, not the original seeded body binding. The native writer rechecks the enabled
+setting, current assignment, live receiving agent, read policy and exact channel actor
+before admitting the event. A caller
 label is never a PERSON, owner, provider identity or voiceprint.
 
 The metadata row and the existing SurfaceEvent attempt commit in one transaction. The

@@ -21,7 +21,7 @@ impl Vault {
             if !read.is_ref_readable_with_policy_in(txn, &policy, &identity_ref)? {
                 return Err(crate::phone_line::invalid());
             }
-            let (line, identity) =
+            let (line, facts) =
                 crate::phone_line::admitted_line_in_txn(self, txn, read, identity_ref)?;
             let key = crate::phone_line::arrival_key(identity_ref, &arrival.call_id);
             let offered = crate::phone_line::input_digest(&arrival)?;
@@ -34,8 +34,8 @@ impl Vault {
             // The queue and lens retain no caller or provider-call-id text.
             let input = InboundSurfaceEventInput::new(
                 correlation_id.clone(),
-                "voice",
-                identity.address_or_handle(),
+                facts.channel.as_str(),
+                facts.address_or_handle.as_str(),
                 crate::surface_event::SurfaceCounterpartyStamp::unparsed("voice", key),
                 now,
                 true,
