@@ -4,6 +4,12 @@
 //! owner-act mutex. The final preference check and owner read share that mutex
 //! with setting changes. These commands are not in the agent verb catalog.
 
+mod capture;
+pub(crate) use capture::{
+    CopyClassification, PrivateCopyMarker, PrivateCopyRegistration, capture_private_copy,
+    classify_private_copy,
+};
+
 use oneiron::secret_custody::{OwnerSecretReveal, RevealTarget};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use tauri::{AppHandle, Manager};
