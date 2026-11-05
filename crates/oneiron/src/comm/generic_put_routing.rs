@@ -62,12 +62,13 @@ pub(super) struct CommSourceEvent {
 impl CommSourceEvent {
     /// Records this event in `wtxn` and projects it there through
     /// `projection`, which notes the event and the heads its rule writes.
-    fn record_in_txn(
+    pub(super) fn record_in_txn(
         &self,
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
         projection: &mut RecordedEventProjection,
         admission: &mut HeadAdmission<'_>,
+        later_born_heads: Option<&BTreeSet<EntityId>>,
     ) -> Result<()> {
         let event_id = put_source_event_in_txn(
             vault,
@@ -80,7 +81,14 @@ impl CommSourceEvent {
         )
         .map_err(source_event_error)?;
         projection
-            .project_in_txn(vault, wtxn, event_id, self.kind, admission, None)
+            .project_in_txn(
+                vault,
+                wtxn,
+                event_id,
+                self.kind,
+                admission,
+                later_born_heads,
+            )
             .map_err(source_event_error)
     }
 }
@@ -123,7 +131,13 @@ pub fn route_projector_only_comm_put_in_txn(
         CommPutRoute::Projector(event) => {
             if let Some(event) = event {
                 let mut projection = RecordedEventProjection::default();
-                event.record_in_txn(vault, wtxn, &mut projection, &mut HeadAdmission::default())?;
+                event.record_in_txn(
+                    vault,
+                    wtxn,
+                    &mut projection,
+                    &mut HeadAdmission::default(),
+                    None,
+                )?;
                 // The source event and the rows its projection wrote go to
                 // the live-window mirror when the caller's write commits.
                 #[cfg(feature = "sync")]
@@ -183,7 +197,7 @@ impl RoutedBatchPuts {
         };
         let mut projection = RecordedEventProjection::default();
         for event in &self.events {
-            event.record_in_txn(vault, wtxn, &mut projection, &mut admission)?;
+            event.record_in_txn(vault, wtxn, &mut projection, &mut admission, None)?;
         }
         Ok(projection.into_written())
     }
@@ -276,7 +290,6 @@ fn take_batch_puts_in_txn(
     for op in ops.iter() {
         note_named_ids(op, |id| *mentions.entry(id).or_default() += 1);
     }
-    let mut events = Vec::new();
     let mut inputs = Vec::new();
     let mut routed = BTreeSet::new();
     let mut born_touches = super::born_touch::DeferredBornTouches::default();
@@ -321,13 +334,16 @@ fn take_batch_puts_in_txn(
                 continue;
             }
             inputs.push((*id, body));
-            events.extend(event);
+            if let Some(event) = event {
+                born_touches.push_routed(event);
+            }
             routed.insert(*id);
         }
     }
     if routed.is_empty() && born_touches.is_empty() {
         return Ok(None);
     }
+    let (events, born_touches) = born_touches.split_prefix_events();
     ops.retain(|op| !leaves_with_routed_put(op, &routed));
     Ok(Some(RoutedBatchPuts {
         events,

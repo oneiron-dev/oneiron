@@ -21,10 +21,15 @@ struct BornTouch {
     event: CommSourceEvent,
 }
 
-/// Retained original puts, not the removed inputs' policy-preflight slots.
+enum DeferredTouch {
+    Born(BornTouch),
+    Routed(CommSourceEvent),
+}
+
+/// Original-order touches after native writes, separate from input preflight.
 #[derive(Default)]
 pub(crate) struct DeferredBornTouches {
-    touches: Vec<BornTouch>,
+    touches: Vec<DeferredTouch>,
 }
 
 impl DeferredBornTouches {
@@ -35,12 +40,38 @@ impl DeferredBornTouches {
         birth: &RowBirth,
         event: CommSourceEvent,
     ) {
-        self.touches.push(BornTouch {
+        self.touches.push(DeferredTouch::Born(BornTouch {
             id,
             data: data.to_vec(),
             birth: birth.base_form().into_owned(),
             event,
-        });
+        }));
+    }
+
+    pub(super) fn push_routed(&mut self, event: CommSourceEvent) {
+        self.touches.push(DeferredTouch::Routed(event));
+    }
+
+    /// Without a born touch, all events keep their original pre-apply phase.
+    /// With one, only touch assertions join its post-native schedule.
+    pub(super) fn split_prefix_events(self) -> (Vec<CommSourceEvent>, Self) {
+        let has_born = self
+            .touches
+            .iter()
+            .any(|touch| matches!(touch, DeferredTouch::Born(_)));
+        let mut events = Vec::new();
+        let mut deferred = Self::default();
+        for touch in self.touches {
+            match touch {
+                DeferredTouch::Routed(event)
+                    if !has_born || event.kind != CommEventKind::TouchAsserted =>
+                {
+                    events.push(event);
+                }
+                touch => deferred.touches.push(touch),
+            }
+        }
+        (events, deferred)
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -59,8 +90,28 @@ impl DeferredBornTouches {
             None => HeadAdmission::default(),
         };
         let mut projection = RecordedEventProjection::default();
-        let mut later_born_heads: BTreeSet<_> = self.touches.iter().map(|touch| touch.id).collect();
+        let mut later_born_heads: BTreeSet<_> = self
+            .touches
+            .iter()
+            .filter_map(|touch| match touch {
+                DeferredTouch::Born(touch) => Some(touch.id),
+                DeferredTouch::Routed(_) => None,
+            })
+            .collect();
         for touch in self.touches {
+            let touch = match touch {
+                DeferredTouch::Born(touch) => touch,
+                DeferredTouch::Routed(event) => {
+                    event.record_in_txn(
+                        vault,
+                        txn,
+                        &mut projection,
+                        &mut admission,
+                        Some(&later_born_heads),
+                    )?;
+                    continue;
+                }
+            };
             later_born_heads.remove(&touch.id);
             // A mask or another native operation may have changed the input.
             // Such a write keeps its ordinary raw result, not a fabricated event.

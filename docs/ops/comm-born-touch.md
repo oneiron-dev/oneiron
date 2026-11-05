@@ -42,8 +42,13 @@ its typed `source_position`, including canonical base-world sources. They
 retain the original CLAIM disclosure band and audience requirements; they are
 not readable through a COMM_RECORD-only selector. The strict format and
 unified born-source id binding are described in `comm-scoped-touch-source.md`.
-Later unprocessed born Puts are excluded from an earlier deferred projection,
-so the original assertion order is preserved and a later time tie wins.
+When a batch has an eligible born touch, its ordinary routed touches join the
+same post-native assertion schedule in original Put order. Later unprocessed
+born Puts are excluded from each earlier assertion's projection, so the later
+assertion wins a time tie even when only one Put has an explicit birth. STOP
+and thread events keep their original pre-apply phase. Batches without born
+touches keep their original event phase and order. Original routed inputs
+still pass their policy and caller preflight before native apply.
 Deploy matching engine/server binaries
 at the normal authorized release. There is no migration, old-format reader,
 new configuration, policy cap, or numeric default.
