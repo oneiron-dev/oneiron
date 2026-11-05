@@ -1247,7 +1247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/state_serve/boot_keys.rs` | src | s | 6 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
 | `src/managed/state_serve/carrier_watch.rs` | src | m | 3 crate-vis | — | A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684) |
 | `src/managed/state_serve/carrier_watch/diverged_ask.rs` | src | s | 2 crate-vis | — | The owner's ask for each copy the outbox carrier keeps unagreed (FIX 11074): one inbox Ask per live owner… |
-| `src/managed/state_serve/control.rs` | src | s | 1 fn · 3 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
+| `src/managed/state_serve/control.rs` | src | s | 1 fn · 4 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/state_serve/coordinator.rs` | src | L | 1 fn | — | Supervised vault startup, serving, and shutdown |
 | `src/managed/state_serve/deletion.rs` | src | s | 2 crate-vis | — | The vault's deletion as `Ping` reports it (FIX 11710): the marker itself lives beside the host's write gate… |
 | `src/managed/state_serve/idle_backup.rs` | src | m | 4 crate-vis | — | The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC) |
