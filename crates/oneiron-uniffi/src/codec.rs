@@ -1246,6 +1246,27 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
 impl Lift<engine::MemoryItem> for MemoryItem {
     fn lift(item: engine::MemoryItem) -> Result<Self, OneironError> {
         Ok(Self {
+            asset_ref: item.asset_ref,
+            embedding_matches: item
+                .embedding_matches
+                .into_iter()
+                .map(|evidence| {
+                    let kind = |kind| match kind {
+                        oneiron::store::embedding::InputKind::Text => crate::InputKind::Text,
+                        oneiron::store::embedding::InputKind::Image => crate::InputKind::Image,
+                        oneiron::store::embedding::InputKind::Audio => crate::InputKind::Audio,
+                    };
+                    crate::EmbeddingMatchEvidence {
+                        space: evidence.space,
+                        embedding_kind: kind(evidence.embedding_kind),
+                        query_kind: kind(evidence.query_kind),
+                        score: f64::from(evidence.score),
+                        floor: f64::from(evidence.floor),
+                        strong: f64::from(evidence.strong),
+                        matched: evidence.matched,
+                    }
+                })
+                .collect(),
             short_id: item.short_id,
             source_revision_ref: item.source_revision_ref,
             kind: item.kind,
