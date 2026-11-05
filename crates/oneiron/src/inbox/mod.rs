@@ -59,7 +59,7 @@ pub use self::unified::{
 };
 
 pub(crate) use self::notification::{
-    notification_id, scrub_finding_notification_subjects_in_txn,
+    notification_id, scrub_finding_notification_actor_in_txn,
 };
 pub(crate) use self::projection::inbox_claim_hash;
 
