@@ -304,17 +304,26 @@ impl Appended {
 /// exactly as for any ordinary base write.
 pub(crate) struct PromoteReplayGrant {
     members: BTreeSet<EntityId>,
+    selected_saver: Option<crate::WriteActor>,
 }
 
 impl PromoteReplayGrant {
     fn mint(plan: &PromotePlan) -> Self {
         Self {
             members: plan.replayed.iter().copied().collect(),
+            selected_saver: None,
         }
     }
 
     fn mint_for(members: BTreeSet<EntityId>) -> Self {
-        Self { members }
+        Self {
+            members,
+            selected_saver: None,
+        }
+    }
+
+    pub(crate) const fn selected_saver(&self) -> Option<crate::WriteActor> {
+        self.selected_saver
     }
 
     /// Readable crate-wide so both membership doors can ASK a grant they were
@@ -402,6 +411,8 @@ impl FloorWrites<'_> {
         let grant = PromoteReplayGrant::mint(plan);
         let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
@@ -645,6 +656,8 @@ impl FloorWrites<'_> {
         let stream_messages =
             self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
@@ -737,6 +750,22 @@ impl FloorWrites<'_> {
             "off-record promote staged pickup markers for its source windows"
         );
         Ok(())
+    }
+}
+
+impl FloorWrites<'_> {
+    pub(in crate::off_record) fn save_scratch_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        session_ref: &str,
+        prepared: crate::off_record::lifecycle::PreparedScratchSave,
+    ) -> Result<crate::off_record::lifecycle::SavedScratch> {
+        let grant = PromoteReplayGrant {
+            members: prepared.members().clone(),
+            selected_saver: Some(prepared.saver()),
+        };
+        prepared.land(self, vault, txn, session_ref, &grant)
     }
 }
 

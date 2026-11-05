@@ -314,8 +314,16 @@ impl SyncConnection {
                 .await;
             self.publish_leave_unqueued(&mut debounce_buffer);
         } else {
-            self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
-                .await;
+            let mut final_gate = self.batch_gate();
+            let mut final_left = self.left.subscribe();
+            tokio::select! {
+                biased;
+                () = async { let _ = final_left.wait_for(|left| *left).await; } => {
+                    self.queue_on_exit(&mut final_gate, &mut debounce_buffer).await;
+                    self.publish_leave_unqueued(&mut debounce_buffer);
+                }
+                _ = self.queue_on_shutdown(&mut final_gate, &mut debounce_buffer) => {}
+            }
         }
         self.running.send_replace(false);
         Ok(())
@@ -634,7 +642,12 @@ impl SyncConnection {
             // so no clear reaches them.
             match client.update_verdict(&update.window_key, &update.encoded) {
                 UpdateVerdict::Portable => {}
-                UpdateVerdict::Withheld => continue,
+                UpdateVerdict::Withheld => {
+                    // A home that may not read the world takes it sealed,
+                    // when the world syncs sealed (DEC-0005 fix 8).
+                    client.relay_withheld_update(&update.window_key, &update.encoded);
+                    continue;
+                }
                 UpdateVerdict::Uninspectable => break,
             }
             // A window the home refused to grant again keeps its rows queued,

@@ -294,7 +294,12 @@ impl BrokerMedia {
                 for file in files {
                     form = form.file(file.name, file.filename, file.media_type, file.bytes);
                 }
-                let (kind, body) = form.finish();
+                let (kind, body) = form.finish().map_err(|_| {
+                    RetryableLlmError::not_sent(
+                        "multipart_body",
+                        "multipart body allocation failed",
+                    )
+                })?;
                 (Some(kind), body)
             }
         };
@@ -416,7 +421,12 @@ impl GeminiMediaTransport for BrokerMedia {
 }
 
 fn json_bytes(value: &serde_json::Value) -> LlmResult<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|_| invalid())
+    oneiron_broker::json_body(value).map_err(|error| match error.io_error_kind() {
+        Some(std::io::ErrorKind::OutOfMemory) => {
+            RetryableLlmError::not_sent("json_body", "JSON body allocation failed").into()
+        }
+        _ => invalid(),
+    })
 }
 
 fn invalid() -> LlmError {
