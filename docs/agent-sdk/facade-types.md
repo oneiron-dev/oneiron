@@ -8658,7 +8658,7 @@ export type MailSourceSyncRequest = { source_ref: string; bodies?: number | null
 /** `oneiron::mail_pack::importer::MailSyncReport` */
 export type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean }
 /** `oneiron::mail_pack::inbox::MailInboxRequest` */
-export type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; before?: number | null; limit?: number | null }
+export type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null }
 /** `oneiron::mail_pack::state::MailStage` */
 export type MailStage = "headers" | "body"
 /** `oneiron::mail_pack::state::MailPresence` */
@@ -8666,7 +8666,7 @@ export type MailPresence = "present" | { source_deleted: { at: number } } | { fo
 /** `oneiron::mail_pack::inbox::MailInboxItem` */
 export type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean }
 /** `oneiron::mail_pack::inbox::MailInboxPage` */
-export type MailInboxPage = { items: MailInboxItem[]; next_before?: number | null }
+export type MailInboxPage = { items: MailInboxItem[]; next_cursor?: string | null }
 /** `oneiron::mail_pack::inbox::MailThreadRequest` */
 export type MailThreadRequest = { thread_ref: string }
 /** `oneiron::mail_pack::inbox::MailThreadView` */

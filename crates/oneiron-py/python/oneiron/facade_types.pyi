@@ -22515,7 +22515,7 @@ class MailSyncReport(TypedDict):
 class MailInboxRequest(TypedDict):
     source_ref: NotRequired[str | None]
     include_source_deleted: NotRequired[bool]
-    before: NotRequired[int | None]
+    cursor: NotRequired[str | None]
     limit: NotRequired[int | None]
 MailStage = Literal["headers", "body"]
 class MailPresenceSourceDeletedBody(TypedDict):
@@ -22530,7 +22530,7 @@ MailPresence = Literal["present"] | MailPresenceSourceDeleted | MailPresenceForg
 MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool})
 class MailInboxPage(TypedDict):
     items: list[MailInboxItem]
-    next_before: NotRequired[int | None]
+    next_cursor: NotRequired[str | None]
 class MailThreadRequest(TypedDict):
     thread_ref: str
 class MailThreadView(TypedDict):
