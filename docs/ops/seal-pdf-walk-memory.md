@@ -15,8 +15,15 @@ path returns a refusal as its typed verification error, never as an
 invalid-revision verdict. Ordinary malformed or policy-rejected input
 keeps its existing invalid outcome on every path.
 
-Not covered here: per-chain `seen` sets, the lexer, CMap and decoder
-heaps, third-party heaps, allocator slack, and retained outputs. No
+FIX 14264 also admits the per-reference chain's `seen` set before
+its initial entry and each new link. It drops the set before returning its
+charged bytes, including cyclic, dangling and resource-error exits. Every
+production reference helper carries the same operation limits. Missing or
+cyclic links keep their existing absence/invalid outcome; resource refusals
+stay typed errors, never invalid-PDF verdicts or shorter results.
+
+Not covered here: the lexer, CMap and decoder heaps, third-party heaps,
+allocator slack, and retained outputs. No
 whole-heap, compile, or runtime closure is claimed. FIX 14217: these
 walk containers return their own credits when they drop. `walk::pages`
 yields its output held (`Held`) until the caller drops it, and its open
