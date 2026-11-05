@@ -78,6 +78,7 @@ pub struct ChatBrainBindings {
     /// The call's credential, as the owner door admitted it at hello. Each
     /// turn's memories are read under it; it is never bound again.
     pub(crate) auth: CoreAuth,
+    pub(crate) phone: Option<Arc<super::phone::PhoneCallRead>>,
     /// The room the call is heard in, as the host proved the caller reads
     /// it at hello: the host's own binding, never a claim a request makes.
     /// Each turn proves it again under `auth`. `None` for no room.
@@ -371,8 +372,11 @@ impl ChatBrain {
         let (read, members, room) = match in_room {
             Some((read, members, room)) => (read, Some(members), Some(room)),
             None => {
-                let read = crate::api::scoped_read_for_core_auth(vault, auth)
-                    .map_err(|error| refused(format!("{error:?}")))?;
+                let read = match &self.bindings.phone {
+                    Some(phone) => phone.read(),
+                    None => crate::api::scoped_read_for_core_auth(vault, auth)
+                        .map_err(|error| refused(format!("{error:?}")))?,
+                };
                 (read, None, None)
             }
         };

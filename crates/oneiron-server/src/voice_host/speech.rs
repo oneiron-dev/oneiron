@@ -100,6 +100,7 @@ pub enum VoicePlayout {
 pub struct PlayoutFrame {
     frame: PcmFrame,
     session: Weak<Mutex<SessionState>>,
+    phone: Option<Weak<super::phone::PhoneCallRead>>,
 }
 
 /// A packet's weak epoch fence, kept without copying its audio.
@@ -107,6 +108,7 @@ pub struct PlayoutFrame {
 pub(super) struct PlayoutGate {
     generation: GenerationEpoch,
     session: Weak<Mutex<SessionState>>,
+    phone: Option<Weak<super::phone::PhoneCallRead>>,
 }
 
 impl PlayoutGate {
@@ -117,7 +119,14 @@ impl PlayoutGate {
         let Ok(state) = session.lock() else {
             return false;
         };
-        state.core.accepts_pcm(self.generation)
+        let current = state.core.accepts_pcm(self.generation);
+        drop(state);
+        current
+            && self.phone.as_ref().is_none_or(|phone| {
+                phone
+                    .upgrade()
+                    .is_some_and(|phone| phone.accepts_output(self.generation))
+            })
     }
 }
 
@@ -137,6 +146,7 @@ impl PlayoutFrame {
         PlayoutGate {
             generation: self.frame.generation,
             session: self.session.clone(),
+            phone: self.phone.clone(),
         }
     }
 
@@ -407,6 +417,7 @@ impl VoiceHost {
             let frame = PlayoutFrame {
                 frame,
                 session: Arc::downgrade(&self.state),
+                phone: self.phone.as_ref().map(Arc::downgrade),
             };
             bridge.play(VoicePlayout::Pcm(frame))?;
         }

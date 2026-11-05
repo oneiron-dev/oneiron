@@ -21,6 +21,7 @@ mod entry_barrier;
 mod extraction;
 mod hello_refusal;
 mod media_bridge;
+mod phone;
 // Spoken audio gated per chunk on its way to the wire (FIX 9542).
 mod playout_queue;
 mod public;
@@ -80,6 +81,8 @@ pub struct VoiceHostBindings {
     /// The actual owner credential admitted for a live call. An unbound
     /// trusted pass attachment supplies None, never a fabricated credential.
     pub speculative_auth: Option<CoreAuth>,
+    /// The receiving agent's call-bound reader, never a bridge credential.
+    pub(crate) phone: Option<Arc<phone::PhoneCallRead>>,
     /// The host's owner-plane policy config each sentence's safeguard
     /// enforces under (FIX 5043): its notice wording and dial.
     pub owner_policy: PolicyModelConfig,
@@ -119,6 +122,7 @@ pub struct VoiceHost {
     /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
     call_deadline: std::time::Duration,
     speculative_auth: Option<CoreAuth>,
+    phone: Option<Arc<phone::PhoneCallRead>>,
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
@@ -201,6 +205,7 @@ impl VoiceHost {
         Ok(Self {
             call_deadline,
             speculative_auth: bindings.speculative_auth,
+            phone: bindings.phone,
             container,
             roster,
             speculative: SpeculativeThreads::default(),

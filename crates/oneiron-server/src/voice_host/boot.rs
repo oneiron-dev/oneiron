@@ -575,6 +575,7 @@ pub(super) fn prepare_call(
             session,
             shutdown: shutdown.clone(),
             speculative_auth: Some(auth.clone()),
+            phone: None,
             // Each sentence's safeguard runs under the host's policy config,
             // its ladder's paired question lent (FIX 1201).
             owner_policy: server
@@ -589,6 +590,7 @@ pub(super) fn prepare_call(
         ai: server.ai.clone(),
         vault: Arc::clone(vault),
         auth: auth.clone(),
+        phone: None,
         room: brain_room,
         instructions,
         agent,
