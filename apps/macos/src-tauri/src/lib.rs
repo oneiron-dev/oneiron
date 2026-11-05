@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::{Vault, VaultConfig};
+use oneiron_server::embedded::EmbeddedDeviceSync;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Runtime};
@@ -75,6 +76,7 @@ enum RootSecretSource {
 /// The one piece of state the webview and the menu bar share.
 struct AppState {
     session: Mutex<RecorderSession>,
+    device_sync: Mutex<Option<EmbeddedDeviceSync>>,
     /// This launch's open was given a host root that is not the vault's
     /// settled root, so it went unused: the vault opened under its settled
     /// root as before. A fact the window shows as a nonblocking warning
@@ -103,6 +105,7 @@ pub fn run() {
             let launcher = LiveCapture::new(sink, Arc::new(SystemRoute));
             app.manage(AppState {
                 session: Mutex::new(RecorderSession::new(Box::new(launcher), log)),
+                device_sync: Mutex::new(start_device_sync(&vault, &vault_dir)),
                 wrong_root,
             });
             app.manage(root_rekey::RekeyState::new(vault, vault_dir));
@@ -124,8 +127,24 @@ pub fn run() {
             root_rekey::root_rekey_prepare,
             root_rekey::root_rekey_confirm
         ])
-        .run(tauri::generate_context!())
-        .expect("the recorder could not start");
+        .build(tauri::generate_context!())
+        .expect("the recorder could not start")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                // Flush the last segment before its sync connection ends,
+                // including exits that did not use the menu's Quit item.
+                let _ = act(app, RecorderSession::stop);
+                let sync = app
+                    .state::<AppState>()
+                    .device_sync
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                if let Some(sync) = sync {
+                    tauri::async_runtime::block_on(sync.stop());
+                }
+            }
+        });
 }
 
 /// The disclosure panel's words, handed to the webview from the one constants
@@ -214,6 +233,23 @@ where
     match outcome {
         Ok(()) => Ok(view),
         Err(err) => Err(err.to_string()),
+    }
+}
+
+/// Shares the recorder's open vault with the ordinary device-sync path.
+/// A configuration error leaves capture and local landing available.
+fn start_device_sync(vault: &Arc<Vault>, path: &std::path::Path) -> Option<EmbeddedDeviceSync> {
+    match oneiron_server::embedded::embedded_serve_config(path, None, None) {
+        Ok(config) => {
+            tauri::async_runtime::block_on(EmbeddedDeviceSync::start(Arc::clone(vault), &config))
+        }
+        Err(error) => {
+            tracing::warn!(
+                reason = %error,
+                "device sync disabled: the recorder's server config did not resolve"
+            );
+            None
+        }
     }
 }
 
