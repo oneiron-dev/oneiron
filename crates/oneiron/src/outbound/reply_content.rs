@@ -38,12 +38,23 @@ impl Vault {
         agent: EntityId,
         reply_ref: &str,
     ) -> Result<Option<ConnectorReplyBody>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.connector_reply_body_in_txn(&rtxn, event_id, agent, reply_ref)
+    }
+
+    pub(crate) fn connector_reply_body_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        event_id: &str,
+        agent: EntityId,
+        reply_ref: &str,
+    ) -> Result<Option<ConnectorReplyBody>> {
         let artifact_id = reply_body_artifact(event_id, agent, reply_ref)?;
-        if self.get_blob_artifact(&artifact_id)?.is_none() {
+        if self.get_blob_artifact_in_txn(rtxn, &artifact_id)?.is_none() {
             return Ok(None);
         }
         Ok(self
-            .blob_artifact_versions(&artifact_id)?
+            .blob_artifact_versions_in_txn(rtxn, &artifact_id)?
             .first()
             .map(|version| ConnectorReplyBody {
                 content_ref: reply_body_ref(&artifact_id, version.version),
@@ -135,6 +146,15 @@ impl Vault {
     /// # Errors
     /// The version does not read, or its bytes are not text.
     pub fn connector_reply_body_text(&self, content_ref: &str) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.connector_reply_body_text_in_txn(&rtxn, content_ref)
+    }
+
+    pub(crate) fn connector_reply_body_text_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        content_ref: &str,
+    ) -> Result<Option<String>> {
         let Some((artifact, version)) = content_ref
             .strip_prefix(CONNECTOR_REPLY_BODY_PREFIX)
             .and_then(|rest| rest.split_once('@'))
@@ -144,11 +164,13 @@ impl Vault {
         let (Ok(artifact_id), Ok(version)) = (EntityId::from_hex(artifact), version.parse()) else {
             return Ok(None);
         };
-        match self.get_blob_artifact(&artifact_id)? {
+        match self.get_blob_artifact_in_txn(rtxn, &artifact_id)? {
             Some(body) if body.media_type == REPLY_BODY_MEDIA_TYPE => {}
             _ => return Ok(None),
         }
-        let Some(record) = self.blob_artifact_version_metadata(&artifact_id, version)? else {
+        let Some(record) =
+            self.blob_artifact_version_metadata_in_txn(rtxn, &artifact_id, version)?
+        else {
             return Ok(None);
         };
         if !matches!(
@@ -157,7 +179,8 @@ impl Vault {
         ) {
             return Ok(None);
         }
-        let Some(bytes) = self.read_blob_artifact_version(&artifact_id, version)? else {
+        let Some(bytes) = self.read_blob_artifact_version_in_txn(rtxn, &artifact_id, version)?
+        else {
             return Ok(None);
         };
         String::from_utf8(bytes)

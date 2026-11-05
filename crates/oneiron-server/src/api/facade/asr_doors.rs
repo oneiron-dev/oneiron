@@ -203,8 +203,6 @@ pub(crate) async fn ai_voice_asr_open(
         oneiron::memory::caps::check_limit_nonzero(fire_limit)?;
         oneiron::memory::caps::check_limit_nonzero(final_limit)?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
-        let (fire_limit, fire_clamped) = oneiron::memory::caps::clamp_search_limit(fire_limit);
-        let (final_limit, final_clamped) = oneiron::memory::caps::clamp_search_limit(final_limit);
         let deadline = input
             .deadline_ms
             .map(Duration::from_millis)
@@ -228,7 +226,7 @@ pub(crate) async fn ai_voice_asr_open(
             max_fires: defaults.max_fires,
             fire_limit,
             final_limit,
-            limit_clamped: fire_clamped || final_clamped,
+            limit_clamped: false,
             deadline_ms: u64::try_from(deadline.as_millis()).map_err(|_| internal(verb))?,
             narrowing: core.scoped_read_receipt()?,
         };

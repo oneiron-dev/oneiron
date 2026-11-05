@@ -51,6 +51,11 @@ const FROZEN_CASES_PER_SKILL: usize = 64;
 /// Key: id16 (the skill that ran) + u64be at + u64be step seq + receipt.
 const CASES: SideTable<Vec<u8>, FrozenCall, Named> =
     SideTable::new(&side_table::SKILL_CALLABLE_CASE);
+/// Whether a masked copy of a `SKILL_CALLABLE_CASE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn skill_callable_case_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<FrozenCall, Named>(bytes)
+}
 
 /// Who a frozen call was made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
