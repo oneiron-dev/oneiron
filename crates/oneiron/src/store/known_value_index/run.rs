@@ -80,9 +80,15 @@ impl Vault {
 }
 
 impl RunKnownSource {
-    /// Replaces only this run's PERSON values in a typed text payload.
-    /// Custody hits keep their bytes for the caller's existing custody sweep.
-    pub(crate) fn replace_person_text(&self, text: &str) -> Result<Option<String>> {
+    /// Replaces this run's PERSON values only in a typed text payload.
+    /// Custody exclusions come from the complete serialized reply, since
+    /// its greedy selection can start before the Text scalar itself.
+    pub(crate) fn replace_person_text(
+        &self,
+        text: &str,
+        reply: &[u8],
+        encoded_text: std::ops::Range<usize>,
+    ) -> Result<Option<String>> {
         self.pass(|custody, person| {
             let Some(person) = person else {
                 return Ok(None);
@@ -93,21 +99,19 @@ impl RunKnownSource {
                 return Ok(None);
             }
             if let Some(known) = custody {
-                // The original sink matches JSON bytes, not the unescaped Text.
-                let encoded = Zeroizing::new(serde_json::to_vec(text).map_err(|error| {
-                    Error::InvalidConfig(format!("result body encoding failed: {error}"))
-                })?);
-                let held = known.matched_spans_except(&encoded, |_| false);
-                let view = super::forms::json_view(&encoded);
+                let held = known.matched_spans_except(reply, |_| false);
+                let view = super::forms::json_view(&reply[encoded_text.clone()]);
                 spans.retain(|hit| {
-                    // One decode of a serialized string is quote + Text + quote.
+                    // The decoded scalar is quote + Text + quote.
                     let quoted = (hit.span.start + 1)..(hit.span.end + 1);
-                    let encoded_span = match &view {
+                    let scalar_span = match &view {
                         Some(view) => view
                             .source_mapped(quoted)
                             .expect("serialized text maps every source byte"),
                         None => quoted,
                     };
+                    let encoded_span = (encoded_text.start + scalar_span.start)
+                        ..(encoded_text.start + scalar_span.end);
                     !held.iter().any(|held| {
                         encoded_span.start < held.span.end && held.span.start < encoded_span.end
                     })

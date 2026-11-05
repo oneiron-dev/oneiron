@@ -28,12 +28,15 @@ streamed console, finish, stored values and files, and runtime-returned step
 bodies. A model reply's evidence copy also replaces PERSON values, but only in
 typed `ContentPart::Text.text`, before JSON encoding. It borrows every unchanged
 part and leaves the live reply used for execution untouched. Each text pass reads
-current run prints. Custody overlap is checked against the serialized Text scalar,
-using the same JSON encoding as the evidence writer and the native decoded-byte
-source map. A pre-encoding escape spelling must not suppress a PERSON match when
-the eventual custody sweep cannot match it. Custody bytes remain for the evidence
-sink's original custody sweep rather than being replaced twice. This Text-local
-mapping is not a claim about arbitrary control-JSON or cross-field matches.
+current run prints. Custody overlap uses the selected matches in the complete
+native reply serialization, not an independently encoded Text scalar: an earlier
+match can start in a field boundary and suppress a later overlapping custody hit.
+Borrowed typed content/Text positions and the native decoded-byte source map place
+each PERSON hit in those exact serialized bytes. The temporary full encoding is
+wiped on return or error. Custody bytes remain for the evidence sink's original
+custody sweep rather than being replaced twice. This is not a claim that all
+encoded-form context remains unchanged after PERSON substitutions, or that PERSON
+matching applies to arbitrary control-JSON or untyped fields.
 
 Serialized executor control records and source maps keep the existing
 custody-only path. Reply evidence preserves role/kind tags, reasoning and its
