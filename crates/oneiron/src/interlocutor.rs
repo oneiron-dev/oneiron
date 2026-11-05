@@ -27,12 +27,6 @@ use crate::error::{Error, Result};
 const VOICE_ROSTER_UNRESOLVED_LABEL: &str = "unresolved voice roster";
 const LIVE_ROOM_SPEAKER_LABEL: &str = "live room speaker";
 
-/// Display label for an Active counterparty contact the caller may not read
-/// (FIX 9142). The entry stays in the set as an anonymous Unknown so the
-/// disclosure clamp still counts the party (never owner-alone by removal);
-/// only the member hex is withheld.
-const WITHHELD_COUNTERPARTY_LABEL: &str = "withheld counterparty";
-
 /// Who a conversation participant is, as the disclosure clamp sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -680,13 +674,15 @@ impl Vault {
                             )?
                         }
                         // FIX 9142 (L02 YES 12:33, reshaped per #4502 blind
-                        // P1 REVIEW-4502.md): Active-but-unadmitted keeps an
-                        // anonymous Unknown in the set so disclosure
-                        // enforcement still counts the party; only the member
-                        // hex is withheld. No record or Revoked keeps
-                        // today's Unknown stamp below.
+                        // P1s rounds 1+2 REVIEW-4502.md): Active-but-unadmitted
+                        // keeps an Unknown in the set so disclosure
+                        // enforcement still counts the party, stamped with the
+                        // caller-supplied counterparty fallback exactly like
+                        // the no-record and Revoked arms below, so the three
+                        // cases are observationally identical. No member hex
+                        // is echoed.
                         Some((_, record)) if record.status == CounterpartyContactStatus::Active => {
-                            Interlocutor::unknown(WITHHELD_COUNTERPARTY_LABEL, false)
+                            Interlocutor::unknown(counterparty.clone(), false)
                         }
                         _ => Interlocutor::unknown(counterparty.clone(), false),
                     }
