@@ -45,7 +45,11 @@ pub use dependent_walk::{
 pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
+mod dependency_registration;
 mod integrity;
+pub(crate) use dependency_registration::{
+    record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
+};
 mod lmdb_aux;
 pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
@@ -84,10 +88,10 @@ pub(crate) use integrity::{
 };
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
-    record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
-    retire_withdrawn_in_txn, source_has_dependents_in_txn, stage_stale_mark_in_txn, stale_in_txn,
-    withdraw_from_lost_source_in_session_txn, withdraw_from_lost_source_in_txn,
-    withdrawn_worlds_in,
+    marked_stale_in_overlay, record_dependency_in_txn, record_derived_edge_in_txn,
+    record_withdrawn_in_txn, retire_withdrawn_in_txn, source_has_dependents_in_txn,
+    stage_stale_mark_in_txn, stale_in_txn, withdraw_from_lost_source_in_session_txn,
+    withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
 pub use records::*;
 pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
