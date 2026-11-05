@@ -70,12 +70,12 @@ pub use doors::{
 pub(crate) use erase::{erase_drafter_actor_in_txn, erase_drafters_for_source_in_txn};
 pub use load_set::{SEALED_CHUNK_BYTES, drafter_file_name_is_plain, drafter_load_set_blake3};
 pub use policy::{DrafterPolicy, DrafterPolicySetRequest, set_drafter_policy_as_owner};
+pub(crate) use report::unseen_drafter_line_in_txn;
+pub use report::{DRAFTER_GROUP, DRAFTER_VIEW, DigestDrafter, DigestDrafterItem};
 pub use serving::{
     DrafterLoadSetPlan, DrafterMaterialized, DrafterServedView, DrafterServingPlan,
     DrafterServingPlans, DrafterServingRuntime, DrafterUnservedReason,
 };
-pub(crate) use report::unseen_drafter_line_in_txn;
-pub use report::{DRAFTER_GROUP, DRAFTER_VIEW, DigestDrafter, DigestDrafterItem};
 pub use types::*;
 
 /// The verb an agent's Grant lists to read the vault's drafter versions.

@@ -3575,8 +3575,9 @@ What exists now:
   target, with what serves now (stock or a version), the binding generation,
   the draft identity, the worker and its epoch, whether a restart is under
   way, and the reason when the binding is not applied. A drafter target names
-  the worker's backend model digest, its tokenizer digest and `exl3`.
-
+  the worker's backend model digest, its tokenizer digest and `exl3`. The
+  nightly retrain exports its corpus for the first managed EXL3 worker this
+  process launches with a draft, by that target.
 - **Morning report.** A regular proactivity digest carries a drafter line
   (group `coach.drafter`, view `vault.drafters.status`) with every drafter
   event no digest carried yet, read from the event history, not from the

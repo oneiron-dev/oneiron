@@ -152,6 +152,38 @@ pub(in crate::models) fn draft_seat(
     Err(refused.unwrap_or(DrafterUnservedReason::NoServingWorker))
 }
 
+/// The drafter target a nightly retrain exports its corpus for (FIX
+/// 14973): the first managed EXL3 worker this process launches whose row
+/// serves a draft, by the model and tokenizer it serves. `None` when this
+/// process launches none: a managed per-vault process, only external or
+/// llama.cpp workers, or no draft at all.
+pub(in crate::models) fn retrain_target() -> Option<DrafterTarget> {
+    let host = HOST.get()?;
+    if !host.launch_permitted.load(Ordering::SeqCst) {
+        return None;
+    }
+    let workers = host.lock();
+    workers.iter().find_map(|(id, hosted)| {
+        let row = &hosted.row;
+        if row.mode != WorkerMode::Managed || row.kind != WorkerKind::Exl3 {
+            return None;
+        }
+        if row
+            .launch
+            .as_ref()
+            .is_none_or(|launch| launch.draft.is_none())
+        {
+            return None;
+        }
+        let identity = served_identity(id, hosted);
+        Some(DrafterTarget {
+            model: identity.model?.as_str().to_owned(),
+            tokenizer: identity.tokenizer?.as_str().to_owned(),
+            runtime: EXL3_DRAFTER_RUNTIME.to_owned(),
+        })
+    })
+}
+
 /// Hands `worker_id`'s managed EXL3 row a new supervisor whose launch loads
 /// `draft` in place of the row's stock draft (the stock one for `None`),
 /// through the managed row replacement: the predecessor drains and stops,
