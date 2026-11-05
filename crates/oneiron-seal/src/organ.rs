@@ -1233,21 +1233,26 @@ fn bad(detail: impl Into<String>) -> OrganError {
     OrganError::new(ErrorCode::BadRequest, detail)
 }
 
-/// The outcome as the report's one tagged entry, and the call's counts
-/// beside it as `observed`. Its encoded copy and the most the value it
-/// becomes takes ([`read_cost`]) are reserved before either is made
-/// (FIX 6195, 10576).
+/// The outcome as the report's one tagged entry, with the call's counts
+/// beside it as `observed`. Both conversions and the added key are admitted
+/// before either encoded value is made (FIX 6195, 10576).
 fn report<T: Serialize>(
     report: &T,
     observed: &SealObservations,
     memory: &ReplyMemory,
 ) -> Result<Answer, OrganError> {
+    let observed = observed.observed();
     let cost = read_cost(report)
+        .and_then(|report| {
+            let counts = read_cost(&observed)?;
+            let key = read_cost("observed")?;
+            Ok(report.saturating_add(counts).saturating_add(key))
+        })
         .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
     memory.reserve(cost)?;
     let mut value = to_value(report)?;
     if let Value::Map(entries) = &mut value {
-        entries.push((Value::from("observed"), to_value(&observed.observed())?));
+        entries.push((Value::from("observed"), to_value(&observed)?));
     }
     Ok(Answer {
         report: value,

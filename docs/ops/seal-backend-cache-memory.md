@@ -106,3 +106,17 @@ remain conservative until call end. This covers only these initial reads, not
 signature/fetch reply decoding, report conversion, chain conversion, allocator
 overhead, the original reply envelope or total heap use. No wait or retry is
 added after a signature request can have issued a signature.
+
+## Report counts admission
+
+The report's existing memory request includes the measured encoded/decoded costs
+of its outcome, the `SealObserved` snapshot, and the `observed` key. The snapshot
+is copied onto the stack once, after native work, before that request. The
+outcome and counts still use the original known-length serializers and the same
+map append, in the same order. There is no flattened serializer, buffered outer
+map, or cloned payload tree during measurement.
+
+This accounts only those named conversion components. It is not a bound for all
+map-growth or allocator capacity, native outputs, metadata, or total heap use.
+The existing call memory service, one request, missing-service leniency, codec
+and resource errors, signing receipts, and once-only dispatch are unchanged.
