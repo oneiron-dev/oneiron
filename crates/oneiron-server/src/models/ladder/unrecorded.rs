@@ -3,6 +3,20 @@
 use super::*;
 
 impl OfferLadder {
+    /// Settles a rung that did not answer, and says whether it went out. One
+    /// that started keeps its reservation as spend; one admitted and never sent
+    /// never started its lease, so its reservation is released and it pays
+    /// nothing. A settlement the meter refuses is on the run's `Settled` row.
+    pub(super) fn settle_failed(&self, permit: RunPermit) -> bool {
+        let sent = permit.dispatched();
+        if let Err(denied) = permit.settle(CallOutcome::Failed) {
+            if !self.rests.is_unrecorded() {
+                tracing::error!(%denied, "a failed rung's settlement was refused");
+            }
+        }
+        sent
+    }
+
     /// A fresh routing view only for a core-owned unrecorded run. The caller
     /// must still perform its normal route and role admission first.
     pub(crate) fn for_run(self: &Arc<Self>, run: &RunAdmission) -> Arc<Self> {

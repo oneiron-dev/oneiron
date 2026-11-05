@@ -354,12 +354,12 @@ impl OfferLadder {
         // is sent.
         if !warm() || !self.route_admitted(&routes, 0) || self.kept_on_device(0, &request).is_some()
         {
-            settle_failed(permit);
+            self.settle_failed(permit);
             return Ok(None);
         }
         let mut walk = Walk::default();
         let Some(probe) = self.probe(0, &mut walk) else {
-            settle_failed(permit);
+            self.settle_failed(permit);
             return Ok(None);
         };
         let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
@@ -376,7 +376,7 @@ impl OfferLadder {
                 Ok(Some(response))
             }
             Err(error) => {
-                if !settle_failed(permit) {
+                if !self.settle_failed(permit) {
                     // The gate refused it before it went out.
                     return Ok(None);
                 }
