@@ -1,3 +1,6 @@
+//! Core half of `batch::secret_scan::release_read`: its store-layer items live in `oneiron_store::batch::secret_scan::release_read` and are
+//! re-exported here; the items below stay in the engine.
+//!
 //! The release scan over a body read as it streams (FIX 5392, FIX 3677):
 //! what [`super::scan_file_content`] finds in the whole body, read a frame at
 //! a time, so a door that copies a body on never holds it whole for its
@@ -25,6 +28,8 @@
 mod assignment;
 mod tokens;
 
+pub(crate) use oneiron_store::batch::secret_scan::release_read::*;
+
 use std::io::{Read, Seek, SeekFrom};
 
 use self::assignment::AssignmentSegment;
@@ -35,10 +40,6 @@ use crate::error::Result;
 
 /// The bytes one read of the body takes: a buffer, not a bound on the body.
 const FRAME_BYTES: usize = crate::store::LINE_INDEX_BLOCK_BYTES as usize;
-
-/// The head a container's or a framed carrier's leading bytes are read
-/// from: the longest of them, a carrier's magic and its two ids, fits.
-const HEAD_BYTES: u64 = 64;
 
 /// [`super::scan_file_content`] over the body `source` holds, read from its
 /// start ([`scan_file_content_reader`]).
@@ -215,79 +216,5 @@ impl TextScan {
         } else {
             None
         }
-    }
-}
-
-/// The release private-key rule as the text streams: the first `-----BEGIN
-/// ` of a line, then whether `PRIVATE KEY` comes before the first `-----`
-/// after it, as [`shapes::private_key_header`] reads each line.
-#[derive(Default)]
-struct HeaderLine {
-    /// How much of `-----BEGIN ` the line ends in, before it is found.
-    begin: usize,
-    /// Inside the marker after it: the run of `-` the text ends in and how
-    /// much of `PRIVATE KEY` it ends in, or whether that was found.
-    marker: Option<(usize, usize, bool)>,
-    /// The line's marker is closed: nothing else on the line counts.
-    closed: bool,
-}
-
-const BEGIN: &[u8] = b"-----BEGIN ";
-const PRIVATE_KEY: &[u8] = b"PRIVATE KEY";
-
-impl HeaderLine {
-    /// Reads `bytes` on; `true` once a line holds a private-key header.
-    fn feed(&mut self, bytes: &[u8]) -> bool {
-        for &byte in bytes {
-            if byte == b'\n' {
-                *self = Self::default();
-                continue;
-            }
-            if self.closed {
-                continue;
-            }
-            if self.marker.is_none() {
-                self.begin = advance(BEGIN, self.begin, byte);
-                if self.begin == BEGIN.len() {
-                    self.marker = Some((0, 0, false));
-                }
-                continue;
-            }
-            let Some((dashes, key, found)) = &mut self.marker else {
-                continue;
-            };
-            *dashes = if byte == b'-' { *dashes + 1 } else { 0 };
-            if *dashes == 5 {
-                if *found {
-                    return true;
-                }
-                self.closed = true;
-                continue;
-            }
-            if !*found {
-                *key = advance(PRIVATE_KEY, *key, byte);
-                *found = *key == PRIVATE_KEY.len();
-            }
-        }
-        false
-    }
-}
-
-/// How much of `pattern` the text ends in once `byte` follows a text that
-/// ended in its first `matched` bytes. After a whole match the next byte
-/// is read on from the pattern's longest border.
-fn advance(pattern: &[u8], matched: usize, byte: u8) -> usize {
-    let mut matched = matched;
-    loop {
-        if pattern.get(matched) == Some(&byte) {
-            return matched + 1;
-        }
-        if matched == 0 {
-            return 0;
-        }
-        matched = (1..matched)
-            .rev()
-            .find(|&len| pattern[..len] == pattern[matched - len..matched])
-            .unwrap_or(0);
     }
 }
