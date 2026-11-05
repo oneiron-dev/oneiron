@@ -6,6 +6,9 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::VadPostcommitScope;
+use crate::batch::secret_scan::{
+    SecretScanMode, mask_fresh_claim_candidate, secret_scan_mode_in_txn,
+};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -93,11 +96,18 @@ fn capture_input_in_txn(
     let subject = ClaimSubject::Entity(envelope.actor().entity_ref());
     // Text takes the ordinary claim secret-scan/custody path, unlike opaque
     // blob bytes. A rewrite must still decode to the exact original input.
-    let candidate = ClaimCandidate::new(INPUT_PREDICATE, subject, Value::from(original), 1.0)
+    let mut candidate = ClaimCandidate::new(INPUT_PREDICATE, subject, Value::from(original), 1.0)
         .with_world(position.world)
         .with_relationships(position.relationships.clone())
         .with_scope(position.scope.clone())
         .with_scope_stamps(position.facet, position.project);
+    // An aborted capture cannot undo durable custody-key publication. Plan the
+    // native shape mask before the write; a rewrite cannot preserve this input.
+    if secret_scan_mode_in_txn(&vault.store, &*txn)? == SecretScanMode::On
+        && mask_fresh_claim_candidate(id, &mut candidate)?
+    {
+        return Err(unavailable());
+    }
     let mut retained = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut retained)?;
     let occurred = TimeRange {
