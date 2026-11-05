@@ -349,24 +349,16 @@ fn masked_image(
     mark: &crate::secret_custody::MaskedFile,
 ) -> MemoryResult<ImageBytes> {
     use crate::file_secret_marks::{filled, masked_copy_withheld};
-    if image
-        .media_type
-        .split(';')
-        .next()
-        .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("image/svg+xml"))
-        || svg_document(&image.bytes)
-    {
-        std::str::from_utf8(&image.bytes)
-            .map_err(|_| masked_copy_withheld("gate.secret_scan.svg_text"))?;
-        image.bytes = filled(
-            &image.bytes,
-            mark.keys.iter().map(|key| (key.start, key.end)),
-        )?;
-        image.media_type = "image/svg+xml".to_owned();
-        return Ok(image);
-    }
     match super::image_mask::raster(&image) {
         super::image_mask::Projection::Sanitized(image) => Ok(image),
+        super::image_mask::Projection::Unsupported if svg_document(&image.bytes) => {
+            image.bytes = filled(
+                &image.bytes,
+                mark.keys.iter().map(|key| (key.start, key.end)),
+            )?;
+            image.media_type = "image/svg+xml".to_owned();
+            Ok(image)
+        }
         super::image_mask::Projection::Unsupported if PASS_UNSUPPORTED_MASKED_IMAGES => Ok(image),
         _ => Err(masked_copy_withheld("gate.secret_scan.image_metadata").into()),
     }
