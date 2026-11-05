@@ -82,3 +82,27 @@ across all three passes, not an exact peak or a guarantee that allocator excess
 was known before allocation. Chain conversion, the original reply envelope,
 other argument/reply/report paths and total heap use remain outside this slice.
 No signing request, signing retry, call clock, provider, ledger or limit changes.
+
+## Argument codec traversal scratch
+
+The four process verbs (`seal.pdf`, `seal.verify`, `seal.inspect`, and
+`seal.prepare`) now use the same private admitted-value decoder for their
+arguments. Each reads its arguments before resolving inputs or starting native
+work. The decoder borrows the call's existing memory service, measures the
+value with admitted traversal scratch, reserves its encoded/decoded cost, and
+uses the admitted wrapper for both encoding passes before typed decoding.
+Temporary encoded bytes stay inside that helper and drop before it returns.
+
+The identity caller still maps typed resource refusals to `BackendError::Memory`
+and ordinary codec errors to `InvalidResponse`. Argument callers keep their
+existing `what`-qualified bad-request errors for codec failures, `Cancelled` for
+cancellation, and `Budget` for other resource refusals. The original zero-byte
+shortcut remains in `ReplyMemory::reserve`; missing-service leniency is unchanged.
+The helper accepts a protocol `Value`, not an arbitrary serde input.
+
+Both callers retain the per-pass refusal check for actual-capacity settlement.
+They share neither a new provider nor a second operation ledger. Host grants
+remain conservative until call end. This covers only these initial reads, not
+signature/fetch reply decoding, report conversion, chain conversion, allocator
+overhead, the original reply envelope or total heap use. No wait or retry is
+added after a signature request can have issued a signature.
