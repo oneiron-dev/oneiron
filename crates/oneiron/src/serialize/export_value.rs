@@ -245,11 +245,25 @@ impl ExportBody {
             Self::Utf8(text) => out
                 .write_all(text.as_bytes())
                 .map_err(|_| invalid("export body write failed")),
-            body => {
-                let bytes = body.to_bytes()?;
+            // REVIEW-5164 P1: explicit arms, never via `to_bytes` — the
+            // fallback calling `to_bytes` recursed through this writer
+            // forever for Pack/HubSource/File/Nulled. These arms keep the
+            // exact original behavior (each materializes in its own type's
+            // arm, File/Nulled error identically).
+            Self::Pack(value) => {
+                let bytes = value.envelope()?.to_bytes()?;
                 out.write_all(&bytes)
                     .map_err(|_| invalid("export body write failed"))
             }
+            Self::HubSource(value) => {
+                let bytes = value.to_bytes()?;
+                out.write_all(&bytes)
+                    .map_err(|_| invalid("export body write failed"))
+            }
+            Self::File(_) => Err(invalid("a file body is read from its archive file")),
+            Self::Nulled => Err(invalid(
+                "nulled opaque body needs its owning import adapter",
+            )),
         }
     }
 
