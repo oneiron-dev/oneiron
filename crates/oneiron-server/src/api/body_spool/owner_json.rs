@@ -97,6 +97,19 @@ fn decode_spool<T: DeserializeOwned>(mut spool: BodySpool) -> Option<T> {
     spool.json()
 }
 
+/// A transfer body read for a bulk consumer: whole in memory, or spooled
+/// and run through the caller's spool reader on the transfer worker.
+pub(in crate::api) enum TransferBody<T, R> {
+    Whole(T),
+    Bulk(R),
+}
+
+/// A body ready to decode: read whole in memory, or still to spool.
+enum ReadyBody {
+    Memory(Bytes),
+    Stream { declared: Option<u64>, body: Body },
+}
+
 impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
     /// The body as `T`. Call it after the route's door: a body past the
     /// in-memory read is spooled whole before it is decoded.
@@ -118,32 +131,69 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
             .await
     }
 
+    /// `read_for_transfer` for a caller that reads a spooled body itself:
+    /// bodies at or under the in-memory line decode whole as `T`, exactly as
+    /// `read_for_transfer` decodes them; longer bodies spool under the same
+    /// custody policy and run `spool` over the spool on the transfer worker.
+    pub(in crate::api) async fn read_for_transfer_with<R: Send + 'static>(
+        self,
+        server: &SyncServer,
+        spool: impl FnOnce(BodySpool) -> R + Send + 'static,
+    ) -> Result<TransferBody<T, R>, ApiError> {
+        match self.ready_body().await? {
+            ReadyBody::Memory(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| invalid_json())
+                .map(TransferBody::Whole),
+            ReadyBody::Stream { declared, body } => {
+                spool_then(server, declared, body, SpoolPolicy::custody(server), spool)
+                    .await
+                    .map_err(Unspooled::refusal)
+                    .map(TransferBody::Bulk)
+            }
+        }
+    }
+
     async fn read_with_policy(
         self,
         server: &SyncServer,
         policy: SpoolPolicy,
     ) -> Result<T, ApiError> {
+        match self.ready_body().await? {
+            ReadyBody::Memory(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid_json()),
+            ReadyBody::Stream { declared, body } => {
+                spool_then(server, declared, body, policy, decode_spool::<T>)
+                    .await
+                    .map_err(Unspooled::refusal)?
+                    .ok_or_else(invalid_json)
+            }
+        }
+    }
+
+    /// The in-memory/spool branch shared by whole and bulk reads: the same
+    /// declared-length and held-body judgment against the same
+    /// [`IN_MEMORY_BODY_BYTES`] line, with the same errors.
+    async fn ready_body(self) -> Result<ReadyBody, ApiError> {
         if !self.json {
             return Err(invalid_json());
         }
-        let body = match self.declared {
+        match self.declared {
             Some(size) if size <= IN_MEMORY_BODY_BYTES as u64 => {
                 let bytes = axum::body::to_bytes(self.body, IN_MEMORY_BODY_BYTES)
                     .await
                     .map_err(|_| invalid_json())?;
-                return serde_json::from_slice(&bytes).map_err(|_| invalid_json());
+                Ok(ReadyBody::Memory(bytes))
             }
-            Some(_) => self.body,
+            Some(_) => Ok(ReadyBody::Stream {
+                declared: self.declared,
+                body: self.body,
+            }),
             None => match hold(self.body).await? {
-                Held::Whole(bytes) => {
-                    return serde_json::from_slice(&bytes).map_err(|_| invalid_json());
-                }
-                Held::Past(body) => body,
+                Held::Whole(bytes) => Ok(ReadyBody::Memory(Bytes::from(bytes))),
+                Held::Past(body) => Ok(ReadyBody::Stream {
+                    declared: self.declared,
+                    body,
+                }),
             },
-        };
-        spool_then(server, self.declared, body, policy, decode_spool::<T>)
-            .await
-            .map_err(Unspooled::refusal)?
-            .ok_or_else(invalid_json)
+        }
     }
 }

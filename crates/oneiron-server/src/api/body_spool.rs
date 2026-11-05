@@ -11,6 +11,7 @@
 //! spooled document whole while its bulk string members stream to sinks, so
 //! a field of any length never becomes one string in memory.
 
+mod hex;
 mod json;
 mod owner_json;
 
@@ -29,8 +30,9 @@ use crate::machine::{DiskClaim, DiskFloor};
 use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
+pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField};
-pub(super) use self::owner_json::OwnerJsonBody;
+pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
 const SPOOL_PIECE: usize = 64 * 1024;
