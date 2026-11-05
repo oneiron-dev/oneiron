@@ -201,6 +201,10 @@ pub enum AuthorityOp {
     /// by the install key of a live machine of the vault, in any role (FIX
     /// 15740). A main-log entry, so every machine the owner admits folds it.
     OriginCut(OriginCut),
+    /// The owner names a device key's successor (FIX 11135): the install
+    /// that completes the erase receipts that key attested. A main-log
+    /// entry, so every machine the owner admits folds it.
+    DeviceSuccession(DeviceSuccession),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -268,6 +272,7 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate_entry(self)?,
             AuthorityOp::FrontierJoin(join) => join.validate_entry(self)?,
             AuthorityOp::OriginCut(cut) => cut.validate_entry(self)?,
+            AuthorityOp::DeviceSuccession(succession) => succession.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -506,6 +511,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
         AuthorityOp::OriginCut(cut) => cut.validate(),
+        AuthorityOp::DeviceSuccession(succession) => succession.validate(),
     }
 }
 
