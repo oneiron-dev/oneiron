@@ -47,6 +47,7 @@ mod erase;
 mod load_set;
 mod nightly;
 mod policy;
+mod report;
 mod serving;
 mod types;
 
@@ -73,6 +74,8 @@ pub use serving::{
     DrafterLoadSetPlan, DrafterMaterialized, DrafterServedView, DrafterServingPlan,
     DrafterServingPlans, DrafterServingRuntime, DrafterUnservedReason,
 };
+pub(crate) use report::unseen_drafter_line_in_txn;
+pub use report::{DRAFTER_GROUP, DRAFTER_VIEW, DigestDrafter, DigestDrafterItem};
 pub use types::*;
 
 /// The verb an agent's Grant lists to read the vault's drafter versions.
