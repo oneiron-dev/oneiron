@@ -68,6 +68,7 @@ impl OverlaySnapshot {
         Ok(Self {
             state: Arc::clone(&self.state),
             lease: self.lease.retain()?,
+            segment: self.segment,
         })
     }
 
