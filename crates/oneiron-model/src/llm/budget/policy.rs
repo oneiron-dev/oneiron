@@ -1,5 +1,7 @@
 //! Resolved manifest policy table for one budget meter.
 
+use serde::{Deserialize, Serialize};
+
 use crate::llm::CallPurpose;
 use oneiron_contracts::entity_id::EntityId;
 
@@ -59,7 +61,7 @@ impl BudgetPolicyTable {
 }
 
 /// One `budget_policy` row: a selector plus a floor, a cap, or both.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetPolicyRow {
     selector: BudgetPolicySelector,
     floor_units: Option<u64>,
@@ -97,7 +99,7 @@ impl BudgetPolicyRow {
 }
 
 /// The one call set a policy row selects.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BudgetPolicySelector {
     Purpose(CallPurpose),
     Actor(EntityId),

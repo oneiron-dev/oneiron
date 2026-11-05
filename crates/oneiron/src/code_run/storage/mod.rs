@@ -19,6 +19,8 @@ mod secret_lift;
 pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+mod session_checkpoint;
+pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
 mod spawn_erase;
 mod speech_identity;
@@ -52,6 +54,7 @@ pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
     response_erased_error,
 };
+pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{

@@ -22,7 +22,9 @@ mod pad_custody;
 mod policy;
 mod prune;
 mod recall_scope;
+mod sealed_updates;
 mod search;
+mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
     AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
@@ -114,10 +116,19 @@ pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
+pub use sealed_updates::{
+    OutboxSealedUpdate, SEALED_UPDATE_KEEP_SECS, SEALED_UPDATE_PAGE_BYTES,
+    SEALED_UPDATE_PAGE_ENTRIES, SealedUpdateEpoch, SealedUpdateId, SealedUpdatePage,
+    SealedUpdateQueue, StoredSealedUpdate, drop_sealed_update_outbox, put_sealed_update_cursor,
+    put_sealed_update_outbox, sealed_update_cursor, sealed_update_outbox, sealed_update_queue,
+    sealed_updates_since, store_sealed_update,
+};
 pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
+pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
 
 #[cfg(test)]
 use loro::ExportMode;

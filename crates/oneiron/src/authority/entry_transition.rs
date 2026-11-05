@@ -142,6 +142,8 @@ pub(super) fn fold_entry_state(
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
+            origin_cut: super::origin_cut::OriginCutChoiceState::default(),
+            device_succession: super::device_succession::DeviceSuccessionChoiceState::default(),
             conversation_training:
                 super::conversation_training::ConversationTrainingChoiceState::default(),
             conversation_training_vault:
@@ -252,6 +254,38 @@ pub(super) fn fold_entry_state(
             &mut state,
             entry,
             pick,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's origin cut, on the same register, one frontier per
+    // repository portable id (FIX 15740).
+    if let AuthorityOp::OriginCut(cut) = &entry.op {
+        if let Err(issue) = super::origin_cut::apply_origin_cut(
+            &mut state,
+            entry,
+            cut,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's naming of a device key's successor, one frontier per
+    // predecessor (client id, device key) (FIX 11135).
+    if let AuthorityOp::DeviceSuccession(succession) = &entry.op {
+        if let Err(issue) = super::device_succession::apply_device_succession(
+            &mut state,
+            entry,
+            succession,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -633,6 +667,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)

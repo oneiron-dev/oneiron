@@ -6,7 +6,7 @@ mod comm_input;
 mod comm_projection;
 mod commit;
 mod edges;
-mod ops;
+use oneiron_store::batch::builder::ops;
 mod preflight;
 mod puts;
 mod reference_read;
@@ -58,6 +58,10 @@ pub struct BatchBuilder<'a> {
     /// is gated and applied under (FIX 8118); a put with none keeps the
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
+    /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
+    /// exact bytes: a marked carrier's content its writer already scanned
+    /// (FIX 9034), set by that door alone.
+    marked_carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
     #[cfg(feature = "sync")]
     import_tier: crate::store::window_protocol::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -120,6 +124,7 @@ impl<'a> BatchBuilder<'a> {
             asset_files: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
+            marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]

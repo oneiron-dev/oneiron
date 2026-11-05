@@ -79,10 +79,11 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
 /// their carrier and the next rematerialization takes them back.
 pub(crate) fn record_version_claim(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     body: &ClaimBody,
 ) -> Result<()> {
+    let store = write.store;
     let Some((artifact, hash)) = version_claim_reference(body) else {
         return Ok(());
     };
@@ -91,7 +92,13 @@ pub(crate) fn record_version_claim(
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
-        return super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash);
+        return super::lifecycle::release_bytes_of_deleted_artifact(
+            store,
+            txn,
+            &artifact,
+            &hash,
+            &|txn, id| crate::batch::deindex_entity(write, txn, id),
+        );
     }
     VERSION_CLAIM.put(store, txn, &(hash, artifact), &())?;
     CLAIMED_HASH.put(store, txn, &(artifact, hash), &())?;
@@ -187,6 +194,46 @@ pub(super) fn retained_claim_names(
             continue;
         };
         if version_claim_reference(&body) == Some((*artifact, *named)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a retained replicated version claim keeps this artifact's
+/// payload under a hold. Its claim is preserved with the bytes it names.
+pub(super) fn artifact_claim_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+) -> Result<bool> {
+    for edge in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        artifact,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim = edge?.target;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
+            continue;
+        };
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN
+            || raw[0] != ENTITY_TYPE_CLAIM
+            || crate::deletion::row_deletion_marked(store, txn, &claim, Some(&raw))?
+        {
+            continue;
+        }
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
+            continue;
+        };
+        if version_claim_reference(&body).is_some_and(|(id, _)| id == *artifact)
+            && crate::store::legal_hold::held_in_txn(store, txn, claim.as_bytes())?
+        {
             return Ok(true);
         }
     }

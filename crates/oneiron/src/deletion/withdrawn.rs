@@ -93,14 +93,15 @@ pub(crate) fn holds_withdrawn_record_in(
 /// Shell and changes nothing.
 #[cfg(feature = "sync")]
 pub(crate) fn withdraw_received_record_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     cutoff: u64,
 ) -> Result<bool> {
+    let store = write.store;
     if !holds_withdrawn_record_in(store, txn, id, cutoff)? {
         return Ok(false);
     }
-    crate::ports::mark_received_withdrawn_in_txn(store, txn, id)?;
+    crate::ports::mark_received_withdrawn_in_txn(write, txn, id)?;
     scrub_withdrawn_record_in_txn(store, txn, id)
 }

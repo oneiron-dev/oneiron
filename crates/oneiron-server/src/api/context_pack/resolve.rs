@@ -163,8 +163,20 @@ pub(crate) async fn run_context_pack(
     let (mut media_memory, media) = (server.memory.empty_lease(), media);
     media_memory.materialized(
         0,
-        (media.capacity() as u64)
-            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+        media.iter().fold(
+            (media.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+            |bytes, seed| {
+                let vector_bytes = (seed.vector.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<f32>() as u64);
+                let kind_bytes = (seed.kinds.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64);
+                bytes
+                    .saturating_add(seed.space.capacity() as u64)
+                    .saturating_add(vector_bytes)
+                    .saturating_add(kind_bytes)
+            },
+        ),
     );
 
     let mut builder = server
