@@ -120,6 +120,8 @@ impl VerbCall {
     /// credential that carries no read) carries one that reads nothing
     /// ([`ScopedReadActorKey::read_nothing`]) while no hook may run on
     /// `verb`, so a hook bound meanwhile never reads on the actor's own lane.
+    /// A verified share-only renderer carries a read-nothing hook key even
+    /// when hooks run; its share credential stays confined to the renderer.
     ///
     /// # Errors
     ///
@@ -129,7 +131,7 @@ impl VerbCall {
         memory: &crate::Memory<'_>,
         verb: &str,
     ) -> MemoryResult<Option<ScopedReadActorKey>> {
-        match memory.read_key() {
+        match memory.verb_hook_read_key(verb) {
             Ok(key) => Ok(Some(key)),
             Err(error) if Self::may_run(memory.vault(), verb) => Err(error),
             Err(error) => ScopedReadActorKey::read_nothing(
