@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use super::accounting::Source;
 use super::{
     LiftCauseCount, PROPOSALS, RECEIPTS, RUN, STATUS_PROPOSALS, SecretLiftHistoryProposal,
     SecretLiftProgress, SecretLiftRequest, SecretLiftStatus, SecretScanMode, accounting, hex,
@@ -28,8 +29,11 @@ use crate::settings::ReadDestination;
 /// note-proposal carriers also name their actual source entity in their row keys. Other
 /// side rows and carriers stay unknown, except live LFS objects whose native
 /// record binds their manifest ASSET in the same snapshot. Run, receipt and retry counts omit only
-/// contributors whose actual source entity is known and withheld. Unknown
-/// sources never withhold.
+/// contributors with a proven source withheld. A parentless eval case's
+/// known dependencies come from its native receipts' frozen read sets, not
+/// its mutable source list or labels. Any proven withheld dependency omits
+/// that contributor once; unknown dependencies never withhold or cancel
+/// dependencies that are proven.
 ///
 /// # Errors
 /// As [`secret_lift_as_owner`].
@@ -97,7 +101,7 @@ fn proposal_source_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     proposal: &SecretLiftHistoryProposal,
-) -> Result<Option<EntityId>> {
+) -> Result<Source> {
     if let Some((table, key)) = proposal
         .proposal
         .path
@@ -106,9 +110,11 @@ fn proposal_source_in_txn(
         && table == crate::side_table::ORIGIN_LFS_OBJECT.name
     {
         let Ok(oid) = LfsOid::parse_hex(key) else {
-            return Ok(None);
+            return Ok(Source::Unmapped);
         };
-        return vault.lfs_object_source_in_txn(txn, oid);
+        return Ok(vault
+            .lfs_object_source_in_txn(txn, oid)?
+            .map_or(Source::Unmapped, Source::Entity));
     }
     if let Some((table, key)) = proposal
         .proposal
@@ -118,11 +124,27 @@ fn proposal_source_in_txn(
         && table == crate::side_table::MESSAGE_STREAM_ACTIVE.name
     {
         let Ok(message) = EntityId::from_hex(key) else {
-            return Ok(None);
+            return Ok(Source::Unmapped);
         };
-        return vault.message_stream_continuation_source_in_txn(txn, &message);
+        return Ok(vault
+            .message_stream_continuation_source_in_txn(txn, &message)?
+            .map_or(Source::Unmapped, Source::Entity));
     }
-    Ok(proposal_source(proposal))
+    if let Some((table, key)) = proposal
+        .proposal
+        .path
+        .strip_prefix("carrier:")
+        .and_then(|path| path.split_once(':'))
+        && table == crate::side_table::SKILL_OPTIMIZE_EVAL_CASE.name
+    {
+        let Ok(case) = EntityId::from_hex(key) else {
+            return Ok(Source::Unmapped);
+        };
+        return Ok(Source::of_set(
+            vault.eval_case_receipt_sources_in_txn(txn, &case)?,
+        ));
+    }
+    Ok(proposal_source(proposal).map_or(Source::Unmapped, Source::Entity))
 }
 
 /// The records some proposal was filed from that a world withheld from
@@ -135,12 +157,12 @@ fn withheld_sources(
     let mut records = BTreeSet::new();
     for row in PROPOSALS.iter_from(&vault.store, txn, &[])? {
         let (_, proposal) = row?;
-        records.extend(proposal_source_in_txn(vault, txn, &proposal)?);
+        records.extend(proposal_source_in_txn(vault, txn, &proposal)?.entities());
     }
     if let Some(run) = RUN.get_lenient(&vault.store, txn, &())? {
         records.extend(accounting::sources(&vault.store, txn, run.run_id)?);
         for (family, key) in &run.retry {
-            records.extend(accounting::source_in_txn(vault, txn, *family, key)?);
+            records.extend(accounting::source_in_txn(vault, txn, *family, key)?.entities());
         }
     }
     if let Some((_, receipt)) = RECEIPTS
@@ -186,7 +208,7 @@ pub(super) fn status_where(
                     .iter()
                     .try_fold(0_u64, |total, (family, key)| -> Result<u64> {
                         let source = accounting::source_in_txn(vault, &txn, *family, key)?;
-                        Ok(total.saturating_add(u64::from(source.is_none_or(&keep_source))))
+                        Ok(total.saturating_add(u64::from(source.kept_by(&keep_source))))
                     })?;
             Ok(SecretLiftProgress {
                 run_id: run.run_id.to_hex(),
@@ -210,9 +232,7 @@ pub(super) fn status_where(
     let mut proposals = Vec::new();
     for row in PROPOSALS.iter_from(&vault.store, &txn, &[])? {
         let (key, mut proposal) = row?;
-        if proposal_source_in_txn(vault, &txn, &proposal)?
-            .is_some_and(|source| !keep_source(source))
-        {
+        if !proposal_source_in_txn(vault, &txn, &proposal)?.kept_by(&keep_source) {
             continue;
         }
         if !proposal.is_open() {

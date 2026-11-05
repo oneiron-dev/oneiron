@@ -6,9 +6,15 @@ Its native writer doors, retry rules, busy-stream waits and page cursor are unch
 ## Stored and served counts
 
 `secret_lift:contribution:v1:` stores the canonical count contributions for each run.
-Each row groups one family and one actual source entity, or explicitly unmapped sources.
-It counts every census read, including clean rows, and the committed masked, proposal
-and failed outcomes. A run stores its cursor and retry membership, not another copy of
+Each row groups one family and one canonical set of proven source entities, or
+explicitly unmapped sources. Single-source groups keep their existing representation;
+a `Multi` contribution uses key marker `2` followed by the BLAKE3 digest of its
+sorted, distinct, full 16-byte entity ids under
+`oneiron/secret-lift/contribution-sources/v1`. This keeps the database key bounded
+without capping the source set. The contribution value stores every actual source id;
+the digest only groups rows and never establishes a source's identity. It counts every census read, including clean rows, and the committed masked,
+proposal and failed outcomes. A multi-source contributor is counted once, not once per
+source. A run stores its cursor and retry membership, not another copy of
 these totals. A completed run stores completion metadata. The public progress and
 receipt totals are projections of the same contribution rows.
 
@@ -53,6 +59,18 @@ abandoned or retired) remain unknown. Booked message-stream contribution sources
 the seed's deletion, but a proposal has no stored source: once its seed row is gone, even
 a closed proposal passes as unknown. No historical source is reconstructed from a stream
 receipt, saved text or run totals.
+A parentless eval case views the content of the native attempt receipts it names.
+The lift reader resolves each actual receipt in the same transaction and uses its
+original frozen, complete read set. It does not use the case's mutable `source_rows`,
+which erasure can shrink, or treat a case id, label, actor or receipt spelling as source
+authority. Only live native entity ids from those proven sets enter the contribution.
+Missing, malformed or source-unknown receipts add no known dependency. They and unknown
+labels never cancel a dependency another receipt proves. If any proven source is withheld,
+the row, its outcome, its retry and its proposal are each omitted once. On-device counts
+still include every contributor once. This is a set of known dependencies, not a claim
+that every dependency is known. Parent-derived cases, label-only sources, synthetic
+sources and other untraced dependencies remain unknown. Booked sources stay durable;
+a proposal uses current case and receipt bindings and becomes unknown if those disappear.
 The same verified mapping projects pending retry counts and newly booked
 contribution rows. Existing unmapped contributions are not reattributed. Other attempt, side-row and carrier
 sources remain unmapped and pass unchanged; this is not a complete source
