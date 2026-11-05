@@ -191,6 +191,15 @@ fn decode_policy(
     decision_id: GateDecisionId,
     raw: &[u8],
 ) -> Result<GateDecisionRecord> {
+    decode_policy_source(custody, decision_id, raw).map(|(record, _)| record)
+}
+
+/// The exact opened bytes, retained only by the claim-free legal-clone reader.
+pub(super) fn decode_policy_source(
+    custody: LocalCustody<'_>,
+    decision_id: GateDecisionId,
+    raw: &[u8],
+) -> Result<(GateDecisionRecord, zeroize::Zeroizing<Vec<u8>>)> {
     if raw.len() < HEADER_LEN + 16
         || raw[5..21] != POLICY_PARTITION
         || raw[21..37] != decision_id.as_bytes()
@@ -200,25 +209,29 @@ fn decode_policy(
     let key = custody.read(&claim_subject(custody, &POLICY_PARTITION)?.at(0))?;
     let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
     let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
-    let compressed = cipher
-        .decrypt(
-            &Nonce::from(nonce),
-            Payload {
-                msg: &raw[HEADER_LEN..],
-                aad: &raw[..HEADER_LEN],
-            },
-        )
-        .map_err(|_| corrupt())?;
+    let compressed = zeroize::Zeroizing::new(
+        cipher
+            .decrypt(
+                &Nonce::from(nonce),
+                Payload {
+                    msg: &raw[HEADER_LEN..],
+                    aad: &raw[..HEADER_LEN],
+                },
+            )
+            .map_err(|_| corrupt())?,
+    );
     let mut decompressor =
         zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
-    let plain = decompressor
-        .decompress(&compressed, MAX_PLAINTEXT)
-        .map_err(|_| corrupt())?;
+    let plain = zeroize::Zeroizing::new(
+        decompressor
+            .decompress(&compressed, MAX_PLAINTEXT)
+            .map_err(|_| corrupt())?,
+    );
     let record = decode_gate_decision(&plain)?;
     if record.claim_id.is_some() || record.decision_id != decision_id {
         return Err(corrupt());
     }
-    Ok(record)
+    Ok((record, plain))
 }
 
 /// Whether the key an ORCB header names is retired in `custody`. No custody
