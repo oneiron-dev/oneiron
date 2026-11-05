@@ -547,6 +547,7 @@ pub(super) fn require(
         .get_mut("vault_meta")
         .ok_or_else(codec_error)?;
     let pruned = prune_retired_bodies_in_rows(rows, &retired)?;
+    crate::code_run::retire_replay_bodies_in_rows(&mut image.databases, &pruned.digests)?;
     crate::memory::retire_message_results_in_rows(&mut image.databases, &pruned.digests)?;
     // A retired response's row keeps its erased disposition (KS-2B1).
     response_rows::retire_carried(image, &retired)?;
