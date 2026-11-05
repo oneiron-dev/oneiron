@@ -42,7 +42,27 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         CorpusScope::Unscoped => json!({"kind": "unscoped"}),
         CorpusScope::Corpus(id) => json!({"kind": "corpus", "ids": [id.to_hex()]}),
         CorpusScope::AnyOf(ids) => {
-            json!({"kind": "any_of", "ids": ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>() })
+            let mut corpus_memory = builder
+                .media_search
+                .memory()
+                .map(crate::host_memory::MachineMemory::empty_lease);
+            json!({
+                "kind": "any_of",
+                "ids": ({
+                    let ids = ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>();
+                    if let Some(memory) = corpus_memory.as_mut() {
+                        memory.materialized(
+                            0,
+                            ids.iter().fold(
+                                (ids.capacity() as u64)
+                                    .saturating_mul(std::mem::size_of::<String>() as u64),
+                                |bytes, id| bytes.saturating_add(id.capacity() as u64),
+                            ),
+                        );
+                    }
+                    ids
+                }),
+            })
         }
     };
     let formula = match bm25.formula {

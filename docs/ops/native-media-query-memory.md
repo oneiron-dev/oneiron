@@ -45,6 +45,12 @@ buffer moved into the existing serialization expression. These charges use the
 same supplied line and leave an unbound capture usable. They cover vector slots
 only, not the temporary objects' inner storage or the retained replay JSON.
 
+An `AnyOf` corpus replay also records the backing capacities of its temporary
+hex-ID vector and each owned hex string. The existing ID expression stays at
+its JSON field, so field evaluation order is unchanged. The vector moves into
+the serialization temporary while the enclosing arm keeps the lease alive.
+The source IDs and copied retained JSON are outside this charge.
+
 The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
 native attempt releases the identity. Each hash copy is recorded immediately
