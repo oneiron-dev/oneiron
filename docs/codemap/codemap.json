@@ -118832,13 +118832,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key/unlocked_open.rs",
      "purpose": "The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
