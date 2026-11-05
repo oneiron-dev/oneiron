@@ -15,7 +15,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::llm::BrokerIsolation;
-use oneiron::llm::media::MediaBackend;
+use oneiron::llm::media::{
+    InterruptedMediaCall, MediaBackend, MediaFuture, MediaProgressFuture, MediaRequest,
+    MediaResponse,
+};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use oneiron_broker::{BrokerClient, CallHeader, FormData, Isolation, Shape};
 use oneiron_llm_gemini::{
@@ -30,6 +33,7 @@ use oneiron_llm_openai::{
 use super::broker::{
     BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, call_with_key_released, join,
 };
+use super::hosted_speech::{self, HostedWire};
 use super::http::{charge_read, is_cloud_node};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -93,6 +97,23 @@ pub(super) fn broker_media_backend(
             )
             .with_embed_shape(provider.embed_shape),
         )),
+        ProviderKind::Cartesia | ProviderKind::Elevenlabs => {
+            let wire = if matches!(provider.kind, ProviderKind::Cartesia) {
+                HostedWire::Cartesia
+            } else {
+                HostedWire::ElevenLabs
+            };
+            let provider = if wire == HostedWire::Cartesia {
+                super::media::cartesia(provider)
+            } else {
+                provider.clone()
+            };
+            Ok(Arc::new(BrokeredSpeech {
+                broker: BrokerMedia::new(name, &provider, &provider.base_url, site, keys)?,
+                wire,
+                models: wire_models,
+            }))
+        }
         kind => anyhow::bail!(
             "a {kind:?} provider's media calls do not go through the credential broker"
         ),
@@ -225,6 +246,24 @@ impl BrokerMedia {
         ))
     }
 
+    /// A shared hosted-speech request, checked against its exact broker shape.
+    fn hosted(
+        &self,
+        wire: HostedWire,
+        path: String,
+        body: serde_json::Value,
+    ) -> LlmResult<Exchange> {
+        Ok(Exchange {
+            shape: match wire {
+                HostedWire::Cartesia => Shape::CartesiaSpeech,
+                HostedWire::ElevenLabs => Shape::ElevenLabsSpeech,
+            },
+            path: join(&self.prefix, &path),
+            content_type: Some(JSON.to_owned()),
+            body: json_bytes(&body)?,
+        })
+    }
+
     /// An OpenAI-compatible media request as its broker shape takes it.
     fn openai(&self, request: OpenAiMediaHttpRequest) -> LlmResult<Exchange> {
         let OpenAiMediaHttpRequest { method, path, body } = request;
@@ -344,6 +383,58 @@ impl BrokerMedia {
                 }
             }
         })
+    }
+}
+
+/// Hosted speech over the same credential-broker path as other media calls.
+struct BrokeredSpeech {
+    broker: BrokerMedia,
+    wire: HostedWire,
+    models: BTreeMap<ModelId, String>,
+}
+
+impl BrokeredSpeech {
+    async fn speak(
+        &self,
+        mut request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<MediaResponse> {
+        let (text, path, body) = hosted_speech::build(self.wire, &self.models, &mut request)?;
+        let exchange = self.broker.hosted(self.wire, path, body)?;
+        let (status, headers, body) = self.broker.send_released(exchange, lease, release).await?;
+        hosted_speech::parse(status, &headers, &body, request.model, &text)
+    }
+}
+
+impl MediaBackend for BrokeredSpeech {
+    fn run<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+    ) -> MediaFuture<'a, MediaResponse> {
+        Box::pin(self.speak(request, lease, None))
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(async move {
+            self.speak(request, lease, release)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
+        })
+    }
+
+    fn preflight(&self, _request: &MediaRequest) -> LlmResult<()> {
+        self.broker.ready()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        Some(self.broker.isolation())
     }
 }
 

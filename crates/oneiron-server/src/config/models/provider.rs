@@ -25,7 +25,7 @@ pub enum ProviderKind {
     /// Cartesia's speech API (`POST /tts/bytes`, `x-api-key`): a
     /// `[models.media.speech]` rung only.
     Cartesia,
-    /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}/stream`,
+    /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}`,
     /// `xi-api-key`): a `[models.media.speech]` rung only.
     Elevenlabs,
     /// An own-server VoxCPM2 worker (`deploy/voxcpm2`): it renders each
@@ -52,10 +52,11 @@ impl ProviderKind {
     }
 
     /// Whether a `key_secret` key of this kind can leave through the
-    /// credential broker: a chat wire's, or the Gemini API's media wire's.
+    /// credential broker: a chat wire's, the Gemini API's media wire's, or a
+    /// hosted speech wire's.
     #[must_use]
     pub fn brokers(self) -> bool {
-        self.generates() || matches!(self, Self::Gemini)
+        self.generates() || matches!(self, Self::Gemini | Self::Cartesia | Self::Elevenlabs)
     }
 
     /// Whether this kind serves media seats and nothing else.
@@ -231,12 +232,13 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
 /// `key_secret`, never as a literal in a config file.
-const CREDENTIAL_HEADERS: [&str; 5] = [
+const CREDENTIAL_HEADERS: [&str; 6] = [
     "authorization",
     "x-api-key",
     "x-goog-api-key",
     "api-key",
     "proxy-authorization",
+    "xi-api-key",
 ];
 
 /// `[models.providers.<name>]` as written.
@@ -625,7 +627,7 @@ fn validate_key_secret(
     }
     if !kind.brokers() {
         anyhow::bail!(
-            "models.providers.{name}.key_secret applies to generating and gemini providers only"
+            "models.providers.{name}.key_secret applies to generating, gemini and hosted speech providers only"
         );
     }
     if !base_url.starts_with("https://") {
