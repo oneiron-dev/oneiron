@@ -14,6 +14,9 @@ use self::terminal::*;
 pub struct MessageStreamPump {
     pub finalized: Vec<MessageStreamReceipt>,
     pub refused: Vec<(EntityId, MessageStreamError)>,
+    /// Native caller-private streams, including truthful unretained completion.
+    pub session_finalized: Vec<SessionStreamOutcome>,
+    pub session_refused: Vec<(EntityId, MessageStreamError)>,
 }
 /// A host's own condition on a terminal write, judged inside that write's
 /// transaction (the credential a stream answers is still live, say).
@@ -264,7 +267,19 @@ impl Vault {
             .cloned()
             .collect();
         let mut report = MessageStreamPump::default();
-        for entry in entries {
+        for resident in entries {
+            let entry = match resident {
+                Resident::Recorded(entry) => entry,
+                Resident::Session(entry) => {
+                    let stream_id = lock(&entry)?.stream_id;
+                    match session::pump(self, &entry, now) {
+                        Ok(Some(outcome)) => report.session_finalized.push(outcome),
+                        Ok(None) => {}
+                        Err(error) => report.session_refused.push((stream_id, error)),
+                    }
+                    continue;
+                }
+            };
             // Keep this entry locked from the deadline decision through commit:
             // an append cannot make the decision stale while we wait for LMDB.
             let mut state = lock(&entry)?;
