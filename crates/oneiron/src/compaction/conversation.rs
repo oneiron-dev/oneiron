@@ -41,7 +41,7 @@ pub use log::{
     ChatLog, ChatLogCut, ChatLogLine, read_action_chat_log, read_chat_log, read_first_chat_log,
 };
 pub(crate) use order::validate_conversation_window_in_txn;
-pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in};
+pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in, summary_stands_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 use window::ChatLogWindow;
 
