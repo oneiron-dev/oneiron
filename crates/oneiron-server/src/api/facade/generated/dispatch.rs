@@ -36135,6 +36135,28 @@ async fn vault_notes_read(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_read_indexed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.read_indexed",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_notes_history(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41584,6 +41606,7 @@ async fn call_verb_row(
         "vault.notes.author_take" => Box::pin(vault_notes_author_take(server, call, input)).await,
         "vault.notes.from_entity" => Box::pin(vault_notes_from_entity(server, call, input)).await,
         "vault.notes.read" => Box::pin(vault_notes_read(server, call, input)).await,
+        "vault.notes.read_indexed" => Box::pin(vault_notes_read_indexed(server, call, input)).await,
         "vault.notes.history" => Box::pin(vault_notes_history(server, call, input)).await,
         "vault.notes.fork" => Box::pin(vault_notes_fork(server, call, input)).await,
         "vault.notes.forks.read" => Box::pin(vault_notes_forks_read(server, call, input)).await,
