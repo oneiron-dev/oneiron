@@ -60,9 +60,10 @@ pub(super) fn outbound_schedule_context_to_engine(
     if iana_timezone.is_some() && utc_offset_minutes.is_none() {
         return Err("iana_timezone requires utc_offset_minutes".to_owned());
     }
-    if iana_timezone.as_deref().is_some_and(|label| {
-        label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
-    }) {
+    if iana_timezone
+        .as_deref()
+        .is_some_and(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+    {
         return Err("iana_timezone must be non-blank and contain no controls".to_owned());
     }
     let apns_interruption_level = match draft.apns_interruption_level.as_deref() {
