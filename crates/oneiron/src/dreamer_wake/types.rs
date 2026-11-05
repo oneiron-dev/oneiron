@@ -474,6 +474,19 @@ pub trait DreamerAttemptExecutor {
     fn runs_turn_programs(&self) -> bool {
         false
     }
+
+    /// Whether this executor runs host-model Coach jobs (`coach.host`).
+    /// Opt in only when `execute` handles that queue's jobs; otherwise the
+    /// pass leaves them to the host's separate Coach consumer.
+    fn runs_coach_host_jobs(&self) -> bool {
+        false
+    }
+
+    /// Whether this executor runs Coach heals (`coach.heal`). Independent
+    /// of host-job support: `execute` must handle heals before opting in.
+    fn runs_coach_heals(&self) -> bool {
+        false
+    }
 }
 
 /// Durable milestone authorship for driver-written Started/Done milestones.

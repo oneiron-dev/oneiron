@@ -152,11 +152,12 @@ pub(crate) async fn calendar_connector_pull(
                 row.clone(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            let operation = wire.operation().clone();
             let now = server.vault().now_recorded_at();
             let seed = now;
             let outcome = oneiron::calendar::run_calendar_connector_sync(
                 server.vault(),
-                &row.seat,
+                &operation,
                 &CalDavConnector::new(wire),
                 now,
                 seed,
@@ -203,9 +204,10 @@ pub(crate) async fn calendar_connector_write(
                 row.clone(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            let operation = wire.operation().clone();
             oneiron::calendar::write_calendar_event(
                 server.vault(),
-                &row.seat,
+                &operation,
                 &CalDavConnector::new(wire),
                 event,
                 server.vault().now_recorded_at(),
