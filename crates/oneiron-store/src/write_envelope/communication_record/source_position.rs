@@ -140,7 +140,7 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
         .try_into()
         .map_err(|_| CommError::InvalidRecord)?;
     let scope_form = ScopedTouchScopeForm::from_wire(scope_form)?;
-    scope_form.scope(sensitivity)?;
+    let _ = scope_form.scope(sensitivity)?;
     Ok(Some(ScopedTouchSource {
         world: id(world)?,
         facet: id(facet)?,
