@@ -264,9 +264,21 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let planned = spawn.plan.is_some();
         let origin =
             self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        let budget = if budget.is_none() && !planned {
+            crate::learning_setting_choice::owner_spawn_budget_in_txn(
+                self.vault,
+                wtxn,
+                dispatch_input.project_ref,
+                &dispatch_input.type_ref,
+            )?
+        } else {
+            budget
+        };
+        dispatch_input.budget = budget;
         // OF-532: state the launch (count, expected spend, cap) in this
         // transaction and freeze it into the payload; the scope is reserved
         // below, once the attempt id exists, in the same transaction.
@@ -592,7 +604,7 @@ impl<'a> AgentDispatcher<'a> {
         })
     }
 
-    /// The task-type stamp preparation and a direct launch preview read.
+    /// The task-type stamp shared by preparation and a direct launch preview.
     pub(super) fn spawn_type_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
