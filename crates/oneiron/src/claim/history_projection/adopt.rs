@@ -201,6 +201,7 @@ impl Vault {
                         .max(occurred.start),
                 },
                 learned_at,
+                row_version: None,
                 data: super::super::encode_claim_body(projected)?,
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
