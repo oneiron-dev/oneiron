@@ -3470,7 +3470,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointUnresolved",
@@ -3536,7 +3536,7 @@
      "path": "src/authority/checkpoint_policy_choice.rs",
      "purpose": "The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he selects which roots attest his authority…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -8573,13 +8573,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/checkpoint.rs",
      "purpose": "The checkpoint getter of blob artifact versions (KS7-2): each artifact's head record and version records…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -64610,7 +64610,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -69999,7 +69999,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 7
      }
     },
@@ -70038,8 +70038,18 @@
      "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/projector/actor_displacement.rs",
+     "purpose": "Reconcile only native failed actor credit after explicit judge displacement",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -92872,7 +92882,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93138,9 +93148,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6517,
+   "source_files": 6518,
    "test_files": 895
   },
   "oneiron-android": {
@@ -137709,31 +137719,54 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/host_adapters/desktop.rs",
+     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "ActivatedListener",
-      "AwakeGuard",
-      "AwakePolicy",
       "DesktopHost",
-      "KeepAwake",
       "LaunchdHost",
       "SecretSource",
       "SystemdHost"
      ],
-     "path": "src/lib/host_adapters/desktop.rs",
-     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "path": "src/lib/host_adapters/desktop/hosts.rs",
+     "purpose": "—",
      "surface": {
-      "enum": 4,
-      "fn": 14,
-      "struct": 4
+      "enum": 3,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AwakeGuard",
+      "AwakePolicy",
+      "KeepAwake"
+     ],
+     "path": "src/lib/host_adapters/desktop/keep_awake.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/lib/host_adapters/desktop/power.rs",
+     "path": "src/lib/host_adapters/desktop/keep_awake/power.rs",
      "purpose": "The power source a PluggedIn wake assertion follows (FIX 9547)",
      "surface": {
       "crate-vis": 5
@@ -138376,7 +138409,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 54,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -138385,7 +138418,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 53,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-web-fetch": {

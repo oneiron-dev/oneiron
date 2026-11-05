@@ -94,6 +94,8 @@ impl ManagedArgs {
             derivation_owner: DerivationOwner(owner),
             organization_owner,
             member_vault: args.member_vault,
+            privacy_posture: args.privacy_posture.unwrap_or_default(),
+            allow_host_checkpoint_opt_out: args.managed_checkpoint_host_opt_out,
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
                 args.data_dir.clone().or_else(|| args.vault_path.clone()),
@@ -330,6 +332,8 @@ impl ManagedArgs {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
             allow_unauthenticated: false,
+            privacy_posture: self.privacy_posture,
+            allow_host_checkpoint_opt_out: self.allow_host_checkpoint_opt_out,
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             // The host's public https origin and the URLs a kit dials, as
