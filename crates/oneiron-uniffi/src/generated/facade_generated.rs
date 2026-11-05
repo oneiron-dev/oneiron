@@ -1226,6 +1226,11 @@ export_facade! {
     let output = client.vault_skills_fit_set(&input)?;
     crate::codec::lift_record("vault.skills.fit.set", &output)
 };
+"vault.skills.advisory_ask.set" => fn vault_skills_advisory_ask_set(&self, input: SkillAdvisoryAskRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillAdvisoryAskRequest = crate::codec::lower_record("vault.skills.advisory_ask.set", input)?;
+    let output = client.vault_skills_advisory_ask_set(&input)?;
+    crate::codec::lift_record("vault.skills.advisory_ask.set", &output)
+};
 "vault.skills.permissions.approve" => fn vault_skills_permissions_approve(&self, input: HubSkillPermissionRequest) -> HubConsentReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
     let output = client.vault_skills_permissions_approve(&input)?;
@@ -2306,7 +2311,7 @@ export_facade! {
     let output = client.vault_coach_training_offers_result(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.result", &output)
 };
-"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerRecord = |client| {
+"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerReply = |client| {
     let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest = crate::codec::lower_record("vault.coach.training_offers.answer", input)?;
     let output = client.vault_coach_training_offers_answer(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.answer", &output)

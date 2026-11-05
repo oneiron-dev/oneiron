@@ -45,12 +45,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox/landlock.rs` | src | s | 1 crate-vis | — | The filesystem fence on Linux (FIX 7885, ARCH-0075): Landlock, ABI 3 or later |
 | `src/sandbox/scratch.rs` | src | s | 3 crate-vis | — | A third-party organ's scratch dir (FIX 7885): a fresh dir of its own under the system's temp dir, mode 0700… |
 | `src/sandbox/seatbelt.rs` | src | s | 2 crate-vis | — | The filesystem fence on macOS (FIX 7885, ARCH-0075): a third-party organ starts through Seatbelt's… |
-| `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 7 const · 2 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
+| `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 9 const · 2 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 9 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
 | `src/seal/custody_keys.rs` | src | s | 1 struct · 2 fn | CustodySealKeys | A seal key held in secret custody (FIX 1297): its PKCS#8 private key is a custody record's value, named by… |
-| `src/seal/fetch.rs` | src | s | 1 crate-vis | — | The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch… |
+| `src/seal/fetch.rs` | src | s | 1 crate-vis | — | The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL/OCSP reply, each fetch inside the… |
 | `src/seal/file_keys.rs` | src | s | 1 struct · 3 fn | FileSealKeys | A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's… |
-| `src/seal/observe.rs` | src | s | 6 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
+| `src/seal/observe.rs` | src | s | 12 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
+| `src/seal/pdf_work.rs` | src | m | 2 fn | — | The seal port's PDF-work adapter: `seal.inspect` + `seal.prepare` over the organ (FIX 7980/8157) |
 | `src/seal/verify.rs` | src | s | 2 crate-vis | — | The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D) |
 | `src/slot.rs` | src | m | 1 struct · 1 enum · 15 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
 | `src/spec.rs` | src | s | 9 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +3 | What the engine installs and what a caller asks |
