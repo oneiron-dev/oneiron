@@ -783,9 +783,26 @@ impl<'a> ExecutorStorage<'a> {
                 Ok((binding.session.body_dirs()?, key))
             })?,
         };
-        Ok(dirs
+        let found = dirs
             .iter()
-            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref())))
+            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref()));
+        // A missing or short index notes one detached rebuild (FIX 1186b) and
+        // reads as today: the sweep rebuilds, never this read. `Some` and
+        // `Err` never enqueue; correctly-sized-but-bad counts return `Some`
+        // above and never reach here.
+        if found.is_none() {
+            match self {
+                Self::Canonical(vault) => {
+                    vault.note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+                Self::Session(binding) => {
+                    binding
+                        .session
+                        .note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// A writer for one result body, where this run's bodies go.
@@ -851,6 +868,63 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.result_share(),
             Self::Session(binding) => binding.session.result_share(),
+        }
+    }
+
+    /// Notes the scan-bound search credit issued for `output`'s window
+    /// (`base`, `len`): the exact emitted (`offset`, `line`, `credit`)
+    /// (FIX 1189 discount, #4311 P1-B). A canonical run's vault keeps it;
+    /// a session-bound run's keeps it on its session's vault.
+    pub(crate) fn note_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        match self {
+            Self::Canonical(vault) => {
+                vault.note_search_credit(output.raw_blake3, base, len, offset, line, credit);
+            }
+            Self::Session(binding) => {
+                binding.session.note_search_credit(
+                    output.raw_blake3,
+                    base,
+                    len,
+                    offset,
+                    line,
+                    credit,
+                );
+            }
+        }
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// `output`'s window (`base`, `len`): the full tuple must match, else
+    /// the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        match self {
+            Self::Canonical(vault) => {
+                vault.valid_search_credit(output.raw_blake3, base, len, offset, line, credit)
+            }
+            Self::Session(binding) => binding.session.valid_search_credit(
+                output.raw_blake3,
+                base,
+                len,
+                offset,
+                line,
+                credit,
+            ),
         }
     }
 }

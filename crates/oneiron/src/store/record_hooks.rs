@@ -138,6 +138,15 @@ pub trait StoreRecordHooks: Send + Sync {
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
 
+    /// The engine's `affect::state_inputs::spoke_in`.
+    fn spoke_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool>;
+
     /// The engine's `affect::processed_subjects`, using the caller's read lane.
     fn processed_subjects(
         &self,

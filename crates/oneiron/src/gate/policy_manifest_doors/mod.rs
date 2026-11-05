@@ -15,6 +15,12 @@ pub use claim_aging::{
 };
 mod content_policy;
 pub use content_policy::*;
+mod entity_resolution_bands;
+pub use entity_resolution_bands::{
+    EntityResolutionBands, EntityResolutionBandsConfigureRequest, EntityResolutionBandsReceipt,
+    EntityResolutionBandsView, configure_entity_resolution_bands_as_owner,
+    entity_resolution_bands_as_owner,
+};
 mod retrieval_weights;
 pub(crate) use retrieval_weights::{
     RETRIEVAL_WEIGHTS_KEY, decode_retrieval_weights, retrieval_weights_for_run,
