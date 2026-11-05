@@ -153,4 +153,12 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<bool> {
         crate::affect::state_inputs::spoke_in(vault, txn, subject, turn)
     }
+
+    fn processed_subjects(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        subjects: &[EntityId],
+    ) -> Result<BTreeSet<EntityId>> {
+        crate::affect::processed_subjects(read, subjects)
+    }
 }
