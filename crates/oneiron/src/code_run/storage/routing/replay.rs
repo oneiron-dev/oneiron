@@ -70,7 +70,13 @@ impl SessionBinding<'_> {
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
                     |txn, write| {
-                        fence_overlay_replay_in_txn(&write, txn, run_id)?;
+                        // The helper put `record`; its erased form, when it
+                        // is one, replaces it in the same segment.
+                        let fenced =
+                            fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                        if let Cow::Owned(erased) = fenced {
+                            REPLAY_RECORDS.put(&write, txn, &run_id, &erased)?;
+                        }
                         also(txn, write)
                     },
                 )
@@ -80,8 +86,9 @@ impl SessionBinding<'_> {
                 .routed_side_txn(&self.route, |txn, read, write| {
                     let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
                     replay_generation_matches(current.as_ref(), expected)?;
-                    REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
-                    fence_overlay_replay_in_txn(&write, txn, run_id)?;
+                    let record =
+                        fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                    REPLAY_RECORDS.put(&write, txn, &run_id, &record)?;
                     also(txn, write)
                 }),
         }
