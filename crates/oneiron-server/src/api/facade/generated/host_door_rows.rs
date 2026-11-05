@@ -890,6 +890,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
     VaultMailPackInstall,
+    VaultMailSourcesSync,
 }
 impl HostDoorRow {
     /// The row `verb` names, when it is one.
@@ -1637,6 +1638,7 @@ impl HostDoorRow {
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
             "vault.mail.pack.install" => Self::VaultMailPackInstall,
+            "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
             _ => return None,
         })
     }
