@@ -577,6 +577,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeOriginMirrorPush
         | Row::VaultCodeOriginAuthorityGet
         | Row::VaultCodeOriginAuthoritySet
+        | Row::VaultDevicesPredecessorName
         | Row::VaultCodeOriginPublications
         | Row::VaultCodeCheckoutBind
         | Row::VaultArtifactsKeepOutline

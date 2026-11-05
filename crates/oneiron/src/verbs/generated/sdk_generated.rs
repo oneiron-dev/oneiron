@@ -3861,6 +3861,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.devices.predecessor.name",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::device_succession::DevicePredecessor,
+                >(),
+            ),
+            (
                 "vault.code.origin.authority.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRepoRequest,
@@ -7697,6 +7703,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.publish.approve",
     "vault.code.origin.publish.execute",
     "vault.code.origin.publish.cancel",
+    "vault.devices.predecessor.name",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
@@ -9618,6 +9625,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.publish.cancel" => crate::code_run::vault_read::request_schema::<
             crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.devices.predecessor.name" => crate::code_run::vault_read::request_schema::<
+            crate::memory::device_succession::DevicePredecessor,
         >(),
         "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginAuthorityView,
@@ -15631,6 +15641,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.publish.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.devices.predecessor.name" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21820,6 +21837,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.publish.cancel" => {
             let _input: crate::origin::publish::OriginPublishIdRequest = decode(value.clone())?;
         }
+        "vault.devices.predecessor.name" => {
+            let _input: crate::memory::device_succession::DevicePredecessor =
+                decode(value.clone())?;
+        }
         "vault.code.origin.authority.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
         }
@@ -25243,6 +25264,9 @@ pub fn invoke(
         }
         "vault.code.origin.publish.cancel" => {
             encode(vault_code_origin_publish_cancel(memory, decode(value)?)?)
+        }
+        "vault.devices.predecessor.name" => {
+            encode(vault_devices_predecessor_name(memory, decode(value)?)?)
         }
         "vault.code.origin.authority.get" => {
             encode(vault_code_origin_authority_get(memory, decode(value)?)?)
@@ -32327,6 +32351,15 @@ pub fn vault_code_origin_publish_cancel(
 ) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
     memory.origin_publish_cancel_as(
         &memory.origin_publish_proof("vault.code.origin.publish.cancel"),
+        input,
+    )
+}
+pub fn vault_devices_predecessor_name(
+    memory: &Memory<'_>,
+    input: crate::memory::device_succession::DevicePredecessor,
+) -> MemoryResult<crate::memory::device_succession::DevicePredecessor> {
+    memory.device_predecessor_name_as(
+        &memory.embedded_owner("vault.devices.predecessor.name")?,
         input,
     )
 }

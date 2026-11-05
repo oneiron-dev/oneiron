@@ -736,6 +736,7 @@ vaultCodeOriginPublishGet(input: unknown): unknown
 vaultCodeOriginPublishApprove(input: unknown): unknown
 vaultCodeOriginPublishExecute(input: unknown): unknown
 vaultCodeOriginPublishCancel(input: unknown): unknown
+vaultDevicesPredecessorName(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown

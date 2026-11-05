@@ -695,6 +695,8 @@ class Oneiron:
         @property
         def results(self) -> "Oneiron._VaultResultsVerbs": ...
         @property
+        def devices(self) -> "Oneiron._VaultDevicesVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def repo(self) -> "Oneiron._VaultRepoVerbs": ...
@@ -2790,6 +2792,12 @@ class Oneiron:
             """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
         def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+    class _VaultDevicesVerbs:
+        @property
+        def predecessor(self) -> "Oneiron._VaultDevicesPredecessorVerbs": ...
+    class _VaultDevicesPredecessorVerbs:
+        def name(self, spec: Facade.DevicePredecessor) -> Facade.DevicePredecessor:
+            """Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
