@@ -23,7 +23,7 @@ use crate::store::Store;
 /// value and carrier keys (KS-6 part 2), matched by the credential's id as
 /// their items' first 16 bytes, and an erased actor's erasable keys (FIX
 /// 8875), matched by the actor as their parent, and the checkpoint payload
-/// leaves of the entities and attachment occurrences it erased.
+/// leaves of the entities, attachment occurrences and audience operations it erased.
 const ERASE_KINDS: [CustodyKind; 9] = [
     CustodyKind::ClaimDecision,
     CustodyKind::KnownValueEntry,
@@ -102,7 +102,7 @@ impl Store {
     /// pad row it erased, and each body instance the erase retired or owes
     /// (one another holder keeps waits on that holder, KS-2A), through the
     /// newest generation it retires, the checkpoint leaves of its entity and
-    /// attachment occurrence compartments, and each erasable key of an actor it
+    /// attachment occurrence and audience operation compartments, and each erasable key of an actor it
     /// erased (FIX 8875). Each credential it fenced owes its whole erase
     /// too, under its value's name, even with no key found yet (KS-6 part
     /// 2): its discovery and every key its id names, as late as they are
@@ -154,7 +154,9 @@ impl Store {
                         PayloadItem::decode(intent.subject.item()).is_some_and(|item| {
                             matches!(
                                 item.subtype(),
-                                Subtype::EntityTree | Subtype::AttachmentOccurrence
+                                Subtype::EntityTree
+                                    | Subtype::AttachmentOccurrence
+                                    | Subtype::AudienceOperation
                             ) && records.contains(&item.owner()[..16])
                         })
                     }

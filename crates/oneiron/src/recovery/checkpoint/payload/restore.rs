@@ -81,7 +81,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         .filter(|(_, answer)| matches!(answer, CompartmentAccess::Open(_)))
         .filter_map(|(index, _)| owner(index))
         .collect();
-    let unopened = unavailable(&held, &opened);
+    let mut unopened = unavailable(&held, &opened);
     let vault = sealed.vault_id();
     let mut contents = Vec::new();
     let mut actor_parts = Vec::new();
@@ -103,6 +103,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
             opened_content(&plain, &actor_parts, unopened.clone())?,
         ));
     }
+    select_audience_operations(&mut bundles, image, &mut unopened)?;
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
         tracing::info!(
@@ -117,6 +118,129 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         unopened,
         unavailable_calls: take_unavailable_calls(image),
     }))
+}
+
+/// Keeps an independently opened, content-free audience operation only
+/// when its original entity compartment is unavailable and its original
+/// root still stands. The operation's own leaf, not the missing entity
+/// leaf, is the positive evidence that a history purge left it alive.
+fn select_audience_operations(
+    bundles: &mut Vec<(BundleRole, OpenedOwnerRows)>,
+    image: &CheckpointImage,
+    unopened: &mut BTreeSet<OwnerRef>,
+) -> Result<()> {
+    let mut available = BTreeMap::new();
+    if let Some(rows) = image.databases.get("entities") {
+        for (key, value) in rows {
+            if let Ok(bytes) = <[u8; 16]>::try_from(key.as_slice())
+                && let Ok(id) = EntityId::from_bytes(bytes)
+            {
+                available.insert(id, value.as_slice());
+            }
+        }
+    }
+    for (role, rows) in bundles.iter() {
+        if *role != BundleRole::Content(Getter::Entities)
+            || rows.subtype == Subtype::AudienceOperation
+        {
+            continue;
+        }
+        for part in &rows.rows {
+            if let RowPart::Exact { at, value } = part
+                && at.db == RowDb::Entities
+                && !held_up(rows, at)
+                && let Ok(bytes) = <[u8; 16]>::try_from(at.key.as_slice())
+                && let Ok(id) = EntityId::from_bytes(bytes)
+            {
+                available.insert(id, value.as_slice());
+            }
+        }
+    }
+    let mut selected = BTreeSet::new();
+    for (role, rows) in bundles.iter() {
+        if rows.subtype != Subtype::AudienceOperation {
+            continue;
+        }
+        let bad = crate::store::checkpoint_payload::rows::bad_part;
+        if *role != BundleRole::Content(Getter::Entities)
+            || !rows.actor_parts.is_empty()
+            || rows.occurrence_hint.is_some()
+        {
+            return Err(bad());
+        }
+        let [RowPart::Exact { at, value }] = rows.rows.as_slice() else {
+            return Err(bad());
+        };
+        let id = EntityId::from_bytes(at.key.as_slice().try_into().map_err(|_| bad())?)?;
+        if at.db != RowDb::Entities
+            || !at.path.is_empty()
+            || rows.owner32 != OwnerRef::entity(&id).owner32
+        {
+            return Err(bad());
+        }
+        let Some((binding, canonical)) =
+            crate::workspace_roster::checkpoint_audience_operation(&id, value)?
+        else {
+            return Err(bad());
+        };
+        let [dependency] = rows.dependencies.as_slice() else {
+            return Err(bad());
+        };
+        let root_owner = OwnerRef::entity(&binding.root);
+        if canonical != *value || dependency.at != *at || dependency.on != root_owner {
+            return Err(bad());
+        }
+        if available.contains_key(&id)
+            || !unopened.contains(&OwnerRef::entity(&id))
+            || unopened.contains(&root_owner)
+            || held_up(rows, at)
+            || image_entity_deleted(image, &id)
+            || image_entity_deleted(image, &binding.root)
+        {
+            continue;
+        }
+        let Some(root) = available.get(&binding.root) else {
+            continue;
+        };
+        if crate::workspace_roster::checkpoint_audience_root_matches(root, &binding)
+            && !selected.insert(id)
+        {
+            return Err(bad());
+        }
+    }
+    drop(available);
+    // No projection can overwrite an opened original or make another
+    // erased owner live. Original history compartments remain unopened.
+    bundles.retain(|(_, rows)| {
+        rows.subtype != Subtype::AudienceOperation
+            || EntityId::from_bytes(rows.owner32[..16].try_into().expect("owner width"))
+                .is_ok_and(|id| selected.contains(&id))
+    });
+    for id in selected {
+        let owner = OwnerRef::entity(&id);
+        unopened.remove(&owner);
+        for (_, rows) in bundles.iter_mut() {
+            rows.unavailable.remove(&owner);
+        }
+    }
+    Ok(())
+}
+
+/// The image's native deletion markers, not a header or an absent leaf.
+fn image_entity_deleted(image: &CheckpointImage, id: &EntityId) -> bool {
+    let Some(rows) = image.databases.get("sync_state") else {
+        return false;
+    };
+    [
+        &side_table::DELETION_HARD_DELETE_MARKER,
+        &side_table::DELETION_ROW_FENCE,
+    ]
+    .iter()
+    .any(|decl| {
+        let mut key = decl.prefix.to_vec();
+        key.extend_from_slice(id.to_hex().as_bytes());
+        rows.iter().any(|(held, _)| *held == key)
+    })
 }
 
 /// Takes the image's unavailable-call rows (FIX 6260) out of its rows, to

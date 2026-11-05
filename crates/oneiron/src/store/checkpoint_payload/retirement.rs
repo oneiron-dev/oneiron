@@ -126,12 +126,15 @@ fn stage_erase_in_txn(
 }
 
 /// The record a legal hold on `item`'s owner names: an entity tree's own id,
-/// an attachment occurrence's holding record. A code document or an
+/// an attachment occurrence's holding record, or an audience operation's
+/// edit. A code document or an
 /// outbound call names no record a hold can target yet (Engine 10-20 08:4x,
 /// ruling 4).
 fn held_record(item: &PayloadItem) -> Option<[u8; 16]> {
     match item.subtype() {
-        Subtype::EntityTree | Subtype::AttachmentOccurrence => item.owner()[..16].try_into().ok(),
+        Subtype::EntityTree | Subtype::AttachmentOccurrence | Subtype::AudienceOperation => {
+            item.owner()[..16].try_into().ok()
+        }
         Subtype::CodeDocument | Subtype::OutboundCall => None,
     }
 }

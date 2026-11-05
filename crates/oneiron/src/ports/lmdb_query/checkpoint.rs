@@ -131,6 +131,35 @@ fn entity_row(out: &mut Captured, key: Vec<u8>, value: Vec<u8>) {
     }
 }
 
+/// An independently keyed, content-free copy of a live audience operation.
+/// It names the same image row as the ordinary entity getter, under the
+/// same handler, but its leaf does not roll with authored history.
+fn capture_audience_operation(
+    out: &mut Captured,
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    key: &[u8],
+    value: &[u8],
+) -> Result<()> {
+    let Some(id) = entity_key(key) else {
+        return Ok(());
+    };
+    let Some((binding, projected)) =
+        crate::workspace_roster::checkpoint_audience_operation_in_txn(dbs, txn, &id, value)?
+    else {
+        return Ok(());
+    };
+    let subtype = crate::store::checkpoint_payload::Subtype::AudienceOperation;
+    let owner = OwnerRef {
+        subtype,
+        owner32: subtype.owner(id.as_bytes())?,
+    };
+    let at = RowLocator::row(RowDb::Entities, key.to_vec());
+    out.exact(owner, at.clone(), projected);
+    out.depends(owner, &at, OwnerRef::entity(&binding.root));
+    Ok(())
+}
+
 fn edge_row(out: &mut Captured, db: RowDb, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
     let at = RowLocator::row(db, key);
     let Ok(edge) = parse_strict_edge_record(&at.key, &value) else {
@@ -159,6 +188,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     let mut out = Captured::default();
     for row in dbs.entities().iter(txn)? {
         let (key, value) = row?;
+        capture_audience_operation(&mut out, dbs, txn, key, value)?;
         entity_row(&mut out, key.to_vec(), value.to_vec());
     }
     for (db, table) in [

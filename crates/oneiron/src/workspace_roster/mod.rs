@@ -230,6 +230,10 @@ pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
+pub(crate) use rooms::{
+    checkpoint_audience_operation, checkpoint_audience_operation_in_txn,
+    checkpoint_audience_operation_live_in_txn, checkpoint_audience_root_matches,
+};
 
 pub(crate) use rooms::RoomThreadTask;
 pub use rooms::{ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin};

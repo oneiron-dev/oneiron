@@ -2,6 +2,7 @@
 mod audience;
 #[cfg(feature = "sync")]
 mod audience_carriers;
+mod audience_checkpoint;
 mod audience_doors;
 mod audience_edit_guard;
 mod audience_erase;
@@ -53,6 +54,10 @@ pub(crate) use audience::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use audience_carriers::{carried_audience_edit_in_txn, scrub_audience_edits};
+pub(crate) use audience_checkpoint::{
+    checkpoint_audience_operation, checkpoint_audience_operation_in_txn,
+    checkpoint_audience_operation_live_in_txn, checkpoint_audience_root_matches,
+};
 pub use audience_doors::{
     MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN, ThreadAudienceAddRequest, ThreadAudienceReceipt,
     ThreadAudienceRemoveRequest,

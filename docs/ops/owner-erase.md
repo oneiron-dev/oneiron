@@ -25,8 +25,26 @@ The receipt binds this pending old-generation obligation before its retirement
 intent is staged, so an unsealed replacement cannot count as completed erasure.
 The ordinary record-delete rail's GDPR-only audience-edit exception is unchanged.
 
-The initial erase receipt binds staged entity-tree and attachment-occurrence
-checkpoint leaf retirements by their native custody names. A receipt is not
+New checkpoints also seal each live audience edit's content-free operation in
+an independently keyed compartment. It keeps the original TURN id, header
+times, thread binding, person and operation, but no editor or other prose.
+This leaf does not roll with the entity tree's authored history. On restore,
+the original entity wins whenever it opens. Only an independently opened,
+strictly validated operation whose original root also stands can replace an
+unavailable entity tree. Its existing About edges and order are kept; no new
+edge or erase authority is inferred from a missing leaf. Whole-owner erasure
+retires every incarnation of this operation's compartment too. The native
+actor and room-person erasure sweeps still apply after restore. A capture
+re-proves the live operation and root in its minting writer, so an erase
+between the snapshot read and first mint cannot create this new leaf.
+
+This is forward capture, not a retrofit of sealed artifacts. An older artifact
+without the independent operation cannot recover that operation after its
+entity-tree leaf retires. Peer replay and whole-vault erase closure remain
+separate work.
+
+The initial erase receipt binds staged entity-tree, attachment-occurrence and
+audience-operation checkpoint leaf retirements by their native custody names. A receipt is not
 proof that the leaves have been destroyed. Retirement runs after commit and
 retries through housekeeping; legal holds and custody faults can defer it.
 The existing final receipt waits for the bound retirements and any sweep.
