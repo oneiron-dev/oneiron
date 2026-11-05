@@ -21,3 +21,9 @@ Update both participating nodes together. This changes the ask and answer
 stream envelope, without an old-format reader or an ALPN change. Handler
 grants, signing receipts, call deadlines, cancellation, inline thresholds and
 piece sizes are unchanged. This is not a new total-heap accounting guarantee.
+
+A staged returned output keeps its original machine-floor lease. Immediately
+after the transfer completes, that same lease records the returned vector's
+actual capacity as allocated, before receipt hashing or another admission.
+Inline outputs keep their existing no-separate-lease path. This is post-allocation
+bookkeeping, not a new reservation, wait or pre-allocation accounting guarantee.
