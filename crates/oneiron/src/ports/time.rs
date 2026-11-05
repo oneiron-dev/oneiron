@@ -239,6 +239,51 @@ impl crate::store::Store {
         lease_journal::truncate_after_replay(&journal);
         Ok(())
     }
+
+    /// The latest authorization time this vault has committed or may have
+    /// taken, read in `txn` under its writer (FIX 12772): its committed clock
+    /// floor and lease, the bound its lease journal holds, the latest time
+    /// this handle judged or observed, and its clock now. A restore's
+    /// replacement carries it before the swap that puts it in this vault's
+    /// place ([`Self::carry_authorization_high`]).
+    pub(crate) fn authorization_high_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        let (floor, lease) = clock_floor_and_lease_in_txn(self, txn)?;
+        let journaled = lease_journal::journaled_bound(self.canonical_root())?;
+        let clock = crate::store::ManifestDbs::clock(self);
+        Ok(floor
+            .max(lease)
+            .max(journaled)
+            .max(clock.judged())
+            .max(clock.observed_floor())
+            .max(clock.peek_recorded_at()))
+    }
+
+    /// Carries `high`, the latest authorization time of the vault this store
+    /// was restored to replace, into this store before the swap (FIX 12772;
+    /// REVIEW-4484 Astra R2 P1-3): a bound covering it, `high` plus the
+    /// lease, appended and synced in this store's own lease journal, which
+    /// its next owned open replays into its committed clock floor, and
+    /// observed by this handle's clock now. So the replacement never judges
+    /// below a time the vault it replaces took, a wall stepped back
+    /// included, and the lease the bound adds covers a decision that vault
+    /// takes between this carry and the exchange. A journal that does not
+    /// take it refuses, and the swap moves nothing.
+    pub(crate) fn carry_authorization_high(&self, high: u64) -> Result<()> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        let journal = match clock.lease_journal() {
+            Some(journal) => journal,
+            None => lease_journal::replay_at_open(self.canonical_root())?.0,
+        };
+        if !journal.cover(high) {
+            return Err(Error::InvalidConfig(
+                "the replacement's clock lease journal did not take the authorization time of \
+                 the vault it replaces; nothing moved, try the swap again"
+                    .into(),
+            ));
+        }
+        clock.observe_floor(high)?;
+        Ok(())
+    }
 }
 
 /// A lapsed lease's renewal, in its group's transaction (FIX 12023): the

@@ -560,7 +560,14 @@ impl Vault {
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
     /// would not know those proofs; so does one that holds an agent id looser
-    /// than this vault now does (H215).
+    /// than this vault now does (H215). Under the same writer, before the
+    /// exchange, the replacement carries this vault's authorization time:
+    /// its committed floor and lease, its journaled bound, the times this
+    /// handle judged and its clock now, journaled with a lease's margin in
+    /// the replacement's own lease journal, so the replacement never judges
+    /// a grant below a time this vault already took, a wall stepped back
+    /// included; a journal that does not take it refuses the swap, and
+    /// nothing moves (FIX 12772).
     ///
     /// First, no admission spends a nonce in memory on this handle any more,
     /// and the swap waits up to `SWAP_SPEND_DRAIN_WAIT` (5 s) for the writes
@@ -601,7 +608,12 @@ impl Vault {
                     &self.store,
                     txn,
                     &replacement.store,
-                )
+                )?;
+                // The replacement never judges below a time this vault took
+                // (FIX 12772).
+                replacement
+                    .store
+                    .carry_authorization_high(self.store.authorization_high_in_txn(txn)?)
             },
             swap,
         )
