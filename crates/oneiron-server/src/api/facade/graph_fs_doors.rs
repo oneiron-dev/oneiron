@@ -1,12 +1,20 @@
-//! Cooperative snapshot-file reads with the facade's original invocation setup.
+//! Cooperative file reads with the facade's original invocation setup.
 use super::*;
 
-pub(super) async fn graph_fs_read_file(
+pub(super) async fn graph_fs_bytes(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
+    verb: &'static str,
+    read: impl FnOnce(
+        &oneiron::Memory<'_>,
+        oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+        &oneiron::batch::ReadPacing,
+    )
+        -> oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>
+    + Send
+    + 'static,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
-    const VERB: &str = "graph_fs.read_file";
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
@@ -23,18 +31,18 @@ pub(super) async fn graph_fs_read_file(
                 &owned.call(),
                 actor,
                 class,
-                VERB,
+                verb,
                 value,
                 &producers,
                 None,
                 |memory, value| {
-                    oneiron::task_verb::verb_hook_boundary::row(memory, VERB, value, |value| {
+                    oneiron::task_verb::verb_hook_boundary::row(memory, verb, value, |value| {
                         let input = serde_json::from_value(value).map_err(|error| {
                             oneiron::memory::MemoryError::bad_request(format!(
                                 "invalid SDK request: {error}"
                             ))
                         })?;
-                        let outcome = memory.graph_fs_read_file_with_pacing(input, &pacing)?;
+                        let outcome = read(memory, input, &pacing)?;
                         serde_json::to_value(outcome).map_err(|_| {
                             oneiron::memory::MemoryError::bad_request("SDK result encoding failed")
                         })

@@ -20823,7 +20823,14 @@ async fn graph_fs_read_file(
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
-    super::graph_fs_doors::graph_fs_read_file(server, call, input).await
+    super::graph_fs_doors::graph_fs_bytes(
+        server,
+        call,
+        input,
+        "graph_fs.read_file",
+        move |memory, input, pacing| memory.graph_fs_read_file_with_pacing(input, pacing),
+    )
+    .await
 }
 async fn graph_fs_read_link(
     server: &Arc<SyncServer>,
@@ -20910,22 +20917,14 @@ async fn graph_fs_cat(
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
-    let auth = call.auth();
-    auth.require(CoreScope::Read)?;
-    auth.require_lane_record_scope()?;
-    let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    super::graph_fs_doors::graph_fs_bytes(
         server,
         call,
-        actor,
-        class,
+        input,
         "graph_fs.cat",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+        move |memory, input, pacing| memory.graph_fs_cat_with_pacing(input, pacing),
+    )
+    .await
 }
 async fn graph_fs_head(
     server: &Arc<SyncServer>,

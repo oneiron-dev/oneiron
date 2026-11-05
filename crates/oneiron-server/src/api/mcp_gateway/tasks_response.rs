@@ -770,11 +770,19 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// One MCP file read on its owned native stack. Hooks stay in the caller's
 /// existing pre/post chain; the worker returns the rows its read listed.
-async fn mcp_graph_fs_read_file(
+async fn mcp_graph_fs_bytes(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     surface: McpRowSurface,
     input: oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+    read: impl FnOnce(
+        &oneiron::Memory<'_>,
+        oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+        &oneiron::batch::ReadPacing,
+    )
+        -> oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>
+    + Send
+    + 'static,
 ) -> Result<
     (
         oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>,
@@ -791,7 +799,7 @@ async fn mcp_graph_fs_read_file(
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
             let memory = surface.memory(&server, &actor, &producers);
-            memory.graph_fs_read_file_with_pacing(input, &pacing)
+            read(&memory, input, &pacing)
         });
         (output, producers.take())
     })
