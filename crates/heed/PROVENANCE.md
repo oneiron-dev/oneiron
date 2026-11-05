@@ -223,6 +223,54 @@ above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
 
+## FIX 8125: transaction-scoped dirty-page heap account
+
+The earlier upstream inventories describe the vendor before this extension.
+The package versions, features, dependencies and on-disk page format remain
+unchanged. Re-vendoring must also preserve these source additions:
+
+- `heed-0.20.5/src/page_account.rs` defines `PageAccount` and its C callback
+  registration. `RwTxn::set_page_account` attaches it to a fresh root writer,
+  before dirty pages or children exist. WRITEMAP is not a malloc-backed page
+  account. Children inherit the root's callbacks. The original `RoTxn` field
+  drops before the registration, so implicit abort still has a live context.
+- `heed-0.20.5/src/txn.rs`, `src/lib.rs` and `src/mdb/lmdb_ffi.rs` retain that
+  registration through actual native commit or abort and expose the new API.
+  Each successful reserve retains one thin-pointer Arc ticket without a
+  per-buffer Rust allocation. A buffer consumes that ticket only after
+  physical free, or after malloc failed without allocating.
+- `lmdb-master3-sys-0.2.6/src/bindings.rs` and
+  `lmdb/libraries/liblmdb/lmdb.h` declare the exact acquire, materialized and
+  release callback ABI and `mdb_txn_set_page_account`. The C root writer
+  clears its previous scope only after taking the writer lock; children copy
+  the new scope. No environment-global account is installed.
+- `mdb.c` prefixes every malloc-backed dirty page buffer with a private heap
+  union aligned by the actual `MDB_page` type. Its real `sizeof`, plus the
+  requested page bytes, is the admitted malloc size. The prefix stores the
+  allocation's ticket, byte count and release callback. None of it is part
+  of `MDB_page`, a page copy or bytes written to disk. Size arithmetic checks
+  addressability before malloc.
+- Singleton cache push and reuse keep the ticket without a second allocation
+  or a transaction-end release. The overflow frees, both nested replacement
+  frees and environment-close cache drain free the true prefixed allocation,
+  then release its ticket. New allocation is admitted while a replaced
+  buffer is still live. Failed malloc cancels its reservation and returns
+  NULL before any page field is written.
+
+Callbacks must not panic, re-enter LMDB or wait for memory. Acquire only
+assigns already admitted pending capacity; insufficient room follows the
+existing ENOMEM return. Real admission belongs outside the writer. The
+account's implementation must preserve exactly-once tickets and the actual
+cache/free lifetime; the generic callback supplier does not prove that a
+caller does so.
+
+The retained-call driver does not yet install this account. Its grouped
+nested child and final parent commit need an explicit root-account and
+commit-phase integration before replay can be safe. This supplier is not
+complete FIX8125, native disk accounting or runtime proof. IDL, transaction
+control, decrypted-read stash, rpage and mmap costs are not charged by this
+page-buffer callback.
+
 ## Re-packaging for the Python sdist (ONE-1441)
 
 The workspace dependency also declares this vendor as a path dependency so

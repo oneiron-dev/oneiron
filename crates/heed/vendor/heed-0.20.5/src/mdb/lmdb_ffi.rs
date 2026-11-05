@@ -12,6 +12,7 @@ pub use ffi::{
 };
 // ONEIRON FORK (OF-570): mdb.master3, whose page hook seals a sealed env's pages.
 pub use ffi::{mdb_env_set_encrypt, MDB_ENCRYPT, MDB_REMAP_CHUNKS};
+pub use ffi::mdb_txn_set_page_account;
 use lmdb_master3_sys as ffi;
 
 pub mod cursor_op {

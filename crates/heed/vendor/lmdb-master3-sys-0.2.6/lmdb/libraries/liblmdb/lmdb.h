@@ -271,6 +271,27 @@ typedef struct MDB_env MDB_env;
  */
 typedef struct MDB_txn MDB_txn;
 
+/** ONEIRON: transaction-scoped, nonblocking dirty-page heap accounting.
+ * acquire returns zero and an opaque ticket for already admitted bytes, or
+ * nonzero without a ticket when more admission is needed. It must not wait.
+ * materialized follows successful malloc. release consumes the ticket after
+ * physical free (allocated=1), or a failed malloc (allocated=0). Cached pages
+ * retain their ticket, even after the transaction ends. Callbacks and tickets
+ * must remain valid until release, and must not re-enter LMDB.
+ */
+typedef int (MDB_page_acquire_func)(void *context, size_t bytes, void **ticket);
+typedef void (MDB_page_materialized_func)(void *ticket, size_t bytes);
+typedef void (MDB_page_release_func)(void *ticket, size_t bytes, int allocated);
+
+/** Attach accounting before writing in a fresh root, non-WRITEMAP transaction.
+ * Children inherit it. The context lives through commit/abort; each acquired
+ * ticket owns its own lifetime beyond that scope. Failure returns EINVAL.
+ */
+int mdb_txn_set_page_account(MDB_txn *txn, MDB_page_acquire_func *acquire,
+	MDB_page_materialized_func *materialized, MDB_page_release_func *release,
+	void *context);
+
+
 /** @brief A handle for an individual database in the DB environment. */
 typedef unsigned int	MDB_dbi;
 
