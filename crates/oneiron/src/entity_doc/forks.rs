@@ -18,6 +18,73 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// The original authorized SWITCH owns both retained sources and the exact
+/// result of its constrained merge. No decoded snapshot constructs this owner.
+pub(super) struct SwitchedDocument<'vault> {
+    vault: &'vault Vault,
+    entity: EntityId,
+    source_head: storage::Head,
+    head_bytes: Vec<u8>,
+    source_frontier: Vec<u8>,
+    source_inventory: super::native_skill_state::NativeMapInventory,
+    fork_key: String,
+    fork: ForkRecord,
+    fork_snapshot: Vec<u8>,
+    document: EntityDoc,
+    frontier: Vec<u8>,
+    inventory: super::native_skill_state::NativeMapInventory,
+}
+
+impl SwitchedDocument<'_> {
+    pub(super) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
+    pub(super) fn document(&self) -> &EntityDoc {
+        &self.document
+    }
+
+    pub(super) fn require_document(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        head: &storage::Head,
+    ) -> Result<BTreeSet<EntityId>> {
+        use super::native_skill_state::inspect_inventory;
+
+        if *entity != self.entity
+            || head.entity != self.source_head.entity
+            || head.document != self.fork.fork
+            || head.incarnation != self.source_head.incarnation
+            || head.field != self.source_head.field
+            || head.generation != self.source_head.generation
+            || head.pending != self.source_head.pending
+            || head.birth_frontier != self.source_head.birth_frontier
+            || storage::record_head_bytes(&self.vault.store, txn, entity)?.as_deref()
+                != Some(self.head_bytes.as_slice())
+            || ENTITY_DOC_FORK
+                .get(&self.vault.store, txn, &self.fork_key)?
+                .as_ref()
+                != Some(&self.fork)
+            || ENTITY_DOC_FORK_SNAPSHOT
+                .get(&self.vault.store, txn, &self.fork_key)?
+                .as_deref()
+                != Some(self.fork_snapshot.as_slice())
+        {
+            return Err(invalid("native SKILL state Switch source"));
+        }
+        let current = storage::load(&self.vault.store, txn, &self.source_head)?;
+        if inspect_inventory(&current)? != self.source_inventory
+            || current.frontier() != self.source_frontier
+            || inspect_inventory(&self.document)? != self.inventory
+            || self.document.frontier() != self.frontier
+        {
+            return Err(invalid("native SKILL state Switch source"));
+        }
+        self.inventory.writer_tokens()
+    }
+}
+
 /// Authorization is separate from attribution. Owner evidence is opaque;
 /// automated writes resolve a live DEC-0006 entity-bound action grant in-txn.
 #[derive(Debug, Clone, Copy)]
@@ -677,11 +744,15 @@ fn settle_one(
             {
                 return Err(Error::Artifact(ArtifactError::EditProposalStale));
             }
-            let fork = EntityDoc::from_snapshot(
-                &ENTITY_DOC_FORK_SNAPSHOT
-                    .get(&vault.store, txn, &fork_id.to_owned())?
-                    .ok_or(Error::EntityNotFound)?,
-            )?;
+            let fork_snapshot = ENTITY_DOC_FORK_SNAPSHOT
+                .get(&vault.store, txn, &fork_id.to_owned())?
+                .ok_or(Error::EntityNotFound)?;
+            let fork = EntityDoc::from_snapshot(&fork_snapshot)?;
+            let source_head = h.clone();
+            let head_bytes = storage::record_head_bytes(&vault.store, txn, &entity)?
+                .ok_or_else(|| invalid("native SKILL state Switch source"))?;
+            let source_frontier = live.frontier();
+            let source_inventory = super::native_skill_state::inspect_inventory(&live)?;
             // The retained fork is shallow at its base. Import only its ops into
             // a full live scratch doc before switching, retaining pinned history.
             merge_into(&live, &fork, &record.base)?;
@@ -695,7 +766,21 @@ fn settle_one(
             )?;
             h.document = record.fork.clone();
             storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
-            storage::persist(vault, txn, &entity, &mut h, &live, None)?;
+            let switched = SwitchedDocument {
+                vault,
+                entity,
+                source_head,
+                head_bytes,
+                source_frontier,
+                source_inventory,
+                fork_key: fork_id.to_owned(),
+                fork: record.clone(),
+                fork_snapshot,
+                frontier: live.frontier(),
+                inventory: super::native_skill_state::inspect_inventory(&live)?,
+                document: live,
+            };
+            storage::persist_switched_document(txn, &entity, &mut h, &switched)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
                     txn,
@@ -705,7 +790,7 @@ fn settle_one(
             }
             storage::drop_document(&vault.store, txn, &old_document)?;
             record.status = ForkStatus::Switched;
-            live.frontier()
+            switched.document().frontier()
         }
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &fork_id.to_owned(), &record)?;

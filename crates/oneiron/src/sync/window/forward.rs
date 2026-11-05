@@ -28,6 +28,7 @@ struct RematCtx<'a> {
     window_key: &'a WindowKey,
     lease_vault_id: u64,
     trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
+    native_source: Option<&'a crate::recovery::StoreCapturedCanonical>,
     entities_map: LoroMap,
     edges_map: LoroMap,
     /// The tombstones map indexed once for every pass of this rematerialization (H15).
@@ -145,7 +146,7 @@ fn forward_with_recovery(
         scope,
     )?;
     loop {
-        if let Some(count) = run.page(vault, doc, window_key, trusted, usize::MAX)? {
+        if let Some(count) = run.page(vault, doc, window_key, trusted, None, usize::MAX)? {
             return Ok(count);
         }
     }
@@ -188,6 +189,7 @@ fn remat_ctx<'a>(
     doc: &'a LoroDoc,
     window_key: &'a WindowKey,
     trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
+    native_source: Option<&'a crate::recovery::StoreCapturedCanonical>,
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
 ) -> RematCtx<'a> {
@@ -197,6 +199,7 @@ fn remat_ctx<'a>(
         window_key,
         lease_vault_id,
         trusted,
+        native_source,
         entities_map: doc.get_map("entities"),
         edges_map: doc.get_map("edges"),
         tombstones,
@@ -315,9 +318,22 @@ impl ForwardRun {
         snapshot: &crate::recovery::CanonicalSnapshot,
         page: usize,
     ) -> Result<Option<u32>> {
+        self.recovery_page_with_source(vault, doc, materializer, window_key, snapshot, None, page)
+    }
+
+    pub(crate) fn recovery_page_with_source(
+        &mut self,
+        vault: &Vault,
+        doc: &LoroDoc,
+        materializer: &Materializer,
+        window_key: &WindowKey,
+        snapshot: &crate::recovery::CanonicalSnapshot,
+        native_source: Option<&crate::recovery::StoreCapturedCanonical>,
+        page: usize,
+    ) -> Result<Option<u32>> {
         let _import = crate::sync::manager::import_scope();
         let _guard = materializer.lock();
-        self.page(vault, doc, window_key, Some(snapshot), page)
+        self.page(vault, doc, window_key, Some(snapshot), native_source, page)
     }
 
     /// The pass a run stands in, and the key of its next row, for a
@@ -382,6 +398,7 @@ impl ForwardRun {
             doc,
             window_key,
             trusted,
+            None,
             lease_vault_id,
             &tombstones,
         ))?;
@@ -404,6 +421,7 @@ impl ForwardRun {
         doc: &LoroDoc,
         window_key: &WindowKey,
         trusted: Option<&crate::recovery::CanonicalSnapshot>,
+        native_source: Option<&crate::recovery::StoreCapturedCanonical>,
         page: usize,
     ) -> Result<Option<u32>> {
         let page = page.max(1);
@@ -412,6 +430,7 @@ impl ForwardRun {
             doc,
             window_key,
             trusted,
+            native_source,
             self.lease_vault_id,
             &self.tombstones,
         );
@@ -773,7 +792,12 @@ fn settle(
     }
 
     if let Some(documents) = ctx.trusted {
-        crate::recovery::materialize_window_documents(vault, ctx.doc, documents)?;
+        crate::recovery::materialize_window_documents_with_source(
+            vault,
+            ctx.doc,
+            documents,
+            ctx.native_source,
+        )?;
     }
     calendar::reconcile(ctx)?;
     Ok(ledger.count)

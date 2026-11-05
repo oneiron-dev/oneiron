@@ -35,9 +35,14 @@ mod audit;
 mod authority;
 mod claim;
 mod dispatch;
+#[cfg(feature = "sync")]
+mod native_skill;
 mod old_record;
 mod projections;
 mod rewrite;
+
+#[cfg(feature = "sync")]
+pub(in crate::batch) use native_skill::PendingNativeSkillPut;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
@@ -121,6 +126,8 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         &dispatch,
         &mut portable_agent_source,
     )?;
+    #[cfg(feature = "sync")]
+    let pending_native_skill_put = PendingNativeSkillPut::capture(store, wtxn, &fixed, data)?;
     audit::audit_and_stage_body(
         store,
         wtxn,
@@ -135,7 +142,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
             agent_id_pin,
         },
     )?;
-    projections::stage_put_projections(
+    let applied = projections::stage_put_projections(
         store,
         wtxn,
         data,
@@ -151,5 +158,11 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         evicted_shell_sources,
         project_revisions,
         portable_agent_source,
-    )
+    )?;
+    #[cfg(feature = "sync")]
+    let applied = AppliedPut {
+        pending_native_skill_put,
+        ..applied
+    };
+    Ok(applied)
 }

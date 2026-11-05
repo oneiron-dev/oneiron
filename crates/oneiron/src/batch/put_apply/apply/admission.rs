@@ -3,6 +3,9 @@ use super::*;
 /// Inputs to `apply_put` that no phase mutates: the row identity, the admit
 /// flags, and the borrowed context the put is judged against.
 pub(super) struct FixedPut<'a> {
+    #[cfg(feature = "sync")]
+    pub(super) skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
+    pub(super) native_publication: Option<crate::batch::NativePublicationContext<'a>>,
     pub(super) id: EntityId,
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
@@ -31,6 +34,22 @@ pub(super) struct FixedPut<'a> {
     pub(super) hub_sync_imported: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) mutation_recorded_at: u64,
+}
+
+impl FixedPut<'_> {
+    /// The physical row stays immutable for a headed native state operation.
+    /// All semantic gates and effects continue to receive the logical body.
+    pub(super) fn storage_body_and_times<'row>(
+        &'row self,
+        data: &'row [u8],
+    ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8])> {
+        #[cfg(feature = "sync")]
+        if let Some(request) = self.skill_state_write {
+            let (occurred, learned_at) = request.snapshot().physical_times()?;
+            return Ok((occurred, learned_at, request.snapshot().physical_body()));
+        }
+        Ok((self.occurred, self.learned_at, data))
+    }
 }
 
 /// Body buffers the staged `data` slice borrows, in shadow order. The parent
@@ -96,6 +115,9 @@ pub(super) fn admit_put<'a>(
         options,
         context:
             PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write,
+                native_publication,
                 origin,
                 write_policy,
                 write_envelope,
@@ -139,6 +161,8 @@ pub(super) fn admit_put<'a>(
         replicated,
         origin,
         posture,
+        #[cfg(feature = "sync")]
+        skill_state_write,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
@@ -225,6 +249,9 @@ pub(super) fn admit_put<'a>(
     crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     Ok(Admission {
         fixed: FixedPut {
+            #[cfg(feature = "sync")]
+            skill_state_write,
+            native_publication,
             id,
             entity_type,
             occurred,

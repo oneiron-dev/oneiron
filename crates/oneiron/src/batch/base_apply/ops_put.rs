@@ -30,6 +30,7 @@ pub(super) fn apply_put_arm(
     text_index_trusted: bool,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
+    native_publication: Option<NativePublicationContext<'_>>,
     #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
@@ -157,6 +158,12 @@ pub(super) fn apply_put_arm(
             },
             options: put_options,
             context: PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write: gate_mode
+                    .skill_state_write
+                    .as_ref()
+                    .filter(|request| request.entity() == id),
+                native_publication,
                 origin,
                 write_policy: state.write_policy.as_ref(),
                 write_envelope: materialization
@@ -176,6 +183,10 @@ pub(super) fn apply_put_arm(
         authority_beside,
         own_device,
     )?;
+    #[cfg(feature = "sync")]
+    if let Some(pending) = applied.pending_native_skill_put {
+        state.pending_native_skill_puts.push(pending);
+    }
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {
         crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;

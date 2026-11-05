@@ -174,6 +174,99 @@ pub(super) fn persist_scanned(
     before: Option<&loro::VersionVector>,
     scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
 ) -> Result<()> {
+    let native_tokens =
+        super::native_skill_state::reconcile_for_persist(vault, txn, entity, h, doc)?;
+    persist_scanned_inner(vault, txn, entity, h, doc, before, native_tokens, scan)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_native_skill(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    admission: super::native_skill_state::LocalSkillStateAdmission<'_>,
+) -> Result<()> {
+    let vault = admission.vault();
+    let native_tokens = admission.require_document(txn, entity, doc)?;
+    persist_scanned_inner(vault, txn, entity, h, doc, before, native_tokens, door_scan)
+}
+
+/// Persist only the document owned by the actual source-bound canonical
+/// producer. Rebuilt operation identities are not inherited old operation ids.
+pub(super) fn persist_canonical_skill(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    rebuilt: &super::native_skill_state::CanonicalRebuiltDocument<'_>,
+) -> Result<()> {
+    let native_tokens = rebuilt.require_document(entity, h)?;
+    persist_scanned_inner(
+        vault,
+        txn,
+        entity,
+        h,
+        rebuilt.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
+/// Consume the authenticated owner's actual constrained history cut, not an
+/// arbitrary shallow snapshot offered as inherited native state.
+pub(super) fn persist_purged_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    purged: &super::pins::PurgedDocument<'_>,
+) -> Result<()> {
+    let native_tokens = purged.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        purged.vault(),
+        txn,
+        entity,
+        h,
+        purged.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
+/// Publish the original SWITCH's owned stored-source merge after its existing
+/// stale-base guard and pointer move, with no receiver alias for a native fact.
+pub(super) fn persist_switched_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    switched: &super::forks::SwitchedDocument<'_>,
+) -> Result<()> {
+    let native_tokens = switched.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        switched.vault(),
+        txn,
+        entity,
+        h,
+        switched.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
+fn persist_scanned_inner(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    native_tokens: std::collections::BTreeSet<EntityId>,
+    scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
+) -> Result<()> {
     let store = &vault.store;
     // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
     // on an armed vault, a tag pass (ARCH-0036) and a vector of the new text
@@ -221,6 +314,9 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
+    if !native_tokens.is_empty() {
+        crate::provenance::record_actor_stamp_uses_in_txn(store, txn, entity, native_tokens)?;
+    }
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;

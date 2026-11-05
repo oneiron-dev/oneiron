@@ -29,7 +29,10 @@ pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
 pub(super) use budget::held_bytes;
 pub use capture::capture_canonical_window;
-pub(crate) use capture::{capture_canonical_window_within, prepare_artifact_pads};
+pub(crate) use capture::{
+    StoreCapturedCanonical, capture_canonical_window_from_store, capture_canonical_window_within,
+    prepare_artifact_pads,
+};
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
@@ -68,6 +71,7 @@ impl CanonicalEntityDocument {
             + self.document_id.len()
             + self.field.as_ref().map_or(0, String::len)
             + self.text.len()
+            + self.native_skill_state.as_ref().map_or(0, Vec::len)
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.birth_actor.map_or(0, |actor| actor.len())
@@ -75,6 +79,7 @@ impl CanonicalEntityDocument {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()
                         + version.middle.len()
+                        + version.native_skill_state.as_ref().map_or(0, Vec::len)
                         + metadata_size(&version.metadata)
                 });
                 let pins = history.pins.iter().map(|pin| 96 + pin.quote.len());
@@ -82,6 +87,7 @@ impl CanonicalEntityDocument {
                 let forks = history.forks.iter().map(|fork| {
                     108 + fork.output.as_ref().map_or(0, String::len)
                         + fork.output_metadata.as_ref().map_or(0, metadata_size)
+                        + fork.output_native_skill_state.as_ref().map_or(0, Vec::len)
                         + 16 * fork.read_refs.len()
                         + fork.keep.as_ref().map_or(0, String::len)
                 });

@@ -31,6 +31,8 @@ use super::{
     validate_replicated_authority_log_for_local_vault,
 };
 
+#[cfg(feature = "sync")]
+pub(super) use self::apply::PendingNativeSkillPut;
 pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
@@ -66,6 +68,8 @@ pub(super) enum EffectiveEntity {
 }
 
 pub(super) struct AppliedPut {
+    #[cfg(feature = "sync")]
+    pub(super) pending_native_skill_put: Option<PendingNativeSkillPut>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
     /// Revision companions a PROJECT put captured, for the batch to write next.
     pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
@@ -101,12 +105,11 @@ fn validate_note_birth_put(
 
 fn decode_previous_skill_record(
     old_type: u8,
-    old_record: &[u8],
+    prior_body: &[u8],
 ) -> Result<Option<crate::write_envelope::skill_record::SkillRecord>> {
     if old_type != ENTITY_TYPE_SKILL {
         return Ok(None);
     }
-    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
     match crate::write_envelope::skill_record::decode_skill_record(prior_body) {
         Ok(record) => Ok(Some(record)),
         Err(error) => Err(error),
