@@ -61,14 +61,41 @@ commands, not a new view panel or a capture watcher. Build and ship the matching
 macOS app to use them; a Linux workspace compile does not exercise the native
 authentication binding.
 
-## Capture integration still required
+## Private classification and capture supplier
 
-This supplier does not watch the clipboard or classify pasteboard markers. The
-host must route a private copy here instead of the ordinary world-text capture
-path, and must not send the value to text, recall or search indexing. Failed
-private capture is not permission to fall back to ordinary plaintext capture.
+The Mac host's `root_rekey::private_copy` module exposes a pure types-only
+`classify_private_copy` and an owned-value `capture_private_copy` supplier for
+the common watcher. The classifier reads no copy payload. It identifies the
+exact confidential markers `org.nspasteboard.ConcealedType` and
+`com.agilebits.onepassword` before considering the generic
+`org.nspasteboard.TransientType` lifetime marker.
+
+A generic transient copy returns `TransientSourceUnknown`, not a private
+classification or proof that ordinary capture is safe. Enpass uses that same
+transient marker, but non-secret text-expander traffic also uses it. There is
+no guessed Enpass marker, bundle id or frontmost-app attribution. The common
+watcher's actual Enpass source handling remains open. `Unmarked` means these
+known markers were absent, not that every possible private format was ruled
+out.
+
+`capture_private_copy` takes the app handle, explicit `PrivateCopyRegistration`
+metadata, an owned `Zeroizing<Vec<u8>>` value and the capture time. Metadata
+preserves the caller's name, class, device-only dial, rung, bindings and optional
+manifest. The supplier takes the existing parent owner-act mutex, a fresh
+writer lease and the real local-owner proof, then borrows the wiping bytes
+into `Vault::register_private_copy_as_owner`. Its result is the native
+value-less registration metadata and actual handle. It invents no class,
+binding, name, authority or replacement value. Capture does not itself require
+the viewing dialog.
+
+## Common watcher integration still required
+
+These suppliers do not start or duplicate a watcher. The common watcher must
+classify markers **before** reading text and route a private copy to the private
+supplier instead of the ordinary world-text path. It must not send the value
+to text, recall or search indexing. Failed private capture is not permission
+to fall back to ordinary plaintext capture. Supplier availability is not proof
+that the actual watcher or capture caller is implemented.
 
 Other hosts must implement the owner's viewing step themselves. The engine's
 authenticated owner read alone is not proof that an OS viewing check happened.
-Private marker classification, the private capture adapter and its common
-watcher integration remain separate from this Mac owner-view backend.
