@@ -24,6 +24,9 @@ use crate::store::Store;
 
 use super::*;
 
+mod topology;
+pub(crate) use topology::preserved_topology_act_in_txn;
+
 /// Policy hook (FIX 4703, single owner-call hook): preserve a NOW-refused
 /// native WorldPrivacy act by an agent whose exact hash every counted signed
 /// revoke of its Grant saw. `false` keeps today's NOW judgment for every act.
@@ -165,7 +168,7 @@ fn preserved_one(
         match &entry.op {
             AuthorityOp::AgentGrantAct(record) if record.grant == grant => match &record.change {
                 AgentGrantChange::Mint { .. } => mints.push(*hash),
-                AgentGrantChange::Revoke => revokes.push(*hash),
+                AgentGrantChange::Revoke { .. } => revokes.push(*hash),
             },
             AuthorityOp::SlipGrantRevoke { grant_ref } if *grant_ref == grant => {
                 return Ok(None);

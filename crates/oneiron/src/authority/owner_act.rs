@@ -271,6 +271,29 @@ pub(super) fn signed_owner_agent_mint_names_world_act(
         && scope_names_world(scope, world)
 }
 
+/// A signed Access Mint naming `topology_seal` for `agent` at the decided
+/// core's time, using the exact live Grant member/verb/confers predicate.
+/// Topology seals have no world-target check.
+pub(super) fn signed_owner_agent_mint_names_topology_act(
+    member: EntityId,
+    scope: &crate::federation::Scope,
+    kind: crate::federation::FederationGrantKind,
+    expires_at: Option<u64>,
+    agent: EntityId,
+    at: u64,
+) -> bool {
+    kind == crate::federation::FederationGrantKind::Access
+        && scope_names_act(
+            scope,
+            kind,
+            expires_at,
+            member,
+            agent,
+            OwnerActKind::TopologySeal,
+            at,
+        )
+}
+
 /// What this replica holds of an agent act's Grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GrantStanding {
