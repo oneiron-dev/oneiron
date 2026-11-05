@@ -79,7 +79,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
@@ -250,7 +250,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let own = self
             .actor_key

@@ -132,7 +132,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN
@@ -164,7 +164,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
         // History controls travel through scoped sync/export, never ordinary
