@@ -615,7 +615,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_tests.rs` | test | L | — | — | Source-folder exports and ordinary admission, with no replay/activation bypass |
 | `src/batch/export/bundle_types.rs` | src | s | 4 struct · 1 enum · 1 re-export | ExportAgentBundle, ExportFileTree, ExportSkillBundle, ExportSourceContent, ExportSourceFile | Core half of `batch::export::bundle_types`: its store-layer items live in… |
 | `src/batch/export/bundle_validation.rs` | src | m | 14 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
-| `src/batch/export/credential_filter.rs` | src | m | 9 fn · 2 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
+| `src/batch/export/credential_filter.rs` | src | L | 9 fn · 3 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/document_import.rs` | src | XL | 6 fn · 5 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
 | `src/batch/export/document_snapshot.rs` | src | L | 4 fn · 6 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
