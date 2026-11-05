@@ -148,15 +148,21 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
         Carried::Inline(bytes) => return Ok(bytes.into_vec()),
         Carried::Staged { hash, len } => (hash, len),
     };
-    let want = usize::try_from(len).map_err(|_| MeshError::Io("staged bytes too long".into()))?;
-    let mut bytes = Vec::with_capacity(want);
+    let want = usize::try_from(len)
+        .ok()
+        .filter(|len| *len <= isize::MAX as usize)
+        .ok_or_else(|| MeshError::Io("staged bytes too long".into()))?;
+    let mut bytes = Vec::new();
     while bytes.len() < want {
         let request = Request::Get {
             hash,
             offset: bytes.len() as u64,
         };
         match exchange(conn, &request).await? {
-            Reply::Piece(piece) if !piece.is_empty() && bytes.len() + piece.len() <= want => {
+            Reply::Piece(piece) if !piece.is_empty() && piece.len() <= want - bytes.len() => {
+                bytes.try_reserve_exact(piece.len()).map_err(|error| {
+                    MeshError::Io(format!("staged bytes allocation failed: {error}"))
+                })?;
                 bytes.extend_from_slice(&piece);
             }
             other => return Err(unexpected(&other)),

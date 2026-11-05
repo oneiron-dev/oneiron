@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
+use oneiron_llm_openai::EmbedShape;
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none
@@ -32,10 +33,10 @@ pub enum ProviderKind {
     /// carries, so it is reached over loopback HTTP only. A
     /// `[models.media.speech]` rung only.
     Voxcpm2,
-    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: a
-    /// `[models.media.image]` rung (`models/{model}:generateContent`, asked
-    /// for image output) or a `[models.media.video]` rung (a Veo
-    /// `predictLongRunning` job) only.
+    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: chat
+    /// rungs (`models/{model}:generateContent`), a `[models.media.image]`
+    /// rung (asked for image output) or a `[models.media.video]` rung (a Veo
+    /// `predictLongRunning` job).
     Gemini,
     /// Soniox's real-time speech-to-text WebSocket
     /// (`wss://stt-rt.soniox.com/transcribe-websocket`, the key as a bearer
@@ -60,7 +61,7 @@ impl ProviderKind {
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
-        self.speech_only() || matches!(self, Self::Gemini | Self::Soniox)
+        self.speech_only() || matches!(self, Self::Soniox)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
@@ -253,6 +254,7 @@ pub(super) struct ProviderFile {
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
+    embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
     model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
@@ -292,6 +294,10 @@ pub struct ProviderConfig {
     pub output_limit_field: OutputLimitField,
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
+    /// The shape the provider's embedding endpoint speaks (FIX 866):
+    /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
+    /// chat form.
+    pub embed_shape: EmbedShape,
     pub capabilities: Vec<LlmCapability>,
     /// One wire model's own capabilities, in place of `capabilities`, so two
     /// models on one provider can differ (one hears audio, one does not).
@@ -313,8 +319,8 @@ pub struct ProviderConfig {
     /// Host-supplied token conversions for the allocation's named unit.
     pub rates: Vec<UnitRate>,
     /// The Responses socket an OpenAI-compatible provider's calls hold, or
-    /// `None` for the chat HTTP path alone. A broker-held key always takes
-    /// HTTP: the broker runs no socket yet.
+    /// `None` for the chat HTTP path alone. A broker-held OpenAI key uses the
+    /// broker's per-call Responses socket when set, else HTTP.
     pub responses_socket: Option<ResponsesSocket>,
     /// How this provider's JSON request bodies are compressed, or `None` to
     /// send them plain. A broker-held key has none here: the broker
@@ -476,6 +482,7 @@ impl ProviderFile {
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
+            embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
             family: self.family.map(|family| family.trim().to_owned()),
@@ -552,13 +559,13 @@ fn request_compression(
 }
 
 /// The Responses socket an entry holds: what it wrote, else the default its
-/// origin has. Only a hosted OpenAI-compatible provider whose key is not the
-/// broker's holds one.
+/// origin has. An OpenAI-compatible provider may hold one whether its key is
+/// direct or broker-held; other kinds never do.
 fn responses_socket(
     name: &str,
     kind: ProviderKind,
     base_url: &str,
-    brokered: bool,
+    _brokered: bool,
     file: Option<ResponsesSocketFile>,
 ) -> anyhow::Result<Option<ResponsesSocket>> {
     let known = RESPONSES_SOCKET_ORIGINS
@@ -580,10 +587,10 @@ fn responses_socket(
     let Some(max_age_secs) = max_age_secs else {
         return Ok(None);
     };
-    if kind != ProviderKind::OpenaiCompat || brokered {
+    if kind != ProviderKind::OpenaiCompat {
         if file.is_some() {
             anyhow::bail!(
-                "models.providers.{name}.responses_socket applies to an openai-compat provider whose key is not key_secret"
+                "models.providers.{name}.responses_socket applies to an openai-compat provider"
             );
         }
         return Ok(None);
