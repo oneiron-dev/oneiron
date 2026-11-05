@@ -20,10 +20,24 @@ use serde_json::Value as JsonValue;
 use super::cache_usage::carry_chat_evidence;
 use super::http::{HttpFailure, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
+#[cfg(unix)]
+use super::native_exl3::Tie;
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
 use super::worker_host;
 use crate::config::models::ResponseFormatWire;
+
+/// The managed-launch tie off Unix (FIX 9296): native EXL3 exists only on
+/// Unix, so no HTTP fallback ever carries one here; the direct route passes
+/// `None`.
+#[cfg(not(unix))]
+#[derive(Clone)]
+pub(super) struct Tie;
+
+#[cfg(not(unix))]
+impl Tie {
+    fn apply(&self, _body: &mut JsonValue) {}
+}
 
 pub(super) struct OpenAiHttp {
     pub(super) http: ProviderHttp,
@@ -52,31 +66,14 @@ impl OpenAiHttp {
     ) -> Option<AnsweringIdentity> {
         self.identities.resolve(&self.http, returned, target).await
     }
-}
 
-/// One `.send()` per call over [`ProviderHttp`], which follows no redirect
-/// and never resends: a run's gate may wrap this transport's adapter.
-impl oneiron::llm::SingleSend for OpenAiHttp {}
-
-impl From<HttpFailure> for OpenAiCompatTransportError {
-    fn from(failure: HttpFailure) -> Self {
-        match failure {
-            HttpFailure::Timeout => Self::Timeout,
-            HttpFailure::Connection => Self::Connection,
-            HttpFailure::StreamCut => Self::StreamCut,
-            HttpFailure::Malformed
-            | HttpFailure::EventTooLarge
-            | HttpFailure::BodyTooLarge
-            | HttpFailure::OutOfMemory => Self::Server,
-        }
-    }
-}
-
-impl OpenAiCompatTransport for OpenAiHttp {
-    fn execute<'a>(
+    /// A buffered call tied to its managed launch when `tie` names one (FIX
+    /// 9296): `None` is the direct HTTP route, as before.
+    pub(super) fn execute_with_tie<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        tie: Option<Tie>,
     ) -> OpenAiCompatFuture<'a> {
         Box::pin(async move {
             let mut body = request.body;
@@ -108,6 +105,9 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 answering.as_ref(),
                 execution.as_ref(),
             );
+            if let Some(tie) = tie.as_ref() {
+                tie.apply(&mut reply.body);
+            }
             // The receipt the reply carries is the request's final one.
             if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
                 if let Some(worker) = &observed {
@@ -129,10 +129,13 @@ impl OpenAiCompatTransport for OpenAiHttp {
         })
     }
 
-    fn stream<'a>(
+    /// A streamed call tied to its managed launch when `tie` names one (FIX
+    /// 9296): `None` is the direct HTTP route, as before.
+    pub(super) fn stream_with_tie<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        tie: Option<Tie>,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let mut body = request.body;
         self.cap.apply(&mut body);
@@ -157,6 +160,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 target,
                 execution,
                 model,
+                tie,
                 worker: observed,
                 answering: None,
                 publisher,
@@ -170,6 +174,42 @@ impl OpenAiCompatTransport for OpenAiHttp {
             Frames::next,
         );
         Ok(Box::pin(frames))
+    }
+}
+
+/// One `.send()` per call over [`ProviderHttp`], which follows no redirect
+/// and never resends: a run's gate may wrap this transport's adapter.
+impl oneiron::llm::SingleSend for OpenAiHttp {}
+
+impl From<HttpFailure> for OpenAiCompatTransportError {
+    fn from(failure: HttpFailure) -> Self {
+        match failure {
+            HttpFailure::Timeout => Self::Timeout,
+            HttpFailure::Connection => Self::Connection,
+            HttpFailure::StreamCut => Self::StreamCut,
+            HttpFailure::Malformed
+            | HttpFailure::EventTooLarge
+            | HttpFailure::BodyTooLarge
+            | HttpFailure::OutOfMemory => Self::Server,
+        }
+    }
+}
+
+impl OpenAiCompatTransport for OpenAiHttp {
+    fn execute<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_tie(request, lease, None)
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        self.stream_with_tie(request, lease, None)
     }
 }
 
@@ -325,6 +365,9 @@ struct Frames<'a, S> {
     /// The engine model the call was admitted for, when its wire id names
     /// one: stamped on its final receipt.
     model: Option<ModelId>,
+    /// The managed launch the HTTP fallback's answers tie to when one names
+    /// it (FIX 9296): `None` is the direct HTTP route, as before.
+    tie: Option<Tie>,
     /// The bound external worker captured at request start, if any (FIX 9200).
     worker: Option<InferenceWorker>,
     /// The last top-level `model` this stream's chunks named, as it came.
@@ -366,6 +409,9 @@ where
                 .answering(self.answering.as_deref(), self.target.as_deref())
                 .await;
             carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
+            if let Some(tie) = self.tie.as_ref() {
+                tie.apply(&mut carrier);
+            }
             self.publish(&carrier);
             self.published_end();
             return Some((Ok(OpenAiCompatStreamFrame::Chunk(carrier)), self));
@@ -376,7 +422,10 @@ where
 
     async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
         match item? {
-            SseItem::Status(reply) => {
+            SseItem::Status(mut reply) => {
+                if let Some(tie) = self.tie.as_ref() {
+                    tie.apply(&mut reply.body);
+                }
                 Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
                     status: reply.status,
                     headers: reply.headers,
@@ -409,6 +458,9 @@ where
                     None
                 };
                 carry_chat_evidence(&mut chunk, answering.as_ref(), self.execution.as_ref());
+                if let Some(tie) = self.tie.as_ref() {
+                    tie.apply(&mut chunk);
+                }
                 self.publish(&chunk);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
