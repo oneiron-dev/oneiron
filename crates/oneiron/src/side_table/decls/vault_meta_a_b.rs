@@ -342,6 +342,12 @@ side_tables! {
     /// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
     /// Key: bytes32 (action key).
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
+    /// Actual in-flight native hard purges, emptied before commit. Key: entity16.
+    BYOA_EXHAUST_ACTIVE_PURGE: VaultMeta b"byoa:exhaust_active_purge:v1:" Named;
+    /// A native terminal capture's artifact, version, claim and hash. Key: attempt16.
+    BYOA_EXHAUST_CAPTURE: VaultMeta b"byoa:exhaust_capture:v1:" Named;
+    /// An accepted exhaust erase's sources, inventory and owed retirements. Key: attempt16.
+    BYOA_EXHAUST_ERASE: VaultMeta b"byoa:exhaust_erase:v1:" Named;
     /// A staged-job artifact erase owed after its legal hold lifts. Key: hash32 (job digest).
     BYOA_STAGED_INPUT_ERASE: VaultMeta b"byoa:staged_input_erase:v1:" Named;
 }

@@ -39,7 +39,8 @@ impl Vault {
     /// Returns the erased shells for the redaction sweep, plus the other
     /// documents this walk rewrote (author-stamped events, citing NOTEs, a
     /// restamped subject edge's endpoints) for post-commit local
-    /// invalidation. No notice is sent from inside the transaction. Each
+    /// invalidation, plus actual native cancellation generations for the
+    /// caller to signal only after commit. No notice is sent inside the transaction. Each
     /// shell's actor scrub runs under `act`, the owner act the head's erase
     /// carries out, when its door bound one (FIX 11883).
     pub(in crate::deletion) fn cascade_hard_erase_to_redirect_shells_in_txn(
@@ -47,14 +48,18 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         head: &EntityId,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<(BTreeSet<EntityId>, Vec<EntityId>)> {
+    ) -> Result<(
+        BTreeSet<EntityId>,
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+    )> {
         let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
             &self.store,
             &*wtxn,
             &BTreeSet::from([*head]),
         )?;
         if shells.is_empty() {
-            return Ok((shells, Vec::new()));
+            return Ok((shells, Vec::new(), Vec::new()));
         }
         for shell in &shells {
             self.store
@@ -92,15 +97,16 @@ impl Vault {
         // Each shell takes the actor scrub its head's erase runs, so no side
         // row stamped with a shell's id keeps it (FIX 6709). The head's own
         // provenance erase stays the one that retires keys.
+        let mut cancelled = Vec::new();
         for shell in &shells {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *shell),
                 act,
-            )?;
+            )?);
         }
         let mut touched = shells.clone();
         touched.insert(*head);
         changed.extend(self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?);
-        Ok((shells, changed))
+        Ok((shells, changed, cancelled))
     }
 }
