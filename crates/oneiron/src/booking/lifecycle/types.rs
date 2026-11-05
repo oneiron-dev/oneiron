@@ -340,6 +340,10 @@ pub struct ConfirmReceipt {
     /// confirm stands either way. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_digest: Option<String>,
+    /// The invite dispatch's absolute Unix-second retry edge, when held.
+    /// The booking itself is already committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_retry_at: Option<u64>,
     /// The rows the confirm writer read (FIX 5483): every row its
     /// availability re-solve listed. A replay returns the first pass's.
     #[serde(default, with = "entity_refs_serde")]
@@ -350,6 +354,10 @@ pub struct ConfirmReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevisionReceipt {
     pub calendar: CalendarRevision,
+    /// The revised or cancelled invite's absolute Unix-second retry edge,
+    /// when held. The booking change itself is already committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_retry_at: Option<u64>,
     /// The rows the writer read (FIX 5483): the booking EVENT and every claim
     /// on it, and for a move every row its re-solve listed. A replay returns
     /// the first pass's.

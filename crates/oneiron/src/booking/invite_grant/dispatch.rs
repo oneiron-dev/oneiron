@@ -91,9 +91,21 @@ pub fn enqueue_confirm_invite(
 /// The refusal [`enqueue_confirm_invite`] answers a dispatch that recorded
 /// no intent with.
 fn recorded_or_refused(outcome: ConfirmInviteOutcome) -> Result<IntentId, BookingError> {
-    outcome
-        .intent_id
-        .ok_or_else(|| refused("the outbound door recorded no intent for this invite"))
+    if let Some(intent_id) = outcome.intent_id {
+        return Ok(intent_id);
+    }
+    if let Some(retry_at) = outcome.retry_at {
+        let mut error = crate::memory::MemoryError::new(
+            crate::memory::MEMORY_CODE_INVALID_STATE,
+            "the outbound door held this invite; retry at the receipt's reset time",
+            &["Retry this invite at the returned resets_at time."],
+        );
+        error.resets_at.push(retry_at);
+        return Err(BookingError::Boundary(Box::new(error)));
+    }
+    Err(refused(
+        "the outbound door recorded no intent for this invite",
+    ))
 }
 
 /// What [`enqueue_confirm_invite_outcome`] dispatched (FIX 6424).
@@ -107,6 +119,9 @@ pub struct ConfirmInviteOutcome {
     /// digest his one-time press must name to release it, 64 lower-hex,
     /// copied from the dispatch result. `None` otherwise.
     pub approval_digest: Option<String>,
+    /// When the dispatch receipt holds the invite until an absolute Unix
+    /// second, the same edge; `None` when the receipt names none.
+    pub retry_at: Option<u64>,
 }
 
 /// [`enqueue_confirm_invite`], answering a held invite instead of refusing
@@ -202,6 +217,7 @@ fn enqueue_booking_invite_outcome(
         return Ok(ConfirmInviteOutcome {
             intent_id: Some(intent_id),
             approval_digest: None,
+            retry_at: None,
         });
     }
 
@@ -231,11 +247,13 @@ fn enqueue_booking_invite_outcome(
         .dispatch_outbound_intent(request, sink)
         .map_err(|error| refused(format!("calendar invite dispatch refused: {error}")))?;
 
+    let retry_at = result.retry_at();
     // Success IS the durable intent: a gate denial or hold records none, so
     // nothing moved; a hold names the digest the owner's press carries.
     Ok(ConfirmInviteOutcome {
         intent_id: recorded_intent_id(vault, &payload)?,
         approval_digest: result.approval_digest,
+        retry_at,
     })
 }
 
