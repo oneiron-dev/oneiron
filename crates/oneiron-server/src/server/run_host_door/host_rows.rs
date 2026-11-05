@@ -8,7 +8,7 @@ use super::{
     LadderGraphAnswerer, Memory, MemoryError, MemoryResult, Modality, QuestionAnswersRequest,
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
     QuestionOutcomeWindowsRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
-    RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
+    RenderRefusal, RunAdmission, RunMediaStep, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
     closed_outcome_windows_in_lane, create_question_with_lane, decode, edit_question_with_lane,
     encode, inside_host_dial, internal, on_caller_payer, owners, pause_question,
     question_answers_in_lane, read_question_in_lane, resume_held_wave, run_graph_ask_receipted,
@@ -27,6 +27,7 @@ pub(super) fn host_row(
     input: Value,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
     evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
@@ -255,7 +256,7 @@ pub(super) fn host_row(
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => match granted_media(server, principal, verb) {
             Some(operation) => {
-                granted_media_row(server, principal, line, attempt, verb, operation, input)
+                granted_media_row(server, principal, line, attempt, media_step, verb, operation, input)
             }
             None => Err(owners(verb, "ai.* media calls are the owner's")),
         },
@@ -292,12 +293,22 @@ fn granted_media_row(
     agent: EntityId,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
     verb: AgentVerb,
     operation: AiOperation,
     input: Value,
 ) -> MemoryResult<Value> {
     let line = line.ok_or_else(|| internal(verb))?;
     let runtime = tokio::runtime::Handle::current();
+    if let (AgentVerb::AiImage, Some(step)) = (verb, media_step) {
+        return encode(runtime.block_on(crate::api::ai_image_for_run_step(
+            server,
+            line,
+            attempt,
+            decode(input)?,
+            step,
+        ))?);
+    }
     match verb {
         AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_agent_run(
             server,
