@@ -23,7 +23,8 @@ pub(super) struct HouseReadObserver<'a> {
 
 impl<'a> HouseReadObserver<'a> {
     pub(super) fn new(house: &'a HouseRead, run: HouseReadRun<'a>) -> Self {
-        let caller = model_call_context();
+        let unrecorded = matches!(&run, HouseReadRun::Caller(run) if run.is_unrecorded());
+        let caller = (!unrecorded).then(model_call_context).flatten();
         let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
             house
                 .vault

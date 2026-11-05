@@ -131,7 +131,9 @@ impl DecisionReadGate for RunHouseGate<'_> {
             }
         };
         if let Err(denied) = permit.settle(outcome) {
-            tracing::error!(%denied, "a house decision read's settlement was refused");
+            if !self.run.is_unrecorded() {
+                tracing::error!(%denied, "a house decision read's settlement was refused");
+            }
         }
         Ok(gated)
     }
@@ -336,7 +338,7 @@ impl SystemOneRung {
         if call.deadline.decision_time_left().is_zero() {
             return Err(failed("admitted after the work time"));
         }
-        let caller = model_call_context();
+        let caller = (!run.is_unrecorded()).then(model_call_context).flatten();
         let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
