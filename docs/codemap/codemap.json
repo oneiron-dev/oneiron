@@ -45186,7 +45186,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -45237,7 +45237,7 @@
      "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
      "surface": {
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "re-export": 4,
       "struct": 2
      }
@@ -45310,7 +45310,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "re-export": 1
      }
@@ -45350,7 +45350,7 @@
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
