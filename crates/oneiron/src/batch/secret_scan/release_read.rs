@@ -6,20 +6,31 @@
 //!
 //! Each release text rule is read where it lives: a private-key header on
 //! its line, the blocklist anywhere (a window keeps the longest entry's
-//! length), the recovery-phrase rule over the whole text, and the provider
-//! tokens and credential assignments inside a segment (the text between
-//! `\n`, `\r`, `,`, `;`, `{` and `}`), which no token or assignment crosses.
-//! The text is the body read as the whole scan reads it, lossy UTF-8, a
-//! sequence an edge cuts carried to the next frame. The reason is the one
-//! the whole scan names: its rules in their order. A container, whose walk
-//! reads its members, and a framed carrier, whose body is decoded whole, are
-//! read whole and judged as the whole scan judges them. No size skips a
-//! body or refuses it (Rule 5).
+//! length), the recovery-phrase rule over the whole text, the provider rule
+//! in each token, and the assignment rule in each segment (the text between
+//! `\n`, `\r`, `,`, `;`, `{` and `}`). The text is the body read as the
+//! whole scan reads it, lossy UTF-8, a sequence an edge cuts carried to the
+//! next frame. The reason is the one the whole scan names: its rules in
+//! their order. A container, whose walk reads its members, and a framed
+//! carrier, whose body is decoded whole, are read whole and judged as the
+//! whole scan judges them (FIX 7199). No size skips a body or refuses it
+//! (Rule 5).
+//!
+//! FIX 7200: the reader holds no segment and no token whole, so a body that
+//! is one long segment is not held whole either. The blocklist reads each
+//! frame. A token keeps only the window its rules read ([`tokens`]). A
+//! segment keeps small states, not its text ([`assignment`]). Each rule
+//! decides where the whole rule decides, and only memory differs.
+
+mod assignment;
+mod tokens;
 
 use std::io::{Read, Seek, SeekFrom};
 
-use super::shapes::{self, Door, MnemonicStream};
-use super::{REASON_MNEMONIC, REASON_PRIVATE_KEY, classify_token, framed_payload, is_container};
+use self::assignment::AssignmentSegment;
+use self::tokens::ProviderTokens;
+use super::shapes::{self, MnemonicStream, SEGMENT_BREAKS};
+use super::{REASON_MNEMONIC, REASON_PRIVATE_KEY, framed_payload, is_container};
 use crate::error::Result;
 
 /// The bytes one read of the body takes: a buffer, not a bound on the body.
@@ -28,10 +39,6 @@ const FRAME_BYTES: usize = crate::store::LINE_INDEX_BLOCK_BYTES as usize;
 /// The head a container's or a framed carrier's leading bytes are read
 /// from: the longest of them, a carrier's magic and its two ids, fits.
 const HEAD_BYTES: u64 = 64;
-
-/// The segment edges the assignment rule splits text at. None is a token
-/// byte, so no provider token crosses one either.
-const SEGMENT_BREAKS: [char; 6] = ['\n', '\r', ',', ';', '{', '}'];
 
 /// [`super::scan_file_content`] over the body `source` holds, read from its
 /// start ([`scan_file_content_reader`]).
@@ -85,19 +92,18 @@ pub(crate) fn scan_file_content_reader(
 struct TextScan {
     /// The bytes of a UTF-8 sequence the last frame ended inside.
     carry: Vec<u8>,
-    /// The text of the segment not yet ended.
-    pending: String,
-    /// The end of the text the segment rules read, where a blocklist entry
-    /// the next window ends could start.
+    /// The end of the text the blocklist read, where an entry the next
+    /// frame ends could start.
     tail: String,
     /// How much of that end is kept: one byte short of the longest entry.
     keep: usize,
     header: HeaderLine,
     phrases: MnemonicStream,
+    tokens: ProviderTokens,
+    segment: AssignmentSegment,
     private_key: bool,
     blocklisted: bool,
     phrase: bool,
-    provider: Option<&'static str>,
     assignment: bool,
 }
 
@@ -105,15 +111,15 @@ impl TextScan {
     fn new() -> Self {
         Self {
             carry: Vec::new(),
-            pending: String::new(),
             tail: String::new(),
             keep: shapes::blocklist_longest().saturating_sub(1),
             header: HeaderLine::default(),
             phrases: MnemonicStream::default(),
+            tokens: ProviderTokens::default(),
+            segment: AssignmentSegment::default(),
             private_key: false,
             blocklisted: false,
             phrase: false,
-            provider: None,
             assignment: false,
         }
     }
@@ -147,60 +153,63 @@ impl TextScan {
         self.feed_text(&text);
     }
 
-    /// Reads `text` on: the line and whole-text rules as it passes, and the
-    /// segment rules over each run of whole segments it ends.
+    /// Reads `text` on: the line, blocklist and whole-text rules over it as
+    /// it passes, then the token and segment rules a character at a time.
     fn feed_text(&mut self, text: &str) {
         self.private_key |= self.header.feed(text.as_bytes());
         self.phrase |= self.phrases.feed(text);
-        let from = self.pending.len();
-        self.pending.push_str(text);
-        if let Some(at) = self.pending[from..].rfind(SEGMENT_BREAKS) {
-            // Each edge is one byte, so the cut is a char boundary.
-            let window: String = self.pending.drain(..from + at + 1).collect();
-            self.segments(&window);
+        self.blocklist(text);
+        if self.tokens.found().is_some() && self.assignment {
+            return;
+        }
+        for ch in text.chars() {
+            self.tokens.feed(ch);
+            if self.assignment {
+                continue;
+            }
+            if SEGMENT_BREAKS.contains(&ch) {
+                self.assignment = self.segment.finish();
+            } else {
+                self.segment.feed(ch);
+            }
         }
     }
 
-    /// The segment rules over `window`, whole segments in order.
-    fn segments(&mut self, window: &str) {
-        if !self.blocklisted {
-            let joined = format!("{}{window}", self.tail);
-            self.blocklisted = shapes::blocklisted(&joined);
-            let mut start = joined.len().saturating_sub(self.keep);
-            while !joined.is_char_boundary(start) {
-                start -= 1;
-            }
-            self.tail = joined[start..].to_owned();
+    /// The blocklist over `text` and the end of the text before it, so an
+    /// entry a frame edge cuts is read whole.
+    fn blocklist(&mut self, text: &str) {
+        if self.blocklisted {
+            return;
         }
-        if self.provider.is_none() {
-            self.provider = window
-                .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
-                .find_map(classify_token);
+        let joined = format!("{}{text}", self.tail);
+        self.blocklisted = shapes::blocklisted(&joined);
+        let mut start = joined.len().saturating_sub(self.keep);
+        while !joined.is_char_boundary(start) {
+            start -= 1;
         }
-        if !self.assignment {
-            self.assignment = shapes::sensitive_assignment(window, Door::Release);
-        }
+        self.tail = joined[start..].to_owned();
     }
 
     /// Reads the end of the text: a sequence it ends inside is one
-    /// replacement character, and the last segment ends with it. The hit is
-    /// the whole scan's, its rules in its order.
+    /// replacement character, and the last token and segment end with it.
+    /// The hit is the whole scan's, its rules in its order.
     fn finish(mut self) -> Option<&'static str> {
         if !self.carry.is_empty() {
             self.carry.clear();
             self.feed_text("\u{fffd}");
         }
-        let last = std::mem::take(&mut self.pending);
-        self.segments(&last);
+        self.tokens.end_token();
+        self.assignment |= self.segment.finish();
         self.phrase |= self.phrases.finish();
+        let provider = self.tokens.found();
         if self.private_key {
             Some(REASON_PRIVATE_KEY)
         } else if self.blocklisted {
             Some("gate.secret_scan.blocklist")
         } else if self.phrase {
             Some(REASON_MNEMONIC)
-        } else if self.provider.is_some() {
-            self.provider
+        } else if provider.is_some() {
+            provider
         } else if self.assignment {
             Some("gate.secret_scan.sensitive_env")
         } else {
@@ -265,11 +274,12 @@ impl HeaderLine {
 }
 
 /// How much of `pattern` the text ends in once `byte` follows a text that
-/// ended in its first `matched` bytes (`matched` short of the whole).
+/// ended in its first `matched` bytes. After a whole match the next byte
+/// is read on from the pattern's longest border.
 fn advance(pattern: &[u8], matched: usize, byte: u8) -> usize {
     let mut matched = matched;
     loop {
-        if pattern[matched] == byte {
+        if pattern.get(matched) == Some(&byte) {
             return matched + 1;
         }
         if matched == 0 {
