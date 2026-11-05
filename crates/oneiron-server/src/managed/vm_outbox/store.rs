@@ -356,6 +356,34 @@ pub(super) fn read_backup_label(dir: &File) -> anyhow::Result<Option<BackupLabel
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
+/// The member records in the store `dir`'s existing `members/`, by kind and
+/// member, or `None` when there is no such directory. It opens, reads, and
+/// parses only: it creates, writes, repairs, prunes, or retires nothing, and
+/// any eligible record that does not read or parse is an error, never a
+/// skipped healthy gap. Hidden and non-JSON names are skipped as `Store::open`
+/// skips them.
+pub(super) fn read_member_records(
+    dir: &File,
+) -> anyhow::Result<Option<BTreeMap<(VmOutboxKind, String), MemberRecord>>> {
+    let members = match super::local::open_dir_at(dir, MEMBERS) {
+        Ok(members) => members,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut records = BTreeMap::new();
+    for entry in rustix::fs::Dir::read_from(&members)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !name.ends_with(".json") {
+            continue;
+        }
+        let bytes = read_small(&members, &name)?;
+        let stored: Stored = serde_json::from_slice(&bytes)?;
+        records.insert((stored.kind, stored.member), stored.record);
+    }
+    Ok(Some(records))
+}
+
 /// A small file in `dir`, read without following a link.
 fn read_small(dir: &File, name: &str) -> std::io::Result<Vec<u8>> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
@@ -384,4 +412,60 @@ fn write_whole(dir: &File, name: &str, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()?;
     rustix::fs::renameat(dir, temporary.as_str(), dir, name)?;
     dir.sync_all()
+}
+
+/// A kind's set journal in the store directory, `set-<kind>.json`
+/// ([`super::journal`], FIX 7543): the set of that kind this end is
+/// publishing, or has still to finish. One kind has at most one.
+fn set_journal_name(kind: VmOutboxKind) -> String {
+    format!("set-{}.json", kind.as_str())
+}
+
+impl Store {
+    /// Writes `kind`'s set journal whole, as a record is written.
+    pub(super) fn write_set_journal(
+        &self,
+        kind: VmOutboxKind,
+        bytes: &[u8],
+    ) -> std::io::Result<()> {
+        write_whole(&self.dir, &set_journal_name(kind), bytes)
+    }
+
+    /// Deletes `kind`'s set journal, when there is one, and syncs the store
+    /// directory.
+    pub(super) fn remove_set_journal(&self, kind: VmOutboxKind) -> std::io::Result<()> {
+        match rustix::fs::unlinkat(&self.dir, set_journal_name(kind).as_str(), AtFlags::empty()) {
+            Ok(()) => self.dir.sync_all(),
+            Err(Errno::NOENT) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// `kind`'s set journal, read whole, since only this end writes it and
+    /// a set is not capped; `None` when there is none.
+    pub(super) fn read_set_journal(&self, kind: VmOutboxKind) -> std::io::Result<Option<Vec<u8>>> {
+        let name = set_journal_name(kind);
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let file = match rustix::fs::openat(&self.dir, name.as_str(), flags, Mode::empty()) {
+            Ok(file) => file,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut file = File::from(file);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Each set journal the store holds, by kind, as it reads.
+    pub(super) fn read_set_journals(&self) -> Vec<(VmOutboxKind, std::io::Result<Vec<u8>>)> {
+        VmOutboxKind::ALL
+            .into_iter()
+            .filter_map(|kind| match self.read_set_journal(kind) {
+                Ok(None) => None,
+                Ok(Some(bytes)) => Some((kind, Ok(bytes))),
+                Err(error) => Some((kind, Err(error))),
+            })
+            .collect()
+    }
 }
