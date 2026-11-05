@@ -112,6 +112,32 @@ pub(super) struct SkillStateFact {
     attestation: Option<Attestation>,
 }
 
+/// Produced only by the actual closed final-input factory below. A decoded
+/// witness is data and cannot be promoted to this local publication owner.
+#[cfg(feature = "sync")]
+pub(super) struct LocalSkillStateFact {
+    fact: SkillStateFact,
+}
+
+#[cfg(feature = "sync")]
+impl LocalSkillStateFact {
+    pub(super) fn fact(&self) -> &SkillStateFact {
+        &self.fact
+    }
+
+    pub(super) fn extends_source(
+        &self,
+        entity: EntityId,
+        document: EntityId,
+        birth_at: u64,
+        frontier: &[u8],
+    ) -> bool {
+        self.fact.target_birth_is(entity, birth_at)
+            && self.fact.operation.document == *document.as_bytes()
+            && self.fact.operation.source_frontier == frontier
+    }
+}
+
 fn malformed() -> Error {
     Error::CorruptedIndex("native SKILL state witness")
 }
@@ -126,7 +152,7 @@ impl SkillStateFact {
         document: EntityId,
         source: &super::super::EntityDoc,
         previous: Option<&Self>,
-    ) -> Result<(Self, Option<ActorStamp>)> {
+    ) -> Result<(LocalSkillStateFact, Option<ActorStamp>)> {
         input.recheck_in_txn(txn)?;
         let entity = input.entity();
         let birth = source.birth();
@@ -219,7 +245,7 @@ impl SkillStateFact {
             let signature = key.sign(&fact.transcript()?).to_bytes().to_vec();
             fact.attestation.as_mut().ok_or_else(malformed)?.signature = signature;
         }
-        Ok((fact, writer.map(|(stamp, _)| stamp)))
+        Ok((LocalSkillStateFact { fact }, writer.map(|(stamp, _)| stamp)))
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {

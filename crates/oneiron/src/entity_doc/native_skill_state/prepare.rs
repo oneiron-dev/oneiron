@@ -3,8 +3,9 @@
 use loro::{CommitOptions, LoroDoc, VersionVector};
 
 use super::super::{EntityDoc, storage};
+use super::admission::{LocalSkillStateAdmission, LocalSkillStateSource};
 use super::codec::SkillStateFact;
-use super::register::{CURRENT, ROOT, read_fact};
+use super::register::{CURRENT, ROOT};
 use crate::EntityId;
 use crate::batch::NativeSkillFinalInput;
 use crate::error::{Error, Result};
@@ -16,6 +17,7 @@ pub(super) struct PreparedSkillState {
     pub(super) document: EntityDoc,
     pub(super) before: VersionVector,
     pub(super) next: SkillStateFact,
+    admission: LocalSkillStateAdmission,
 }
 
 /// Actual local stored source: load the original head and replay into a fresh
@@ -25,16 +27,14 @@ pub(super) fn prepare_in_txn(
     input: &NativeSkillFinalInput<'_>,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<PreparedSkillState> {
-    input.recheck_in_txn(txn)?;
+    let (source, head, document) = LocalSkillStateSource::capture_in_txn(input, txn)?;
     let store = &input.vault().store;
     let entity = input.entity();
-    let head = storage::head(store, txn, &entity)?;
-    let document = storage::load(store, txn, &head)?;
     let document_id = EntityId::from_hex(&head.document)?;
     let before = document.doc.oplog_vv();
-    let previous = read_fact(&document)?;
-    let (next, actor_stamp) =
-        SkillStateFact::from_final_input(input, txn, document_id, &document, previous.as_ref())?;
+    let (local, actor_stamp) =
+        SkillStateFact::from_final_input(input, txn, document_id, &document, source.previous())?;
+    let next = local.fact();
     document
         .doc
         .set_peer_id(LoroDoc::new().peer_id())
@@ -62,11 +62,14 @@ pub(super) fn prepare_in_txn(
     // The Binary witness also retains this opaque token when its commit
     // message later falls below a shallow floor. Keep its ordinary hold use
     // in this writer, without resolving the token or asserting permission.
+    let admission = source.admit_local(&document, &local)?;
+    admission.recheck_in_txn(input.vault(), txn)?;
     crate::provenance::record_actor_stamp_uses_in_txn(store, txn, &entity, next.writer_token()?)?;
     Ok(PreparedSkillState {
         head,
         document,
         before,
-        next,
+        next: next.clone(),
+        admission,
     })
 }
