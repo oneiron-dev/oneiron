@@ -574,7 +574,7 @@ families! {
     // side_table/decls/vault_meta_s.rs
     // KS-3's known-value history references: custody slots and the master's
     // generation, never a payload.
-    Class::Structure => STORAGE_SCHEMA_VERSION SHORT_ID_GRAMMAR_VERSION SHORT_ID_COUNTER
+    Class::Structure => STORAGE_SCHEMA_VERSION SHORT_ID_GRAMMAR_VERSION SHORT_ID_COUNTER SHORT_ID_KIND_COUNTER
         STORAGE_ABI_VERSION SECRET_KNOWN_HISTORY SECRET_KNOWN_INDEX SECRET_CUSTODY_ERASE
         SECRET_CUSTODY_RESTORE_RELEASE;
     // The planned-intent fence's erased-asker selectors: value-free hashes
