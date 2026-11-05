@@ -211,7 +211,7 @@ fn take_asks(record: &mut CodeRunReplayRecord) -> Result<Vec<ReplayPart>> {
         });
     }
     if unproved > 0 {
-        tracing::warn!(
+        tracing::debug!(
             unproved,
             "spawn calls with no resolved target keep their asks where their replay row keeps them"
         );

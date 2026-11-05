@@ -302,11 +302,10 @@ async fn try_capacity(
 ) -> Result<Fit<SignedCandidate>, SealError> {
     let (revision_id, mut draft) = if revisions.is_empty() {
         let kind = pdf::RevisionKind::Signature {
-            field_name: pdf::field_name_for(operation_id),
-            date_str: pdf::pdf_date(ctx.clock_ms),
+            field_name: pdf::field_name_for(operation_id, ctx.limits)?,
+            date_str: pdf::pdf_date(ctx.clock_ms, ctx.limits)?,
         };
         let draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
-        charge_draft(ctx.limits, &draft, SealStage::PdfIncrementalUpdate)?;
         (None, draft)
     } else {
         let (id, draft) = supplied_draft(&prepared.bytes, revisions, capacity, ctx.limits)?;
@@ -424,7 +423,7 @@ async fn try_capacity(
     ctx.limits
         .observed
         .note(Counter::ContentsBytes, cms_der.len());
-    match pdf::patch_contents(&mut draft, &cms_der) {
+    match pdf::patch_contents(&mut draft, &cms_der, ctx.limits) {
         Ok(()) => Ok(Fit::Signed(SignedCandidate { draft, token })),
         Err(SealError::Fatal {
             code: FatalCode::ContentsCapacityExceeded,
@@ -432,19 +431,6 @@ async fn try_capacity(
         }) => Ok(Fit::Short(cms_der.len())),
         Err(e) => Err(e),
     }
-}
-
-/// Charges a draft the seal wrote to its operation as it is built (FIX
-/// 8452): the draft holds a whole copy of the PDF it extends.
-pub(super) fn charge_draft(
-    limits: &SealResourceLimits,
-    draft: &pdf::DraftRevision,
-    stage: SealStage,
-) -> Result<(), SealError> {
-    limits
-        .memory
-        .admit::<u8>(draft.bytes.capacity())
-        .map_err(|refusal| refusal.seal_error(stage))
 }
 
 fn degrade_warning(
@@ -476,7 +462,6 @@ async fn append_doc_timestamp(
             &pdf::RevisionKind::DocumentTimestamp,
             capacity,
         )?;
-        charge_draft(ctx.limits, &draft, SealStage::DocumentTimestamp)?;
         let br = draft.byte_range.ok_or(SealError::Fatal {
             stage: SealStage::DocumentTimestamp,
             code: FatalCode::PdfInvariantFailed,
@@ -487,7 +472,7 @@ async fn append_doc_timestamp(
         };
         let needed = token.content_info_der.len();
         ctx.limits.observed.note(Counter::ContentsBytes, needed);
-        match pdf::patch_contents(&mut draft, &token.content_info_der) {
+        match pdf::patch_contents(&mut draft, &token.content_info_der, ctx.limits) {
             Ok(()) => return Ok(Some(draft.bytes)),
             Err(SealError::Fatal {
                 code: FatalCode::ContentsCapacityExceeded,
