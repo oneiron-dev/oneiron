@@ -101493,6 +101493,7 @@
      "path": "src/supervisor/inference_device.rs",
      "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency…",
      "surface": {
+      "crate-vis": 3,
       "enum": 2,
       "fn": 21,
       "struct": 6
@@ -101574,7 +101575,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -101608,6 +101609,20 @@
      "purpose": "What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601)",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionAllocation",
+      "SessionAllocationOwner"
+     ],
+     "path": "src/supervisor/session_allocations.rs",
+     "purpose": "Fact-only session ownership rows (FIX10370): which vault sessions hold bytes on a device's worker, as the…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -101843,7 +101858,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101873,7 +101888,7 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -124013,6 +124028,7 @@
       "RungStatus",
       "SeatState",
       "SeatStatus",
+      "SessionAllocationStatus",
       "SnapshotReceipt",
       "SnapshotSkips",
       "SnapshotStatus",
@@ -124025,7 +124041,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 18
+      "struct": 19
      }
     },
     {
@@ -124099,7 +124115,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -124269,7 +124285,7 @@
      "path": "src/models/worker_host/session/registry.rs",
      "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 39
      }
     },
     {
