@@ -101024,6 +101024,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites.rs",
+     "purpose": "Source-defined preset sites retained when Edit Points makes a freeform",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites/data.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -102133,7 +102153,7 @@
      "purpose": "A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its…"
     },
     "live": {
-     "files": 61,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102226,7 +102246,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 166,
+   "source_files": 168,
    "test_files": 14
   },
   "oneiron-driver": {
