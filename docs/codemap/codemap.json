@@ -104862,7 +104862,7 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -104948,7 +104948,8 @@
      "path": "src/wire.rs",
      "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 1,
+      "fn": 3
      }
     }
    ],
