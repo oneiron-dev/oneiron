@@ -23037,6 +23037,7 @@
       "RoomPosture",
       "RoomPresence",
       "RoomSection",
+      "RoomStretch",
       "RosterParty"
      ],
      "path": "src/context_board/room.rs",
@@ -23045,7 +23046,7 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 3,
-      "struct": 3,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -52328,6 +52329,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/lifecycle/room/stretches.rs",
+     "purpose": "Live room-stretch identity for member-bound ROOM projections",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/lifecycle/room_births.rs",
      "purpose": "What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its…",
      "surface": {
@@ -62583,7 +62594,7 @@
      "path": "src/runtime_hooks/apply.rs",
      "purpose": "Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62872,6 +62883,26 @@
      "purpose": "A fact-hook run's body call and what comes of it (ARCH-0080 §4, §6): its `ai.verdict` asks and their pins…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/runner/evaluation.rs",
+     "purpose": "One evaluation, kept intact until its memo and completion tail commit",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/runner/retained.rs",
+     "purpose": "Owned background fact evaluations",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -92456,7 +92487,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92687,7 +92718,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 46,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93109,7 +93140,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6514,
+   "source_files": 6517,
    "test_files": 895
   },
   "oneiron-android": {
