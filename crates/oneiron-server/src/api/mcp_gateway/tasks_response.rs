@@ -144,7 +144,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     // restates a retained answer and spends nothing again.
     let mut hooks = None;
     let mut hook_notice = None;
-    let (mut output, health, carrier, snapshot, producer_epoch) =
+    let (mut output, health, carrier, mut snapshot, producer_epoch) =
         if let Some(continuation) = dispatch.continuation.as_ref() {
             let snapshot = continuation.snapshot.clone().ok_or_else(|| {
                 mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -235,6 +235,7 @@ pub(crate) async fn execute_mcp_generated_verb(
             };
             (output, source.health(), carrier, snapshot, producer_epoch)
         };
+    let hook_notice = mcp_hook_notice(server, actor, hook_notice, &mut snapshot.rows);
     dispatch.producer_epoch = producer_epoch;
     let mut page = mcp_resolve_page(
         server,
@@ -273,7 +274,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         ),
     });
     if let Some(notice) = hook_notice {
-        structured["meta"]["hook_notice"] = Value::String(notice);
+        structured["meta"]["hook_notice"] = notice;
     }
     // A board read records the receipt its hook rows owe before it goes out
     // and spends their blocks once it has, as setup's page one does (OF-579).
@@ -499,6 +500,36 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
     error
 }
 
+/// Resolves the short refs embedded in a notice before releasing its detail.
+/// Allowed detail keeps those rows in the reply's replay provenance, after an
+/// act's own detail narrowing; unknown or held detail stays content-free.
+fn mcp_hook_notice(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    notice: Option<String>,
+    rows: &mut Option<Vec<oneiron::EntityId>>,
+) -> Option<Value> {
+    let notice = notice?;
+    let withheld = || json!(oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device());
+    let Some(named) = crate::device_local::short_refs_in_text(&server.vault, &notice) else {
+        return Some(withheld());
+    };
+    if !crate::device_local::retained_hold(
+        &server.vault,
+        &actor.destination(),
+        &named,
+        notice.as_bytes(),
+    )
+    .is_ok_and(|hold| hold.is_none())
+    {
+        return Some(withheld());
+    }
+    if let Some(rows) = rows {
+        rows.extend(named);
+    }
+    Some(Value::String(notice))
+}
+
 /// A verb hook's stop as the tool result a client reads (ARCH-0080 §3): the
 /// verb gave no output, so `isError` is set, and `structuredContent.hook`
 /// carries the typed stop, a pending ask's invocation and handle included.
@@ -510,6 +541,8 @@ fn mcp_hook_stop_result(
     served: Option<&[oneiron::EntityId]>,
     hook_notice: Option<String>,
 ) -> Result<Value, McpGatewayError> {
+    let mut served = served.map(<[oneiron::EntityId]>::to_vec);
+    let hook_notice = mcp_hook_notice(server, actor, hook_notice, &mut served);
     let text = stop.to_string();
     let mut structured = json!({
         "tool": args.tool.name,
@@ -520,7 +553,11 @@ fn mcp_hook_stop_result(
     });
     let mut content = vec![mcp_text_content(text)];
     if let Some(notice) = hook_notice {
-        content.push(mcp_text_content(notice.clone()));
+        content.push(mcp_text_content(
+            notice
+                .as_str()
+                .map_or_else(|| notice.to_string(), str::to_owned),
+        ));
         structured["meta"] = json!({"hook_notice": notice});
     }
     let result = json!({
@@ -528,7 +565,7 @@ fn mcp_hook_stop_result(
         "structuredContent": structured,
         "isError": true,
     });
-    mcp_release_listed(server, actor, served, false, result)
+    mcp_release_listed(server, actor, served.as_deref(), false, result)
 }
 
 /// Every structured refusal states the same four things: the machine code, the

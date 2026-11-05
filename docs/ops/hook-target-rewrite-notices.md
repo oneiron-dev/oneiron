@@ -15,8 +15,13 @@ post-chain transport errors carry `error.data.hook_notice`. The original stop
 or error is unchanged. A row that failed before its post chain keeps its
 existing error behavior.
 
-The existing destination-release checks apply to the notice as well as the
-rest of the reply. A held reply does not release its target-change text.
+Embedded short refs in a notice are resolved before its detail is released.
+Allowed detail adds those dependencies to the final reply's replay provenance,
+after the action's own result narrowing. Unresolved refs or a held notice use
+`{"details_on_device": true}` in `meta.hook_notice` instead of the text; a typed
+stop's additional text block states that same content-free value. The original
+typed output and error are unchanged. Existing destination-release checks
+still apply to the rest of the reply.
 
 This notice is call-scoped. It contains the verb and the existing change notes,
 clipped at the owner notice's existing detail limit. It adds no caller or
