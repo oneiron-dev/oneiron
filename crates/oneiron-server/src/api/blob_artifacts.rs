@@ -413,6 +413,14 @@ pub(super) async fn view(
     Ok(Json(json!(view)))
 }
 
+struct AppendError(ApiError);
+
+impl From<oneiron::Error> for AppendError {
+    fn from(error: oneiron::Error) -> Self {
+        Self(core_engine_error("artifact version append failed", error))
+    }
+}
+
 /// Append a version, on the head or forked from an earlier version.
 #[utoipa::path(
     post,
@@ -444,7 +452,6 @@ pub(super) async fn append(
     let outcome = blocking_read(move || {
         let vault = server.vault();
         let (occurred, now) = moment(&server);
-        let reader = made_by_reader(&vault, &auth, request.made_by.as_ref())?;
         vault
             .append_blob_artifact_version_checked(
                 &id,
@@ -452,12 +459,12 @@ pub(super) async fn append(
                 &bytes,
                 &provenance,
                 request.made_by.as_ref(),
-                reader,
+                || made_by_reader(vault, &auth, request.made_by.as_ref()).map_err(AppendError),
                 actor,
                 occurred,
                 now,
             )
-            .map_err(|error| core_engine_error("artifact version append failed", error))
+            .map_err(|AppendError(error)| error)
     })
     .await?;
     Ok(Json(match outcome {
@@ -494,31 +501,54 @@ async fn export(
     let file = blocking_read(move || {
         let vault = server.vault();
         let failed = |error: oneiron::Error| core_engine_error("artifact export failed", error);
+        // The exact version served, pinned once before any check (FIX 4997):
+        // every path below reads this version and no other, so a head that
+        // advances mid-export cannot swap what the checks judged.
+        let Some((pinned, rows)) = vault
+            .blob_artifact_version_rows(&id, version)
+            .map_err(failed)?
+        else {
+            return Ok(None);
+        };
+        let lane = caveat_lane(vault, &auth)?;
+        // A wording version whose source the credential cannot read reads as
+        // absent (FIX 4997): judged through the credential's own lane — the
+        // caveat lane when one exists, else one built for the check — whose
+        // own exemptions decide. Never an owner bypass.
+        if vault
+            .commitment_reminder_wording_protected(&id, pinned)
+            .map_err(failed)?
+        {
+            let uncaveated;
+            let guard = match lane.as_ref() {
+                Some(lane) => lane,
+                None => {
+                    uncaveated = crate::api::scoped_read_for_core_auth(vault, &auth)?;
+                    &uncaveated
+                }
+            };
+            if !guard
+                .commitment_reminder_wording_source_readable(&id, pinned)
+                .map_err(failed)?
+            {
+                return Ok(None);
+            }
+        }
         // A credential with record caveats takes the exact version its lane
         // admits (FIX 7645): the artifact, that version's CLAIM and its
         // content's ASSET, judged from its metadata before a byte is read,
         // then that version read and no other. One it withholds reads as
         // absent. A records caveat that names the artifact covers that
         // version's rows for the records check alone (FIX 8245).
-        let version = match caveat_lane(vault, &auth)? {
-            None => version,
-            Some(lane) => {
-                let Some((pinned, rows)) = vault
-                    .blob_artifact_version_rows(&id, version)
-                    .map_err(failed)?
-                else {
-                    return Ok(None);
-                };
-                let lane = lane.with_artifact_records_cover(&[id]);
-                let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
-                if !lane.all_refs_readable(&sources).map_err(failed)? {
-                    return Ok(None);
-                }
-                Some(pinned)
+        if let Some(lane) = lane {
+            let lane = lane.with_artifact_records_cover(&[id]);
+            let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
+            if !lane.all_refs_readable(&sources).map_err(failed)? {
+                return Ok(None);
             }
-        };
+        }
         let file = vault
-            .export_blob_artifact_as(&id, version, sight)
+            .export_blob_artifact_as(&id, Some(pinned), sight)
             .map_err(failed)?;
         let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
@@ -772,20 +802,25 @@ pub(super) async fn propose_deck(
         let vault = server.vault();
         let failed = |error| core_engine_error("deck proposal failed", error);
         let reader = made_by_reader(vault, &auth, request.made_by.as_ref())?;
-        match vault
-            .propose_blob_artifact_deck_edit(&id, &transaction, &request.run_ref, request.context)
-            .map_err(failed)?
-        {
+        let (outcome, read_rows) = vault
+            .propose_blob_artifact_deck_edit_with_reads(
+                &id,
+                &transaction,
+                &request.run_ref,
+                request.context,
+            )
+            .map_err(failed)?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => {
                 let now = vault.now_recorded_at();
                 vault
-                    .retain_edit_proposal(
+                    .retain_edit_proposal_with_reads(
                         &id,
                         &proposal,
                         request.made_by.as_ref(),
                         reader,
-                        actor,
-                        now,
+                        (actor, now),
+                        &read_rows,
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -836,7 +871,7 @@ pub(super) async fn propose_output(
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
-        report: request.report,
+        report: request.report.to_string(),
         made_by: request.made_by,
     };
     let pending = blocking_read(move || {

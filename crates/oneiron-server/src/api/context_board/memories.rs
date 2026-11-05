@@ -3,7 +3,6 @@
 use super::super::companion_scope_resolution_authorized;
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
-use super::cursor::MEMORIES_CURSOR_SESSION_ID_MAX_BYTES;
 use super::cursor::SHARED_SESSION_SCOPE_IDS;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
@@ -309,7 +308,7 @@ fn bounded_pinned_refs(
     memories: Option<&ContextBoardMemoriesControls>,
 ) -> Result<&[String], ApiError> {
     let pinned_refs = memories.map_or(&[][..], |controls| controls.pinned_refs.as_slice());
-    if pinned_refs.len() > 128 || pinned_refs.iter().any(|reference| reference.len() > 128) {
+    if pinned_refs.len() > 128 {
         return Err(ApiError::bad_request(
             "memory pins exceed the bounded reference list",
             Some("memories.pinned_refs"),
@@ -600,12 +599,6 @@ pub(crate) fn validate_session_id(session_id: &str, field: &'static str) -> Resu
     if session_id.trim().is_empty() {
         return Err(ApiError::bad_request(
             format!("{field} must be non-empty"),
-            Some(field),
-        ));
-    }
-    if session_id.len() > MEMORIES_CURSOR_SESSION_ID_MAX_BYTES {
-        return Err(ApiError::bad_request(
-            format!("{field} must be at most {MEMORIES_CURSOR_SESSION_ID_MAX_BYTES} bytes"),
             Some(field),
         ));
     }

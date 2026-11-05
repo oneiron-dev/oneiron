@@ -13,6 +13,7 @@
 //! checks in [`CallHeader::check`], so the daemon refuses a bad request before
 //! it reads any key, and the broker refuses it again before it sends.
 
+mod body;
 mod call;
 pub mod cli;
 mod deadline;
@@ -20,6 +21,8 @@ mod digest;
 mod error;
 mod form;
 mod frame;
+mod responses;
+mod route_keys;
 mod send;
 mod shape;
 mod strip;
@@ -35,6 +38,7 @@ mod peer;
 #[cfg(unix)]
 mod serve;
 
+pub use body::json_body;
 pub use call::{CallHeader, Outcome, ReplyHeader};
 pub use deadline::FRAME_DEADLINE;
 pub use digest::{is_auth_header, request_digest};

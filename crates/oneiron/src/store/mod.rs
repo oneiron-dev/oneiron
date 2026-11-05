@@ -178,6 +178,12 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod attempt_operations;
 pub(crate) use attempt_operations::StoreAttemptOperations;
+#[cfg(unix)]
+pub(crate) mod voice_bank_response;
+#[cfg(unix)]
+pub(crate) use voice_bank_response::StoreVoiceBankResponse;
+pub(crate) mod core_write_operations;
+pub(crate) use core_write_operations::StoreCoreWriteOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 pub(crate) mod critical_confirm_record;
@@ -187,8 +193,8 @@ pub(crate) use gate_hooks::StoreGateHooks;
 mod sync_hooks;
 #[cfg(feature = "sync")]
 pub(crate) use sync_hooks::StoreSyncHooks;
-#[cfg(feature = "sync")]
 pub mod document_frame_tags;
+pub mod framing;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
@@ -202,6 +208,9 @@ pub mod model_score_diff;
 pub(crate) mod model_step_response_carriage;
 pub mod model_step_submission;
 pub(crate) mod model_stream_row;
+pub mod note_body;
+pub mod note_kind;
+pub mod outbound_actor;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub(crate) mod output_decay;
@@ -223,7 +232,6 @@ pub mod result_memory;
 pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
-#[cfg(feature = "sync")]
 pub mod window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
@@ -305,6 +313,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_handle_purpose;
 pub(crate) mod secret_name_index;
 pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
@@ -364,6 +373,7 @@ pub mod revision_ref;
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
+pub(crate) mod shared_leave_receipt;
 mod short_id_alias;
 pub(crate) mod skill_attribution_causes;
 pub(crate) mod skill_attribution_judgments;
@@ -427,10 +437,11 @@ pub(crate) use body_envelope::{
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
+    ResponseOwners, ResponseRead, ResponseScan, bind_missing_response_owners_in_txn,
+    bind_response_in_txn, bind_retained_response_owner_in_txn, carrier_row,
     erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn, stamp_opaque_erased,
+    response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -468,6 +479,9 @@ pub(crate) use key_custody::{
     TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
+};
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
 #[allow(
     unused_imports,
@@ -487,6 +501,7 @@ pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;
 pub(crate) use page_bound::{PageLayout, TreeRows};
 pub(in crate::store) use pending_embedding::*;
+pub(crate) use pending_gate_consent::hashed_string_index_matches;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]
@@ -532,7 +547,7 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
-pub(crate) use usage_sources::erase_usage_source_in_txn;
+pub(crate) use usage_sources::{erase_pending_usage_source_in_txn, erase_usage_source_in_txn};
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
@@ -579,19 +594,27 @@ pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
 
-pub(crate) mod task_authority_guard;
-pub(crate) mod vad_annotation;
+pub(crate) mod habit_streak;
+pub(crate) mod own_rate_rows;
+pub mod persona_snapshot_record;
 
-pub(crate) mod container_output;
-pub(crate) mod live_speaker_calls;
-pub mod record_ref;
-
-pub(crate) mod identity_redirect_rows;
+pub mod query_health;
+pub(crate) mod query_memo_lifetime;
+pub mod skill_source_index;
+pub mod snapshot_catalog;
+pub(crate) mod snapshot_ledger;
+pub(crate) mod snapshot_lifecycle;
 
 pub(crate) mod authority_rows;
 pub mod channel_class;
 pub mod claim_source_ranking;
 pub mod code_document_receipt;
+pub(crate) mod container_output;
+pub(crate) mod identity_redirect_rows;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
 pub(crate) use oneiron_store::vector_insert_plan;
 pub(crate) mod consent_bound;
 pub(crate) mod conversation_summary;

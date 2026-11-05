@@ -82,6 +82,57 @@ impl ActorBound<'_> {
         self.vault
             .put_edge_provenance(claim_id, subject, body, self.actor_class, learned_at)
     }
+
+    /// Writes an `edge.provenance` Claim for an EXISTING structural edge
+    /// carrying the BOUND actor + class (FIX 7755: an explicitly authored
+    /// structural tie) — delegates to
+    /// [`Vault::put_structural_edge_provenance`] with the same fail-closed
+    /// binding check as [`ActorBound::put_edge_provenance`].
+    pub fn put_structural_edge_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        learned_at: u64,
+    ) -> Result<()> {
+        if body.actor_entity_ref != self.actor {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "body actor_entity_ref conflicts with the session-bound actor",
+            )));
+        }
+        self.vault.put_structural_edge_provenance(
+            claim_id,
+            subject,
+            body,
+            self.actor_class,
+            learned_at,
+        )
+    }
+
+    /// Cuts an EXISTING structural edge with the BOUND actor attached
+    /// (FIX 7755: an explicitly authored structural cut) — delegates to
+    /// [`Vault::delete_structural_edge_with_provenance`] with the same
+    /// fail-closed binding check as [`ActorBound::put_edge_provenance`].
+    pub fn delete_structural_edge_with_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        learned_at: u64,
+    ) -> Result<bool> {
+        if body.actor_entity_ref != self.actor {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "body actor_entity_ref conflicts with the session-bound actor",
+            )));
+        }
+        self.vault.delete_structural_edge_with_provenance(
+            claim_id,
+            subject,
+            body,
+            self.actor_class,
+            learned_at,
+        )
+    }
 }
 
 impl Vault {
@@ -175,7 +226,7 @@ impl Vault {
         }
         self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
-                return Err(crate::memory::hard_deleted_refusal(&owner));
+                return Err(crate::vault::entity_refs::hard_deleted_refusal(&owner));
             }
             let now = self.store.clock.now_recorded_at();
             Ok(self.stage_embedded_owner_actor_in_txn(wtxn, now)?)
@@ -211,7 +262,7 @@ impl Vault {
         .map_err(|_| Error::InvariantViolation("agent principal body encode"))?;
         self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &principal)? {
-                return Err(crate::memory::hard_deleted_refusal(&principal));
+                return Err(crate::vault::entity_refs::hard_deleted_refusal(&principal));
             }
             match self.get_entity_type_in_txn(wtxn, &principal)? {
                 Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(principal),
