@@ -77,6 +77,9 @@ struct AttachFolder {
     /// vault knows.
     #[serde(default = "default_kind")]
     kind: String,
+    /// An existing epistemic WORLD id in hex; omitted keeps base reality.
+    #[serde(default)]
+    world: Option<String>,
 }
 
 /// The `import folder attach` default `--kind`: [`AttachFolder::kind`] when
@@ -112,10 +115,19 @@ async fn attach(
         path,
         include,
         kind,
+        world,
     } = payload.read(&server).await?;
-    let attached =
-        blocking(move || folder_sources::attach(server.vault(), &owner, &path, include, &kind))
-            .await?;
+    let attached = blocking(move || {
+        folder_sources::attach(
+            server.vault(),
+            &owner,
+            &path,
+            include,
+            &kind,
+            world.as_deref(),
+        )
+    })
+    .await?;
     Ok(Json(attached))
 }
 

@@ -91,8 +91,13 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         path,
         out,
         kind,
+        world,
         serve,
     } = args;
+    let world = world
+        .as_deref()
+        .map(|world| crate::owner::entity_id("world", world))
+        .transpose()?;
     let started = Instant::now();
     anyhow::ensure!(
         !out.exists(),
@@ -197,6 +202,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         let batch = ImportedNoteBatch {
             request_id: EntityId::now(),
             folder: folder.clone(),
+            world,
             notes: files,
             links,
             name_only,

@@ -778,6 +778,10 @@ pub struct ImportFolderAttachArgs {
     #[arg(long, default_value = "observation")]
     pub kind: String,
 
+    /// The existing epistemic WORLD for new notes, as a hex id; omitted keeps base reality.
+    #[arg(long)]
+    pub world: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -853,6 +857,10 @@ pub struct ImportNotesArgs {
     /// vault knows.
     #[arg(long, default_value = "observation")]
     pub kind: String,
+
+    /// The existing epistemic WORLD for new notes, as a hex id; omitted keeps base reality.
+    #[arg(long)]
+    pub world: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

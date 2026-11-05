@@ -7,7 +7,8 @@ use std::collections::{HashMap, HashSet};
 use super::super::documents::{NoteProgramEdit, NoteProgramEditOutcome};
 use super::super::files::{FileFacts, FileMeta, NameOnlyFile};
 use super::super::import::{
-    ImportedNote, ImportedNoteBatch, ImportedNoteLink, revision, scan_titles, validate_batch,
+    ImportedNote, ImportedNoteBatch, ImportedNoteLink, normalized_import_world, revision,
+    scan_titles, validate_batch,
 };
 use super::{
     FILES, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSourceFile,
@@ -90,7 +91,13 @@ impl Vault {
         let landing = Landing {
             folder: &folder,
             namespace: source.namespace(),
-            world: source.files.as_ref().map(|files| files.world),
+            world: normalized_import_world(
+                source
+                    .files
+                    .as_ref()
+                    .map(|files| files.world)
+                    .or(source.world),
+            ),
         };
         let mut report = FolderRescanReport::default();
         self.land_new_files(
@@ -142,6 +149,7 @@ impl Vault {
         let batch = ImportedNoteBatch {
             request_id: self.new_entity_id()?,
             folder: landing.namespace.clone(),
+            world: landing.world,
             notes,
             links,
             name_only: Vec::new(),
@@ -161,6 +169,7 @@ impl Vault {
             let alone = ImportedNoteBatch {
                 request_id: self.new_entity_id()?,
                 folder: landing.namespace.clone(),
+                world: landing.world,
                 notes: vec![note.clone()],
                 links: Vec::new(),
                 name_only: Vec::new(),

@@ -88,6 +88,9 @@ pub struct ImportedNoteBatch {
     pub request_id: EntityId,
     /// The folder the notes came from, as the host names it.
     pub folder: String,
+    /// The owner's selected existing epistemic WORLD. None or the reserved
+    /// base id lands notes in base reality, with no InWorld edge.
+    pub world: Option<EntityId>,
     pub notes: Vec<ImportedNote>,
     pub links: Vec<ImportedNoteLink>,
     /// Files the host holds by name only, with the bytes the walk read
@@ -264,8 +267,8 @@ impl Vault {
     }
 
     /// The exact batch, described for one approve-once act of `owner`.
-    /// Changing any note, link, name-only file, kind, title, time or the
-    /// request changes the digest.
+    /// Changing any note, link, name-only file, kind, title, time, normalized
+    /// world or the request changes the digest.
     ///
     /// # Errors
     /// Refuses an empty batch, a repeated path or title, a blank or oversize
@@ -327,7 +330,7 @@ impl Vault {
                 txn,
                 owner_actor,
                 &batch.folder,
-                None,
+                normalized_import_world(batch.world),
                 &batch.notes,
                 kinds,
                 &ids,
@@ -365,8 +368,9 @@ impl Vault {
     /// the folder's import MACHINE wrote them, for `importer`: an approved
     /// batch, or the new files of an attached folder (OF-554). Each note's
     /// author is that MACHINE and its birth is Stated, the file's own text.
-    /// A Files source's notes are born in its `world` (FIX 6942), in the
-    /// same write as the note, so no reader ever sees one outside it.
+    /// Notes are born in the selected `world`, including a Files source's
+    /// existing placement (FIX 6942), in the same write as the note, so no
+    /// reader ever sees one outside it. None keeps base reality.
     /// Returns how many links landed.
     ///
     /// # Errors
@@ -615,7 +619,12 @@ pub(super) fn revision(folder: &str, path: &str, markdown: &str) -> [u8; 16] {
     out
 }
 
-/// Every note, link and name-only file of the batch, hashed.
+/// Base reality has no InWorld edge, whichever spelling the owner chose.
+pub(super) fn normalized_import_world(world: Option<EntityId>) -> Option<EntityId> {
+    world.filter(|world| *world != crate::claim::base_world_id())
+}
+
+/// Every note, link, name-only file and normalized world of the batch, hashed.
 fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
     let notes = batch
         .notes
@@ -652,8 +661,14 @@ fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
             )
         })
         .collect::<Vec<_>>();
-    let content = serde_json::to_vec(&(&batch.folder, notes, links, name_only))
-        .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
+    let content = serde_json::to_vec(&(
+        &batch.folder,
+        normalized_import_world(batch.world).map(|world| world.to_hex()),
+        notes,
+        links,
+        name_only,
+    ))
+    .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
     Ok(blake3::hash(&content))
 }
 
