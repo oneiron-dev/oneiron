@@ -69,11 +69,13 @@ a notice cannot make an otherwise valid result disappear. Session-only calls
 may carry the notice without adding a durable receipt or notice record.
 
 A core call reading a drained call's saved completion returns the original
-result and any notice metadata its source supplied. Non-room native drains
-keep the actual hook-chain bit. Credential facade drains keep a positive
-notice flag; an absent flag does not certify that no arguments changed.
-Credential MCP and managed-owner MCP drains keep a positive flag from the
-same hook chain's existing notice. Missing metadata remains unknown, not a
+result or error and any notice metadata its source supplied. Non-room native drains
+keep the actual hook-chain bit for both outcomes. Credential facade drains
+keep a positive notice flag beside the result or error; an absent flag does
+not certify that no arguments changed. Credential MCP and managed-owner MCP
+drains keep a positive flag from the same hook chain's existing notice,
+including a supplied error notice. A receipt failure does not discard an
+already supplied positive notice. Missing metadata remains unknown, not a
 claim that the arguments stayed unchanged. Core room-turn calls do not yet
 supply this metadata. These are separate from a saved HTTP reply, which already
 keeps the notice flag described above. Saved metadata never grants authority
@@ -81,7 +83,8 @@ to run a call.
 
 This HTTP slice does not cover those unsupported completion sources or room-turn
 paths, action-wrapper routes, custody-spool routes, non-facade calls, or errors
-before a notice source was supplied. Drained calls' saved error metadata is also
-not supplied yet. It adds no notice to those paths. The wider caller-notice
+before a notice source was supplied. Completion adapters outside the ordinary
+notice-aware core path are not covered by this slice. It adds no notice to those
+paths. The wider caller-notice
 row remains partial. Deploy matching engine/server and native SDK binaries;
 no guest artifact change is needed.

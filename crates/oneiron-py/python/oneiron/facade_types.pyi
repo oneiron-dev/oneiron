@@ -18946,6 +18946,7 @@ class VerbHookStopCompletedWithError(TypedDict):
     code: str
     message: str
     receipt_ref: NotRequired[str | None]
+    hook_notice: NotRequired[bool | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
 class FacadeMemoryError(TypedDict):
     attempted: NotRequired[str]

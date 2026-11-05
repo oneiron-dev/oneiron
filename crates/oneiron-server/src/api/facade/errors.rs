@@ -331,6 +331,12 @@ impl FacadeApiError {
     /// facade (MCP's row door admission, the held socket's `rpc.err`): its
     /// open code, message and suggestions, its read receipt, wrong-root
     /// correction and hook stop. Only the HTTP status stays behind.
+    pub(crate) fn into_memory_error_with_notice(self) -> (MemoryError, Option<bool>) {
+        let hook_notice = self.hook_notice.then_some(true);
+        (self.into_memory_error(), hook_notice)
+    }
+
+    /// The same refusal without its caller-only notice metadata.
     pub(crate) fn into_memory_error(self) -> MemoryError {
         let FacadeErrorEnvelope { error, narrowing } = self.body;
         let mut refusal = MemoryError::new(&error.code, error.message, &[]);
