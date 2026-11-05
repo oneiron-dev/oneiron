@@ -18,7 +18,6 @@ mod lift;
 mod message_parts;
 mod message_stream;
 mod metadata;
-#[cfg(feature = "sync")]
 mod native_skill_state;
 pub mod office;
 mod pins;

@@ -1,15 +1,13 @@
 //! Preparing a native state witness in a fresh, transaction-owned document.
 
-use loro::{CommitOptions, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
+use loro::{CommitOptions, LoroDoc, VersionVector};
 
 use super::super::{EntityDoc, storage};
 use super::codec::SkillStateFact;
+use super::register::{CURRENT, ROOT, read_fact};
 use crate::EntityId;
 use crate::batch::NativeSkillPostGate;
 use crate::error::{Error, Result};
-
-pub(super) const ROOT: &str = "native_skill_state";
-pub(super) const CURRENT: &str = "current";
 
 /// The scratch document and next witness have no exporter or persistence
 /// terminal. Only the native publisher can consume their private fields.
@@ -18,23 +16,6 @@ pub(super) struct PreparedSkillState {
     pub(super) document: EntityDoc,
     pub(super) before: VersionVector,
     pub(super) next: SkillStateFact,
-}
-
-/// Read only the supplied document; malformed native state is not absence.
-/// This validates the codec, not its native source or carrier standing.
-pub(super) fn read_fact(doc: &EntityDoc) -> Result<Option<SkillStateFact>> {
-    let map = doc.doc.get_map(ROOT);
-    let current = map.get(CURRENT);
-    if map.len() != usize::from(current.is_some()) {
-        return Err(Error::CorruptedIndex("native SKILL state register keys"));
-    }
-    match current {
-        None => Ok(None),
-        Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
-            SkillStateFact::decode(bytes.as_ref()).map(Some)
-        }
-        Some(_) => Err(Error::CorruptedIndex("native SKILL state register")),
-    }
 }
 
 /// Actual local stored source: load the original head and replay into a fresh
