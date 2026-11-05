@@ -35,7 +35,9 @@ use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
 
+mod caller;
 mod execute;
+pub use caller::{SessionWitnessContext, SessionWitnessOutcome};
 mod planning;
 mod provenance;
 
@@ -61,6 +63,8 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// summary is overlay-only (see [`Memory::witness_into_session`]).
     Session {
         session: &'a OffRecordSession<'v>,
+        /// An already captured native caller route; existing one-shot doors mint one.
+        route: Option<&'a SessionWriteRoute>,
         summary: Option<&'a str>,
         admit: Option<Admit<'a>>,
         /// The room whose roster admits speech into its overlay.

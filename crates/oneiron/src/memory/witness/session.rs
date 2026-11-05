@@ -108,6 +108,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: None,
                 rostered: None,
@@ -188,6 +189,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: None,
@@ -243,6 +245,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: Some(room),
@@ -278,6 +281,7 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: None,

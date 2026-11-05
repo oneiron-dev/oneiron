@@ -365,7 +365,6 @@ pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolv
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
-pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -379,6 +378,7 @@ pub use witness::{
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
     StreamSyncVisibility,
 };
+pub use witness::{MessageReplyAssertions, SessionWitnessContext, SessionWitnessOutcome};
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
