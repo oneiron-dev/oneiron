@@ -12,28 +12,29 @@
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "5d315687fdde4be0b324314a39cb86e0cde93631b705db60b96c71e224973c83",
+  "wit_sha256": "0aac0a25e82768c1b4d729455df55071a2b16c573f36798ba15649c7f006541a",
   "sources": {
     "guest.c": "fac7f416152488370b086423a820dc6d484e8a590d88d14743c2989b9bff53c6",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "e4360d957284f4d81dcbb1a5980cabf6a6c8e29696b082ca605fdef588905071",
+    "bootstrap.js": "90735720da69562a7985604db535328632dd67fe26973d5d1a64877b51c23984",
     "reader_forks.js": "8418c12bf23be76f4a4b00682a3fa524acf7b601bf373cfc3328cd2c6b3d1b6a",
-    "diff.js": "928816d75a92bb0e98c21216c2728044c9095d2c6bc75cd38aee2c08981fcf1f",
+    "diff.js": "128383271eadf64d3e8ca2c0b92e104b14e39dc69b191c39da045766c0c9047a",
+    "runtime.d.ts": "e51e567c2c3b7f241190f9b6148416884eeb03223e1ce6986d2d6ff64e722ade",
     "hook_guest.c": "16546a88af133b79f9789c515fc4da8470bae0585ddc438bb3e14fc9184021ab",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "5bd6af632512ba4814536b3e994b249916b27d6de28d10d534db512f74a48370",
-    "build.py": "9a91f060f757413cdf44e9450aa5fa037579a0bfb6cdefde9d37c3761cc7dc56"
+    "build.py": "1ece88cbd1c3fc9f0efed893f6186e3458b4150ecfb3477871cdc49e215bb237"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "e03fce5d9476a0ff436c0f687a57a3818cd85bbafd551a59b5ea347c56542671",
-      "bytes": 1096172
+      "sha256": "792e3cffd16a01968f7bfc9f2f76d3963c21ee5d8df9713f99d2f2c83f7b8b1e",
+      "bytes": 1108462
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "06d45775d0a3132cde95d646d068ffc821447957549e0f4ad4173bd9b9a391a7",
-      "bytes": 1091292
+      "sha256": "7a4d4d590dc6cbb8bf7142fea5bc3710edc35df15ed09cf9f085ad6e5f367076",
+      "bytes": 1103432
     },
     "hook": {
       "file": "quickjs-hook.wasm",

@@ -14,6 +14,7 @@ mod identity_index;
 mod lifecycle;
 mod storage;
 mod trusted_contact;
+mod trusted_contact_credential;
 mod trusted_contact_notice;
 mod types;
 
@@ -24,6 +25,7 @@ pub use self::codec::{
 pub(crate) use self::codec::{
     validate_counterparty_contact_body_bytes, validate_counterparty_contact_claim_structure,
 };
+pub(crate) use self::lifecycle::fold_party_opt_out_heads_for_store_in_txn;
 #[cfg(test)]
 pub(crate) use self::lifecycle::rematerialize_contact_cache_in_txn;
 pub(crate) use self::lifecycle::{

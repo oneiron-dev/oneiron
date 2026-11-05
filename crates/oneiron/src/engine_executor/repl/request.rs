@@ -2,6 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
+use super::super::store::load_script_context;
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -110,10 +111,29 @@ impl EngineNativeExecutor<'_> {
         // Only a Full view expands its body; older steps cost their reference.
         // A Full body is held against the run's share of the result-memory
         // pool first: one that does not fit stays in its file, and its view
-        // falls back to the reference the run reads it by.
+        // falls back to the reference the run reads it by. So does one the
+        // model's window, as the run's compaction seat sizes it, cannot take
+        // beside the bodies already expanded (FIX 312).
         self.context_holds.clear();
+        let window = self
+            .compaction
+            .as_deref()
+            .filter(|seat| seat.is_live())
+            .map(|seat| seat.report().window_tokens)
+            .filter(|tokens| *tokens > 0);
+        let mut expanded_tokens = 0_u64;
         let mut holds = Vec::new();
         let mut left = Vec::new();
+        let mut past_window = Vec::new();
+        let epochs = self.compaction_epochs(record.run_id)?;
+        if !epochs.is_empty() {
+            self.admit_compaction_read()?;
+        }
+        // A step whose output a fold by kind folded shows the fold's stub:
+        // its body is never read, held or counted against the window.
+        let folded_outputs = epochs
+            .folds
+            .kind_folded_steps(crate::compaction::FoldKind::ReplOutput);
         let views = {
             let share = &self.result_share;
             let watch = self.storage.limit_watch();
@@ -122,21 +142,34 @@ impl EngineNativeExecutor<'_> {
                     let seq = steps
                         .get(&source)
                         .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    if folded_outputs.contains(seq) {
+                        return Ok(None);
+                    }
                     let Some(hold) = share.hold(source.byte_len, watch) else {
                         left.push((*seq, source));
                         return Ok(None);
                     };
+                    let text =
+                        load_context_output(&self.storage, record, &observation_output_path(*seq))?;
+                    if let Some(window) = window {
+                        let tokens = crate::tokenizer::count_context_pack_tokens(&text) as u64;
+                        if expanded_tokens.saturating_add(tokens) > window {
+                            past_window.push((*seq, source));
+                            return Ok(None);
+                        }
+                        expanded_tokens = expanded_tokens.saturating_add(tokens);
+                    }
                     holds.push((source, hold));
-                    load_context_output(&self.storage, record, &observation_output_path(*seq))
-                        .map(|text| Some(text.into_bytes()))
+                    Ok(Some(text.into_bytes()))
                 })?
         };
-        let memory_note = result_memory_note(&self.result_share, &holds, &left);
+        let memory_note = result_memory_note(
+            &self.result_share,
+            &holds,
+            &left,
+            window.map(|tokens| (tokens, past_window.as_slice())),
+        );
         self.context_holds = holds.into_iter().map(|(_, hold)| hold).collect();
-        let epochs = self.compaction_epochs(record.run_id)?;
-        if !epochs.is_empty() {
-            self.admit_compaction_read()?;
-        }
         // The replies parked calls resumed with, by the step that parked.
         let resumed: BTreeMap<u64, &CodeRunRawOutput> = record
             .outputs
@@ -144,6 +177,8 @@ impl EngineNativeExecutor<'_> {
             .filter_map(|output| resumed_output_wait(&output.path).map(|(seq, _)| (seq, output)))
             .collect();
         let mut swapped = false;
+        // The folds by kind whose note a shown stub already carries.
+        let mut noted = std::collections::BTreeSet::new();
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
@@ -158,17 +193,33 @@ impl EngineNativeExecutor<'_> {
             let view = view.clone();
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
-            let console = match view.tier {
-                OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
-                    .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
-                OutputTier::Stub => serde_json::to_string(&json!({
-                    "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
-                    "byte_len": view.source.byte_len,
-                    "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
-                }))?,
+            let folded = epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::ReplOutput, seq as u64);
+            let console = match folded {
+                // A fold by kind keeps the program and its say() messages;
+                // the console shows the fold's stub, which keeps the
+                // output's handles (ARCH-0067 §2.2, fold by kind).
+                Some(fold) => fold
+                    .output_stub(seq as u64, noted.insert(fold.fold))
+                    .unwrap_or_default(),
+                None => match view.tier {
+                    OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
+                        .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
+                    OutputTier::Stub => serde_json::to_string(&json!({
+                        "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
+                        "byte_len": view.source.byte_len,
+                        "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                    }))?,
+                },
             };
             let turn = CodeRunHistoryTurn {
-                code: load_context_output(&self.storage, record, &script_output_path(seq as u64))?,
+                code: load_script_context(
+                    &self.storage,
+                    record,
+                    &script_output_path(seq as u64),
+                    None,
+                )?,
                 console,
             };
             messages.push(LlmMessage {
@@ -411,6 +462,7 @@ pub(super) fn result_memory_note(
     share: &crate::result_memory::ResultShare,
     held: &[(OutputRef, crate::result_memory::ResultHold)],
     left: &[(u64, OutputRef)],
+    past_window: Option<(u64, &[(u64, OutputRef)])>,
 ) -> Option<String> {
     let mut lines = Vec::new();
     let share_bytes = share.bytes();
@@ -440,6 +492,16 @@ pub(super) fn result_memory_note(
             "Result of step {seq} ({} bytes) left context memory: it would pass \
              limits.code_result_session_memory_bytes or limits.code_result_memory_bytes. \
              It is stored whole; read it with sandbox.fs.read_file(\"{}\").",
+            source.byte_len,
+            recoverable_chunk_path(*seq, *source, 0)
+        ));
+    }
+    let (window, past_window) = past_window.unwrap_or_default();
+    for (seq, source) in past_window {
+        lines.push(format!(
+            "Result of step {seq} ({} bytes) left context: with the results before it, it \
+             would pass this run's {window}-token model window. It is stored whole; read it \
+             with sandbox.fs.read_file(\"{}\").",
             source.byte_len,
             recoverable_chunk_path(*seq, *source, 0)
         ));

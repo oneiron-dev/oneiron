@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 use super::actor_dispatch::{mcp_proof_error, mcp_proof_headers};
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, mcp_actor_result, mcp_endpoint_result,
-    mcp_facade_error, mcp_release_result,
+    mcp_facade_error,
 };
 use crate::api::call_receipt::CallStamp;
 use crate::api::facade::FacadeApiError;
@@ -71,13 +71,15 @@ pub(crate) async fn execute_mcp_invoke_action(
         request,
     )
     .await;
-    let mut output = output.map_err(|error| {
+    let output = output.map_err(|error| {
         let mut error = mcp_action_error(error);
         if row_receipt(&row).is_some() {
             error.row_receipt = Some(Box::new(row.clone()));
         }
         error
     })?;
+    let rows = output.rows;
+    let mut output = output.value;
     // A step's type feedback leaves on its own release (FIX 10390), as on
     // the generated verb path: the row's output rides string-encoded in its
     // outcome.
@@ -105,14 +107,15 @@ pub(crate) async fn execute_mcp_invoke_action(
         McpCarrierPolicy::Drain,
     )
     .await;
-    mcp_release_result(server, actor, &[], false, result).map(|result| {
-        super::type_feedback_release::attach_action_feedback(
-            server,
-            actor,
-            Some(&[]),
-            feedback,
-            result,
-        )
+    let rows = rows.as_deref();
+    super::device_release::mcp_release_action_result(server, actor, rows, result).map(|result| {
+        let result = super::type_feedback_release::attach_action_feedback(
+            server, actor, rows, feedback, result,
+        );
+        // The claim keeps the final reply, including its separately released
+        // feedback, beside the same producer rows.
+        super::claimed_release::record(&result, rows);
+        result
     })
 }
 

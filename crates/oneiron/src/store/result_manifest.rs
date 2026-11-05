@@ -1,50 +1,10 @@
-//! Result-body manifests, occurrence identifiers and their format bounds.
+//! Core half of `store::result_manifest`: its store-layer items live in `oneiron_store::result_manifest` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::result_manifest::*;
 
 use crate::error::ArtifactError;
 use crate::{EntityId, Error, Result};
-
-pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
-pub(crate) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
-pub(crate) const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
-
-/// The preview text of a body the secret scan marked.
-pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
-    "[preview withheld: the secret scan found a secret in this result]";
-
-/// Compact preview stored in a replay record beside a raw output handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CodeRunOutputPreview {
-    pub codec: String,
-    pub text: String,
-    pub truncated: bool,
-}
-
-/// What a result body holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeRunOutputKind {
-    /// The whole body is UTF-8.
-    Text,
-    /// Anything else, kept byte for byte.
-    Binary,
-}
-
-impl CodeRunOutputKind {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Binary => "binary",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "text" => Some(Self::Text),
-            "binary" => Some(Self::Binary),
-            _ => None,
-        }
-    }
-}
 
 /// One result occurrence's manifest (OF-597): what the body is, measured
 /// as it was written. The body is stored once by its content handle, inline
@@ -210,17 +170,6 @@ impl ResultOccurrence {
             .ok_or(Error::CorruptedIndex("code-run result mark key"))?;
         Ok((handle, Self(EntityId::from_hex(occurrence)?)))
     }
-}
-
-pub(crate) fn validate_text(value: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    if value.trim().is_empty() || value.len() > max_bytes {
-        return Err(invalid_code_run_replay(field));
-    }
-    Ok(())
-}
-
-pub(crate) fn invalid_code_run_replay(message: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(message))
 }
 
 /// What result bodies staged inside one write transaction spill into,

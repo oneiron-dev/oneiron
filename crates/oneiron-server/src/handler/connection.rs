@@ -256,6 +256,7 @@ enum ConnEvent {
     LeafKeys,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
+    ResidenceAnswered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
 
 /// How many verb RPCs one socket runs at once, off its loop. The loop reads
@@ -293,6 +294,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         | SyncMessage::LfsChunks(_)
         | SyncMessage::AssetBody { .. }
         | SyncMessage::LeafKey { .. }
+        | SyncMessage::SealedUpdate(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }

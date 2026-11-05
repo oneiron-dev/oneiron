@@ -10,7 +10,7 @@ side_tables! {
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
     DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named
-        => crate::llm::decision::erase_rule_actor_in_txn;
+        => crate::store::decision_rule_rows::erase_rule_actor_in_txn;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -121,7 +121,7 @@ side_tables! {
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
     /// accidental collision if the same (attempt, artifact_id) pair is ever used from both callers.
     /// Key: id16 + u16be + string.
-    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored
+    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored [accepts: crate::critic::critique_artifact_accepts_masked]
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
@@ -146,7 +146,7 @@ side_tables! {
     /// FIX 4453: one free-time cycle: its policy snapshot, period, root spend scope, items, the
     /// agent's note to its human (its own words, admitted at the wall) and its own-time choice.
     /// Key: id16 (agent) + u64be (boundary).
-    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored;
+    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored [accepts: crate::dreamer_runner::dreamer_free_time_cycle_accepts_masked];
     /// FIX 4453: the immutable binding of one free-time item attempt to its agent, cycle, item,
     /// label and spend scope, stamped when its cycle opened. Key: id16 (attempt).
     DREAMER_FREE_TIME_ITEM: VaultMeta b"dreamer:free_time:item:v1:" Named;
@@ -245,7 +245,7 @@ side_tables! {
     /// Prefilter skip receipt. Key: bytes32 + id16.
     PREFILTER_SKIP: VaultMeta b"dreamer:prefilter:skip:v1:" Named;
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
-    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored;
+    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_digest_accepts_masked];
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
@@ -330,7 +330,7 @@ side_tables! {
     DREAMER_STEP_RESPONSE_PIN: VaultMeta b"dreamer:step_response_pin:v1:" Named Engine;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
-    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;
+    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored [accepts: crate::llm::dreamer_step_state_accepts_masked];
     /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
     /// value: u64be.
     DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
@@ -431,6 +431,9 @@ side_tables! {
     /// erase re-keys the project it names (FIX 6038). Key: string.
     EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Uncaptured-amendment counters per door (FIX 11542): how many store-row
+    /// and inbox amendments measured nothing. Key: string (door).
+    EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT: VaultMeta b"edit_distance/amendment_uncaptured_count/v1\0" Raw;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
@@ -454,6 +457,9 @@ side_tables! {
     EDIT_DISTANCE_JUDGE_AUDIT: VaultMeta b"edit_distance/judge_audit/v1\0" Raw;
     /// Monotonic counter behind EDIT_DISTANCE_JUDGE_AUDIT's sequence half. Key: ().
     EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE: VaultMeta b"edit_distance/judge_audit_sequence/v1" Raw;
+    /// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the receipt ids taught
+    /// on one claim. Key: id16.
+    EDIT_DISTANCE_MINER_CLAIM_RECEIPTS: VaultMeta b"edit_distance/miner_claim_receipts/v1\0" Named;
     /// Mint-mark preventing a re-mint of the same substitution cluster, keyed by cluster handle. Key:
     /// hash32.
     EDIT_DISTANCE_MINER_MINT_MARK: VaultMeta b"edit_distance/miner_mint_mark/v1\0" Raw;

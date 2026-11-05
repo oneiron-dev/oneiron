@@ -28,6 +28,8 @@ pub(crate) struct HostUnitDecider<'s> {
     class: EdgeActorClass,
     /// The run label a vision seat's read is recorded under.
     label: &'static str,
+    /// The live caller's bound session, absent on standing work.
+    session: Option<String>,
     /// A standing question's criteria, beside each unit's state.
     criteria: QuestionCriteria,
     /// A standing question's posture where it is stricter than the vault's.
@@ -35,11 +37,17 @@ pub(crate) struct HostUnitDecider<'s> {
 }
 
 impl<'s> HostUnitDecider<'s> {
-    pub(crate) fn new(server: &'s SyncServer, class: EdgeActorClass, label: &'static str) -> Self {
+    pub(crate) fn new(
+        server: &'s SyncServer,
+        class: EdgeActorClass,
+        label: &'static str,
+        session_ref: Option<&str>,
+    ) -> Self {
         Self {
             server,
             class,
             label,
+            session: session_ref.map(str::to_owned),
             criteria: QuestionCriteria::default(),
             posture: None,
         }
@@ -118,7 +126,11 @@ impl UnitDecider for HostUnitDecider<'_> {
 
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
         let state = self.state(call.state);
-        ladder_decide(self.server, self.ladder_call(call, &state))
+        crate::decision_verdict::with_model_call_context(
+            call.principal,
+            self.session.as_deref(),
+            || ladder_decide(self.server, self.ladder_call(call, &state)),
+        )
     }
 
     /// Presence first on the host's ladder, its images seated as
@@ -201,7 +213,7 @@ pub(crate) fn pump_answer_wakes_while(
             vault.wake_answer_proposer(
                 &wake,
                 actor,
-                &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask"),
+                &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask", None),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
                 renderer

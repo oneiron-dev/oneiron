@@ -15,9 +15,9 @@
 use super::claims::{RepoProjectionCheckoutRecipient, RepoProjectionClaim, RepoProjectionRecord};
 use super::recipient::RepoProjectionRevealBinding;
 use crate::Vault;
-use crate::checkout::lease::CheckoutLeaseAct;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::checkout_lease::CheckoutLeaseAct;
 
 /// Records that `lease`, bound to a masked copy, was bound for `reveal`;
 /// says whether it wrote the companion. A lease bound to no copy writes

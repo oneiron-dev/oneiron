@@ -16,12 +16,16 @@ use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
 use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt};
 
 use self::pricing::CatalogPrices;
+use self::redelivery::PendingSettlements;
+use crate::byte_line::ByteLine;
 use crate::usage::{
     UnpricedReason, UsageAllocation, UsageCostRates, UsageError, UsageEvent, UsageEventType,
-    UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
+    UsageLedger, UsageMode, UsageRun, UsageServiceCost, UsageTokenCounts,
 };
+use crate::wire_telemetry::LimitQuestions;
 
 mod pricing;
+mod redelivery;
 mod settlement;
 
 /// One host-resolved owner and authority-log vault id. Runs cannot supply or
@@ -36,6 +40,10 @@ pub struct VaultUsage {
     /// The trusted host's explicit overrides, keyed by the exact offer.
     provider_rates: RwLock<BTreeMap<String, UsageCostRates>>,
     calls: Mutex<BTreeMap<(EntityId, String), AdmittedCall>>,
+    retained: Arc<ByteLine>,
+    questions: Arc<LimitQuestions>,
+    pending_settlements: Mutex<PendingSettlements>,
+    settlement_cursor: Mutex<Option<String>>,
 }
 
 struct AdmittedCall {
@@ -51,15 +59,33 @@ struct AdmittedCall {
     price_sources: Option<Vec<EntityId>>,
     /// The billing owner the call's usage lands on, fixed at admission.
     owner: String,
+    service_cost: Option<UsageServiceCost>,
 }
 
 impl VaultUsage {
+    /// Adds a known provider cost to the already admitted physical service call.
+    pub(crate) fn record_service_cost(
+        &self,
+        instance: EntityId,
+        lease: &str,
+        cost: UsageServiceCost,
+    ) {
+        let mut calls = self.calls.lock().expect("usage calls lock poisoned");
+        if let Some(call) = calls.get_mut(&(instance, lease.to_owned()))
+            && call.facts.model.is_none()
+        {
+            call.service_cost = Some(cost);
+        }
+    }
+
     /// `catalog` is the vault whose model registry prices each admitted call.
     pub(crate) fn new(
         ledger: UsageLedger,
         owner: String,
         vault_id: String,
         catalog: Arc<oneiron::Vault>,
+        retained: Arc<ByteLine>,
+        questions: Arc<LimitQuestions>,
     ) -> Result<Arc<Self>, UsageError> {
         // Validate the scope before binding it. The derived rollup is warmed
         // here, and one that cannot be read never keeps the meter from
@@ -72,6 +98,7 @@ impl VaultUsage {
                 "the vault usage rollup could not be read; calls are still metered"
             );
         }
+        let pending_settlements = Mutex::new(PendingSettlements::new(&retained));
         Ok(Arc::new(Self {
             ledger,
             owner,
@@ -79,6 +106,10 @@ impl VaultUsage {
             catalog: CatalogPrices::new(catalog),
             provider_rates: RwLock::default(),
             calls: Mutex::default(),
+            retained,
+            questions,
+            pending_settlements,
+            settlement_cursor: Mutex::default(),
         }))
     }
 

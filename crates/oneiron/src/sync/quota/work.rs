@@ -104,6 +104,11 @@ impl<'a> MaintenanceOp<'a> {
             blob,
         }
     }
+
+    /// Full envelope bytes this op would debit against the byte share.
+    pub(super) fn quota_bytes(&self) -> u64 {
+        self.blob.len() as u64
+    }
 }
 
 thread_local! {

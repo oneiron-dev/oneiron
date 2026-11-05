@@ -185,7 +185,11 @@ fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     let newer_abi = STORAGE_ABI_VERSION + 1;
     set_raw_storage_abi_version(path, Some(newer_abi))?;
 
-    let store_err = match Store::open(path, &test_config()) {
+    let store_err = match Store::open(
+        path,
+        &test_config(),
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+    ) {
         Ok(_) => panic!("Store::open must run the ABI gate"),
         Err(err) => err,
     };

@@ -59,135 +59,16 @@ use crate::authority::SealedCopies;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
 use crate::store::{Store, WorldPadCustody};
+use oneiron_store::world_pad_codec::key_of_id;
 
-/// The carrier form's label.
-const CARRIER_LABEL: &[u8] = b"oneiron/world-key-pad/v1\0";
-/// label ‖ world (16) ‖ generation (8, big-endian) ‖ mint (16) ‖ pad (32).
-const CARRIER_LEN: usize = CARRIER_LABEL.len() + 16 + 8 + 16 + 32;
-/// The reference form's label (CALLS: KS-5 pad reference form).
-const REFERENCE_LABEL: &[u8] = b"oneiron/world-key-pad-ref/v1\0";
-/// label ‖ world (16) ‖ generation (8, big-endian) ‖ mint (16) ‖ custody
-/// namespace (16): the bare reference.
-const REFERENCE_LEN: usize = REFERENCE_LABEL.len() + 16 + 8 + 16 + 16;
-/// The reference ‖ the row's own pad (32): the row at rest.
-const RESTING_LEN: usize = REFERENCE_LEN + 32;
-
-/// One pad row's body, decoded.
-pub(crate) enum PadBody {
-    /// The pad itself, as it travels.
-    Carrier(WorldKeyId, WorldKeyPad),
-    /// The key whose pad current custody holds, with the row's own pad
-    /// beside it at rest; `None` for a bare reference.
-    Reference(WorldKeyId, Option<WorldKeyPad>),
-}
-
-impl PadBody {
-    pub(crate) fn key(&self) -> &WorldKeyId {
-        match self {
-            Self::Carrier(key, _) | Self::Reference(key, _) => key,
-        }
-    }
-
-    /// The pad the body itself holds: a carrier's, or the one a reference
-    /// rests beside.
-    pub(super) fn pad(&self) -> Option<&WorldKeyPad> {
-        match self {
-            Self::Carrier(_, pad) | Self::Reference(_, Some(pad)) => Some(pad),
-            Self::Reference(_, None) => None,
-        }
-    }
-
-    fn into_pad(self) -> Option<WorldKeyPad> {
-        match self {
-            Self::Carrier(_, pad) | Self::Reference(_, Some(pad)) => Some(pad),
-            Self::Reference(_, None) => None,
-        }
-    }
-}
-
-/// The custody item `key`'s pad rests under: its full id, world |
-/// generation | mint (CALLS: FIX 5686 pad custody item codec).
-pub(super) fn pad_item(key: &WorldKeyId) -> [u8; 40] {
-    key.envelope_key_id()
-}
-
-/// `key` ‖ `pad` as a carrier body.
-pub(super) fn encode_carrier(key: &WorldKeyId, pad: &[u8; 32]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(CARRIER_LEN);
-    body.extend_from_slice(CARRIER_LABEL);
-    body.extend_from_slice(&pad_item(key));
-    body.extend_from_slice(pad);
-    body
-}
-
-/// The bare reference: `key`'s reference into `namespace`, no pad beside it.
-pub(super) fn encode_reference(key: &WorldKeyId, namespace: &[u8; 16]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(REFERENCE_LEN);
-    body.extend_from_slice(REFERENCE_LABEL);
-    body.extend_from_slice(&pad_item(key));
-    body.extend_from_slice(namespace);
-    body
-}
-
-/// The custody namespace a reference `body` names, unsigned; `None` for a
-/// carrier or a body that does not decode.
-pub(super) fn reference_namespace(body: &[u8]) -> Option<[u8; 16]> {
-    if !matches!(body.len(), REFERENCE_LEN | RESTING_LEN) || !body.starts_with(REFERENCE_LABEL) {
-        return None;
-    }
-    let at = REFERENCE_LABEL.len() + 40;
-    body.get(at..at + 16)?.try_into().ok()
-}
-
-/// The row at rest: `key`'s reference into `namespace`, its `pad` beside it.
-pub(super) fn encode_resting(key: &WorldKeyId, namespace: &[u8; 16], pad: &[u8; 32]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(RESTING_LEN);
-    body.extend_from_slice(REFERENCE_LABEL);
-    body.extend_from_slice(&pad_item(key));
-    body.extend_from_slice(namespace);
-    body.extend_from_slice(pad);
-    body
-}
-
-/// The key a full id names: world (16) ‖ generation (8, big-endian) ‖ mint
-/// (16).
-fn key_of_id(id: &[u8]) -> Option<WorldKeyId> {
-    Some(WorldKeyId {
-        world: EntityId::from_bytes(id.get(..16)?.try_into().ok()?).ok()?,
-        generation: u64::from_be_bytes(id.get(16..24)?.try_into().ok()?),
-        mint: id.get(24..40)?.try_into().ok()?,
-    })
-}
-
-/// A pad row's body in any of its forms; anything else is malformed.
-pub(crate) fn decode_pad_body(body: &[u8]) -> Result<PadBody> {
-    let malformed = || Error::CorruptedIndex("world key pad body");
-    let (rest, carrier) = if body.len() == CARRIER_LEN && body.starts_with(CARRIER_LABEL) {
-        (&body[CARRIER_LABEL.len()..], true)
-    } else if matches!(body.len(), REFERENCE_LEN | RESTING_LEN) && body.starts_with(REFERENCE_LABEL)
-    {
-        (&body[REFERENCE_LABEL.len()..], false)
-    } else {
-        return Err(malformed());
-    };
-    let key = key_of_id(rest).ok_or_else(malformed)?;
-    // A carrier's pad follows its key; a reference at rest's, its namespace.
-    let pad = rest
-        .get(if carrier { 40 } else { 56 }..)
-        .filter(|raw| raw.len() == 32)
-        .map(|raw| {
-            let mut pad = Zeroizing::new([0u8; 32]);
-            pad.copy_from_slice(raw);
-            WorldKeyPad::from_bytes(pad)
-        });
-    Ok(match pad {
-        Some(pad) if carrier => PadBody::Carrier(key, pad),
-        pad => PadBody::Reference(key, pad),
-    })
-}
+pub(crate) use crate::store::world_pad_rows::pad_row_erased_in_txn;
+pub(crate) use oneiron_store::world_pad_codec::{PadBody, decode_pad_body, pad_row_of_item};
+pub(super) use oneiron_store::world_pad_codec::{
+    encode_carrier, encode_reference, encode_resting, pad_item, reference_namespace,
+};
 
 /// The pad `body` resolves to here: its own first, a carrier's or the one a
 /// reference rests beside, and current custody's only for a bare reference.
@@ -569,30 +450,6 @@ fn stage_local_pad_row_retirement_in_txn(
             Ok(())
         }
     }
-}
-
-/// The pad row id of the key a custody `item` (its full id) names; `None`
-/// for an item that names no key.
-///
-/// # Errors
-///
-/// An id that does not derive.
-pub(crate) fn pad_row_of_item(item: &[u8]) -> Result<Option<EntityId>> {
-    key_of_id(item).map(|key| pad_row_id(&key)).transpose()
-}
-
-/// Whether the pad row of the key a custody `item` (its full id) names was
-/// hard-erased here: the custody finisher's check for a retirement
-/// [`stage_pad_row_erase_in_txn`] staged.
-///
-/// # Errors
-///
-/// Storage faults.
-pub(crate) fn pad_row_erased_in_txn(store: &Store, txn: &RoTxn<'_>, item: &[u8]) -> Result<bool> {
-    let Some(key) = key_of_id(item) else {
-        return Ok(false);
-    };
-    store.port_deletion_marked(txn, DeletionMarker::HardDelete, &pad_row_id(&key)?)
 }
 
 /// Whether a custody head leaves out the pads [`head_carries`] keeps off

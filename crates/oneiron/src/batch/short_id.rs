@@ -204,10 +204,11 @@ pub(super) fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64
 }
 
 pub(super) fn delete_related_edges(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
+    let store = write.store;
     let outbound: Vec<_> = store
         .port_edges(wtxn, id, EdgeDirection::Out, None, None)?
         .map(|row| row.map(|edge| (edge.kind, edge.target)))
@@ -221,7 +222,7 @@ pub(super) fn delete_related_edges(
     // `id`'s edges go. A deletion that already captured them adds nothing.
     for (kind, source) in &inbound {
         if *kind == crate::edge::EdgeKind::DerivedFrom && source != id {
-            crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, source, id)?;
+            crate::ports::withdraw_from_lost_source_in_txn(write, wtxn, source, id)?;
         }
     }
     for (kind, target) in &outbound {

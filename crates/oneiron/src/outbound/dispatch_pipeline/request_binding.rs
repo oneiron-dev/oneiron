@@ -13,6 +13,7 @@ use crate::outbound::capability::{
     OutboundReplaySafety, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
+use crate::outbound::dispatch_types::OutboundDispatchRiskGate;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
 use crate::outbound::linkedin_policy::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;

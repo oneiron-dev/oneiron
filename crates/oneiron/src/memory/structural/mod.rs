@@ -15,11 +15,13 @@ pub use self::productivity::{
     ProductivityTree, ProductivityTreeRequest,
 };
 pub use self::types::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
-    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
+    TextIndexField,
 };
 
 pub(crate) use self::affiliated::append_agent_diary_in_txn;
+pub(crate) use self::affiliated::append_dissent_in_txn;
 use self::codec::registered_edge_weight;
 pub(super) use self::codec::{kind_string_for_type, type_byte_for_kind};
 pub(super) use self::guards::ensure_structural_create_in_txn;

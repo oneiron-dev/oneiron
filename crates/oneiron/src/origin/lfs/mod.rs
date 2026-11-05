@@ -9,12 +9,13 @@
 //! references are journaled and reclaimed in small transactions. Explicit
 //! object deletion is permanent; detaching a Git ref never destroys bytes.
 
+mod batch_client;
 mod chunks;
 mod lifecycle;
 mod lift;
-mod oid;
-mod pointer;
-mod policy;
+use oneiron_store::origin::lfs::oid;
+use oneiron_store::origin::lfs::pointer;
+use oneiron_store::origin::lfs::policy;
 mod read_room;
 mod scanner;
 mod store;
@@ -36,6 +37,7 @@ pub use self::store::{
     lfs_repo_id,
 };
 pub use self::upload::{LFS_DEFAULT_OBJECT_CAP, LFS_WHOLE_SCAN_MAX};
+pub(crate) use batch_client::LfsBatchRemote;
 pub(crate) use chunks::random_lfs_chunk_seed;
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, lfs_chunk_owners_in_txn,

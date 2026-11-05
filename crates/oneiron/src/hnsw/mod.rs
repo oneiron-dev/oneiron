@@ -2,7 +2,7 @@
 
 mod delete;
 mod discipline;
-mod entry_point;
+use oneiron_retrieval::hnsw_entry_point as entry_point;
 mod insert;
 mod keys;
 mod one_way;
@@ -15,7 +15,8 @@ mod types;
 pub(crate) use self::delete::hnsw_deindex;
 pub(crate) use self::discipline::{LinkDiscipline, read_link_discipline};
 pub(crate) use self::insert::{
-    InsertPlan, hnsw_insert_batched, hnsw_insert_planned, run_pending_legacy_rebuild,
+    InsertPlan, InsertPlanSearch, hnsw_insert_batched, hnsw_insert_planned,
+    run_pending_legacy_rebuild,
 };
 pub(crate) use self::keys::COUNT_KEY;
 pub(crate) use self::rebuild::{

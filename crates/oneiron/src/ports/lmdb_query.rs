@@ -307,18 +307,28 @@ impl super::EntityWriteSegmentRead for crate::store::SessionStoreView<'_> {
     }
 }
 pub(super) fn decode_record(raw: &[u8]) -> Result<EntityRecord> {
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let (header, body) = decode_record_parts(raw)?;
     #[cfg(test)]
     super::row_copies::saw(raw);
-    Ok(EntityRecord {
+    Ok(record_from_parts(header, body.to_vec()))
+}
+
+pub(super) fn decode_record_parts(raw: &[u8]) -> Result<(EntityMetadataHeader, &[u8])> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    Ok((header, &raw[ENTITY_METADATA_HEADER_LEN..]))
+}
+
+pub(super) fn record_from_parts(header: EntityMetadataHeader, body: Vec<u8>) -> EntityRecord {
+    EntityRecord {
         entity_type: header.entity_type,
         occurred: crate::TimeRange {
             start: header.occurred_start,
             end: header.occurred_end,
         },
         learned_at: header.learned_at,
-        body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-    })
+        row_version: header.row_version,
+        body,
+    }
 }
 
 impl<T: ManifestDbs> super::EdgeStoreRead for T {

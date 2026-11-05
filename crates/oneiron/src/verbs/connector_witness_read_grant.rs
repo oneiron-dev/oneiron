@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::MemoryResult;
@@ -47,10 +48,12 @@ pub struct ConnectorWitnessReadGrantRevoked {
 pub fn revoke_connector_witness_read_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: ConnectorWitnessReadGrantRevokeRequest,
 ) -> MemoryResult<ConnectorWitnessReadGrantRevoked> {
     let revoke = vault.revoke_connector_witness_read_grant(
         owner,
+        surface,
         &input.grant_ref,
         crate::unix_seconds_now(),
     )?;
@@ -102,10 +105,12 @@ pub struct ConnectorWitnessReadGranted {
 pub fn grant_connector_witness_read_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: ConnectorWitnessReadGrantRequest,
 ) -> MemoryResult<ConnectorWitnessReadGranted> {
     let granted = vault.grant_connector_witness_read_grant(
         owner,
+        surface,
         input.agent,
         input.conversation,
         crate::unix_seconds_now(),

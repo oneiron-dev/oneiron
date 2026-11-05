@@ -150,9 +150,10 @@ impl OfficeRecalcZone {
         if !(-840..=840).contains(&utc_offset_minutes) {
             return Err(invalid("utc_offset_minutes must be in -840..=840"));
         }
-        if iana_timezone.as_deref().is_some_and(|label| {
-            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
-        }) {
+        if iana_timezone
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+        {
             return Err(invalid(
                 "iana_timezone must be non-blank and contain no controls",
             ));

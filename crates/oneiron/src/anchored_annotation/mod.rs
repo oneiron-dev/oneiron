@@ -68,9 +68,9 @@ pub use self::recovery::{ReattachOffer, UnattachedThread};
 pub use self::wire::{
     AnnotationAnchorView, AnnotationAssignRequest, AnnotationBodyAnchorView, AnnotationBriefView,
     AnnotationCommentRequest, AnnotationCommentView, AnnotationDriftView, AnnotationLocator,
-    AnnotationPinRequest, AnnotationResolution, AnnotationStateRequest, AnnotationThreadOpenRequest,
-    AnnotationThreadRequest, AnnotationThreadState, AnnotationThreadView, ArtifactUnitView,
-    ArtifactUnitsRequest, ArtifactUnitsView,
+    AnnotationPinRequest, AnnotationResolution, AnnotationStateRequest,
+    AnnotationThreadOpenRequest, AnnotationThreadRequest, AnnotationThreadState,
+    AnnotationThreadView, ArtifactUnitView, ArtifactUnitsRequest, ArtifactUnitsView,
 };
 pub(crate) use threads::thread_brief_ref;
 

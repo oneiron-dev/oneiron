@@ -5,6 +5,7 @@
 //! the same code. No proposal lands a file here.
 
 use super::*;
+use crate::code_document::CodeOpProvenanceValidation;
 use crate::memory::repo_doors::RepoRunStamp;
 use crate::repo_mutation::snapshot::RepoPinnedBase;
 
@@ -161,7 +162,7 @@ impl Vault {
             RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
-            &BTreeSet::new(),
+            &crate::repo_mutation::bundle::ProvenFiles::new(),
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
@@ -172,15 +173,15 @@ impl Vault {
     /// bundle. A path in `proven` is one a secret remediation read whole
     /// from the canonical commit its pinned base is (FIX 7608 slice 6): it
     /// may change a file the base withholds, whose old bytes are never
-    /// stored, while its new bytes are kept under custody as any are. A
-    /// refusal in `check` writes nothing.
+    /// stored (only their BLAKE3, FIX 10974), while its new bytes are kept
+    /// under custody as any are. A refusal in `check` writes nothing.
     pub(in crate::repo_mutation) fn propose_repo_bundle_checked<R>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
-        proven: &BTreeSet<String>,
+        proven: &crate::repo_mutation::bundle::ProvenFiles,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -226,7 +227,7 @@ impl Vault {
         let custody = SnapshotCustody::of(self, &repo_root)?;
         for file in &files {
             match &file.content {
-                Some(content) if proven.contains(&file.path) => {
+                Some(content) if proven.contains_key(&file.path) => {
                     if let Some(withheld) = custody.withholds(&file.path, content) {
                         return Err(withheld.refusal());
                     }

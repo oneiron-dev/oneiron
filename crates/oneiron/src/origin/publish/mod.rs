@@ -34,6 +34,7 @@ mod authority;
 mod dispatch;
 mod inputs;
 mod lifecycle;
+mod mirror_lfs;
 mod mirror_plan;
 mod mirror_plan_dispatch;
 mod mirror_plan_pins;

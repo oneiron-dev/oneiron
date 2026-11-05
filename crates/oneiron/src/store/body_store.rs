@@ -31,10 +31,11 @@ use rustix::fs::{
 use rustix::io::Errno;
 
 use super::Store;
-use crate::secret_custody::{KnownSource, KnownSweep, KnownValues};
+use crate::store::known_value_index::{KnownSource, KnownSweep, KnownValues, RunKnownSource};
 use crate::{Error, Result};
 
 mod finish_pinned;
+mod finish_scanned;
 mod spool;
 
 const BODIES_DIR: &str = "bodies";
@@ -348,6 +349,15 @@ impl BodyMeter {
         }
     }
 
+    /// A meter for a sink's externally-backed scan: its whole body comes
+    /// from the sink's inline bytes or its finished spill, so no retained
+    /// copy is kept as it streams. Standalone meters keep `new`.
+    fn externally_backed() -> Self {
+        let mut meter = Self::new();
+        meter.secrets.whole = None;
+        meter
+    }
+
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
         self.hasher.update(bytes);
         self.secrets.feed(bytes);
@@ -405,18 +415,7 @@ impl BodyMeter {
 
     pub(crate) fn finish(mut self, preview_chars: usize) -> BodyFacts {
         let secret = self.secrets.finish();
-        let (preview, cut) =
-            crate::serialize::compressed_code_run_output_preview(&self.head, preview_chars);
-        BodyFacts {
-            digest: *self.hasher.finalize().as_bytes(),
-            len: self.len,
-            text: self.text && self.carry_len == 0,
-            lines: self.newlines + u64::from(self.last.is_some_and(|byte| byte != b'\n')),
-            preview,
-            preview_truncated: cut || self.len > self.head.len() as u64,
-            secret,
-            line_index: self.line_index,
-        }
+        finish_scanned::body_facts(self, secret, preview_chars)
     }
 }
 
@@ -436,7 +435,8 @@ pub(super) struct SecretScan {
     /// two frames hold, and the blocklist across edges.
     credentials: crate::origin::lfs::CredentialStream,
     carry: Vec<u8>,
-    /// The body so far, until a hit makes its whole reading needless.
+    /// The body so far for the standalone whole reading, until a hit makes
+    /// it needless; `None` for a sink's externally-backed scan.
     whole: Option<Vec<u8>>,
     hit: Option<&'static str>,
 }
@@ -507,7 +507,11 @@ impl SecretScan {
         }
     }
 
-    pub(super) fn finish(&mut self) -> Option<&'static str> {
+    /// The streamed rules at the end of the body: what the carry holds, the
+    /// phrase rule's last run and the credential stream's end, in the same
+    /// order as `finish`. A sink's finish scans its external whole only
+    /// after this, when it has no hit.
+    fn finish_streamed(&mut self) -> Option<&'static str> {
         if !std::mem::take(&mut self.carry).is_empty() {
             self.read(char::REPLACEMENT_CHARACTER.encode_utf8(&mut [0; 4]));
         }
@@ -517,7 +521,11 @@ impl SecretScan {
         if self.hit.is_none() {
             self.hit = found(self.credentials.finish());
         }
-        if self.hit.is_none()
+        self.hit
+    }
+
+    pub(super) fn finish(&mut self) -> Option<&'static str> {
+        if self.finish_streamed().is_none()
             && let Some(whole) = self.whole.take()
         {
             self.hit = crate::batch::secret_scan::write_payload_hit(&whole);
@@ -578,7 +586,7 @@ impl BodySink {
             dir,
             mint,
             inline_limit,
-            meter: Some(BodyMeter::new()),
+            meter: Some(BodyMeter::externally_backed()),
             inline: Vec::new(),
             spill: None,
             sweep: None,
@@ -590,6 +598,12 @@ impl BodySink {
     /// write transaction: each frame takes the custody read guard.
     pub(crate) fn sweeping(mut self, known: Option<KnownSource>) -> Self {
         self.sweep = known.map(KnownSweep::new);
+        self
+    }
+
+    /// A bound run's custody and PERSON output sweep, fed outside any writer.
+    pub(crate) fn sweeping_run(mut self, source: RunKnownSource) -> Self {
+        self.sweep = Some(KnownSweep::for_run(source));
         self
     }
 
@@ -650,36 +664,6 @@ impl BodySink {
         let mut hasher = meter.hasher.clone();
         hasher.update(&sweep.tail()?);
         Ok(*hasher.finalize().as_bytes())
-    }
-
-    /// Finishes the body: a spilled one is published under its digest.
-    pub(crate) fn finish(mut self, preview_chars: usize) -> Result<(BodyFacts, SunkBody)> {
-        self.finalize_sweep()?;
-        let facts = self
-            .meter
-            .take()
-            .ok_or(Error::InvariantViolation("result body sink finished twice"))?
-            .finish(preview_chars);
-        let Some(spill) = self.spill.take() else {
-            return Ok((facts, SunkBody::Inline(std::mem::take(&mut self.inline))));
-        };
-        let temp = spill.temp().to_owned();
-        let spilled = match spill.finish(&facts.digest, facts.len) {
-            Ok(spilled) => spilled,
-            Err(error) => {
-                self.dir.discard(&temp);
-                return Err(error);
-            }
-        };
-        let key = spilled.publish(&self.dir)?;
-        match &key {
-            Some(key) => key.write_line_index(&self.dir, &facts.line_index),
-            None => self
-                .dir
-                .write_line_index(&body_file_name(&facts.digest), &facts.line_index),
-        }
-        let free_bytes = self.dir.free_bytes().ok();
-        Ok((facts, SunkBody::File { free_bytes, key }))
     }
 }
 

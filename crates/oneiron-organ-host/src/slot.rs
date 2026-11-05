@@ -163,7 +163,8 @@ impl Slot {
                 });
             }
         }
-        (self.spec.tier == OrganTier::ThirdParty)
+        // A third-party organ starts only inside a filesystem fence (FIX 7885).
+        (self.spec.tier == OrganTier::ThirdParty && !crate::sandbox::filesystem_confined())
             .then(|| self.unavailable(Unavailable::ThirdPartyUnconfined))
     }
 

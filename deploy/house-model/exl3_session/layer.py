@@ -19,6 +19,12 @@ its pages and the recurrent state at that exact frontier as the successor.
 Nothing computed for a working branch is ever promoted: a successor's pages
 come from its own commit alone.
 
+A prepare (I1 = C) runs as a commit does, its result kept as the session's
+prepared tail instead of its successor, and only while it is still the
+session's prepare: a fork, another prepare, a drop or an eviction stops it,
+and what it computed after that is released, never kept. A publish ends the
+tail it extended.
+
 `released` only once pages are back in the pool and state slots freed:
 `release_session` runs after every Job of the session has ended.
 
@@ -54,12 +60,12 @@ from .anchor import Anchor, token_digest
 from .jobs import CommitJob, Plan
 from .pages import Owner
 from .registry import (LOST_RESIDENCY, SNAPSHOT_BUSY, SNAPSHOT_INCOMPATIBLE, STALE_GENERATION, UNKNOWN_SESSION,
-                       Checkpoint, Refused, Registry)
+                       Checkpoint, Prepared, Refused, Registry)
 
 # The capability a worker with this layer advertises in its hello.
 SCHEMA_MINOR = 1
 OPS = ("session.create", "session.fork", "session.generate", "session.append", "session.suffix_commit",
-       "session.checkpoint", "session.drop")
+       "session.checkpoint", "session.drop", "session.prepare")
 # What a worker that exports and imports snapshots advertises besides.
 SNAPSHOT_MINOR = 2
 SNAPSHOT_OPS = ("session.export", "session.import")
@@ -271,6 +277,9 @@ class SessionLayer(Registry):
     def bind_call(self, branch, cancel):
         with self.lock:
             branch.cancel = cancel
+            dropping = branch.session.dropping
+        if dropping:
+            cancel()
 
     def end_branch_later(self, branch):
         """Ends `branch` on the scheduler thread, for a call that never
@@ -352,7 +361,10 @@ class SessionLayer(Registry):
                 victim = min(candidates, key=lambda session: session.used)
                 release = self.strip(victim)
                 victim.lost = True
+                preparing, victim.preparing = victim.preparing, None
             self.release(release)
+            if preparing is not None:
+                self.stop_commit(preparing, Refused(LOST_RESIDENCY, "the session was evicted"))
             print(f"SESSION_EVICTED session={victim.label} held_pages={self.held_pages()}", flush=True)
 
     def publish(self, session, op_id, generation, digest, publish):
@@ -367,6 +379,7 @@ class SessionLayer(Registry):
             release = []
             if publish and matches:
                 release += self.retire(session, session.published)
+                release += self.unprepare(session)
                 session.published, session.successor, session.staged = successor, None, None
                 session.generation += 1
                 session.lost = False
@@ -394,9 +407,11 @@ class SessionLayer(Registry):
                 if not branch.claimed:
                     release += self.close_branch(branch)
             commit = session.commit
+            preparing, session.preparing = session.preparing, None
         self.release(release)
-        if commit is not None:
-            self.stop_commit(commit, Refused("unknown_session", "the session was dropped"))
+        for running in (commit, preparing):
+            if running is not None:
+                self.stop_commit(running, Refused("unknown_session", "the session was dropped"))
 
     def release_session(self, session):
         """Gives back everything a dropped session held, once its calls and
@@ -743,12 +758,26 @@ class SessionLayer(Registry):
             session = commit.session
             if session.commit is commit:
                 session.commit = None
+            current = session.preparing is commit
+            if current:
+                session.preparing = None
             release += self.unpin(session, commit.base)
             if anchor is not None and (session.dropping or session.lost):
                 release.append(anchor)
                 anchor = None
                 refusal = Refused(LOST_RESIDENCY, "the session stopped serving while its commit ran")
-            if anchor is not None:
+            if commit.prepare and anchor is not None and (not current or session.published is not commit.base):
+                release.append(anchor)
+                anchor = None
+                refusal = Refused(ops.SUPERSEDED, "the prepare no longer serves")
+            if commit.prepare and anchor is not None:
+                checkpoint = Checkpoint(anchor, commit.staged.head, commit.base.digest)
+                release += self.unprepare(session)
+                computed = anchor.frontier - commit.plan.position
+                session.prepared = Prepared(checkpoint, commit.base, computed)
+                commit.reply = {"prepared_tokens": anchor.frontier - commit.base.anchor.frontier,
+                                "computed_tokens": computed}
+            elif anchor is not None:
                 checkpoint = Checkpoint(anchor, commit.staged.head,
                                         commit.base.digest if commit.base is not None else None)
                 release += self.retire(session, session.successor)
@@ -769,8 +798,10 @@ class SessionLayer(Registry):
             rows = []
             for session in sessions:
                 published = session.published
+                prepared = session.prepared
                 rows.append({"session": session.label, "resident": not session.lost,
                              "frontier_tokens": published.anchor.frontier if published is not None else 0,
+                             "prepared_tokens": prepared.checkpoint.anchor.frontier if prepared is not None else 0,
                              "unique_bytes": self.unique_bytes(session),
                              "retained_snapshot_bytes": self.retained_bytes(session)})
         total = None

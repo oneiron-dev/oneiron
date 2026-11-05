@@ -13,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod borrowed;
+
 /// The memory ask: an organ's own buffers, reserved before it allocates them.
 pub const ASK_MEMORY_GROW: &str = "memory.grow";
 
@@ -34,4 +36,24 @@ pub enum MemoryAnswer {
     Floor { needed: u64, available: u64 },
     /// The bytes did not fit before the call's deadline.
     Deadline,
+}
+
+impl MemoryAsk {
+    /// Reads the fixed control fields without encoding a second copy of the value.
+    ///
+    /// # Errors
+    /// A malformed memory ask, under the same field rules as its wire decoder.
+    pub fn from_value(value: &crate::Value) -> Result<Self, crate::CodecError> {
+        Self::deserialize(borrowed::Control(value))
+    }
+}
+
+impl MemoryAnswer {
+    /// Reads the fixed control fields without asking for memory to decode a grant.
+    ///
+    /// # Errors
+    /// A malformed memory answer, under the same field rules as its wire decoder.
+    pub fn from_value(value: &crate::Value) -> Result<Self, crate::CodecError> {
+        Self::deserialize(borrowed::Control(value))
+    }
 }

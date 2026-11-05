@@ -10,7 +10,7 @@ use crate::store::Store;
 
 use super::codec::invalid_body;
 use super::floor_keys;
-use super::types::{CustodyClass, CustodyTier, SecretCustodyFloor, TierBand};
+use super::types::{CustodyTier, SecretCustodyFloor};
 
 /// MessagePack key-map helpers local to this module (the per-module idiom;
 /// gate.rs's own copies are private to it).
@@ -194,61 +194,10 @@ pub(crate) fn policy_manifest_bodies_strict(
     Ok(bodies)
 }
 
-impl SecretCustodyFloor {
-    /// The tier band for one custody class.
-    #[must_use]
-    pub fn band_for(&self, class: CustodyClass) -> TierBand {
-        match class {
-            CustodyClass::CustodyPortable => self.portable,
-            CustodyClass::CustodyDeviceBound => self.device_bound,
-            CustodyClass::CrossVault => self.cross_vault,
-        }
-    }
-
-    /// Narrows `self` against `other`, most-restrictive per field.
-    pub(crate) fn merge(&mut self, other: SecretCustodyFloor) {
-        self.portable = self.portable.narrow(other.portable);
-        self.device_bound = self.device_bound.narrow(other.device_bound);
-        self.cross_vault = self.cross_vault.narrow(other.cross_vault);
-        self.rotation_max_age_secs = match (self.rotation_max_age_secs, other.rotation_max_age_secs)
-        {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
-        for (k, v) in other.env_bindings {
-            self.env_bindings
-                .entry(k)
-                .and_modify(|existing| {
-                    // Conflicting environment bindings fail closed to the
-                    // narrower (lexicographically smaller, deterministic)
-                    // restriction note.
-                    if v.as_str() < existing.as_str() {
-                        *existing = v.clone();
-                    }
-                })
-                .or_insert(v);
-        }
-    }
-
-    /// Resolves the floor from every POLICY_MANIFEST body in the vault.
-    /// Most-restrictive wins per field. An ABSENT floor row takes the default
-    /// — that is what "no floor declared" means. A row that is PRESENT but
-    /// unreadable is an ERROR: see `decode_floor_keys`.
-    ///
-    /// The same reasoning governs the INDEX PLANE those bodies are reached
-    /// through, and this resolver no longer owns a walk of its own: it consumes
-    /// the shared strict one (`policy_manifest_bodies_strict`), so a broken
-    /// indexed declaration fails closed here exactly as it does at the
-    /// credential door. An unusable type-index key, a dangling entity row, an
-    /// unparseable metadata header, an entry naming another entity type, and a
-    /// body that will not canonically decode all refuse. Skipping one would
-    /// hand back the permissive `T0..T2` default band — the one direction a
-    /// floor must never fail.
-    pub fn resolve(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
+impl oneiron_store::secret_record::SecretCustodyFloorSource for Store {
+    fn resolve_secret_custody_floor(&self, txn: &heed::RoTxn<'_>) -> Result<SecretCustodyFloor> {
         let mut floor = SecretCustodyFloor::default();
-        for entries in policy_manifest_bodies_strict(store, txn).map_err(floor_walk_refusal)? {
+        for entries in policy_manifest_bodies_strict(self, txn).map_err(floor_walk_refusal)? {
             floor.merge(decode_floor_keys(&entries)?);
         }
         Ok(floor)

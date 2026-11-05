@@ -8,9 +8,7 @@ use super::types::{
     CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionIntegrityRecord,
 };
 
-/// Finalized code-revision row (hand-rolled MessagePack map). Key: revision id.
-pub(super) const RECORDS: SideTable<EntityId, CodeRevision, Raw> =
-    SideTable::new(&side_table::CODE_REVISION_RECORD);
+pub(super) use crate::store::code_revision_record::tables::RECORDS;
 
 /// Recorded code-revision fork/branch row. Key: fork session id.
 pub(super) const FORKS: SideTable<EntityId, CodeRevisionFork, Raw> =
@@ -32,6 +30,11 @@ pub(super) const SESSION_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
 /// revision id.
 pub(super) const PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CODE_REVISION_PARENT_INDEX);
+
+/// The checked Baseline a tested queue revision's chain ends at (a Baseline names itself),
+/// written when its seal is finalized (FIX 7390, 7391). Key: revision id.
+pub(super) const QUEUE_ROOTS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_QUEUE_ROOT);
 
 /// Index of forks by parent session, empty marker value. Key: parent session id + fork session id.
 pub(super) const FORK_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =

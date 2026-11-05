@@ -37,8 +37,9 @@ pub fn run() -> Result<()> {
     }
     let mut session = Session::new(connect_vsock()?);
     let preparation: Result<_> = (|| {
-        let input = session.receive()?;
-        prepare_workspace(&input.files)?;
+        let lower = prepare_lower()?;
+        let input = session.receive(&lower)?;
+        prepare_workspace(lower)?;
         prepare_pids(input.pids)?;
         let workspace = Workspace::open(Path::new("/mnt/workspace"))?;
         let signals = block_sigchld()?;
@@ -151,7 +152,7 @@ fn mount_devices() -> Result<()> {
     )
 }
 
-fn prepare_workspace(files: &crate::protocol::Snapshot) -> Result<()> {
+fn prepare_lower() -> Result<Workspace> {
     for directory in [
         "/run/oneiron",
         "/run/oneiron/lower",
@@ -161,8 +162,10 @@ fn prepare_workspace(files: &crate::protocol::Snapshot) -> Result<()> {
     ] {
         fs::create_dir(directory)?;
     }
-    let lower = Workspace::open(Path::new("/run/oneiron/lower"))?;
-    lower.seed(files)?;
+    Workspace::open(Path::new("/run/oneiron/lower"))
+}
+
+fn prepare_workspace(lower: Workspace) -> Result<()> {
     lower.set_owner(UID, GID)?;
     drop(lower);
     std::os::unix::fs::chown("/run/oneiron/upper", Some(UID), Some(GID))?;

@@ -5,9 +5,13 @@ use std::time::Instant;
 
 mod decisions;
 pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
+mod learning;
+pub use learning::SeatLearningContext;
+pub(crate) use learning::learned_models;
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 mod run;
+pub use crate::store::seat_model_description::ModelDescription;
 pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
@@ -28,11 +32,6 @@ use crate::{
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
     SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
-/// Whether a masked copy of a `LLM_MODEL_DESCRIPTION` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn llm_model_description_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<ModelDescription, LegacyJson>(bytes)
-}
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
@@ -81,20 +80,6 @@ fn served_admits(
     locality: ModelLocality,
 ) -> bool {
     served.is_none_or(|set| set.get(model).is_some_and(|at| *at == locality))
-}
-
-/// A description is keyed by the fully revisioned model ID. Absence is not a
-/// recommendation; the router cannot judge an undocumented model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelDescription {
-    pub model: ModelId,
-    /// Capability profile, not a provider, tier or model-family name.
-    pub facet: String,
-    pub owner: Option<String>,
-    pub measured: Option<String>,
-    pub benchmarks: Option<String>,
-    pub vendor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -340,6 +325,11 @@ pub struct SeatTask {
     /// the current set.
     #[serde(skip)]
     pub served: Option<BTreeMap<ModelId, ModelLocality>>,
+    /// Native dispatch context for the pick's scoped measured reads (FIX 6037).
+    /// Read-only input, not authority or durable pin identity. None keeps an
+    /// unprojected birth's decision state unchanged.
+    #[serde(skip)]
+    pub learning: Option<SeatLearningContext>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -652,7 +642,13 @@ impl SeatPool {
             decisions.budget.min(at.saturating_duration_since(started))
         });
         let deadline = RetrievalDeadline::hard(started, budget);
-        let (index, picked, readings) = decisions.pick_before(task, &candidates, &deadline)?;
+        let learned = learned_models(
+            vault,
+            task.learning.as_ref(),
+            candidates.iter().map(|candidate| candidate.model.clone()),
+        );
+        let (index, picked, readings) =
+            decisions.pick_before(task, &candidates, &learned, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,

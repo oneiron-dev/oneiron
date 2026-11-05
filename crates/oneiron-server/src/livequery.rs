@@ -20,7 +20,9 @@ mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
+pub(crate) use residence::{
+    ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;
@@ -264,8 +266,8 @@ impl RpcReply {
         })
     }
 
-    /// [`Self::answer`] for a call no bound credential carries: a home
-    /// handoff call on a socket that bound no actor (FIX 6458). Its receipt
+    /// [`Self::answer`] for a machine-only home handoff or exact pad call
+    /// on a socket that bound no actor. Its receipt
     /// is the connection's, as a ping's is, with the call's outcome and
     /// digests.
     fn answer_unbound(
@@ -398,13 +400,13 @@ pub(crate) fn residence_rpc(
     )
 }
 
-/// FIX 6458: whether `method` is one of the home handoff's own calls, the
-/// only ones a socket that bound no actor makes.
+/// Whether `method` is a home handoff or exact pad call that a socket may
+/// make with its machine proof and no bound actor.
 pub(crate) fn machine_handoff_method(method: &str) -> bool {
     residence::machine_method(method)
 }
 
-/// FIX 6458: one home handoff call on a socket that bound no actor. Its
+/// One machine-only residence call on a socket that bound no actor. Its
 /// owner-grade upgrade's machine, `peer`, judged again now, is the caller;
 /// the reply carries its rows to the send door, and its receipt is the
 /// connection's ([`RpcReply::answer_unbound`]).

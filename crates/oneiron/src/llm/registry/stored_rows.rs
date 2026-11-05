@@ -17,6 +17,11 @@ use crate::side_table::{self, LegacyJson, SideTable, SideTableDbs};
 const ROWS: SideTable<String, ModelRegistryRow, LegacyJson> =
     SideTable::new(&side_table::LLM_REGISTRY_ROW);
 
+/// Whether a masked row still decodes as the registry's native stored value.
+pub(crate) fn llm_registry_row_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ModelRegistryRow, LegacyJson>(bytes)
+}
+
 /// [`ROWS`], each read through [`decoded`].
 #[derive(Clone, Copy)]
 pub(super) struct StoredRows;

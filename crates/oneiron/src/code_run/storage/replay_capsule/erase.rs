@@ -18,11 +18,10 @@
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
-use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::super::response_erase::erase_actor_responses_in_txn;
-use super::{CAPSULES, FORKS, ForkRow};
+use super::{CAPSULES, FORKS, ForkValue};
 use crate::compaction::output::OutputRef;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::EntityStoreRead;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
@@ -151,7 +150,9 @@ fn fork_answers_in_txn(
     let mut answers = Vec::new();
     for row in FORKS.iter_raw_from(dbs, txn, &[])? {
         let (_, bytes) = row?;
-        if let Ok(ForkRow::Fork(receipt)) = FORKS.decode_value(&bytes) {
+        if let Ok(row) = FORKS.decode_value(&bytes)
+            && let ForkValue::Fork(receipt) = row.value
+        {
             let at = (
                 receipt.attempt,
                 u64::from(receipt.lease_generation),
@@ -178,8 +179,7 @@ fn release_bodies_in_txn(
         };
         let occurrence = ResultOccurrence::of(Some(owner), &output)?;
         let marks = occurrence.mark_key(&output.handle);
-        RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
-        RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
+        crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
         release_body_in_txn(&vault.store, wtxn, &owner, &occurrence.id())?;
     }
     Ok(())
@@ -211,15 +211,17 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
 pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let gone = (|| -> Result<bool> {
-        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
-    })();
+    actor_gone_in_store(&vault.store, txn, actor)
+}
+
+/// [`actor_gone_in_txn`] on the vault's canonical store `store`, for a
+/// reader that holds only a room session's composed view, whose base it is.
+pub(crate) fn actor_gone_in_store(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> bool {
+    let gone = crate::ports::owner_gone_in_txn(store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),

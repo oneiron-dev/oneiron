@@ -45,6 +45,9 @@ pub(crate) struct OutboundEffectResult {
     /// decision evaluated: the primary's, or the co-actor's when the co-actor
     /// held it. `None` for every other result.
     pub(crate) approval_digest: Option<String>,
+    /// The Gate's actual hydrated consent composition for a live first
+    /// admission's scoped-MCP hold. It grants nothing by itself.
+    pub(crate) ask_consent: Option<crate::llm::decision::AskConsent>,
     /// The actor whose decision held this call, when `approval_digest` is
     /// set: the press it names is that actor's (FIX 6424 part 2a).
     pub(crate) approval_actor: Option<EntityId>,

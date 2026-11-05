@@ -276,6 +276,31 @@ impl Journal {
         platform::lock_at(&self.sub(ACKS)?.join(target_file("l", target)))
     }
 
+    /// The automatic backup folder's whole publication/expiry lock, separate
+    /// from its head-switch lock and the journal's metadata lock.
+    pub(super) fn backup_publication_lock(&self, target: &TargetId) -> Result<File> {
+        platform::lock_at(&self.sub(ACKS)?.join(target_file("b", target)))
+    }
+
+    /// Forgets only the current availability of a removed backup companion.
+    /// Its membership, set history and completed obligations stay unchanged.
+    pub(super) fn forget_backup_ack(
+        &self,
+        target: &TargetId,
+        pending: &TargetPending,
+    ) -> Result<()> {
+        let acks = self.sub(ACKS)?;
+        let _lock = self.lock()?;
+        for prefix in ["a", "r"] {
+            match fs::remove_file(acks.join(target_file(prefix, target))) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.note_pending(target, pending)
+    }
+
     /// The required set; empty before the first registration.
     pub(crate) fn required_set(&self) -> Result<RequiredSet> {
         match read_whole(&self.dir().join(TARGETS))? {

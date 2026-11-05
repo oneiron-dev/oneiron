@@ -17,6 +17,7 @@ use crate::side_table::{self, Named, SideTable};
 
 use super::estimate::Estimate;
 use super::evidence::EVIDENCE;
+use super::prior::PRIOR;
 use super::project::project_cell_in_txn;
 
 /// One-sided 95% normal quantile for the divergence interval.
@@ -223,13 +224,20 @@ pub(crate) fn conversions_in_txn(
 }
 
 fn reproject_judged_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
-    let digests: BTreeSet<[u8; 32]> = EVIDENCE
+    let mut digests: BTreeSet<[u8; 32]> = EVIDENCE
         .scan(&vault.store, wtxn)?
         .into_iter()
         // Earlier judges can reach this map through another conversion.
         .filter(|(_, row)| row.judge.is_some())
         .map(|((digest, _), _)| digest)
         .collect();
+    digests.extend(
+        PRIOR
+            .scan(&vault.store, wtxn)?
+            .into_iter()
+            .filter(|(_, prior)| prior.fold.as_ref().is_some_and(|fold| fold.has_judge()))
+            .map(|(digest, _)| digest),
+    );
     for digest in &digests {
         project_cell_in_txn(vault, wtxn, digest, now)?;
     }

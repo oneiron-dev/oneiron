@@ -42,28 +42,31 @@ impl Vault {
                 "read permit fixture needs actors".into(),
             ));
         }
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let scope = crate::federation::scope_codec::encode_scope_value(
             &crate::federation::scope_codec::read_preset(),
         )?;
-        let data = crate::gate::default_policy_manifest_with_scoped_grants(
-            actors
-                .iter()
-                .map(|actor| {
-                    Value::Map(vec![
-                        ("actor_ref".into(), actor.entity_ref().to_hex().into()),
-                        (
-                            "actor_class".into(),
-                            actor.actor_class().gate_actor_class().into(),
-                        ),
-                        ("effector".into(), "core:read".into()),
-                        ("scope".into(), scope.clone()),
-                        ("receipt_required".into(), false.into()),
-                    ])
-                })
-                .collect(),
-        )?;
+        let data = self
+            .store
+            .gate_hooks
+            .default_policy_manifest_with_scoped_grants(
+                actors
+                    .iter()
+                    .map(|actor| {
+                        Value::Map(vec![
+                            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+                            (
+                                "actor_class".into(),
+                                actor.actor_class().gate_actor_class().into(),
+                            ),
+                            ("effector".into(), "core:read".into()),
+                            ("scope".into(), scope.clone()),
+                            ("receipt_required".into(), false.into()),
+                        ])
+                    })
+                    .collect(),
+            )?;
         self.with_write_txn_grouped(|txn| {
             for actor in actors {
                 let super::LiveEntityRow::Live { entity_type, .. } =
@@ -102,6 +105,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

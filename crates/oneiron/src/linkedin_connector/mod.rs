@@ -358,22 +358,26 @@ impl LinkedInMcpConnectorAdapter {
         backfill_window_secs: u64,
     ) -> Result<Vec<LinkedInConversationMessageEvent>> {
         let messages = conversation_messages_from_tool_output(output, None, None)?;
-        self.normalize_conversation_messages(messages, received_at, backfill_window_secs)
+        Ok(self
+            .normalize_conversation_messages(messages, received_at, backfill_window_secs)?
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect())
     }
 
     fn normalize_conversation_messages(
         &self,
-        messages: Vec<LinkedInConversationMessage>,
+        messages: Vec<(bool, LinkedInConversationMessage)>,
         received_at: u64,
         backfill_window_secs: u64,
-    ) -> Result<Vec<LinkedInConversationMessageEvent>> {
+    ) -> Result<Vec<(bool, LinkedInConversationMessageEvent)>> {
         if backfill_window_secs > MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
             return Err(Error::InvalidConfig(
                 "LinkedIn inbox backfill window exceeds maximum length".to_owned(),
             ));
         }
         let mut events = Vec::new();
-        for message in messages {
+        for (incoming, message) in messages {
             if !message_in_backfill_window(&message, received_at, backfill_window_secs) {
                 continue;
             }
@@ -391,10 +395,13 @@ impl LinkedInMcpConnectorAdapter {
                 ),
                 received_at,
             )?;
-            events.push(LinkedInConversationMessageEvent {
-                message,
-                event_input,
-            });
+            events.push((
+                incoming,
+                LinkedInConversationMessageEvent {
+                    message,
+                    event_input,
+                },
+            ));
         }
         Ok(events)
     }

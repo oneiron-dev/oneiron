@@ -1,0 +1,432 @@
+//! Typed session-overlay journal: entries, promotion plans, and replay.
+//! Entry [`PublishedEntry`]; consumed by `snapshot` and the `overlay` segment/retire machinery.
+//! Owned by `session_overlay`; the overlay lifecycle is the sole promoter (ONE-1730).
+use zeroize::Zeroize;
+
+use super::overlay::PlanCharge;
+use crate::batch_op::BatchOp;
+use crate::run_write_token::RunWriteToken;
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::temporal::TimeRange;
+
+/// Semantic ownership tag on a typed journal entry (ARCH-0052 D4, K3).
+///
+/// This is the ONLY legal closure source for promotion (ONE-1730): promote
+/// selects by role, never by inferring ownership from a type-index,
+/// text-posting, short-id, temporal, or edge-index key. Index keys are shared
+/// between turns by construction, so key-shaped selection drags siblings.
+///
+/// Role assignment is CLOSED — every staged op maps to exactly one role:
+///
+/// | role | staged op |
+/// |---|---|
+/// | [`Self::ConversationShell`] | the conversation shell put |
+/// | [`Self::TurnPut`] | the TURN entity put |
+/// | [`Self::MessagePartOf`] | each MESSAGE put and its `PartOf` edge |
+/// | [`Self::SummaryDerivedFrom`] | the SUMMARY put and its `DerivedFrom` edge |
+/// | [`Self::AttributionEdge`] | the `AuthoredBy` and `BelongsTo` edges |
+/// | [`Self::TurnOwnedArtifact`] | every other turn-scoped op (BM25 `content` text ops, vector/HNSW rows) |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalRole {
+    TurnPut,
+    MessagePartOf,
+    SummaryDerivedFrom,
+    AttributionEdge,
+    ConversationShell,
+    TurnOwnedArtifact,
+}
+
+/// One typed journal operation.
+///
+/// `scope` carries the owning conversation + turn; `learned_at` and `occurred`
+/// are preserved from the witnessing write and never restamped, so promote
+/// replays into the correct month window (ARCH-0052 D4).
+#[derive(Clone)]
+pub struct JournalEntry {
+    /// Read by [`OverlaySnapshot::plan_promotion`] to cut ONE turn's closure
+    /// out of the journal — the whole reason the scope is recorded at staging
+    /// time rather than reconstructed from index keys later.
+    pub scope: JournalScope,
+    pub role: JournalRole,
+    pub learned_at: u64,
+    pub occurred: TimeRange,
+    pub op: BatchOp,
+    /// The leased run whose envelope was open as the op was journaled: an
+    /// authorized promotion that replays the op witnesses its edges for that
+    /// run, never for the promoter (FIX 3103). `None` is unknown.
+    pub source_run: Option<RunWriteToken>,
+}
+
+impl JournalEntry {
+    /// The bytes this entry spends of the room's budget. A `FacetOf` edge, a
+    /// NOTE's birth facet, is the room's bookkeeping and spends none
+    /// (`keyspace::unbudgeted_row`). Nor does a media vector, which only the
+    /// room's media door stages (`Vault::put_session_media_vector`): derived
+    /// from the room's own records and recomputable, it spends none, and the
+    /// door marks its row as bookkeeping too, so a write that fits the room
+    /// without it still fits (FIX 2345, Engine 10-20 23:4x). Its source run
+    /// is the host's bookkeeping too, and spends none (FIX 3103).
+    pub(super) fn byte_size(&self) -> usize {
+        if matches!(
+            self.op,
+            BatchOp::Edge {
+                kind: oneiron_base::edge::EdgeKind::FacetOf,
+                ..
+            } | BatchOp::MediaVector { .. }
+        ) {
+            return 0;
+        }
+        std::mem::size_of::<Self>()
+            .saturating_sub(std::mem::size_of::<Option<RunWriteToken>>())
+            .saturating_add(batch_op_payload_bytes(&self.op))
+    }
+}
+
+// Every journal clone owns a distinct payload. Wipe each copy on drop, not
+// at close: a COW journal can outlive the publishing overlay in a read lease.
+impl Drop for JournalEntry {
+    fn drop(&mut self) {
+        zeroize_batch_op_payload(&mut self.op);
+    }
+}
+
+/// A journal entry as the overlay published it, with the identity it was
+/// published under: the overlay's own count of the entries it has published,
+/// never reused. A promotion names exactly the entries it was cut from by
+/// these, so retiring it leaves an entry published after its snapshot where
+/// it is (ARCH-0052 D4: only promoted content drops, and only after commit).
+#[derive(Clone)]
+pub struct PublishedEntry {
+    pub(super) seq: u64,
+    entry: JournalEntry,
+}
+
+impl PublishedEntry {
+    pub(super) const fn new(seq: u64, entry: JournalEntry) -> Self {
+        Self { seq, entry }
+    }
+}
+
+impl std::ops::Deref for PublishedEntry {
+    type Target = JournalEntry;
+
+    fn deref(&self) -> &JournalEntry {
+        &self.entry
+    }
+}
+
+pub fn zeroize_batch_op_payload(op: &mut BatchOp) {
+    match op {
+        BatchOp::Put { data, .. } => data.zeroize(),
+        BatchOp::Vector {
+            vector,
+            pending_embedding_token,
+            ..
+        } => {
+            vector.zeroize();
+            if let Some(token) = pending_embedding_token {
+                token.zeroize();
+            }
+        }
+        BatchOp::Text { fields, .. } => {
+            for (name, value) in fields {
+                name.zeroize();
+                value.zeroize();
+            }
+        }
+        BatchOp::MediaVector {
+            vector, text_hash, ..
+        } => {
+            vector.zeroize();
+            if let Some(hash) = text_hash {
+                hash.zeroize();
+            }
+        }
+        BatchOp::Phonetic { codes, .. } => {
+            for code in codes {
+                code.zeroize();
+            }
+        }
+        // These variants cannot be staged by the session journal. Their
+        // typed payloads are owned by the ordinary batch path, not this seam.
+        _ => {}
+    }
+}
+
+/// Turn/conversation scope carried by each typed journal operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalScope {
+    conversation: EntityId,
+    turn: EntityId,
+}
+
+impl JournalScope {
+    pub const fn new(conversation: EntityId, turn: EntityId) -> Self {
+        Self { conversation, turn }
+    }
+
+    /// The turn this op belongs to. Promotion moves ONE turn at a time, so
+    /// this is how the closure is cut out of the journal.
+    pub const fn turn(&self) -> EntityId {
+        self.turn
+    }
+
+    /// The conversation shell owning this op.
+    pub const fn conversation(&self) -> EntityId {
+        self.conversation
+    }
+}
+
+/// One turn's promotable closure, cut out of the typed journal by
+/// [`OverlaySnapshot::plan_promotion`] (ARCH-0052 D4, ONE-1730).
+///
+/// The plan is data and the charge on its copies: it names WHAT to replay,
+/// and the promote transaction decides how. Selection and durable commit are
+/// separate so the caller can hold the per-session state lock across both and
+/// a failed commit leaves the journal it was cut from untouched.
+pub struct PromotePlan {
+    /// The replay program, in journal-staging order — the shell put leads, so
+    /// every later op refers to a row the base apply already materialized.
+    pub ops: Vec<BatchOp>,
+    /// Entity ids the replay materializes, in the same order.
+    pub replayed: Vec<EntityId>,
+    /// `(id, in-room alias)` for every promoted entity that carries one. The
+    /// canonical half is read back from base after the replay.
+    pub temporary_short_ids: Vec<(EntityId, String)>,
+    /// Distinct journal `learned_at` values, ascending. These are the SOURCE
+    /// windows the pickup markers are derived from — never a promote-time
+    /// clock. Only the sync pickup-marker writer reads them, but the field is
+    /// accumulated unconditionally so the plan shape stays feature-independent.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub source_learned_at: Vec<u64>,
+    /// The published identity of the journal entry each op was cut from, in
+    /// the same order as `ops`. Retirement removes these entries and no
+    /// other: never one published after the snapshot this plan was cut from,
+    /// nor one the plan left out.
+    pub(super) cut_from: Vec<u64>,
+    /// The source run each op's journal entry kept, in the same order as
+    /// `ops` (FIX 3103).
+    pub(super) source_runs: Vec<Option<RunWriteToken>>,
+    pub(super) turn: EntityId,
+    pub(super) conversation: EntityId,
+    /// Whether the turn is already in base, saved by this stretch, so the
+    /// plan only adds messages said into it since ([`Self::appends`]).
+    pub(super) appends: bool,
+    /// The exact source view whose MESSAGE bodies and side rows this plan saves.
+    pub(super) source_snapshot: super::snapshot::OverlaySnapshot,
+    /// The copies' charge on what the room's overlay retains, held for the
+    /// plan's life. Last, so it drops after the copies it counts.
+    pub(super) charge: Option<PlanCharge>,
+}
+
+// Replay ops and in-room aliases are private temporary copies of journal
+// material. The returned public promote outcome owns a separate mapping.
+impl Drop for PromotePlan {
+    fn drop(&mut self) {
+        for op in &mut self.ops {
+            zeroize_batch_op_payload(op);
+        }
+        for (_, alias) in &mut self.temporary_short_ids {
+            alias.zeroize();
+        }
+    }
+}
+
+impl PromotePlan {
+    /// The same overlay view from which this replay program was selected.
+    pub fn source_snapshot(&self) -> &super::snapshot::OverlaySnapshot {
+        &self.source_snapshot
+    }
+
+    /// The promoted turn — the receipt key and the pickup marker's id.
+    pub const fn turn(&self) -> EntityId {
+        self.turn
+    }
+
+    /// The room's conversation the turn belongs to.
+    pub const fn conversation(&self) -> EntityId {
+        self.conversation
+    }
+
+    /// Whether this plan adds messages to a turn this stretch already saved,
+    /// rather than promoting the turn itself (a later save of a room's talk
+    /// after the run spoke on into a saved turn).
+    pub const fn appends(&self) -> bool {
+        self.appends
+    }
+
+    /// Each op with the source run its journal entry kept, in plan order.
+    pub fn ops_with_source_runs(&self) -> impl Iterator<Item = (&BatchOp, Option<&RunWriteToken>)> {
+        self.ops
+            .iter()
+            .zip(self.source_runs.iter().map(Option::as_ref))
+    }
+}
+
+/// The entity a replayed op writes: the row of a put, text or vector, the
+/// source of an edge. Every op a plan carries belongs to the entity it
+/// writes, so a promotion that kept an entity kept each op whose subject it
+/// is.
+pub fn replayed_subject(op: &BatchOp) -> Option<EntityId> {
+    match op {
+        BatchOp::Put { id, .. }
+        | BatchOp::Text { id, .. }
+        | BatchOp::Vector { id, .. }
+        | BatchOp::MediaVector { id, .. } => Some(*id),
+        BatchOp::Edge { src, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, .. }
+        | BatchOp::EdgeWithCreatedAt { src, .. } => Some(*src),
+        _ => None,
+    }
+}
+
+/// The ONE closure-membership predicate a plan is cut by. Retirement does not
+/// ask it again: it removes the exact entries a committed plan was cut from,
+/// so an entry the predicate would match now, published after the cut, stays.
+pub(super) fn journal_entry_in_closure(
+    entry: &JournalEntry,
+    turn: EntityId,
+    conversation: EntityId,
+) -> bool {
+    match entry.role {
+        JournalRole::ConversationShell => entry.scope.conversation() == conversation,
+        JournalRole::AttributionEdge => entry.scope.turn() == turn,
+        JournalRole::TurnPut
+        | JournalRole::MessagePartOf
+        | JournalRole::SummaryDerivedFrom
+        | JournalRole::TurnOwnedArtifact => entry.scope.turn() == turn,
+    }
+}
+
+/// Rebuilds one journaled op as the base apply must see it.
+///
+/// The ENTRY's `occurred`/`learned_at` ride into the rebuilt op — never
+/// `unix_seconds_now()` — so a promoted row lands in the month window the turn
+/// actually happened in. Edges become the timestamped PUBLIC arm for the same
+/// reason: the plain `Edge` arm stamps `created_at` at apply time, which would
+/// restamp the whole attribution set to the promote clock.
+pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
+    Ok(match &entry.op {
+        BatchOp::Put {
+            id,
+            entity_type,
+            row_version,
+            data,
+            allow_maintenance,
+            allow_reserved_predicate,
+            hub_sync_imported,
+            ..
+        } => BatchOp::Put {
+            id: *id,
+            entity_type: *entity_type,
+            occurred: entry.occurred,
+            learned_at: entry.learned_at,
+            row_version: *row_version,
+            data: data.clone(),
+            allow_maintenance: *allow_maintenance,
+            allow_reserved_predicate: *allow_reserved_predicate,
+            hub_sync_imported: *hub_sync_imported,
+        },
+        BatchOp::Edge {
+            src,
+            kind,
+            tgt,
+            weight,
+            vad,
+        } => BatchOp::PublicEdgeWithCreatedAt {
+            src: *src,
+            kind: *kind,
+            tgt: *tgt,
+            weight: *weight,
+            created_at: entry.learned_at,
+            vad: *vad,
+        },
+        // Text, Vector and MediaVector ride unchanged — only Put re-stamps the
+        // journaled time range and only Edge re-arms, so these clone verbatim.
+        // A media vector's base arm re-admits it against base's bindings, and
+        // a text one keeps the hash of the text it embeds, so the backfill
+        // embeds again what changed since (OF-370).
+        BatchOp::Text { .. } | BatchOp::Vector { .. } | BatchOp::MediaVector { .. } => {
+            entry.op.clone()
+        }
+        BatchOp::ClaimCandidate { .. }
+        | BatchOp::ReconcileLexicalQueryHints { .. }
+        | BatchOp::Phonetic { .. }
+        | BatchOp::PublicEdgeWithCreatedAt { .. }
+        | BatchOp::EdgeWithCreatedAt { .. }
+        | BatchOp::SetEdgeWeight { .. }
+        | BatchOp::SetEdgeVad { .. }
+        | BatchOp::Delete { .. }
+        | BatchOp::DeleteEdge { .. }
+        | BatchOp::CommitmentGapDecay { .. } => {
+            return Err(Error::InvariantViolation(
+                "promotion replay found a journal op the session write path cannot stage",
+            ));
+        }
+    })
+}
+
+fn batch_op_payload_bytes(op: &BatchOp) -> usize {
+    match op {
+        BatchOp::Put { data, .. } => data.len(),
+        BatchOp::ClaimCandidate {
+            candidate,
+            envelope,
+            ..
+        } => debug_bytes(candidate).saturating_add(debug_bytes(envelope)),
+        BatchOp::ReconcileLexicalQueryHints { keep, .. } => {
+            keep.len().saturating_mul(std::mem::size_of::<EntityId>())
+        }
+        BatchOp::Vector {
+            vector,
+            pending_embedding_token,
+            ..
+        } => vector
+            .len()
+            .saturating_mul(std::mem::size_of::<f32>())
+            .saturating_add(pending_embedding_token.as_ref().map_or(0, Vec::len)),
+        BatchOp::Text { fields, .. } => fields
+            .iter()
+            .map(|(name, value)| name.len().saturating_add(value.len()))
+            .sum(),
+        BatchOp::Phonetic { codes, .. } => codes.iter().map(String::len).sum(),
+        BatchOp::MediaVector {
+            space,
+            vector,
+            text_hash,
+            ..
+        } => vector
+            .len()
+            .saturating_mul(std::mem::size_of::<f32>())
+            .saturating_add(space.len())
+            .saturating_add(text_hash.map_or(0, |hash| hash.len())),
+        BatchOp::Edge { .. }
+        | BatchOp::PublicEdgeWithCreatedAt { .. }
+        | BatchOp::EdgeWithCreatedAt { .. }
+        | BatchOp::SetEdgeWeight { .. }
+        | BatchOp::SetEdgeVad { .. }
+        | BatchOp::Delete { .. }
+        | BatchOp::DeleteEdge { .. } => 0,
+        // The lapse op names ids and carries no body; the rows it rewrites are
+        // derived inside the applying transaction, not staged here.
+        BatchOp::CommitmentGapDecay { ids, .. } => {
+            ids.len().saturating_mul(std::mem::size_of::<EntityId>())
+        }
+    }
+}
+
+fn debug_bytes(value: &impl std::fmt::Debug) -> usize {
+    struct Counter(usize);
+
+    impl std::fmt::Write for Counter {
+        fn write_str(&mut self, value: &str) -> std::fmt::Result {
+            self.0 = self.0.saturating_add(value.len());
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter(0);
+    let _ = std::fmt::write(&mut counter, format_args!("{value:?}"));
+    counter.0
+}

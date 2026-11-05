@@ -34,14 +34,14 @@ mod room_verbs;
 #[cfg(test)]
 mod room_verbs_tests;
 mod worlds;
-pub use capabilities::{CapabilityHit, SkillsSection};
+pub use capabilities::{CapabilityHit, SkillsSection, split_skills_section};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
     ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{
-    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch, RosterParty, room_scope,
 };
 pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
@@ -88,6 +88,7 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_body_for_announcement;
 pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
@@ -102,12 +103,14 @@ mod tasks;
 
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
-    BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
-    CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
-    SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_tasks_section, render_board_block,
-    resolve_board_budget, section_policy_for_budget_ref, shed,
+    BoardFrameError, BoardLegend, BoardPart, BoardRender, BoardRenderMetadata, BoardSection,
+    BudgetPolicyRef, CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES,
+    PLUGIN_SECTION_BUDGET_POLICY_REF, SHED_ORDER, SectionPolicy, SectionView, ShedOutcome,
+    ShedRank, ShedSection, SplitBoardRender, TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES,
+    assemble_tasks_section, render_board_block, render_split_board_block, resolve_board_budget,
+    section_policy_for_budget_ref, shed,
 };
+mod turn_opener;
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,
 };
@@ -121,7 +124,6 @@ pub use notifications::{
     caller_marker_contains, notification_body_json, notification_scoped_to_caller,
 };
 pub(crate) use plugin::erase_section_fit_receipts_in_txn;
-pub(crate) use plugin::scrub_section_fit_receipt_actors_in_txn;
 pub use plugin::{
     AdmittedPluginSection, ApprovedPluginIdentity, AuthorityLaneRef, BoardBlockKind,
     BoardBlockPage, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope, CORE_SECTION_IDS,
@@ -144,12 +146,16 @@ pub use plugin::{
     render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
     validate_manifest_for_proposal,
 };
+pub(crate) use plugin::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
+};
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
     TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
+pub use turn_opener::{is_turn_opener_line, turn_opener_line};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,

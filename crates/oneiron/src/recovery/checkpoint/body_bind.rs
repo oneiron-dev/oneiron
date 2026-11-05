@@ -23,7 +23,7 @@ use super::carried_bodies::{BodyCensus, Unbound, inline_asset};
 use super::{StorageTier, response_rows, storage_tier};
 use crate::store::{
     BODY_KEYS, BodyKeyRow, INLINE_ASSETS, ManifestDbs, Store, pin_body_custody_in_txn,
-    remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn,
 };
 use crate::{Error, Result, Vault};
 
@@ -95,7 +95,8 @@ fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<(Vec<Unbound>, BTree
 /// Binds `instance` to `body` in `txn`, unless one was bound since or the
 /// body has gone: then the instance is debris. A digest whose row switches
 /// between inline and file keeps the instance it displaced (FIX 6023).
-/// Returns a response's obligation rows, for the writer to journal.
+/// Returns the bound instance rows and a response's obligation rows, for
+/// the writer to journal in one frame (FIX 6229).
 fn bind_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -103,6 +104,7 @@ fn bind_in_txn(
     instance: [u8; 16],
 ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let store = &vault.store;
+    let mut out = Vec::new();
     match body {
         Unbound::Asset(id) => {
             let still = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
@@ -122,12 +124,12 @@ fn bind_in_txn(
             let inline = prior.as_ref().is_some_and(|row| row.inline);
             if !inline && vault.code_run_body_inline_in_txn(txn, digest)? {
                 if let Some(prior) = prior {
-                    remember_body_instances_in_txn(
+                    out.extend(remembered_body_instance_rows_in_txn(
                         store,
                         txn,
                         digest,
                         &[prior.instance, instance],
-                    )?;
+                    )?);
                 }
                 BODY_KEYS.put(store, txn, digest, &BodyKeyRow::vault(instance, *len, true))?;
             }
@@ -142,12 +144,12 @@ fn bind_in_txn(
                     return Err(Error::CorruptedIndex("code-run result body file missing"));
                 }
                 if let Some(prior) = prior {
-                    remember_body_instances_in_txn(
+                    out.extend(remembered_body_instance_rows_in_txn(
                         store,
                         txn,
                         digest,
                         &[prior.instance, instance],
-                    )?;
+                    )?);
                 }
                 BODY_KEYS.put(
                     store,
@@ -161,5 +163,5 @@ fn bind_in_txn(
             return response_rows::bind_in_txn(store, txn, carrier, instance);
         }
     }
-    Ok(Vec::new())
+    Ok(out)
 }

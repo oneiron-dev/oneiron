@@ -198,12 +198,9 @@ impl Vault {
                 )
                 .apply(txn)?;
             if let Some(project) = state.document.project {
-                crate::federation::record_scope::stamp_blob_project(
-                    &self.store,
-                    txn,
-                    image,
-                    project,
-                )?;
+                self.store
+                    .scope_stamps
+                    .stamp_blob_project(&self.store, txn, image, project)?;
             }
             // A bearer authorizes document input, not an owner-level Auto assertion.
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;

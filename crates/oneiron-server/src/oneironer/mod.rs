@@ -25,17 +25,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionEncoder, ExtractionWork,
+    EncoderAttempt, EncoderInput, ExecutionRuntime, ExtractionCaller, ExtractionEncoder,
+    ExtractionWork,
 };
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
-use dispatcher::{Completion, Dispatcher, WorkerSpec};
-use engines::{Admission, BaselineCalibration};
+use dispatcher::{Completion, Dispatcher, WorkerDescriptor, WorkerSpec, WorkerState};
+use engines::{Admission, BaselineCalibration, COREML_ABSENT, MLX_ABSENT, PlatformAbsent};
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
+pub(crate) use local::{QuestionHead, QuestionTokenizer};
 
 pub(crate) mod bundle;
 mod coreml;
@@ -147,14 +149,21 @@ impl ProviderTagger {
         &self,
         claim: DispatchClaim,
         planned: oneiron::Result<InferenceWindows>,
+        context: Option<oneiron::llm::TaggerCallContext>,
     ) -> Completion {
-        claim.submit_planned(planned)
+        claim.submit_planned_in(planned, context)
     }
 
     /// The dispatcher's pending cap of `work`'s class, from its policy: the
     /// bound the tagging coordinator also keeps its resident markers in.
     pub(crate) fn pending_cap(&self, work: ExtractionWork) -> usize {
         dispatcher::pending_cap(work)
+    }
+
+    /// Every worker's descriptor, state and latest transition reason, for the
+    /// slot's status (FIX 7384).
+    pub(crate) fn worker_statuses(&self) -> Vec<(WorkerDescriptor, WorkerState, Option<String>)> {
+        self.dispatcher.worker_statuses()
     }
 
     /// The decoder revision a native tagger runs; `None` for an endpoint,
@@ -213,6 +222,16 @@ impl ExtractionEncoder for ProviderTagger {
     ) -> EncoderAttempt {
         self.dispatcher.call(input, work, caller)
     }
+
+    fn infer_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &oneiron::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        self.dispatcher.call_in(input, work, caller, context)
+    }
 }
 
 /// One trace as a test observes it.
@@ -222,6 +241,17 @@ pub(crate) struct LoggedTrace {
     pub(crate) trace: TaggingTrace,
     /// When the worker logged it, for the write-to-trace measurement.
     pub(crate) at: std::time::Instant,
+}
+
+/// One platform runtime's worker state and why, for the tagger row (FIX 7384).
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeStatus {
+    /// Which runtime: MLX or Core ML.
+    pub(crate) runtime: ExecutionRuntime,
+    /// The worker's state; `None` when the admission found the row absent.
+    pub(crate) state: Option<WorkerState>,
+    /// The absence, DOWN or crash reason; `None` when never recorded.
+    pub(crate) why: Option<String>,
 }
 
 /// The slot on the server: what is configured and the tagger.
@@ -234,6 +264,8 @@ pub(crate) struct TaggerSlot {
     serving: Arc<Mutex<Option<engines::Serving>>>,
     /// The platform admission the serving build starts, until it does.
     platforms: Option<Admission>,
+    /// Each platform row's absence, as the admission found it (FIX 7384).
+    absent: PlatformAbsent,
     /// The after-bind calibration of the Candle baseline the serving build
     /// starts, until it does (FIX 7108); it starts the platform admission
     /// once it lands.
@@ -308,6 +340,45 @@ impl TaggerSlot {
     pub(crate) fn accept_card(&self, card: endpoint::ModelCard) {
         if let Ok(mut slot) = self.card.lock() {
             *slot = Some(card);
+        }
+    }
+
+    /// Each platform runtime's worker state and why, for the tagger row (FIX
+    /// 7384): MLX first, Core ML second. A runtime with a worker reports its
+    /// state and latest transition reason; one the admission found absent
+    /// reports its absence reason; one never admitted reports neither.
+    pub(crate) fn runtime_status(&self) -> [RuntimeStatus; 2] {
+        let workers = self.tagger.worker_statuses();
+        let absent = self
+            .absent
+            .lock()
+            .map(|absent| *absent)
+            .unwrap_or([None, None]);
+        [
+            Self::platform_status(ExecutionRuntime::Mlx, &workers, absent[MLX_ABSENT]),
+            Self::platform_status(ExecutionRuntime::CoreMl, &workers, absent[COREML_ABSENT]),
+        ]
+    }
+
+    fn platform_status(
+        runtime: ExecutionRuntime,
+        workers: &[(WorkerDescriptor, WorkerState, Option<String>)],
+        absent: Option<&'static str>,
+    ) -> RuntimeStatus {
+        match workers
+            .iter()
+            .find(|(descriptor, _, _)| descriptor.runtime() == runtime)
+        {
+            Some((_, state, why)) => RuntimeStatus {
+                runtime,
+                state: Some(*state),
+                why: why.clone(),
+            },
+            None => RuntimeStatus {
+                runtime,
+                state: None,
+                why: absent.map(str::to_owned),
+            },
         }
     }
 
@@ -402,6 +473,7 @@ fn build_slot_inner(
     };
     config.validate()?;
     let serving = Arc::new(Mutex::new(None));
+    let absent: PlatformAbsent = Arc::new(Mutex::new([None, None]));
     let (mut platforms, mut calibration) = (None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
@@ -471,6 +543,7 @@ fn build_slot_inner(
                     engine,
                     worker,
                     card.clone(),
+                    Arc::clone(&absent),
                 );
                 calibration = BaselineCalibration::new(
                     config,
@@ -480,6 +553,7 @@ fn build_slot_inner(
                     worker,
                     card,
                     Arc::clone(&serving),
+                    Arc::clone(&absent),
                 );
                 tagger
             } else {
@@ -518,6 +592,7 @@ fn build_slot_inner(
         card: Mutex::new(None),
         serving,
         platforms,
+        absent,
         calibration,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
@@ -563,12 +638,21 @@ pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
     rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    let build = move || {
-        let mut slot = build_slot_with_rows(config.as_ref(), rows_location.as_deref())?;
-        if let Some(slot) = slot.as_mut() {
-            slot.start_platform_workers();
-        }
-        Ok(slot)
-    };
-    crate::logging::off_runtime("tagger slot task", build).await?
+    crate::logging::off_runtime("tagger slot task", move || {
+        build_slot_on_thread(config.as_ref(), rows_location.as_deref())
+    })
+    .await?
+}
+
+/// The serving build on an existing blocking thread: what first-run setup
+/// calls inside the owner route's `blocking()` unit.
+pub(crate) fn build_slot_on_thread(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<Option<TaggerSlot>> {
+    let mut slot = build_slot_with_rows(config, rows_location)?;
+    if let Some(slot) = slot.as_mut() {
+        slot.start_platform_workers();
+    }
+    Ok(slot)
 }

@@ -16,12 +16,12 @@ use std::path::PathBuf;
 use super::claims::{RepoProjectionCheckout, RepoProjectionClaim, RepoProjectionRecord};
 use super::git::{RepoGitProjectionRoots, materialize_masked_git_graph, projection_graph_dir};
 use crate::Vault;
-use crate::checkout::lease::CheckoutLeaseAct;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::smart_http::store_holds_readable_marks_in_txn;
+use crate::store::checkout_lease::CheckoutLeaseAct;
 
 /// The bare store's directory inside a copy's own directory.
 const PROJECTION_STORE_REPO: &str = "repo.git";

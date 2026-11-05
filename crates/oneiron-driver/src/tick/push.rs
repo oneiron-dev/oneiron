@@ -11,10 +11,10 @@ use tokio::sync::Notify;
 
 use super::queue::SessionHintQueue;
 use super::{
-    ArmedLane, HintSignal, NowMillis, SessionHintCarrier, Tick, TickSource, WakeSignal,
-    system_now_ms,
+    ArmedLane, HintSignal, NowMillis, QueuedSessionHint, SessionHintCarrier, Tick, TickSource,
+    WakeSignal, system_now_ms,
 };
-use crate::session::SessionHint;
+use crate::session::{SessionHint, SessionHintEffect};
 
 // ---------------------------------------------------------------------------
 // PushTick — bounded, role-typed, coalescing push mailbox (H-S4)
@@ -119,15 +119,15 @@ impl PushShared {
     }
 
     /// Pops the oldest session hint; a producer waiting for room is woken.
-    fn pop_session_hint(&self) -> Option<SessionHintCarrier> {
+    fn pop_session_hint(&self) -> Option<QueuedSessionHint> {
         let mut state = self.lock_state();
-        let carrier = state.session_hints.pop_front();
+        let envelope = state.session_hints.pop_front();
         let waiting = !state.session_hints.line_empty();
         drop(state);
-        if carrier.is_some() && waiting {
+        if envelope.is_some() && waiting {
             self.drained.notify_all();
         }
-        carrier
+        envelope
     }
 }
 
@@ -173,7 +173,7 @@ pub struct PushTick {
     pub(super) wake_scan_start: usize,
     /// Timestamp sidecar for the session hint most recently surfaced by
     /// `next_tick`; consumed by the SessionTicks decorator before surfacing.
-    delivered_session_hint: Option<SessionHintCarrier>,
+    delivered_session_hint: Option<QueuedSessionHint>,
 }
 
 impl PushTick {
@@ -239,13 +239,14 @@ impl PushTick {
         // Session hints drain in ARRIVAL order: reordering lifecycle facts
         // rewrites causality (an end-then-open burst is a reopen, not an
         // open that ends itself). The plain advisory slot drains last.
-        let carrier = state.session_hints.pop_front();
-        let waiting = carrier.is_some() && !state.session_hints.line_empty();
-        let tick = match carrier {
-            Some(carrier) => {
-                self.delivered_session_hint = Some(carrier);
+        let envelope = state.session_hints.pop_front();
+        let waiting = envelope.is_some() && !state.session_hints.line_empty();
+        let tick = match envelope {
+            Some(envelope) => {
+                let hint = envelope.carrier.hint;
+                self.delivered_session_hint = Some(envelope);
                 Some(Tick::Hint(HintSignal {
-                    session: Some(carrier.hint),
+                    session: Some(hint),
                 }))
             }
             None => state.plain_hint.take().map(Tick::Hint),
@@ -299,12 +300,17 @@ impl Drop for PushTick {
     fn drop(&mut self) {
         // Under the mailbox lock, so a producer waiting for room cannot miss
         // the wake between its check and its wait.
-        let state = self
+        let mut state = self
             .shared
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.shared.receiver_alive.store(false, Ordering::Release);
+        // Queued facts die with the receiver: dropping their envelopes
+        // disconnects tracked apply-waiters as closed. The waiter line is
+        // untouched — producers still in line leave through their own
+        // receiver-gone check.
+        state.session_hints.clear();
         drop(state);
         self.shared.drained.notify_all();
     }
@@ -315,24 +321,28 @@ impl TickSource for PushTick {
         self.recv().await
     }
 
+    async fn wait_for_buffered_session_hint(&mut self) {
+        self.shared.notify.notified().await;
+    }
+
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(SessionKey, SessionHint, Option<u64>, u64)> {
-        self.shared.pop_session_hint().map(|carrier| {
+        self.shared.pop_session_hint().map(|envelope| {
             (
-                carrier.key,
-                carrier.hint,
-                carrier.first.claimed_ms,
-                carrier.first.arrival_ms,
+                envelope.carrier.key,
+                envelope.carrier.hint,
+                envelope.carrier.first.claimed_ms,
+                envelope.carrier.first.arrival_ms,
             )
         })
     }
 
-    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         self.shared.pop_session_hint()
     }
 
-    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         self.delivered_session_hint.take()
     }
 
@@ -532,6 +542,135 @@ impl HintPusher {
             tracing::warn!(?hint, ?outcome, "session hint left the line unkept");
         }
         outcome
+    }
+
+    /// Pushes a TRACKED app-open hint ([`SessionHint::AppOpen`]) onto the SAME
+    /// ordered queue [`Self::push_session_hint`] uses — same room, ticket
+    /// order, arrival stamp and coalescing floor — and returns a handle that
+    /// waits the hint's ACTUAL apply. The channel is minted once per call;
+    /// its sender rides the queued envelope to the session decorator, which
+    /// ACKs every applied effect (or drops it as closed). Refuses like the
+    /// untracked push, with no handle: [`TickPushError::Closed`] when the
+    /// receiver is gone, [`TickPushError::MemoryPressure`] when the allocator
+    /// has no room or earlier hints wait ahead.
+    /// [`Self::push_app_open_tracked_waiting`] waits its turn instead.
+    pub fn push_app_open_tracked(
+        &self,
+        key: SessionKey,
+        claimed_ms: Option<u64>,
+    ) -> Result<AppOpenApplyHandle, TickPushError> {
+        let mut state = self.shared.lock_state();
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TickPushError::Closed);
+        }
+        let carrier = SessionHintCarrier::point(
+            key,
+            SessionHint::AppOpen,
+            claimed_ms,
+            (self.shared.now_ms)(),
+        );
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut completion = Some(sender);
+        if !state.session_hints.line_empty()
+            || !state.session_hints.keep_with_completion(
+                carrier,
+                &mut completion,
+                self.shared.coalesce_floor_ms,
+            )
+        {
+            return Err(TickPushError::MemoryPressure);
+        }
+        drop(state);
+        self.shared.notify.notify_one();
+        Ok(AppOpenApplyHandle { receiver })
+    }
+
+    /// [`Self::push_app_open_tracked`] that waits its turn under real memory
+    /// pressure instead of refusing, on the SAME ticket/line/condvar path as
+    /// [`Self::push_session_hint_waiting`]: same arrival order, stamps,
+    /// doubling recheck and caller-owned `deadline`. The tracked sender is
+    /// minted once and retained across failed keeps — it moves into the queue
+    /// only with the kept fact.
+    pub fn push_app_open_tracked_waiting(
+        &self,
+        key: SessionKey,
+        claimed_ms: Option<u64>,
+        deadline: Option<Instant>,
+    ) -> Result<AppOpenApplyHandle, TickPushError> {
+        let floor = self.shared.coalesce_floor_ms;
+        let mut state = self.shared.lock_state();
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TickPushError::Closed);
+        }
+        let hint = SessionHint::AppOpen;
+        let carrier = SessionHintCarrier::point(key, hint, claimed_ms, (self.shared.now_ms)());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut completion = Some(sender);
+        if state.session_hints.line_empty()
+            && state
+                .session_hints
+                .keep_with_completion(carrier, &mut completion, floor)
+        {
+            drop(state);
+            self.shared.notify.notify_one();
+            return Ok(AppOpenApplyHandle { receiver });
+        }
+        let ticket = state.session_hints.join_line();
+        tracing::warn!(?hint, "session hint waits for room in arrival order");
+        let mut recheck = PRESSURE_RECHECK_FIRST;
+        let outcome = loop {
+            if !self.shared.receiver_alive.load(Ordering::Acquire) {
+                break Err(TickPushError::Closed);
+            }
+            if state.session_hints.is_turn(ticket)
+                && state
+                    .session_hints
+                    .keep_with_completion(carrier, &mut completion, floor)
+            {
+                break Ok(());
+            }
+            let wait = match deadline {
+                Some(at) => match at.checked_duration_since(Instant::now()) {
+                    Some(left) if !left.is_zero() => left.min(recheck),
+                    _ => break Err(TickPushError::DeadlinePassed),
+                },
+                None => recheck,
+            };
+            state = self
+                .shared
+                .drained
+                .wait_timeout(state, wait)
+                .expect("push mailbox lock poisoned")
+                .0;
+            recheck = recheck.saturating_mul(2).min(PRESSURE_RECHECK_MAX);
+        };
+        state.session_hints.leave_line(ticket);
+        drop(state);
+        // The turn moved on: the next producer in line looks now.
+        self.shared.drained.notify_all();
+        if outcome.is_ok() {
+            self.shared.notify.notify_one();
+        } else {
+            tracing::warn!(?hint, ?outcome, "session hint left the line unkept");
+        }
+        outcome.map(|()| AppOpenApplyHandle { receiver })
+    }
+}
+
+/// Waits the actual apply of one tracked app-open hint: the session decorator
+/// ACKs the effect it applied, on EVERY [`Ok`] effect. Never touches the queue
+/// mutex — the wait is a plain channel receive, so an async caller runs it
+/// where blocking is allowed. Dropping the handle abandons the wait without
+/// disturbing the apply.
+pub struct AppOpenApplyHandle {
+    receiver: std::sync::mpsc::Receiver<SessionHintEffect>,
+}
+
+impl AppOpenApplyHandle {
+    /// Blocks until the hint applies. [`TickPushError::Closed`] when the
+    /// queued or retrying work was dropped before its apply ran.
+    pub fn wait(self) -> Result<SessionHintEffect, TickPushError> {
+        self.receiver.recv().map_err(|_| TickPushError::Closed)
     }
 }
 

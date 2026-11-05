@@ -9,8 +9,8 @@ use crate::config::VaultConfig;
 use crate::distance::PreparedCosine;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
 use oneiron_retrieval::pipeline::ScoredEntity;
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::keys::{
     ERR_ENTRY_POINT_MISSING, ERR_ENTRY_POINT_VECTOR_MISSING, ERR_VECTOR_ROW_MISSING_AT_RESCORE,
@@ -50,7 +50,7 @@ use super::types::{
 /// the beam. The walk still passes through refused nodes, and the result
 /// is short when the beam finds fewer admitted ones.
 pub(crate) fn hnsw_search(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     query_vector: &[f32],
@@ -96,7 +96,7 @@ pub(crate) fn hnsw_search(
     if count == 0 {
         let graph_rows_exist = match graph {
             GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
-                store.hnsw_neighbors().first(rtxn)?.is_some()
+                store.index_neighbors().first(rtxn)?.is_some()
             }
             GraphSource::Rebuilt(neighbors_by_id) => !neighbors_by_id.is_empty(),
         };
@@ -169,7 +169,7 @@ pub(crate) fn hnsw_search(
     // active matches. Restore only removes the marker, not graph state.
     let mut visible = Vec::with_capacity(nearest.len());
     for entry in nearest {
-        if !crate::vault_cleanup::is_archived_in_txn(store, rtxn, &entry.id)? {
+        if !store.index_is_archived(rtxn, &entry.id)? {
             visible.push(entry);
         }
     }
@@ -228,7 +228,7 @@ pub(super) fn score_prefix(vector: &[f32], score_dims: usize) -> Result<&[f32]> 
 }
 
 pub(super) fn beam_search(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     entry_point: EntityId,
@@ -250,7 +250,7 @@ pub(super) fn beam_search(
 /// [`beam_search`] over the persisted rows that also logs every neighbour list
 /// it expands (see [`ExpandedLists`]).
 pub(super) fn beam_search_logged(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     (entry_point, log): (EntityId, &std::cell::RefCell<ExpandedLists>),
@@ -270,7 +270,7 @@ pub(super) fn beam_search_logged(
 }
 
 fn beam_search_graph(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     entry_point: EntityId,
@@ -313,7 +313,7 @@ fn beam_search_graph(
     let mut visible: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let graph_nodes = match graph {
         GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
-            usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0)
+            usize::try_from(store.index_neighbors().len(txn)?).unwrap_or(0)
         }
         GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id.len(),
     };
@@ -325,10 +325,8 @@ fn beam_search_graph(
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
 
-    let walks = check_existence && crate::ports::any_pending_walk(store, txn)?;
-    if !check_existence
-        || crate::ports::EntityStoreRead::port_entity_present(store, txn, &entry_point)?
-    {
+    let walks = check_existence && store.index_any_pending_walk(txn)?;
+    if !check_existence || store.index_entity_present(txn, &entry_point)? {
         results.push(entry);
         if check_existence && is_match(store, txn, &entry_point, walks, admission)? {
             visible.push(entry);
@@ -368,9 +366,7 @@ fn beam_search_graph(
             }
 
             *ops += 1;
-            if check_existence
-                && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &neighbor_id)?
-            {
+            if check_existence && !store.index_entity_present(txn, &neighbor_id)? {
                 continue;
             }
 
@@ -425,15 +421,15 @@ fn beam_search_graph(
 /// (the walk passes through each, see [`load_vector_into`]); and one the
 /// reader's `admission` admits.
 fn is_match(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     walks: bool,
     admission: Option<&Admission<'_>>,
 ) -> Result<bool> {
-    let hidden = store.vectors().hides(id.as_bytes())
-        || crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
-        || (walks && crate::ports::stale_in_txn(store, txn, id)?);
+    let hidden = store.index_vectors().hides(id.as_bytes())
+        || store.index_is_archived(txn, id)?
+        || (walks && store.index_is_stale(txn, id)?);
     if hidden {
         return Ok(false);
     }
@@ -442,7 +438,7 @@ fn is_match(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn beam_search_snapshot(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     rtxn: &RoTxn<'_>,
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     query_id: &EntityId,

@@ -93,6 +93,13 @@ pub(crate) fn task_for_announcement(carrier: &[u8], fallback: EntityId) -> Entit
     let body = carrier
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .unwrap_or_default();
+    task_body_for_announcement(body, fallback)
+}
+
+/// The id a committed TASK body announces to board subscribers.
+///
+/// Same mapping as [`task_for_announcement`] for body-only bytes.
+pub(crate) fn task_body_for_announcement(body: &[u8], fallback: EntityId) -> EntityId {
     if crate::write_envelope::task_body::task_role_from_body_bytes(body).ok()
         != Some(crate::write_envelope::task_body::TaskRole::AuthorityFact)
     {

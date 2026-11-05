@@ -23,25 +23,17 @@ use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
 use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
-/// Actor context supplied to the outbound dispatch gate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutboundDispatchActor {
-    pub actor_class: String,
-    pub actor_ref: Option<String>,
-    pub actor_entity_ref: Option<EntityId>,
+pub use crate::store::outbound_actor::{
+    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchPolicyRisk,
+};
+
+pub(in crate::outbound) trait OutboundDispatchActorGate {
+    fn gate_actor(&self) -> GateActor;
+    fn provenance(&self) -> GateProvenanceHandles;
 }
 
-impl OutboundDispatchActor {
-    #[must_use]
-    pub fn agent(agent_ref: EntityId) -> Self {
-        Self {
-            actor_class: "agent".to_owned(),
-            actor_ref: Some(agent_ref.to_hex()),
-            actor_entity_ref: Some(agent_ref),
-        }
-    }
-
-    pub(super) fn gate_actor(&self) -> GateActor {
+impl OutboundDispatchActorGate for OutboundDispatchActor {
+    fn gate_actor(&self) -> GateActor {
         GateActor {
             actor_class: self.actor_class.clone(),
             actor_ref: self.actor_ref.clone(),
@@ -49,7 +41,7 @@ impl OutboundDispatchActor {
         }
     }
 
-    pub(super) fn provenance(&self) -> GateProvenanceHandles {
+    fn provenance(&self) -> GateProvenanceHandles {
         GateProvenanceHandles {
             actor_entity_ref: self.actor_entity_ref,
             ..GateProvenanceHandles::default()
@@ -57,38 +49,15 @@ impl OutboundDispatchActor {
     }
 }
 
-/// ExternalEffect policy-risk dial for outbound dispatch.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
-pub enum OutboundDispatchPolicyRisk {
-    #[default]
-    Normal,
-    HoldToProposal,
+pub(in crate::outbound) trait OutboundDispatchRiskGate {
+    fn to_gate(self) -> ExternalEffectPolicyRisk;
 }
 
-impl OutboundDispatchPolicyRisk {
-    pub(super) const fn to_gate(self) -> ExternalEffectPolicyRisk {
+impl OutboundDispatchRiskGate for OutboundDispatchPolicyRisk {
+    fn to_gate(self) -> ExternalEffectPolicyRisk {
         match self {
             Self::Normal => ExternalEffectPolicyRisk::Normal,
             Self::HoldToProposal => ExternalEffectPolicyRisk::HoldToProposal,
-        }
-    }
-}
-
-/// Gate facts supplied by the trigger source or caller.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct OutboundDispatchGate {
-    pub has_opted_in: bool,
-    pub has_permission: bool,
-    pub policy_risk: OutboundDispatchPolicyRisk,
-}
-
-impl OutboundDispatchGate {
-    #[must_use]
-    pub const fn allow_when_policy_grants() -> Self {
-        Self {
-            has_opted_in: true,
-            has_permission: true,
-            policy_risk: OutboundDispatchPolicyRisk::Normal,
         }
     }
 }
@@ -147,6 +116,8 @@ pub struct OutboundDispatchRequest {
     /// minute from, with the vault clock reading taken alongside
     /// `occurred_at`. The window door reads the clock again for this send.
     pub(crate) delivery_window_clock: Option<DeliveryWindowClock>,
+    /// Frozen IANA label replayed from the TASK; the door re-resolves it at delivery.
+    pub(crate) delivery_window_iana_timezone: Option<String>,
     /// A human selected this exact instant; policy is observed but cannot park it.
     pub delivery_window_human_explicit_instant: bool,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
@@ -244,6 +215,7 @@ impl OutboundDispatchRequest {
             delivery_window_apns_interruption_level: None,
             delivery_window_resolved_level: None,
             delivery_window_clock: None,
+            delivery_window_iana_timezone: None,
             delivery_window_human_explicit_instant: false,
             context_receipt: None,
             linkedin_sandbox_policy: None,
@@ -375,6 +347,13 @@ impl OutboundDispatchRequest {
             utc_offset_minutes,
             anchor_recorded_at,
         });
+        self
+    }
+
+    /// Replay the TASK's frozen IANA label for delivery-time resolution.
+    #[must_use]
+    pub(crate) fn delivery_window_iana_timezone(mut self, zone: impl Into<String>) -> Self {
+        self.delivery_window_iana_timezone = Some(zone.into());
         self
     }
 

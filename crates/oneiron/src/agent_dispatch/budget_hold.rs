@@ -235,7 +235,10 @@ impl AgentDispatcher<'_> {
         let ready = self.scope_has_spend(root)?;
         let queue = AttemptQueue::new(self.vault);
         let mut wtxn = self.vault.store.env.write_txn()?;
-        queue.hold_for_budget_in_txn(
+        let already_held = queue
+            .get_in_write_txn(&wtxn, lease.attempt)?
+            .is_some_and(|record| record.budget_hold());
+        let held_row = queue.hold_for_budget_in_txn(
             &mut wtxn,
             HoldAttemptForBudget {
                 id: lease.attempt,
@@ -245,14 +248,20 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
+        let canonical = held_row.cancel_state.resume_point.clone().ok_or(
+            crate::error::Error::CorruptedIndex("budget hold without a checkpoint"),
+        )?;
         let mut hold = PLAN_HOLD
             .get(&self.vault.store, &wtxn, &root)?
             .unwrap_or_else(|| PartialResultHold::new(root, reason));
+        let replay = already_held
+            && hold.state == BudgetHoldState::Held
+            && hold.held.iter().any(|held| held.attempt == lease.attempt);
         hold.state = BudgetHoldState::Held;
         hold.held.retain(|held| held.attempt != lease.attempt);
         hold.held.push(HeldAttempt {
             attempt: lease.attempt,
-            resume_point: lease.resume_point,
+            resume_point: canonical,
         });
         for result in saved {
             if !hold.partial_result_refs.contains(&result) {
@@ -262,14 +271,24 @@ impl AgentDispatcher<'_> {
         if plan.is_some() {
             hold.plan = plan;
         }
-        hold.held_at = Some(now);
         hold.resume_ready = ready;
         hold.resumed_at = None;
         hold.resumed_by = None;
-        hold.notice = Some(BudgetHoldNotice {
-            text: hold.notice_text(),
-            delivered_at: None,
-        });
+        if replay {
+            hold.held_at.get_or_insert(held_row.updated_at);
+            if hold.notice.is_none() {
+                hold.notice = Some(BudgetHoldNotice {
+                    text: hold.notice_text(),
+                    delivered_at: None,
+                });
+            }
+        } else {
+            hold.held_at = Some(held_row.updated_at);
+            hold.notice = Some(BudgetHoldNotice {
+                text: hold.notice_text(),
+                delivered_at: None,
+            });
+        }
         PLAN_HOLD.put(&self.vault.store, &mut wtxn, &root, &hold)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();

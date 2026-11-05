@@ -281,6 +281,6 @@ fn deliver(
         url: url.to_string(),
         status,
         headers,
-        body: bytes,
+        body: bytes.into(),
     })
 }

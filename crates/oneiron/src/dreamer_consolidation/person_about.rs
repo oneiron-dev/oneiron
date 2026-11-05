@@ -387,15 +387,10 @@ impl Vault {
         let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
             return Ok(None);
         };
-        if row.moved || row.asked != row.written {
-            return Ok(None);
-        }
-        Ok(row
-            .lines
-            .iter()
-            .rev()
-            .find(|line| line.band <= ceiling)
-            .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
+        Ok(
+            sources::current_line_in_txn(&self.store, &txn, &row, ceiling)?
+                .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()),
+        )
     }
 }
 
@@ -440,6 +435,14 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for PersonAboutExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],

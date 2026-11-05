@@ -93,7 +93,8 @@ impl Store {
         let Some(position) = self.custody_position()? else {
             return Ok(None);
         };
-        let destroyed = crate::world_keys::world_keys_destroyed_in_txn(self, txn, world)?;
+        let destroyed =
+            crate::store::world_pad_rows::world_keys_destroyed_in_txn(self, txn, world)?;
         let mut live = BTreeMap::new();
         let mut retired = BTreeSet::new();
         for item in items {
@@ -102,7 +103,7 @@ impl Store {
             }
             // An erase standing here retires the pad, whatever custody holds
             // while its retirement finishes.
-            if destroyed || crate::world_keys::pad_row_erased_in_txn(self, txn, item)? {
+            if destroyed || crate::store::world_pad_rows::pad_row_erased_in_txn(self, txn, item)? {
                 retired.insert(*item);
                 continue;
             }

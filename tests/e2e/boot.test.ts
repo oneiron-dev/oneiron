@@ -1,11 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
-import type { CommitReceipt, FacadeReceipt, MemoryPack, WitnessReceipt } from "oneiron";
+import type { MemoryPack, WitnessReceipt } from "oneiron";
 import { EngineFixture } from "./support/engine.ts";
 import type { PairedActor } from "./support/engine.ts";
 import { McpClient, PublicHttpClient } from "./support/clients.ts";
-import type { JsonRpcReply, SdkDriverResult, SdkOperation } from "./support/clients.ts";
+import type { JsonRpcReply, SdkDriverResult, SdkOperation, SdkTarget } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
 import { defineFile, redactor, runProcess } from "./support/run.ts";
 
@@ -55,11 +55,28 @@ function sdkWitness(journey: Journey, at: number): SdkOperation {
       content: journey.text, isVisible: true, order: 0 }],
   } };
 }
-function sdkClaim(journey: Journey, at: number): SdkOperation {
+function sdkClaim(journey: Journey, at: number, scope: Facade.ClaimScope): SdkOperation {
   return { verb: "claimUpsert", input: {
-    id: journey.claimId, subjectRef: journey.turnId, predicate: journey.predicate,
-    value: journey.value, confidence: 1, source: "user_stated", occurredAt: at, learnedAt: at,
+    id: journey.claimId, subject_ref: journey.turnId, predicate: journey.predicate, scope,
+    value: journey.value, confidence: 1, source: "user_stated", occurred_at: at, learned_at: at,
   } };
+}
+async function embeddedClaimScope(engine: EngineFixture, target: SdkTarget): Promise<Facade.ClaimScope> {
+  const actor = sdkValue<Facade.SelfActorRefs>(await engine.sdk.run("napi",target,[{verb:"selfActor"}]));
+  const facets = sdkValue<FacadeResult<"vault.neighbors">>(await engine.sdk.run("napi",target,[{
+    verb:"neighbors",input:{entity_ref:actor.actor_ref,opts:{edge_kind:"has_facet",limit:100}},
+  }]));
+  const views = await engine.sdk.run("napi",target,facets.value.map(facet => ({
+    verb:"get" as const,input:{entity_ref:facet.short_id},
+  })));
+  for (const index of facets.value.keys()) {
+    const row = sdkValue<FacadeResult<"vault.get">>(views,index).value;
+    const body = row?.body;
+    if (row?.kind === "FACET" && body && typeof body === "object" && "kind" in body && body.kind === "substrate")
+      return {world_id:"00000000000000000000000000000001",scope_facet_id:row.id_hex,
+        scope_relationship_id:"all",scope_project_id:"00000000000000000000000000000002"};
+  }
+  throw new Error("Embedded owner has no readable substrate facet");
 }
 function sdkValue<T>(reply: SdkDriverResult, index = 0): T {
   expect(reply.process.exitCode).toBe(0);
@@ -89,8 +106,8 @@ function recalledTurn(pack: Facade.MemoryPack, receipt: Facade.WitnessReceipt, j
     expect.objectContaining({ short_id: receipt.message_short_ids[0], value_text: journey.text }),
   ]));
 }
-function recalledClaim(pack: MemoryPack, receipt: CommitReceipt, journey: Journey): void {
-  const claim = pack.items.find(item => item.shortId === receipt.claimShortId);
+function recalledClaim(pack: MemoryPack, receipt: Facade.CommitReceipt, journey: Journey): void {
+  const claim = pack.items.find(item => item.shortId === receipt.claim_short_id);
   expect(claim).toBeDefined();
   expect(claim!.predicate).toBe(journey.predicate);
   expect(claim!.valueText).toContain(journey.value.seat);
@@ -100,11 +117,11 @@ function recalledClaim(pack: MemoryPack, receipt: CommitReceipt, journey: Journe
   expect(Array.isArray(claim!.provenance.evidenceTurnIds)).toBe(true);
   expect(pack.narrowing.applied.denyAll).toBe(false);
 }
-function claimReceipt(rows: FacadeReceipt[], commit: CommitReceipt, principal?: string): FacadeReceipt {
-  const row = rows.find(item => item.receiptRef === commit.receiptRef);
+function claimReceipt(rows: Facade.MemoryReceipt[], commit: Facade.CommitReceipt, principal?: string): Facade.MemoryReceipt {
+  const row = rows.find(item => item.receipt_ref === commit.receipt_ref);
   expect(row).toBeDefined();
   expect(row!.outcome).toBe("allow");
-  if (principal !== undefined) expect(row!.actorRef).toBe(principal);
+  if (principal !== undefined) expect(row!.actor_ref).toBe(principal);
   return row!;
 }
 
@@ -207,18 +224,19 @@ suite.test(test, "BOOT-02", "TypeScript remote memory journey should work", asyn
   const actor = await engine.pairActor({ principalRef: engine.pairedActor.principalRef,
     actorClass: "human", scope: ["core:read", "core:write"] });
   const target = { mode: "remote" as const, url: engine.url, credential: actor.credential };
+  const scope = await ownerBaseClaimScope(engine.client,engine.pairedActor.principalRef);
   const result = await engine.sdk.run("typescript", target, [
-    sdkWitness(journey, data.occurredAt), sdkClaim(journey, data.occurredAt),
+    sdkWitness(journey, data.occurredAt), sdkClaim(journey, data.occurredAt, scope),
     { verb: "recall", query: journey.marker, options: { effort: "light", asOf: data.occurredAt } },
     { verb: "receipts", limit: 100 },
   ]);
   expect(result.results).toHaveLength(4);
   const witnessed = sdkValue<WitnessReceipt>(result, 0);
-  const committed = sdkValue<CommitReceipt>(result, 1);
+  const committed = sdkValue<Facade.CommitReceipt>(result, 1);
   expect(witnessed.receiptRef).toStartWith("witness:");
   expect(committed.approval).toBe("auto");
   recalledClaim(sdkValue<MemoryPack>(result, 2), committed, journey);
-  expect(claimReceipt(sdkValue<FacadeReceipt[]>(result, 3), committed, actor.principalRef).actorClass).toBe("human");
+  expect(claimReceipt(sdkValue<Facade.VaultReceiptsPage>(result, 3).receipts, committed, actor.principalRef).actor_class).toBe("human");
   const saved = await actor.client.call("vault.claims.list", { subject_ref: journey.turnId, limit: 10 });
   expect(saved.value).toEqual(expect.arrayContaining([expect.objectContaining({
     claim_ref: journey.claimId, value: journey.value, source: "user_stated", approval: "auto",
@@ -226,7 +244,7 @@ suite.test(test, "BOOT-02", "TypeScript remote memory journey should work", asyn
   const reader = await engine.pairActor({ principalRef: actor.principalRef, actorClass: "human", scope: ["core:read"] });
   sdkRefusal(await engine.sdk.run("typescript", {
     mode: "remote", url: engine.url, credential: reader.credential,
-  }, [sdkClaim({ ...journey, claimId: data.deniedMessageId }, data.occurredAt)]), "FORBIDDEN");
+  }, [sdkClaim({ ...journey, claimId: data.deniedMessageId }, data.occurredAt, scope)]), "FORBIDDEN");
   expect((await engine.client.call("vault.get", { entity_ref: data.deniedMessageId })).value).toBeNull();
 });
 
@@ -242,6 +260,7 @@ suite.test(test, "BOOT-03", "Python remote memory journey should work", async ()
       occurred_at: data.occurredAt, messages: [{ id: journey.messageId, author: "user", message_type: "dialogue",
         content: journey.text, order: 0 }] } },
     { verb: "claimUpsert", input: { subject_ref: journey.turnId, predicate: journey.predicate,
+      scope: await ownerBaseClaimScope(engine.client,engine.pairedActor.principalRef),
       value: journey.value, confidence: 1, source: "user_stated" } },
     { verb: "recall", query: journey.marker, options: { effort: "light", as_of: data.occurredAt } },
     { verb: "receipts", limit: 100 },
@@ -258,7 +277,7 @@ suite.test(test, "BOOT-03", "Python remote memory journey should work", async ()
   expect(claim!.value_text).toContain(journey.value.seat);
   expect(claim!.value_text).toContain(journey.marker);
   expect(pack.narrowing.applied.deny_all).toBe(false);
-  const receipts = sdkValue<Facade.MemoryReceipt[]>(result, 3);
+  const receipts = sdkValue<Facade.VaultReceiptsPage>(result, 3).receipts;
   expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({
     receipt_ref: committed.receipt_ref, actor_ref: actor!.principalRef, actor_class: "agent", outcome: "allow",
   })]));
@@ -276,12 +295,13 @@ suite.test(test, "BOOT-04", "Native addon memory persistence should work", async
   const journey = data.native;
   const engine = await EngineFixture.start({ id: "BOOT-04", profile });
   const target = { mode: "embedded" as const, path: resolve(engine.root, "embedded-vault") };
+  const scope = await embeddedClaimScope(engine,target);
   const written = await engine.sdk.run("napi", target, [
-    sdkWitness(journey, data.occurredAt), sdkClaim(journey, data.occurredAt),
+    sdkWitness(journey, data.occurredAt), sdkClaim(journey, data.occurredAt, scope),
   ]);
   expect(written.results).toHaveLength(2);
   expect(sdkValue<WitnessReceipt>(written, 0).receiptRef).toStartWith("witness:");
-  const committed = sdkValue<CommitReceipt>(written, 1);
+  const committed = sdkValue<Facade.CommitReceipt>(written, 1);
   expect(committed.approval).toBe("auto");
   // run() has awaited actual Node process exit before this second host opens the same path.
   const reopened = await engine.sdk.run("napi", target, [
@@ -290,10 +310,10 @@ suite.test(test, "BOOT-04", "Native addon memory persistence should work", async
   ]);
   expect(reopened.results).toHaveLength(2);
   recalledClaim(sdkValue<MemoryPack>(reopened, 0), committed, journey);
-  const row = claimReceipt(sdkValue<FacadeReceipt[]>(reopened, 1), committed);
-  expect(row.actorClass).toBe("human");
-  expect(row.actorRef).toMatch(/^[0-9a-f]{32}$/);
-  expect(row.actorRef).not.toBe(engine.pairedActor.principalRef);
+  const row = claimReceipt(sdkValue<Facade.VaultReceiptsPage>(reopened, 1).receipts, committed);
+  expect(row.actor_class).toBe("human");
+  expect(row.actor_ref).toMatch(/^[0-9a-f]{32}$/);
+  expect(row.actor_ref).not.toBe(engine.pairedActor.principalRef);
   expect((await engine.client.call("vault.recall", { query: journey.marker, effort: "light" })).items).toEqual([]);
 });
 
@@ -327,7 +347,7 @@ suite.test(test, "BOOT-05", "CLI memory access should work", async () => {
   expect(savedClaim!.value_text).toContain(journey.marker);
   expect(savedClaim!.provenance.source).toBe("user_stated");
   const receipts = await actor.cli.call("vault.receipts", { limit: 100 });
-  expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({
+  expect(receipts.receipts).toEqual(expect.arrayContaining([expect.objectContaining({
     receipt_ref: committed.receipt_ref, actor_ref: actor.principalRef, actor_class: "human", outcome: "allow",
   })]));
   const reader = await engine.pairActor({ principalRef: actor.principalRef, actorClass: "human", scope: ["core:read"] });
@@ -409,7 +429,7 @@ suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", 
     short_ref: proposed.output.claim_short_id, value: journey.value, source: "tool_output", approval: "proposed",
   })]));
   const receipts = await engine.client.call("vault.receipts", { limit: 100 });
-  expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({
+  expect(receipts.receipts).toEqual(expect.arrayContaining([expect.objectContaining({
     receipt_ref: proposed.output.receipt_ref, outcome: "pending", actor_ref: proposer!.principalRef, actor_class: "agent",
   })]));
   const unapproved = await engine.client.call("vault.recall", {
@@ -445,15 +465,15 @@ const p = JSON.parse(readFileSync(0, 'utf8'));
 const { Oneiron } = await import(pathToFileURL(p.module).href);
 const a = Oneiron.connect(p.a.url, p.a.credential);
 const b = Oneiron.connect(p.b.url, p.b.credential);
-function write(m, j) {
+function write(m, j, scope) {
   const witnessed = m.vault.witness({ conversationRef: j.conversationId, turnRef: j.turnId, occurredAt: p.at,
     messages: [{ id: j.messageId, author: 'user', messageType: 'dialogue', content: j.text, order: 0 }] });
-  const committed = m.vault.claims.upsert({ id: j.claimId, subjectRef: j.turnId, predicate: j.predicate,
-    value: j.value, confidence: 1, source: 'user_stated', occurredAt: p.at, learnedAt: p.at });
+  const committed = m.vault.claims.upsert({ id: j.claimId, subject_ref: j.turnId, predicate: j.predicate, scope,
+    value: j.value, confidence: 1, source: 'user_stated', occurred_at: p.at, learned_at: p.at });
   return { witnessed, committed };
 }
-const wa = write(a, p.a.journey);
-const wb = write(b, p.b.journey);
+const wa = write(a, p.a.journey, p.a.scope);
+const wb = write(b, p.b.journey, p.b.scope);
 const options = { effort: 'light', asOf: p.at };
 const firstA = a.vault.recall(p.a.journey.marker, options);
 const fromB = b.vault.recall(p.b.journey.marker, options);
@@ -462,13 +482,13 @@ process.stdout.write(JSON.stringify({ wa, wb, firstA, fromB, againA,
   receiptsA: a.vault.receipts(), receiptsB: b.vault.receipts() }));
 `;
 interface IsolationReply {
-  wa: { witnessed: WitnessReceipt; committed: CommitReceipt };
-  wb: { witnessed: WitnessReceipt; committed: CommitReceipt };
+  wa: { witnessed: WitnessReceipt; committed: Facade.CommitReceipt };
+  wb: { witnessed: WitnessReceipt; committed: Facade.CommitReceipt };
   firstA: MemoryPack;
   fromB: MemoryPack;
   againA: MemoryPack;
-  receiptsA: FacadeReceipt[];
-  receiptsB: FacadeReceipt[];
+  receiptsA: Facade.VaultReceiptsPage;
+  receiptsB: Facade.VaultReceiptsPage;
 }
 suite.test(test, "BOOT-08", "Vault and client isolation should work", async () => {
   const data = await corpus();
@@ -482,8 +502,10 @@ suite.test(test, "BOOT-08", "Vault and client isolation should work", async () =
     requireAsset(a.build, "node"), "--input-type=module", "-e", ISOLATION_CLIENTS,
   ], { cwd: a.root, env: a.env, label: "boot-isolation-sdk", privateOutput: true,
     input: JSON.stringify({ module: requireAsset(a.build, "sdk-js"), at: data.occurredAt,
-      a: { url: a.url, credential: a.pairedActor.credential, journey: data.isolationA },
-      b: { url: b.url, credential: b.pairedActor.credential, journey: data.isolationB } }),
+      a: { url: a.url, credential: a.pairedActor.credential, journey: data.isolationA,
+        scope: await ownerBaseClaimScope(a.client,a.pairedActor.principalRef) },
+      b: { url: b.url, credential: b.pairedActor.credential, journey: data.isolationB,
+        scope: await ownerBaseClaimScope(b.client,b.pairedActor.principalRef) } }),
   });
   expect(processResult.exitCode).toBe(0);
   expect(processResult.signal).toBeNull();
@@ -492,16 +514,16 @@ suite.test(test, "BOOT-08", "Vault and client isolation should work", async () =
   expect(result.wb.committed.approval).toBe("auto");
   for (const pack of [result.firstA, result.againA]) {
     recalledClaim(pack, result.wa.committed, data.isolationA);
-    expect(pack.items.some(item => item.shortId === result.wb.committed.claimShortId)).toBe(false);
+    expect(pack.items.some(item => item.shortId === result.wb.committed.claim_short_id)).toBe(false);
     expect(pack.items.some(item => item.valueText.includes(data.isolationB.value.seat))).toBe(false);
   }
   recalledClaim(result.fromB, result.wb.committed, data.isolationB);
-  expect(result.fromB.items.some(item => item.shortId === result.wa.committed.claimShortId)).toBe(false);
+  expect(result.fromB.items.some(item => item.shortId === result.wa.committed.claim_short_id)).toBe(false);
   expect(result.fromB.items.some(item => item.valueText.includes(data.isolationA.value.seat))).toBe(false);
-  claimReceipt(result.receiptsA, result.wa.committed, a.pairedActor.principalRef);
-  claimReceipt(result.receiptsB, result.wb.committed, b.pairedActor.principalRef);
-  expect(result.receiptsA.some(row => row.claimRef === data.isolationB.claimId)).toBe(false);
-  expect(result.receiptsB.some(row => row.claimRef === data.isolationA.claimId)).toBe(false);
+  claimReceipt(result.receiptsA.receipts, result.wa.committed, a.pairedActor.principalRef);
+  claimReceipt(result.receiptsB.receipts, result.wb.committed, b.pairedActor.principalRef);
+  expect(result.receiptsA.receipts.some(row => row.claim_ref === data.isolationB.claimId)).toBe(false);
+  expect(result.receiptsB.receipts.some(row => row.claim_ref === data.isolationA.claimId)).toBe(false);
   const replayed = new PublicHttpClient(b.url, { credential: a.pairedActor.credential, artifacts: b.artifacts });
   const denied = await replayed.raw<{ error: { code: string } }>("POST", "/v1/core/facade/vault.recall", {
     query: data.isolationA.marker, effort: "light",
@@ -520,6 +542,6 @@ suite.test(test, "BOOT-08", "Vault and client isolation should work", async () =
   expect(atA.items.some(item => item.value_text.includes(data.isolationB.value.seat))).toBe(false);
   expect(atB.items.some(item => item.value_text.includes(data.isolationA.value.seat))).toBe(false);
   for (const [target, foreignClaim] of [[a, data.isolationB.claimId], [b, data.isolationA.claimId]] as const) {
-    expect((await target.client.call("vault.receipts", { limit: 100 })).some(row => row.claim_ref === foreignClaim)).toBe(false);
+    expect((await target.client.call("vault.receipts", { limit: 100 })).receipts.some(row => row.claim_ref === foreignClaim)).toBe(false);
   }
 });

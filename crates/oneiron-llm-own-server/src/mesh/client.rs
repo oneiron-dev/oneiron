@@ -16,7 +16,7 @@ use tokio::runtime::Handle;
 use super::catalog::{CatalogRefresh, merge, mesh_row, prune};
 use super::pump::{AbortOnDrop, Demand, demand};
 use super::staging::{BookedBody, Booking, StagingBudget};
-use super::{Batch, LLM_ALPN, Reply, Request, exchange, lock, put, take};
+use super::{Batch, CountedConnection, LLM_ALPN, Reply, Request, exchange, lock, put, take};
 use crate::OwnServerTransport;
 
 /// How long a node has to answer the dial.
@@ -231,12 +231,12 @@ impl Leg {
     async fn catalog_on(&self, machine: MachineId) -> Result<Vec<LlmCatalogEntry>, Absent> {
         let conn = self.dial(machine).await?;
         let asked = tokio::time::timeout(CATALOG_TIMEOUT, async {
-            match exchange(&*conn, &Request::Catalog)
+            match exchange(&conn, &Request::Catalog)
                 .await
                 .map_err(|err| err.to_string())?
             {
                 Reply::Catalog(carried) => {
-                    let body = take(&*conn, carried, &self.budget)
+                    let body = take(&conn, carried, &self.budget)
                         .await
                         .map_err(|err| err.to_string())?;
                     serde_json::from_slice(&body.bytes)
@@ -289,11 +289,11 @@ impl Leg {
         lock(&self.proofs).insert(machine, peer);
     }
 
-    async fn dial(&self, machine: MachineId) -> Result<Box<dyn MeshConnection>, Absent> {
+    async fn dial(&self, machine: MachineId) -> Result<CountedConnection, Absent> {
         match tokio::time::timeout(DIAL_TIMEOUT, self.transport.dial(machine, LLM_ALPN)).await {
             Ok(Ok(conn)) => {
                 self.note_proof(machine, &*conn);
-                Ok(conn)
+                Ok(CountedConnection::new(conn))
             }
             Ok(Err(err)) => Err(format!("unreachable: {err}")),
             Err(_) => Err("did not answer".into()),
@@ -327,15 +327,15 @@ impl Leg {
     ) -> Result<LlmResult<LlmResponse>, Absent> {
         let conn = self.dial(machine).await?;
         let answer = async {
-            let request = put(&*conn, body.to_vec())
+            let request = put(&conn, body.to_vec())
                 .await
                 .map_err(|err| err.to_string())?;
-            match exchange(&*conn, &Request::Generate { request })
+            match exchange(&conn, &Request::Generate { request })
                 .await
                 .map_err(|err| err.to_string())?
             {
                 Reply::Generated(Ok(carried)) => {
-                    let body = take(&*conn, carried, &self.budget)
+                    let body = take(&conn, carried, &self.budget)
                         .await
                         .map_err(|err| err.to_string())?;
                     Ok(serde_json::from_slice(&body.bytes)
@@ -390,10 +390,10 @@ impl Leg {
     ) -> Result<(), Absent> {
         let conn = self.dial(machine).await?;
         let ran = async {
-            let request = put(&*conn, body.to_vec())
+            let request = put(&conn, body.to_vec())
                 .await
                 .map_err(|err| err.to_string())?;
-            let id = match exchange(&*conn, &Request::Stream { request })
+            let id = match exchange(&conn, &Request::Stream { request })
                 .await
                 .map_err(|err| err.to_string())?
             {
@@ -409,12 +409,12 @@ impl Leg {
             let mut flowed = false;
             loop {
                 let Some(room) = pump.room().await else {
-                    let _ = exchange(&*conn, &Request::Cancel { stream: id }).await;
+                    let _ = exchange(&conn, &Request::Cancel { stream: id }).await;
                     return Ok(());
                 };
                 // Once events flow, a broken node ends the stream: its
                 // events cannot be taken back. Before, another node can run it.
-                let Some((events, end, booking)) = self.next_batch(&*conn, id).await else {
+                let Some((events, end, booking)) = self.next_batch(&conn, id).await else {
                     if !flowed {
                         return Err("broke before its first event".to_owned());
                     }
@@ -468,7 +468,7 @@ impl Leg {
     /// last, and the booking of its bytes; `None` when the node broke.
     async fn next_batch(
         &self,
-        conn: &dyn MeshConnection,
+        conn: &CountedConnection,
         id: u64,
     ) -> Option<(Vec<Result<String, LlmError>>, bool, Booking)> {
         let Ok(Reply::Events { events, end }) = exchange(conn, &Request::Next { stream: id }).await

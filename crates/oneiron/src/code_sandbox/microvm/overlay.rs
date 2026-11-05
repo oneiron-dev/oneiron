@@ -1,4 +1,4 @@
-//! The host-side scratch root and the bounded overlay walk that turns guest writes into proposals.
+//! The host-side scratch root and the checked overlay walk that turns guest writes into proposals.
 
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -151,21 +151,6 @@ fn scratch_root_io_detail(root: &Path, operation: &str, error: &std::io::Error) 
 /// export spools overlay files instead and bounds none of them by size.
 pub(super) const MAX_OVERLAY_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Maximum regular-file count accepted from one overlay during proposal export.
-pub(super) const MAX_OVERLAY_FILES: usize = 8_192;
-
-/// Maximum directory count accepted below one overlay upper root.
-pub(super) const MAX_OVERLAY_DIRECTORIES: usize = 8_192;
-
-/// Maximum directory depth below the overlay upper root.
-pub(super) const MAX_OVERLAY_DEPTH: usize = 64;
-
-#[derive(Default)]
-pub(super) struct OverlayWalkBounds {
-    pub(super) file_count: usize,
-    pub(super) directory_count: usize,
-}
-
 /// Collects an overlay upper directory into typed review proposals.
 /// A whiteout is a deletion; an opaque marker is a directory hide request.
 /// A whiteout paired with a new file does not prove a rename of one document:
@@ -177,8 +162,8 @@ pub(super) struct OverlayWalkBounds {
 /// # Errors
 ///
 /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay root is missing or
-/// invalid, an entry vanishes during traversal, a resource bound is exceeded,
-/// or an entry has a non-UTF-8 name, is a symlink, or is an unsupported type.
+/// invalid, an entry vanishes during traversal, or an entry has a non-UTF-8
+/// name, is a symlink, or is an unsupported type.
 pub fn collect_overlay_writes(
     upper_root: &Path,
     mount: SandboxMount,
@@ -204,18 +189,9 @@ pub fn collect_overlay_writes(
     }
 
     let mut files = BTreeMap::<OverlayKey, SandboxProposalWrite>::new();
-    let mut bounds = OverlayWalkBounds::default();
-    let mut stack = vec![(upper_root.to_path_buf(), String::new(), 0_usize)];
-    while let Some((dir, prefix, depth)) = stack.pop() {
-        walk_overlay_dir(
-            &dir,
-            &prefix,
-            depth,
-            mount,
-            &mut files,
-            &mut stack,
-            &mut bounds,
-        )?;
+    let mut stack = vec![(upper_root.to_path_buf(), String::new())];
+    while let Some((dir, prefix)) = stack.pop() {
+        walk_overlay_dir(&dir, &prefix, mount, &mut files, &mut stack)?;
     }
 
     Ok(files.into_values().collect())
@@ -233,11 +209,9 @@ pub(super) enum OverlayKey {
 pub(super) fn walk_overlay_dir(
     dir: &Path,
     prefix: &str,
-    depth: usize,
     mount: SandboxMount,
     files: &mut BTreeMap<OverlayKey, SandboxProposalWrite>,
-    stack: &mut Vec<(PathBuf, String, usize)>,
-    bounds: &mut OverlayWalkBounds,
+    stack: &mut Vec<(PathBuf, String)>,
 ) -> Result<()> {
     // The root and each nested directory may carry the kernel's opaque xattr.
     // An OCI-style .wh..wh..opq marker is handled as an entry below.
@@ -293,7 +267,6 @@ pub(super) fn walk_overlay_dir(
                 OverlayKey::Opaque(path.as_str().to_owned()),
                 SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
             );
-            count_entry(bounds, &relative)?;
             continue;
         }
         if let Some(target) = name.strip_prefix(".wh.") {
@@ -306,7 +279,6 @@ pub(super) fn walk_overlay_dir(
                 format!("{prefix}/{target}")
             };
             add_delete(&target, mount, files)?;
-            count_entry(bounds, &relative)?;
             continue;
         }
         #[cfg(unix)]
@@ -318,28 +290,10 @@ pub(super) fn walk_overlay_dir(
                 )));
             }
             add_delete(&relative, mount, files)?;
-            count_entry(bounds, &relative)?;
             continue;
         }
         if metadata.is_dir() {
-            let child_depth = depth + 1;
-            if child_depth > MAX_OVERLAY_DEPTH {
-                return Err(overlay_error(format!(
-                    "overlay depth bound {MAX_OVERLAY_DEPTH} exceeded at `{relative}`"
-                )));
-            }
-            let next_directory_count = bounds.directory_count.checked_add(1).ok_or_else(|| {
-                overlay_error(format!(
-                    "overlay directory count bound {MAX_OVERLAY_DIRECTORIES} exceeded at `{relative}`"
-                ))
-            })?;
-            if next_directory_count > MAX_OVERLAY_DIRECTORIES {
-                return Err(overlay_error(format!(
-                    "overlay directory count bound {MAX_OVERLAY_DIRECTORIES} exceeded at `{relative}`"
-                )));
-            }
-            bounds.directory_count = next_directory_count;
-            stack.push((entry_path, relative, child_depth));
+            stack.push((entry_path, relative));
             continue;
         }
         if !metadata.is_file() {
@@ -348,18 +302,12 @@ pub(super) fn walk_overlay_dir(
             )));
         }
 
-        if bounds.file_count >= MAX_OVERLAY_FILES {
-            return Err(overlay_error(format!(
-                "overlay file count bound {MAX_OVERLAY_FILES} exceeded at `{relative}`"
-            )));
-        }
         // The file is spooled as it is read, never held whole: a proposed
         // file has no size bound (Rule 5).
         let mut file = fs::File::open(&entry_path)
             .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
         let body = SandboxProposalBody::copy_from(&mut file)?;
 
-        bounds.file_count += 1;
         let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
         if files
             .insert(
@@ -382,16 +330,6 @@ pub(super) fn overlay_error(detail: impl Into<String>) -> Error {
     Error::Code(CodeError::MicroVmOverlayError {
         detail: detail.into(),
     })
-}
-
-fn count_entry(bounds: &mut OverlayWalkBounds, path: &str) -> Result<()> {
-    if bounds.file_count >= MAX_OVERLAY_FILES {
-        return Err(overlay_error(format!(
-            "overlay file count bound {MAX_OVERLAY_FILES} exceeded at `{path}`"
-        )));
-    }
-    bounds.file_count += 1;
-    Ok(())
 }
 
 fn add_delete(

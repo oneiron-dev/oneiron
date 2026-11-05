@@ -45,7 +45,7 @@ pub(crate) async fn vault_artifacts_review_slides(
     // A caller who leaves stops the render its worker runs (FIX 7653).
     let (_stop, stop) = crate::slide_render::StopOnDrop::new();
     let (answer, mut listed) =
-        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
             let host = server.decision_host();
             // Its render takes a turn in the renderer line as it starts, at
             // the caller's fair place, and gives it back before the ladder
@@ -54,7 +54,12 @@ pub(crate) async fn vault_artifacts_review_slides(
                 crate::slide_render::AdmittedRenderer::at_render(server, Some(caller.0), stop);
             memory.artifacts_review_slides_through(
                 &input,
-                &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
+                &crate::decision_artifact::HostUnitDecider::new(
+                    server,
+                    caller.1,
+                    VERB,
+                    auth.off_record_session(),
+                ),
                 host.dial(oneiron::llm::decision::DecisionRung::Big),
                 &host.bands(),
                 renderer
@@ -88,11 +93,16 @@ pub(crate) async fn vault_artifacts_ask(
     };
     let beside = read_beside([input.artifact_ref.as_str()]);
     let (answer, mut listed) =
-        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
             let host = server.decision_host();
             memory.artifacts_ask_through(
                 &input,
-                &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
+                &crate::decision_artifact::HostUnitDecider::new(
+                    server,
+                    caller.1,
+                    VERB,
+                    auth.off_record_session(),
+                ),
                 host.dial(oneiron::llm::decision::DecisionRung::Big),
                 &host.bands(),
             )

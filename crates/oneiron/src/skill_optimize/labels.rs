@@ -33,7 +33,7 @@ pub use self::rubric::{
     JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheckReport, JudgeLabelRecheckRequest,
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
-pub(crate) use self::rubric::{judge_rubric_in_txn, recheck_judge_labels};
+pub(crate) use self::rubric::{judge_head_in_txn, judge_rubric_in_txn, recheck_judge_labels};
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
 const ASKS: SideTable<[u8; 32], JudgeAsk, LegacyJson> =

@@ -64,6 +64,10 @@ impl DreamerWakeDriver<'_> {
                 worker.guard = self.guard.clone();
                 worker.milestones = self.milestones.clone();
                 worker.claim_authoring = self.claim_authoring.clone();
+                // One token for the whole MACRO pass (FIX 11963): role runs
+                // admit under it, and the wake ask trips every worker's
+                // boundary and pre-dispatch syncs alike.
+                worker.device_cancel = self.device_cancel.clone();
                 worker.consolidation_only = index != 0;
                 if index == 0 {
                     worker.skill_optimizer = self.skill_optimizer.as_ref().map(|optimizer| {

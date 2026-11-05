@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 
 use super::{BatchState, CheckPhase, MergeBatch, MergeQueue};
 use crate::Vault;
-use crate::contract_oracle::ContractOracle;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::store::contract_oracle::ContractOracle;
 
 /// One head the queue advanced green: the tree its full path tested, which
 /// the commit must name. Its batch, verdicts and baseline were checked when

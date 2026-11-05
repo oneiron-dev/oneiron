@@ -1,0 +1,15 @@
+[package]
+name = "oneiron-linkedin-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "LinkedIn seat policy values of the oneiron engine: the seat verb catalog, sandbox host config and the seat policy decision outbound admission reads"
+repository.workspace = true
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+serde = { workspace = true }
+
+[lints]
+workspace = true

@@ -8,6 +8,7 @@
 //! They are the files in `deploy/house-model/`, `deploy/voxcpm2/`,
 //! `deploy/asr/` and `deploy/media-worker/`, read when this crate is built
 //! from the source tree.
+use oneiron::llm::WorkerKind;
 use sha2::{Digest as _, Sha256};
 
 /// Every file a worker runs from, by the name it is written under.
@@ -118,11 +119,31 @@ pub(super) const ASR_WORKER: &str = "asr_worker.py";
 pub(super) const EXL3_LOCK: &[u8] =
     include_bytes!("../../../../../deploy/house-model/requirements-exl3.lock");
 
-/// The bundle's digest: SHA-256 over each file's name, length and bytes, in
-/// name order.
+/// The installed directory's digest, over every bundled file.
 pub(super) fn bundle_sha256() -> String {
+    files_sha256(WORKER_FILES.iter().copied())
+}
+
+/// The code a kind runs, independent of unrelated workers' scripts. The
+/// installed directory still holds the whole bundle; launch manifests and
+/// runtime pins bind only these files.
+pub(super) fn bundle_sha256_for(kind: WorkerKind) -> String {
+    files_sha256(WORKER_FILES.iter().copied().filter(|(name, _)| match kind {
+        WorkerKind::Exl3 => !matches!(
+            *name,
+            ASR_WORKER | LLAMA_IDENTITY | VOXCPM2_WORKER | "worker_support.py"
+        ),
+        WorkerKind::LlamaCpp => *name == LLAMA_IDENTITY,
+        WorkerKind::VoxCpm2 => matches!(*name, VOXCPM2_WORKER | "worker_support.py"),
+        WorkerKind::Asr => matches!(*name, ASR_WORKER | "worker_support.py"),
+        WorkerKind::Embedder | WorkerKind::Oneironer | WorkerKind::Unknown => false,
+    }))
+}
+
+/// SHA-256 over each file's name, length and bytes, in name order.
+fn files_sha256(files: impl Iterator<Item = (&'static str, &'static [u8])>) -> String {
     let mut digest = Sha256::new();
-    for (name, bytes) in WORKER_FILES {
+    for (name, bytes) in files {
         digest.update(name.as_bytes());
         digest.update([0_u8]);
         digest.update(bytes.len().to_string().as_bytes());

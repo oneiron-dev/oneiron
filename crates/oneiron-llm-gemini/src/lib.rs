@@ -16,7 +16,7 @@ use oneiron::{
 use std::collections::BTreeMap;
 use stream::GeminiAccumulator;
 pub use transport::*;
-use wire::{build_request, classify_status, parse_response};
+pub use wire::{build_request, classify_status, parse_response};
 pub struct GeminiBackend<T> {
     transport: T,
     models: BTreeMap<ModelId, LlmCatalogEntry>,

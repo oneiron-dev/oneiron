@@ -1,6 +1,6 @@
 //! A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows
-//! as every child of the parent is: the same task, run and attempt ids, the
-//! same parent row with its clock, meter and frozen model list, the same
+//! as every child of the parent is: kind-specific task, run and attempt ids,
+//! the same parent row with its clock, meter and frozen model list, the same
 //! queue and the same runner. Its kind keeps what its loan lent it, and its
 //! binding the parent attempt lease it borrowed, if any (FIX 7507 PR3),
 //! which its claim, report, settle and recovery check in their own
@@ -13,7 +13,7 @@ use crate::attempt_queue::{AttemptQueue, BorrowedAttemptLease};
 use crate::code_run::{
     ExecutorStorage, ReaderActor, ReaderJob, ReaderJobKind, ReaderJobState, ReaderRoute,
     ReaderSpawnReceipt, SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PARENT_LEASE_LOST,
-    ScopedChildLoan, SpawnHostSeat, reader_attempt_id, reader_run_id, reader_task_id,
+    ScopedChildLoan, SpawnHostSeat, reader_attempt_id, reader_run_id, scoped_child_task,
     valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
@@ -84,7 +84,7 @@ impl ReaderJobs<'_> {
         if loan.actor.actor_class() == EdgeActorClass::System && loan.parent_lease.is_none() {
             return Ok(Err(SCOPED_CHILD_AUTHORITY_LAPSED));
         }
-        let task = reader_task_id(loan.parent_run, intent_key)?;
+        let task = scoped_child_task(loan.parent_run, intent_key)?;
         let actor = ReaderActor::of(loan.actor);
         let kind = ReaderJobKind::ScopedAgent {
             spec: loan.spec.clone(),

@@ -8,11 +8,14 @@
 //! Before the destination exists, each value a row commits to is planned
 //! where the restore takes its custody from. The vault's own custody on this
 //! host, a live source's a copy forks, and the custody of a vault a restore
-//! takes the place of: live, it lands sealed; retired since, it lands sealed
+//! takes the place of: live, it lands sealed; retired, it lands sealed
 //! and unavailable (ErasedUnavailable); missing there, it lands sealed,
 //! PendingCustody, never a refusal: a restore cannot tell a key lost since
-//! the image from a row its source already could not read. A head landed
-//! on a new host carries an eligible credential's keys only in its owner-only
+//! the image from a row its source already could not read. A cut-bound
+//! observation of its source key state adds context to a pending note,
+//! never a restore requirement or proof of value readability.
+//! A head landed on a new host carries an eligible credential's keys only
+//! in its owner-only
 //! compartment: one it lacks is Withheld while the restore left that
 //! compartment unopened, PendingCustody once it opened it or the head holds
 //! none (CALLS `CUSTODY_LANDED_MISSING_NOTE`); any other's LocalOnlyReenter,
@@ -44,13 +47,79 @@
 //! so its own finisher retires every key the id names in the custody it
 //! holds now.
 
-use super::{CheckpointImage, Custody, Rejected, codec_error};
-use crate::Vault;
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+
+use super::{CanonicalRows, CheckpointImage, Custody, Rejected, codec_error};
 use crate::secret_custody::{
     CredentialDisposition, CredentialRoute, ImageCredentialRow, PendingRestoreStage,
     PlannedCredentials,
 };
 use crate::store::{CredentialFences, CustodyPlan, Store};
+use crate::{EntityId, Vault};
+
+/// The source's material-key state at capture, never value readability.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+enum SourceKeyState {
+    Live,
+    Unavailable,
+}
+
+/// An exact sealed image row's source key state during capture. Absence
+/// proves nothing; even a live entry says nothing about value readability,
+/// current custody, or when anything changed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SourceKeyObservation {
+    credential: EntityId,
+    generation: u32,
+    raw_digest: [u8; 32],
+    state: SourceKeyState,
+}
+
+impl SourceKeyObservation {
+    /// The observation belongs only to these unchanged captured row bytes.
+    pub(super) fn matches_rows(&self, rows: &CanonicalRows) -> bool {
+        rows.binary_search_by(|(key, _)| key.as_slice().cmp(self.credential.as_bytes()))
+            .ok()
+            .is_some_and(|at| blake3::hash(&rows[at].1).as_bytes() == &self.raw_digest)
+    }
+}
+
+/// Called on the capture's entity rows under its existing custody guard
+/// and read transaction. Reads the sealed stored form only, never a value
+/// or key's bytes, and never takes a second guard. Faults remain unknown.
+pub(super) fn source_key_observation_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    raw: &[u8],
+) -> Option<SourceKeyObservation> {
+    if !crate::batch::EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+    {
+        return None;
+    }
+    let credential = EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?;
+    let stored =
+        crate::secret_custody::read_stored_custody_in_txn(store, txn, &credential).ok()??;
+    let crate::secret_custody::StoredValue::Sealed { generation, bytes } = stored.value;
+    if bytes.is_empty() {
+        return None;
+    }
+    let state = match store.credential_value_key_unavailable(&credential, generation) {
+        Ok(true) => SourceKeyState::Unavailable,
+        Ok(false) => SourceKeyState::Live,
+        Err(_) => return None,
+    };
+    Some(SourceKeyObservation {
+        credential,
+        generation,
+        raw_digest: *blake3::hash(raw).as_bytes(),
+        state,
+    })
+}
 
 /// What a restore says of a credential value its rows commit to that it did
 /// not land readable, by its handle and generation, each with its remedy
@@ -58,8 +127,8 @@ use crate::store::{CredentialFences, CustodyPlan, Store};
 /// only; a note names no value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialRestoreNote {
-    /// The custody the restore took retired its key after the image was
-    /// taken, or an erase fenced its id (KS-6 part 2): its row rests sealed
+    /// The custody the restore took retired its key, or an erase fenced
+    /// its id (KS-6 part 2): its row rests sealed
     /// or withheld, its value unavailable.
     ErasedUnavailable { handle: String, generation: u32 },
     /// Its keys stay on the machine that held them: no custody head carries
@@ -80,6 +149,14 @@ pub enum CredentialRestoreNote {
     /// generation 0 when its row did not read): pending. Retry, or re-enter
     /// it.
     PendingCustody { handle: String, generation: u32 },
+    /// Pending here, with authenticated evidence that this exact row's
+    /// source custody already had no live key during image capture. This
+    /// does not infer when a key was lost or whether any value opened.
+    PendingSourceKeyUnavailable { handle: String, generation: u32 },
+    /// Pending here, with authenticated evidence that this exact row's
+    /// source custody held a live key during image capture. Not proof of
+    /// value readability, when anything changed, or custody here.
+    PendingSourceKeyLive { handle: String, generation: u32 },
     /// The credential census stopped after `listed` rows: those were
     /// planned, and any other credential rests as it was, its discovery
     /// pending, never a complete pass.
@@ -113,6 +190,12 @@ impl CredentialRestoreNote {
             }
             CredentialDisposition::Withheld => Self::Withheld { handle, generation },
             CredentialDisposition::PendingCustody => Self::PendingCustody { handle, generation },
+            CredentialDisposition::PendingSourceKeyUnavailable => {
+                Self::PendingSourceKeyUnavailable { handle, generation }
+            }
+            CredentialDisposition::PendingSourceKeyLive => {
+                Self::PendingSourceKeyLive { handle, generation }
+            }
         }
     }
 }
@@ -122,8 +205,8 @@ impl std::fmt::Display for CredentialRestoreNote {
         match self {
             Self::ErasedUnavailable { handle, generation } => write!(
                 f,
-                "credential {handle} generation {generation}: its key was erased since the \
-                 image; its value is unavailable"
+                "credential {handle} generation {generation}: its custody key is retired or \
+                 its credential is erase-fenced; its value is unavailable"
             ),
             Self::LocalOnlyReenter { handle, generation } => write!(
                 f,
@@ -140,15 +223,34 @@ impl std::fmt::Display for CredentialRestoreNote {
                 "credential {handle} generation {generation}: this host only relays it; its key \
                  is with its executor"
             ),
-            Self::PendingCustody { handle, generation } => write!(
-                f,
-                "credential {handle} generation {generation}: its value did not open from \
-                 custody here; it rests sealed or withheld, pending. One the restore saved \
-                 pending on its source's evidence is rechecked on its own, and its batch is \
-                 listed with the confirm that keeps it without the source (`oneiron secrets \
-                 pending`, `GET /v1/owner/secrets/custody/pending`); a value that never opens \
-                 is re-entered or reissued"
-            ),
+            Self::PendingCustody { handle, generation }
+            | Self::PendingSourceKeyUnavailable { handle, generation }
+            | Self::PendingSourceKeyLive { handle, generation } => {
+                if matches!(self, Self::PendingSourceKeyUnavailable { .. }) {
+                    write!(
+                        f,
+                        "Its source custody already had no live key when this exact image row \
+                         was captured; this does not establish when a key was lost or that its \
+                         value was readable. "
+                    )?;
+                } else if matches!(self, Self::PendingSourceKeyLive { .. }) {
+                    write!(
+                        f,
+                        "Its source custody held a live key for this exact image row when \
+                         captured. This establishes neither value readability nor when anything \
+                         changed, and says nothing about custody here. "
+                    )?;
+                }
+                write!(
+                    f,
+                    "credential {handle} generation {generation}: its value did not open from \
+                     custody here; it rests sealed or withheld, pending. One the restore saved \
+                     pending on its source's evidence is rechecked on its own, and its batch is \
+                     listed with the confirm that keeps it without the source (`oneiron secrets \
+                     pending`, `GET /v1/owner/secrets/custody/pending`); a value that never opens \
+                     is re-entered or reissued"
+                )
+            }
             Self::CensusPending { listed } => write!(
                 f,
                 "the credential census stopped after {listed} row(s); any other credential rests \
@@ -212,7 +314,11 @@ pub(super) fn note_landed_access(notes: &mut [CredentialRestoreNote], owner_unop
 }
 
 /// The credential values a restore owes once its rows landed.
-pub(super) struct CredentialLanding(PlannedCredentials);
+pub(super) struct CredentialLanding {
+    planned: PlannedCredentials,
+    unavailable_at_capture: BTreeSet<(EntityId, u32)>,
+    live_at_capture: BTreeSet<(EntityId, u32)>,
+}
 
 /// The erase evidence a restore by `custody`'s route takes (CALLS `KS-6
 /// erase fence form`): its live source's, the live rows a restore over a
@@ -264,6 +370,24 @@ pub(super) fn require(
         Custody::Landed => CredentialRoute::Landed,
         Custody::NewHost => CredentialRoute::Absent,
     };
+    let mut unavailable_at_capture = BTreeSet::new();
+    let mut live_at_capture = BTreeSet::new();
+    if route == CredentialRoute::Required {
+        for observed in &image.credential_source_keys {
+            if !image
+                .databases
+                .get("entities")
+                .is_some_and(|rows| observed.matches_rows(rows))
+            {
+                continue;
+            }
+            let keys = match observed.state {
+                SourceKeyState::Unavailable => &mut unavailable_at_capture,
+                SourceKeyState::Live => &mut live_at_capture,
+            };
+            keys.insert((observed.credential, observed.generation));
+        }
+    }
     let mut fences = route_fences(image, plan, custody);
     let mut staged = PendingRestoreStage::keeping(match custody {
         Custody::Keep if fences.source_unread() => plan.source(),
@@ -355,7 +479,11 @@ pub(super) fn require(
             Err(at) => vault_meta.insert(at, (key, value)),
         }
     }
-    Ok(CredentialLanding(planned))
+    Ok(CredentialLanding {
+        planned,
+        unavailable_at_capture,
+        live_at_capture,
+    })
 }
 
 /// Once the rows landed and `vault` reopened under its own custody: opens
@@ -363,7 +491,11 @@ pub(super) fn require(
 /// holds, the bytes wiped at once, and returns what the restore says of
 /// each it did not land readable.
 pub(super) fn land(vault: &Vault, landing: CredentialLanding) -> Vec<CredentialRestoreNote> {
-    let CredentialLanding(mut planned) = landing;
+    let CredentialLanding {
+        mut planned,
+        unavailable_at_capture,
+        live_at_capture,
+    } = landing;
     let txn = vault.store.env.read_txn().ok();
     planned.read_back(|credential, generation| {
         txn.as_ref().is_some_and(|txn| {
@@ -381,6 +513,9 @@ pub(super) fn land(vault: &Vault, landing: CredentialLanding) -> Vec<CredentialR
         })
     });
     drop(txn);
+    planned.note_source_key_unavailable(&unavailable_at_capture);
+    // The unavailable note wins if an image carries conflicting observations.
+    planned.note_source_key_live(&live_at_capture);
     notes(&vault.store, planned)
 }
 

@@ -35,6 +35,7 @@ mod custody_keys;
 mod fetch;
 mod file_keys;
 mod observe;
+mod pdf_work;
 mod verify;
 
 pub use custody_keys::CustodySealKeys;
@@ -60,7 +61,9 @@ use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
 use self::fetch::TimedFetch;
-use self::observe::{measure_asks, measure_input, measure_output, measure_report};
+use self::observe::{
+    measure_asks, measure_input, measure_operation_id, measure_output, measure_report,
+};
 use crate::error::{HostError, Unavailable};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
@@ -72,6 +75,8 @@ use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSp
 pub const SEAL_ORGAN: &str = "seal";
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
+pub const VERB_INSPECT: &str = "seal.inspect";
+pub const VERB_PREPARE: &str = "seal.prepare";
 /// `seal.pdf`'s schema: the engine's revisions, lent beside the PDF.
 pub const SEAL_SCHEMA: u32 = 2;
 /// Ask: the signing identity.
@@ -198,7 +203,12 @@ impl SealSettings {
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
-    spec.verbs = vec![VERB_SEAL.to_owned(), VERB_VERIFY.to_owned()];
+    spec.verbs = vec![
+        VERB_SEAL.to_owned(),
+        VERB_VERIFY.to_owned(),
+        VERB_INSPECT.to_owned(),
+        VERB_PREPARE.to_owned(),
+    ];
     spec.media_types = vec![PDF.to_owned(), REVISIONS.to_owned()];
     spec.asks = vec![
         AskGrant::new(ASK_IDENTITY, u32::MAX),
@@ -367,6 +377,10 @@ enum FailureReply {
     InputInvalid {
         code: String,
     },
+    /// The engine's largest revision held too little for the CMS.
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl VerdictReply {
@@ -412,6 +426,7 @@ impl FailureReply {
                 EsignSealerError::Unavailable { retry_after_ms }
             }
             Self::InputInvalid { code } => EsignSealerError::InputInvalid { code },
+            Self::ContentsShort { needed } => EsignSealerError::ContentsShort { needed },
         }
     }
 }
@@ -506,6 +521,7 @@ impl EsignSealer for HostedSealer<'_> {
             signature_revisions: call.revision_args(),
         })
         .map_err(|_| reply_invalid())?;
+        measure_operation_id(self.vault, &request.operation_id);
         measure_input(self.vault, &input.pdf);
         let lent = vec![
             LentInput {
@@ -564,6 +580,17 @@ impl EsignSealer for HostedSealer<'_> {
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
         Ok(self.verify_classified(pdf)?.0)
+    }
+
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &oneiron::blob_artifact::esign::render::PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: &[String],
+    ) -> Result<Option<oneiron::blob_artifact::esign::render::PreparedEsignPdf>, EsignSealerError>
+    {
+        self.prepare_esign_pdf_via_organ(original, request, chain, trail)
     }
 }
 

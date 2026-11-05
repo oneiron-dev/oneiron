@@ -28,9 +28,9 @@ use heed::{RoTxn, RwTxn};
 
 use super::{
     CAL_RRULE_ROUTE, CommitmentDueEntry, CommitmentDuePhase, CommitmentInstanceOutcome,
-    CommitmentOccurrence, CommitmentSchedulePayload, QuotaWindow, Schedule, ScheduleError,
-    ScheduleHistoryEntry, ScheduleResult, commitment_instance_id, commitment_projection_envelope,
-    iso_week_window, next_due, validate_quota_count,
+    CommitmentOccurrence, CommitmentOccurrenceSchedule, CommitmentSchedulePayload, QuotaWindow,
+    Schedule, ScheduleError, ScheduleHistoryEntry, ScheduleResult, commitment_instance_id,
+    commitment_projection_envelope, iso_week_window, next_due, validate_quota_count,
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::commitment::{

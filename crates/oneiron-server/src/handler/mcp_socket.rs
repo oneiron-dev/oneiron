@@ -83,7 +83,7 @@ const CARRIED_FORWARDING_HEADERS: [&str; 4] = [
 /// The header an MCP connector names its credential in. Beside an owner's
 /// attestation it is that connector's call on `/mcp`, so it never opens the
 /// owner's own socket.
-const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+use oneiron_vault_contract::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 
 /// The upgrade headers the owner's own socket also repeats on each call:
 /// the room turn and the session his supervisor's attestation placed the
@@ -201,7 +201,7 @@ impl Caller {
             headers.insert(header::AUTHORIZATION, bearer.clone());
         }
         if let Some(binding) = binding {
-            headers.insert("x-oneiron-binding", HeaderValue::from_str(&binding).ok()?);
+            headers.insert(BINDING_HEADER, HeaderValue::from_str(&binding).ok()?);
         }
         headers.insert(
             header::CONTENT_TYPE,

@@ -8,7 +8,9 @@ use serde_json::Value;
 use crate::EntityId;
 use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
-use crate::code_run::payload::decode_self_dispatch_outcome;
+use crate::code_run::payload::{
+    agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+};
 use crate::code_run::replay::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayGeneration, CodeRunReplayRecord,
 };
@@ -712,34 +714,30 @@ fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
         .wait_ref()
 }
 
-/// A verb call's identity: the verb and its input with object keys sorted, so
-/// a re-run that writes the same fields in another order makes the same call.
-fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
-    fn sorted(value: &Value) -> Value {
-        match value {
-            Value::Object(fields) => {
-                let mut fields: Vec<_> = fields.iter().collect();
-                fields.sort_unstable_by_key(|(name, _)| *name);
-                Value::Object(
-                    fields
-                        .into_iter()
-                        .map(|(name, value)| (name.clone(), sorted(value)))
-                        .collect(),
-                )
-            }
-            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
-    let mut identity = verb.as_bytes().to_vec();
-    identity.push(0);
-    identity.extend(sorted(input).to_string().into_bytes());
-    identity
-}
-
 /// The identity of the verb call a receipt row recorded, if the row is one.
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
     let (verb, input) = recorded_call(row)?;
+    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+        if !input.is_empty() {
+            return None;
+        }
+        let rmpv::Value::Map(fields) = &row.request else {
+            return None;
+        };
+        let (_, rmpv::Value::Binary(digest)) = fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("input_identity"))?
+        else {
+            return None;
+        };
+        if digest.len() != 32 {
+            return None;
+        }
+        let mut identity = verb.as_bytes().to_vec();
+        identity.push(0);
+        identity.extend_from_slice(digest);
+        return Some(identity);
+    }
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
 }
 

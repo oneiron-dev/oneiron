@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::CleanupKind;
 use crate::entity_id::EntityId;
-use crate::memory::EntityView;
 use crate::note::NoteReadView;
 use crate::ports::ScopedReadResult;
+use crate::vault::entity_view::EntityView;
 
 /// Which open proposal to review.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -75,7 +75,8 @@ pub struct CleanupReviewItem {
     /// The arm that proposed it; none for an erased slot.
     pub kind: Option<CleanupKind>,
     /// 64-hex BLAKE3 of its stored bytes now: the encoded record, with a
-    /// NOTE's live document version after it, or the attempt's queue row.
+    /// NOTE's base-vault document version after it, or the attempt's queue
+    /// row. A room document keeps its own version in its content read.
     /// None when erased or gone, or when a record does not read.
     pub revision: Option<String>,
     /// Why its arm proposes it, read now; none when erased, gone or
@@ -85,9 +86,10 @@ pub struct CleanupReviewItem {
     pub content: Option<CleanupReviewContent>,
     /// What accepting this slot does.
     pub accept: CleanupAcceptEffect,
-    /// `Some(true)` when its stored bytes changed while the review read its
-    /// content, on every read the review took: that content may be newer
-    /// than the facts and `revision` beside it (FIX 10502). `None` otherwise.
+    /// `Some(true)` when its stored bytes kept changing across every read
+    /// the review took (FIX 10502). Content and facts still share the
+    /// returned snapshot; it may be older than now, never a newer content
+    /// read beside older facts. `None` otherwise.
     pub changed_during_review: Option<bool>,
 }
 

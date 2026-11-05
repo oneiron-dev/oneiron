@@ -34,7 +34,7 @@ pub(crate) fn attempt_read_context(
             about.extend(branch.facet_ref);
             if let Some(thing) = branch.thing {
                 about.extend(thing.entity);
-                about.extend(thing.audience);
+                about.extend(thing.audience.map(|audience| audience.entity()));
             }
             for part in &branch.parts {
                 about.push(part.conversation_ref);

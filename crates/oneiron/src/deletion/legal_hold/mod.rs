@@ -473,10 +473,13 @@ impl Vault {
         // What a released hold kept from an erase's scrubs goes first,
         // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
         // an erase it kept from completing completes (FIX 5844).
-        let due = self.with_write_txn_grouped(|txn| {
-            self.settle_held_scrubs_in_txn(txn)?;
-            hold_store::due_erases_in_txn(&self.store, txn)
+        let (due, cancelled) = self.with_write_txn_grouped(|txn| {
+            let cancelled = self.settle_held_scrubs_in_txn(txn)?;
+            let due = hold_store::due_erases_in_txn(&self.store, txn)?;
+            Ok((due, cancelled))
         })?;
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&cancelled);
         self.finish_redaction_erases_logged();
         let mut erased = 0_u64;
         for (record, pending) in due {
@@ -545,7 +548,7 @@ impl Vault {
     /// 8849). Enforcing it on reads is the scope checks' (L02).
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
-        hold_store::use_limit_in_txn(&self.store, &txn, record)
+        hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
     }
 }
 

@@ -12,7 +12,7 @@ use oneiron::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
-use oneiron::skill_attribution::RunWriteToken;
+use oneiron::skill_attribution::{RunWriteToken, run_write_token_of_origin};
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
@@ -136,15 +136,16 @@ pub(super) fn unavailable(
     refusal
 }
 
-/// The principal a diary query reads as.
+/// The principal a diary or sealed-pad host door reads as.
 pub(super) fn diary_reader(
     server: &SyncServer,
     auth: &CoreAuth,
+    verb: &str,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
     crate::api::facade::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            "self.memory.diary.query reads as the credential's own principal",
+            format!("{verb} reads as the credential's own principal"),
             &["Present a slip paired with a principal ref and an actor class."],
         )
     })
@@ -295,7 +296,7 @@ pub(crate) async fn with_calling_origin<F: std::future::Future>(
     origin: oneiron::memory::HostWriteOrigin,
     call: F,
 ) -> F::Output {
-    let run_writes = RunWriteToken::of_origin(&origin);
+    let run_writes = run_write_token_of_origin(&origin);
     CALLING_ORIGIN
         .scope(origin, CALLING_RUN_WRITES.scope(run_writes, call))
         .await

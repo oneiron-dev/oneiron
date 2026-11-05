@@ -86,12 +86,14 @@ pub(super) fn conversation_link_names(
         else {
             continue;
         };
-        let links_to_seat = reference
+        let Some(member) = reference
             .get("url")
             .and_then(Value::as_str)
             .and_then(profile_member)
-            .is_some_and(|member| member.eq_ignore_ascii_case(own_member));
-        if links_to_seat {
+        else {
+            continue;
+        };
+        if member.eq_ignore_ascii_case(own_member) {
             seat.push(name);
         } else {
             others.push(name);

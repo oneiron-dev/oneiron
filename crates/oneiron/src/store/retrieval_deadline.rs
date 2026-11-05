@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::store::RetrievalSignal;
+use oneiron_model::llm::WorkCancel;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -36,7 +37,7 @@ pub struct RetrievalDeadline {
     /// The channels cut at their share so far, one bit per signal.
     cut_channels: AtomicU32,
     cut_short: AtomicBool,
-    cancelled: AtomicBool,
+    cancelled: WorkCancel,
     /// A deadline test's still clock: how far a slow test stage has moved it
     /// past `origin` ([`still_deadline_clock_for_test`]); `None` on the
     /// monotonic clock.
@@ -73,7 +74,7 @@ impl RetrievalDeadline {
             open_channel: AtomicU32::new(0),
             cut_channels: AtomicU32::new(0),
             cut_short: AtomicBool::new(false),
-            cancelled: AtomicBool::new(false),
+            cancelled: WorkCancel::new(),
             #[cfg(any(test, feature = "test-hooks"))]
             still: STILL_CLOCK
                 .with(std::cell::Cell::get)
@@ -99,12 +100,18 @@ impl RetrievalDeadline {
     }
     /// Requests the best admitted pack at the next stage boundary or checkpoint.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancelled.cancel();
+    }
+    /// Same flag/wake for native work; caller sharing it makes explicit cancel
+    /// visible without polling.
+    #[must_use]
+    pub fn work_cancel(&self) -> WorkCancel {
+        self.cancelled.clone()
     }
     /// Whether the answer's time has come: optional work after the stages
     /// (such as the scope census) stops here.
     pub(crate) fn answer_due(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed) || self.now() >= self.at
+        self.cancelled.is_cancelled() || self.now() >= self.at
     }
     /// Absolute answer-time checkpoint for work outside an open retrieval stage.
     pub(crate) fn answer_checkpoint(&self, error: Error) -> Result<()> {
@@ -115,7 +122,7 @@ impl RetrievalDeadline {
         }
     }
     pub(crate) fn stop_before_stage(&self) -> bool {
-        if self.cancelled.load(Ordering::Relaxed) || self.now() >= self.stages_by {
+        if self.cancelled.is_cancelled() || self.now() >= self.stages_by {
             self.cut_short.store(true, Ordering::Relaxed);
             true
         } else {
@@ -157,7 +164,7 @@ impl RetrievalDeadline {
             return Ok(());
         }
         let elapsed = self.now().saturating_duration_since(self.origin);
-        if self.cancelled.load(Ordering::Relaxed)
+        if self.cancelled.is_cancelled()
             || u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX) >= until
         {
             self.cut_short.store(true, Ordering::Relaxed);
@@ -182,7 +189,7 @@ impl RetrievalDeadline {
     /// Whether a typed decision may start a measurement: the caller has not taken the
     /// answer early, and the work time is not spent.
     pub(crate) fn decision_may_start(&self) -> bool {
-        !self.cancelled.load(Ordering::Relaxed) && self.now() < self.decision_work_by()
+        !self.cancelled.is_cancelled() && self.now() < self.decision_work_by()
     }
     /// The call's whole budget, from its start to the answer's time.
     pub(crate) fn budget(&self) -> Duration {

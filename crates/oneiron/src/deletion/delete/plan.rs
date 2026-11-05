@@ -92,7 +92,7 @@ impl Vault {
                 Some(raw) if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN => {
                     // A pad that does not decode stays in the base window.
                     let world = if pad {
-                        crate::world_keys::pad_body_world(&raw).and_then(Result::ok)
+                        crate::store::world_pad_rows::pad_body_world(&raw).and_then(Result::ok)
                     } else {
                         self.erase_claim_world(id, &raw, reason)?
                     };

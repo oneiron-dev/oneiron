@@ -12,7 +12,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::adopted_evidence::AdoptedEvidence;
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
@@ -72,7 +71,7 @@ impl crate::Vault {
             };
             take(authority_entry_hash(&entry)?, &entry);
         }
-        if let Some(adopted) = AdoptedEvidence::read_in_txn(&self.store, txn)? {
+        if let Some(adopted) = crate::authority::cached_adopted_evidence_in_txn(&self.store, txn)? {
             for (hash, entry) in adopted.bodies() {
                 take(*hash, entry);
             }

@@ -110,9 +110,8 @@ pub const LINKEDIN_TOOL_NOT_SENT_PREFIX: &str = "not_sent:";
 /// tool was never called. A `send_message` result is never success on its
 /// own: the message id it names (a `message` object's id, or a top-level
 /// `message_id`) is what verification looks for in a structured transcript.
-/// Page text names no ids: there verification looks for the sent words in
-/// turns not the counterparty's, more often than the page read before the
-/// send showed them (FIX 12329). Anything else leaves the send ambiguous.
+/// Page-text counts are observations only: a sliding page can expose an
+/// older matching message. Without the send's id, delivery stays ambiguous.
 pub trait LinkedInMcpSendTransport {
     fn send_message(
         &mut self,
@@ -417,10 +416,8 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         for attempt in 1..=plan.max_observation_attempts {
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
-                    // Page text names no ids (FIX 12329): delivered means the
-                    // page read after the send shows the words in turns not
-                    // the counterparty's more often than the page read
-                    // before it did.
+                    // Count changes describe the observed pages, not this
+                    // send: an older matching turn may have slid into view.
                     if let Some(before) = pre_send_page
                         && let Some(after) = page_text_occurrences(&output, plan, &self_key)
                         && after > before
@@ -437,18 +434,6 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                             RECEIPT_FIELD_PAGE_TEXT_MATCHES_AFTER.to_owned(),
                             after.to_string(),
                         );
-                        fields.insert(
-                            RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
-                            "content_observed".to_owned(),
-                        );
-                        fields.insert(
-                            RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
-                            attempt.to_string(),
-                        );
-                        return OutboundExecutionOutcome::delivered_to_channel(
-                            linkedin_thread_message_ref(&plan.thread_id, &plan.message_text),
-                        )
-                        .with_receipt_fields(fields);
                     }
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
@@ -658,7 +643,7 @@ fn sent_message_id(output: &Value) -> Option<String> {
     };
     mcp_payload(output)
         .ok()
-        .as_ref()
+        .as_deref()
         .and_then(named)
         .or_else(|| named(output))
 }

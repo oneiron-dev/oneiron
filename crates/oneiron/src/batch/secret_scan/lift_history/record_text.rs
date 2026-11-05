@@ -19,7 +19,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_NOTE;
-use crate::secret_custody::masked_file_in_txn;
+use crate::store::file_key_masks::masked_file_in_txn;
 
 /// The door's reason for a hit in the text record `id` staged for idle
 /// publication, or, for a NOTE, in its title or a pin's quote.

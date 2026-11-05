@@ -13,7 +13,7 @@ use crate::store::{ManifestDbs, Rows, Store};
 use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::query::DeferredPprCacheWrite;
-use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
+use super::walk::{PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 mod purge;
 pub(crate) use purge::purge_ppr_for_erase_in_txn;
@@ -513,15 +513,7 @@ pub(super) fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
     let stale = bytes[CACHE_STALE_OFFSET];
     Ok((computed_at, graph_version, stale))
 }
-pub(super) fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
-    if is_state_cache_payload(payload) {
-        let state = decode_cache_state(payload)?;
-        return Ok(CachedPprRow::State(state));
-    }
-
-    Ok(CachedPprRow::Scores(decode_legacy_cache_scores(payload)?))
-}
-fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
+fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
     if !payload.len().is_multiple_of(CACHE_ENTRY_LEN) {
         return Err(Error::CorruptedIndex("ppr cache scores"));
     }
@@ -542,13 +534,14 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
         })
         .collect()
 }
-fn is_state_cache_payload(payload: &[u8]) -> bool {
-    // Legacy score-only rows are exactly `[EntityId | f32] * n`, so their
-    // payload length is always a multiple of `CACHE_ENTRY_LEN`. Current state
-    // rows start with `FPRS` but have a 29-byte prefix, making that shape
-    // impossible; use both checks so a legacy EntityId may safely begin with
-    // the state magic bytes.
-    payload.starts_with(CACHE_STATE_MAGIC) && !payload.len().is_multiple_of(CACHE_ENTRY_LEN)
+/// True only for the pre-FPRS score-only cache shape: exactly
+/// `[EntityId | f32] * n`, so its length is always a multiple of
+/// `CACHE_ENTRY_LEN`. A current state row is `FPRS` plus a 29-byte prefix
+/// plus `20/24/16`-byte sections, whose total length is `29 + 4k` and can
+/// never be a multiple of 20, so no current row is misclassified. Callers
+/// treat a legacy-shaped row as a cold miss without parsing its bytes.
+pub(super) fn is_legacy_cache_payload(payload: &[u8]) -> bool {
+    payload.len().is_multiple_of(CACHE_ENTRY_LEN)
 }
 pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     if payload.len() < CACHE_STATE_PREFIX_LEN {
@@ -599,7 +592,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     let residual_start = frontier_start + frontier_bytes;
     let dependency_start = residual_start + residual_bytes;
 
-    let scores = decode_legacy_cache_scores(&payload[scores_start..frontier_start])?;
+    let scores = decode_cache_scores(&payload[scores_start..frontier_start])?;
     let mut frontier = Vec::with_capacity(frontier_count);
     let mut frontier_keys = HashSet::new();
     for chunk in payload[frontier_start..dependency_start].chunks_exact(CACHE_FRONTIER_ENTRY_LEN) {

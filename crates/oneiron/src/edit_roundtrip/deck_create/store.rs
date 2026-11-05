@@ -142,6 +142,43 @@ impl crate::Vault {
         Ok(book)
     }
 
+    pub(super) fn font_book_with_inputs_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fonts: &[ArtifactVersionRef],
+    ) -> std::result::Result<(FontBook, Vec<CreatedInput>), DeckCreateError> {
+        let mut book = FontBook::new();
+        let mut inputs = Vec::new();
+        for font in fonts {
+            let (bytes, input) = self
+                .read_blob_artifact_version_in_txn_with_record(
+                    txn,
+                    &font.artifact,
+                    font.version,
+                    |txn, record| {
+                        let bytes = crate::ports::BlobStore::port_blob_get(
+                            self,
+                            txn,
+                            &record.content_hash,
+                        )?
+                        .ok_or(Error::EntityNotFound)?;
+                        Ok::<_, Error>((
+                            bytes,
+                            CreatedInput {
+                                source: *font,
+                                content_hash: record.content_hash,
+                                provenance_kind: record.provenance.as_str().to_owned(),
+                            },
+                        ))
+                    },
+                )?
+                .ok_or(Error::EntityNotFound)?;
+            book.add(bytes)?;
+            inputs.push(input);
+        }
+        Ok((book, inputs))
+    }
+
     pub(super) fn asset_bindings_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -184,9 +221,16 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         assets: &BTreeMap<String, ArtifactVersionRef>,
         kept: &KeptOutline,
-    ) -> std::result::Result<BTreeMap<String, (AssetRecord, Vec<u8>)>, DeckCreateError> {
+    ) -> std::result::Result<
+        (
+            BTreeMap<String, (AssetRecord, Vec<u8>)>,
+            BTreeMap<String, CreatedInput>,
+        ),
+        DeckCreateError,
+    > {
         let brief = Brief::parse(&kept.bytes).map_err(CompileError::from)?;
         let mut out = BTreeMap::new();
+        let mut inputs = BTreeMap::new();
         for (asset, at) in assets {
             let metadata = self
                 .blob_artifact_version_metadata_in_txn(txn, &at.artifact, at.version)?
@@ -218,8 +262,16 @@ impl crate::Vault {
                     self.version_bytes_in_txn(txn, at)?,
                 ),
             );
+            inputs.insert(
+                asset.clone(),
+                CreatedInput {
+                    source: *at,
+                    content_hash: metadata.content_hash,
+                    provenance_kind: metadata.provenance.as_str().to_owned(),
+                },
+            );
         }
-        Ok(out)
+        Ok((out, inputs))
     }
 }
 

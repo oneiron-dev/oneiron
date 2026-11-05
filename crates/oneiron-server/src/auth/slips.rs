@@ -1,6 +1,7 @@
 //! HTTP/session holder proof and projection of the single log-backed slip.
 use super::*;
 use oneiron::authority::{CapabilitySlip, VerifiedSlip};
+use oneiron_vault_contract::BINDING_HEADER;
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
@@ -23,7 +24,7 @@ pub(crate) struct BindingProof {
 impl BindingProof {
     pub(crate) fn from_headers(headers: &HeaderMap) -> Result<Self, ApiError> {
         let raw = headers
-            .get("x-oneiron-binding")
+            .get(BINDING_HEADER)
             .and_then(|h| h.to_str().ok())
             .ok_or_else(ApiError::unauthorized)?;
         serde_json::from_str(raw).map_err(|_| ApiError::unauthorized())
@@ -216,6 +217,7 @@ impl CoreAuth {
                 }
                 let class = match scope {
                     CoreScope::Read => "read",
+                    CoreScope::Propose => "propose",
                     CoreScope::Write => "write",
                     _ => scope.as_str(),
                 };
@@ -393,13 +395,6 @@ impl CoreAuth {
                 .unwrap_or(false);
         }
         self.jti().is_none_or(|jti| {
-            if jti.len() == 64 {
-                return parse_slip_id(jti).is_ok_and(|id| {
-                    vault
-                        .capability_slip_id_is_live_in_txn(txn, &id)
-                        .unwrap_or(false)
-                });
-            }
             vault
                 .sync_state_get_in_write_txn(txn, &super::revoked_token_jti_key(jti))
                 .is_ok_and(|row| row.is_none())

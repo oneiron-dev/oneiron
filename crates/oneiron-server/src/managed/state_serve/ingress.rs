@@ -4,9 +4,10 @@
 
 use super::{
     Arc, Body, CarriedConnection, CarrierPaused, IntoResponse, Json, ManagedCarrierContext,
-    ManagedError, ManagedIngress, ManagedState, ManagedWidenAction, ManagedWidenHolder, Method,
-    Next, Request, Response, Router, State, StatusCode, Surface, SyncServer, UPGRADE, WriteKind,
-    build_app, is_read_only, middleware, owner_attestable, to_bytes, writes_frozen_body,
+    ManagedError, ManagedIngress, ManagedState, ManagedWidenAction, ManagedWidenHolder,
+    McpLifecycleObservation, Method, Next, Request, Response, Router, State, StatusCode, Surface,
+    SyncServer, UPGRADE, WriteKind, build_app, is_read_only, middleware, owner_attestable,
+    to_bytes, writes_frozen_body,
 };
 
 impl ManagedCarrierContext {
@@ -355,14 +356,14 @@ async fn run_admitted_request(
     // transition so their completion receipt reports what they actually did.
     let lifecycle_observation = match (request.method().as_str(), request.uri().path()) {
         ("GET", "/api/health") => true,
-        ("POST", path) => matches!(
-            path,
-            "/v1/core/facade/vault.slim.policy"
-                | "/v1/core/facade/vault.slim.state"
-                | "/v1/core/facade/vault.slim.resume_step"
-                | "/v1/core/facade/vault.slim.drop_heavy"
-                | "/v1/core/facade/vault.slim.resume"
-        ),
+        ("POST", path) => {
+            path.strip_prefix("/v1/core/facade/")
+                .is_some_and(crate::api::is_slim_lifecycle_observation)
+                || request
+                    .extensions()
+                    .get::<McpLifecycleObservation>()
+                    .is_some()
+        }
         _ => false,
     };
     if !lifecycle_observation && let Err(error) = state.server.vault().resume_from_slim_on_inbound()

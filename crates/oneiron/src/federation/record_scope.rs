@@ -120,19 +120,7 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-/// What a put is to the row it writes: [`stamp_put`] mints a first position
-/// for a row stored with none only at its local birth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RowPut {
-    /// A local put of a row not stored before it, or a sweep that settles a
-    /// stored row's first position.
-    Birth,
-    /// A local put of a row stored before it: a row stored with no position,
-    /// as a replicated row is, keeps none (FIX 11925).
-    LocalReput,
-    /// A peer's replicated row.
-    Replicated,
-}
+pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
 /// keeps the default birth: base reality, under the record's own substrate
@@ -160,14 +148,20 @@ pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
         sensitivity: SensitivityCeiling::AtMost(Sensitivity::Sensitive),
     }
 }
+
+/// L02 17:11 (carried by L01-W for FIX 7774): intentionally NOTE/ASSET
+/// only. EVENT/TURN read their birth edge from dedicated arms below so a
+/// derived row without edge keeps the substrate fallback instead of the
+/// `None` (unstamped) this gate's arm returns for a missing edge.
 fn carries_birth_stamp(kind: u8) -> bool {
     matches!(
         kind,
         crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
     )
 }
-/// The facet a NOTE or ASSET was born under: the target of its one stored
-/// `FacetOf` edge.
+/// The facet a record was born under: the target of its one stored `FacetOf`
+/// edge. NOTE/ASSET read it through [`carries_birth_stamp`]; CLAIM (FIX 7757)
+/// and EVENT/TURN (FIX 7774, L02 17:11) read it from their own arms.
 pub(crate) fn birth_facet(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -191,10 +185,12 @@ pub(crate) fn birth_facet(
 /// The position the row `id` of `kind`, with body `data`, is born at, read
 /// on `store`, and the facet it is born under: a CLAIM's from its body, a
 /// FACET at itself, a NOTE or ASSET under its one `FacetOf` target, an
-/// ASSET_TEXT under its sources' facet, any other record under its own
-/// substrate facet. A FACET or RELATIONSHIP keeps the sensitivity its body
-/// declares. `None` for a NOTE or ASSET whose `FacetOf` is not written: no
-/// position is inferred.
+/// EVENT or TURN under its birth edge when one is stored (L02 17:11, carried
+/// by L01-W for FIX 7774) else under its own substrate facet, an ASSET_TEXT
+/// under its sources' facet, any other record under its own substrate facet.
+/// A FACET or RELATIONSHIP keeps the sensitivity its body declares. `None`
+/// for a NOTE or ASSET whose `FacetOf` is not written: no position is
+/// inferred.
 fn derived_position(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -220,6 +216,29 @@ fn derived_position(
         // refused by `stamp_put` as a restamp.
         let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
+    } else if kind == crate::registry::ENTITY_TYPE_EVENT
+        || kind == crate::registry::ENTITY_TYPE_TURN
+    {
+        // L02 17:11 (carried by L01-W for FIX 7774): the birth edge is
+        // authoritative for non-derived rows; a derived row without edge
+        // keeps the substrate fallback. A legacy substrate-stamped row keeps
+        // its substrate even when a later disclosure/world-model edge exists,
+        // so its re-put still matches its stamp; a new edge-born row reads
+        // its edge. NOTE/ASSET/TASK/ASSET_TEXT arms above are untouched.
+        let substrate = crate::claim::substrate_facet_id(id)?;
+        if let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)?
+            && stamp.version == 2
+            && stamp.kind == kind
+            && stamp.birth_facet == *substrate.as_bytes()
+        {
+            (default_stamp(kind, substrate), substrate)
+        } else if let Some(facet) = birth_facet(store, txn, id)? {
+            let birth = default_stamp(kind, facet);
+            let scope = note_world::note_position(store, txn, id, kind, birth);
+            (scope, facet)
+        } else {
+            (default_stamp(kind, substrate), substrate)
+        }
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
         (default_stamp(kind, facet), facet)
@@ -345,6 +364,21 @@ fn stored_scope(
             .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
         Some(asset_text::text_facet(store, txn, id)?)
+    } else if kind == crate::registry::ENTITY_TYPE_EVENT
+        || kind == crate::registry::ENTITY_TYPE_TURN
+    {
+        // L02 17:11 (carried by L01-W for FIX 7774): a new edge-born row reads
+        // its edge; a legacy substrate-stamped row keeps its substrate even
+        // when a later disclosure/world-model edge exists. Either must match
+        // the stamp below, else the row reads unstamped like a NOTE/ASSET
+        // mismatch. Derived rows without edge keep the substrate fallback.
+        match birth_facet(store, txn, id)? {
+            Some(edge) if stamp.birth_facet == *edge.as_bytes() => Some(edge),
+            _ => {
+                let substrate = crate::claim::substrate_facet_id(id)?;
+                (stamp.birth_facet == *substrate.as_bytes()).then_some(substrate)
+            }
+        }
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
@@ -361,11 +395,12 @@ fn stored_scope(
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`); every other record, and any
-/// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
-/// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
-/// gone or was never settled, a NOTE in no single world), which a read
-/// narrowed on worlds keeps out.
+/// it (`note_world`). An ASSET or ASSET_TEXT uses its kind- and birth-facet-bound
+/// singleton stamp, retaining base reality when no such single world is proved.
+/// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
+/// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
+/// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
+/// which a read narrowed on worlds keeps out.
 pub(crate) fn record_world_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -393,7 +428,11 @@ pub(crate) fn record_world_in(
         return Ok(note_world::note_worlds_in(store, txn, id).world());
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
+    let asset = matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
+    );
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -403,6 +442,9 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
+    if asset {
+        return Ok(Some(stamped.flatten()));
+    }
     // An epoch summary is one whatever form its body takes, and a pointer no
     // head stands for may be one (Astra 1384e).
     if summary

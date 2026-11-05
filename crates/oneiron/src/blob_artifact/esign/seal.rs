@@ -4,17 +4,21 @@
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
-    render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf_within},
+    render::{
+        PdfPreparation, PdfPreparationError, SignatureRaster,
+        prepare_esign_pdf_with_replayed_audit, replay_esign_audit,
+    },
     sealer::{
         EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
-        SealProfile, SealVerdict,
+        SealProfile, SealProfileEvidence, SealVerdict,
     },
 };
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::SetAttemptResult;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -45,6 +49,7 @@ pub struct SealedItem {
     pub sealed_artifact: String,
     pub sealed_version: u64,
     pub sha256: [u8; 32],
+    pub profile: SealProfileEvidence,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedDocument {
@@ -181,20 +186,27 @@ impl Vault {
         };
         let fingerprint = snapshot_hash(&rows)?;
         let mut outputs = Vec::new();
+        let document_hex = document.to_hex();
         for (index, (_, original)) in originals.iter().enumerate() {
-            let prepared = prepare_esign_pdf_within(
-                original,
-                PdfPreparation {
-                    document_ref: &document.to_hex(),
-                    item: index as u32,
-                    state: &state,
-                    audit: &rows,
-                    canonical_url,
-                    signature_images: &images,
-                },
-                self.limit_watch()
-                    .bound(EngineLimit::EsignStreamDecodeBytes),
-            )?;
+            let prep = PdfPreparation {
+                document_ref: &document_hex,
+                item: index as u32,
+                state: &state,
+                audit: &rows,
+                canonical_url,
+                signature_images: &images,
+            };
+            let (chain, trail) = replay_esign_audit(&prep)?;
+            let prepared = match sealer.prepare_esign_pdf(original, &prep, chain, &trail)? {
+                Some(prepared) => prepared,
+                None => prepare_esign_pdf_with_replayed_audit(
+                    original,
+                    &prep,
+                    self.esign_stream_decode_bytes(),
+                    chain,
+                    trail,
+                )?,
+            };
             // The seal holds the item whole, however large: past the `[limits]
             // esign_pdf_bytes` row it asks whether everything is okay, and
             // seals it anyway (OF-520).
@@ -207,21 +219,31 @@ impl Vault {
                 document.to_hex(),
                 crate::entity_id::bytes_to_hex_lower(&fingerprint)
             );
-            let (input, stream_bytes) = EsignSealInput::measured(
-                prepared.bytes,
-                &operation_id,
-                self.now_recorded_at().saturating_mul(1000),
-                self.limit_watch()
-                    .bound(EngineLimit::EsignSealStreamCodecBytes),
-            )?;
+            let now_ms = self.now_recorded_at().saturating_mul(1000);
+            let codec_bytes = self
+                .limit_watch()
+                .bound(EngineLimit::EsignSealStreamCodecBytes);
+            let (mut input, stream_bytes) =
+                EsignSealInput::measured(prepared.bytes, &operation_id, now_ms, codec_bytes)?;
             self.measure_limit(EngineLimit::SealPreparedStreamBytes, stream_bytes);
-            let sealed = sealer.seal(
-                &input,
-                &EsignSealRequest {
-                    operation_id,
-                    profile,
-                },
-            )?;
+            let request = EsignSealRequest {
+                operation_id,
+                profile,
+            };
+            let sealed = loop {
+                match sealer.seal(&input, &request) {
+                    // The CMS needed more than the largest revision held: a
+                    // fresh, larger one is written and sealed, and its
+                    // signature issued once (FIX 6270).
+                    Err(EsignSealerError::ContentsShort { needed }) => {
+                        let operation_id = &request.operation_id;
+                        if !input.rewrite_larger(operation_id, now_ms, codec_bytes, needed)? {
+                            return Err(EsignSealerError::ContentsShort { needed }.into());
+                        }
+                    }
+                    sealed => break sealed?,
+                }
+            };
             let checked = sealer.verify(&sealed.bytes)?;
             if !sealed.self_verify.self_verify_ok
                 || !checked.self_verify_ok
@@ -233,7 +255,16 @@ impl Vault {
             if sealed.evidence_sha256 != hash {
                 return Err(EsignSealError::Verification);
             }
-            outputs.push((sealed.bytes, hash, prepared.audit_chain_sha256));
+            outputs.push((
+                sealed.bytes,
+                hash,
+                prepared.audit_chain_sha256,
+                SealProfileEvidence {
+                    requested: sealed.requested,
+                    achieved: sealed.achieved,
+                    degraded: sealed.degraded,
+                },
+            ));
         }
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
@@ -243,7 +274,7 @@ impl Vault {
             }
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;
             let mut items = Vec::new();
-            for (index, (bytes, hash, _)) in outputs.iter().enumerate() {
+            for (index, (bytes, hash, _, profile)) in outputs.iter().enumerate() {
                 let id = self.new_entity_id()?;
                 let mut body = originals[index].0.clone();
                 body.name = format!("sealed-{}.pdf", index + 1);
@@ -261,12 +292,9 @@ impl Vault {
                     )
                     .apply(txn)?;
                 if let Some(project) = state.document.project {
-                    crate::federation::record_scope::stamp_blob_project(
-                        &self.store,
-                        txn,
-                        id,
-                        project,
-                    )?;
+                    self.store
+                        .scope_stamps
+                        .stamp_blob_project(&self.store, txn, id, project)?;
                 }
                 let version = self.append_blob_artifact_version_in_txn(
                     txn,
@@ -292,6 +320,7 @@ impl Vault {
                     sealed_artifact: id.to_hex(),
                     sealed_version: version.version,
                     sha256: *hash,
+                    profile: profile.clone(),
                 });
             }
             let manifest = SealedDocument {
@@ -308,6 +337,7 @@ impl Vault {
                 EsignEvent::Sealed {
                     rejected: manifest.rejected,
                     item_sha256: manifest.items.iter().map(|i| i.sha256).collect(),
+                    item_profiles: manifest.items.iter().map(|i| i.profile.clone()).collect(),
                 },
                 EsignAuditActor {
                     actor: format!(

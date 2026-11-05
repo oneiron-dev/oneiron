@@ -9,8 +9,8 @@ use crate::git_wire::{
     GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire,
     GitWireCommitOutcome, GitWireRepo, lock_repository,
 };
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 
 #[cfg(test)]
 use super::publication_codec::OriginPublicationRow;

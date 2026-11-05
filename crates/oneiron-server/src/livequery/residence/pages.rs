@@ -70,12 +70,14 @@ pub(super) fn search_pages(
         Some(caller) => caller.read_key(),
         None => device_search_read_key(server, auth)?,
     };
-    let as_of = match &input.page {
-        Some(page) => page.as_of,
-        None => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs()),
-    };
+    let as_of = input
+        .as_of
+        .or_else(|| input.page.as_ref().map(|page| page.as_of))
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs())
+        });
     let current_windows: HashSet<_> = read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = HashMap::new();
     // The ranking starts as deep as a search of one call reads and doubles
@@ -89,6 +91,7 @@ pub(super) fn search_pages(
             window,
             input.scope.as_ref(),
             as_of,
+            input.as_of,
         )
         .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
         let mut hits = Vec::new();

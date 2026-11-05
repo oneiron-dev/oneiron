@@ -1,11 +1,16 @@
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 
 /// Applies one op of the edge family and invalidates the PPR caches of both
 /// endpoints when it changes an edge. Returns whether the graph changed: every
 /// edge op changes it except a delete of an edge that is not stored.
-pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<bool> {
+pub(super) fn apply_edge_op(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    op: BatchOp,
+) -> Result<bool> {
+    let store = write.store;
     match op {
         BatchOp::Edge {
             src,
@@ -102,8 +107,10 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             Ok(true)
         }
         BatchOp::DeleteEdge { src, kind, tgt } => {
-            // Deleting or purging the source removes its stamp with it;
-            // a live NOTE, ASSET or ASSET_TEXT keeps the one it was born with.
+            // Deleting or purging the source removes its stamp with it; a live
+            // NOTE, ASSET, ASSET_TEXT, CLAIM, TURN or EVENT keeps the one it was
+            // born with (FIX 9596: a facet move is a new-record fork through the
+            // claim-supersession fork machinery, never a delete plus a re-stamp).
             if kind == crate::edge::EdgeKind::FacetOf
                 && matches!(
                     stored_entity_type(store, wtxn, &src)?,
@@ -111,6 +118,9 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
                         crate::registry::ENTITY_TYPE_NOTE
                             | crate::registry::ENTITY_TYPE_ASSET
                             | crate::registry::ENTITY_TYPE_ASSET_TEXT
+                            | crate::registry::ENTITY_TYPE_CLAIM
+                            | crate::registry::ENTITY_TYPE_TURN
+                            | crate::registry::ENTITY_TYPE_EVENT
                     )
                 )
             {
@@ -124,7 +134,7 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
                 // at this door and at the sync bridge's, which applies a
                 // peer's removal here.
                 if kind == crate::edge::EdgeKind::DerivedFrom {
-                    crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, &src, &tgt)?;
+                    crate::ports::withdraw_from_lost_source_in_txn(write, wtxn, &src, &tgt)?;
                 }
             }
             Ok(deleted)

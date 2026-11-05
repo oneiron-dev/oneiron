@@ -8,8 +8,7 @@ use super::contract::{VaultReadMethod, VaultReadRequest};
 use super::error::{VaultReadResult, invalid_request};
 use super::sealed;
 use super::types::{
-    CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest,
-    CoreQueryRequest, VAULT_READ_MAX_BATCH_REFS,
+    CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest,
 };
 
 /// The affect a query is asked in (OF-423), as the engine takes it; one out
@@ -137,13 +136,6 @@ fn validate_batch_request(request: &CoreBatchShortIdHydrateRequest) -> VaultRead
 
     if request.refs.is_empty() {
         return Err(invalid_request(METHOD, "refs", "refs must not be empty"));
-    }
-    if request.refs.len() > VAULT_READ_MAX_BATCH_REFS {
-        return Err(invalid_request(
-            METHOD,
-            "refs",
-            &format!("refs must contain at most {VAULT_READ_MAX_BATCH_REFS} entries"),
-        ));
     }
     Ok(())
 }

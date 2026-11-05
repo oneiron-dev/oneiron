@@ -12,7 +12,6 @@ use serde_json::{Map, Number, Value};
 
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackStats;
-use crate::pipeline::Signal;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::serialize::pack_accounting::PackItemTokenStats;
@@ -20,6 +19,7 @@ use crate::serialize::pack_accounting::PackSectionTokenStats;
 use crate::serialize::pack_accounting::PackTokenStats;
 use crate::serialize::pack_accounting::TokenAllocation;
 use crate::serialize::pack_format::PackFormat;
+use crate::store::retrieval_signal::Signal;
 use crate::tokenizer::PackTokenizer;
 
 use super::group_labels::known_group_labels;
@@ -283,7 +283,7 @@ fn serialized_prepared_token_count(
     prepared: &PreparedPack,
     tokenizer: PackTokenizer,
 ) -> usize {
-    let bytes = serialize_prepared_pack(pack, config, prepared.clone());
+    let bytes = serialize_prepared_pack(pack, config, prepared.clone(), tokenizer);
     let text = std::str::from_utf8(&bytes).expect("context-pack serialization should be UTF-8");
     tokenizer.count(text)
 }

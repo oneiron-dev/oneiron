@@ -2,10 +2,10 @@
 
 use super::doors::LandedHeader;
 use super::request::decode_request;
-use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::attempt_id::AttemptId;
 use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};

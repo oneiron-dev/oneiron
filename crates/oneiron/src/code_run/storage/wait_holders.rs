@@ -39,55 +39,23 @@ mod response;
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::super::consent_wait::code_consent_waits_bound_to_in_txn;
 use super::records::REPLAY_RECORDS;
-use super::replay_capsule::actor_gone_in_txn;
+use super::replay_capsule::{actor_gone_in_store, actor_gone_in_txn};
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
-use crate::side_table::{self, Erased, Named, SideKey, SideTable};
+use crate::side_table::{Erased, SideKey, SideTableDbs};
 use crate::store::{ResponseDb, Store, response_carrier, settle_shared_response_in_txn};
 use crate::{EntityId, Result, Vault};
 
-pub(crate) use self::response::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
-
-/// The rows. Key: id16(wait) + id16(run) + be64(generation).
-const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
-    SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);
+pub(crate) use self::response::wait_delivery_owners;
+use crate::store::executor_wait_delivery::{HOLDERS, WaitHolder, wait_reply_erased};
 
 /// The generation a connector call's caller holds its call's settled reply
 /// under (FIX 5718 part 3; CALLS C5718-23): the key names the wait, the
 /// caller's actor where a run's id goes, and this generation, which no
 /// run's park reaches. Such a row names no run.
 const CALLER_GENERATION: u64 = u64::MAX;
-
-/// What one run holds of a wait's reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum WaitHolder {
-    /// The reply, for `actor`'s run, when its run's stamps name one.
-    Kept { actor: Option<EntityId> },
-    /// Its run's actor was erased: the reply reads as erased for it, for
-    /// good.
-    Erased,
-}
-
-impl WaitHolder {
-    const fn actor(self) -> Option<EntityId> {
-        match self {
-            Self::Kept { actor } => actor,
-            Self::Erased => None,
-        }
-    }
-
-    pub(super) const fn erased(self) -> bool {
-        matches!(self, Self::Erased)
-    }
-}
 
 /// Where a run's wait stands for it (FIX 5718).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,18 +78,30 @@ const fn holder_key(key: &WaitKey) -> (EntityId, EntityId, u64) {
 /// the actor its owner row names, or, for a run with none, the actor its
 /// turn program runs as or its live run binding names.
 fn run_holder_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, run: EntityId) -> Result<WaitHolder> {
-    let store = &vault.store;
-    let actor = match response_owner_in_txn(store, txn, &run)? {
+    run_holder_in(&vault.store, &vault.store, txn, run)
+}
+
+/// [`run_holder_in_txn`], its stamps read through `dbs`: the vault's own
+/// tables, or a room session's view composed over them (FIX 6586). Whether
+/// the actor is gone is always the answer of the vault's canonical store
+/// `base`.
+fn run_holder_in(
+    base: &Store,
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> Result<WaitHolder> {
+    let actor = match response_owner_in_txn(dbs, txn, &run)? {
         Some(owner) if owner.erased() => return Ok(WaitHolder::Erased),
         Some(owner) => owner.actor(),
-        None => match crate::dreamer_runner::program_run_actor_in_txn(store, txn, &run)? {
+        None => match crate::dreamer_runner::program_run_actor_in_txn(dbs, txn, &run)? {
             Some(actor) => Some(actor),
             None => REPLAY_RECORDS
-                .get_lenient(store, txn, &run)?
+                .get_lenient(dbs, txn, &run)?
                 .and_then(|record| record.live_run.as_ref().map(|live| live.actor)),
         },
     };
-    if actor.is_some_and(|actor| actor_gone_in_txn(vault, txn, &actor)) {
+    if actor.is_some_and(|actor| actor_gone_in_store(base, txn, &actor)) {
         return Ok(WaitHolder::Erased);
     }
     Ok(WaitHolder::Kept { actor })
@@ -131,9 +111,20 @@ fn run_holder_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, run: EntityId) -> Res
 /// membership says so, the actor that membership names is gone, or its run
 /// reads as erased; else its run's stamps.
 fn holder_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, key: &WaitKey) -> Result<WaitHolder> {
-    let run = run_holder_in_txn(vault, txn, key.run)?;
-    let stamped = HOLDERS.get_lenient(&vault.store, txn, &holder_key(key))?;
-    let gone = |actor: &EntityId| actor_gone_in_txn(vault, txn, actor);
+    holder_in(&vault.store, &vault.store, txn, key)
+}
+
+/// [`holder_in_txn`], its membership and run stamps read through `dbs`, the
+/// actor's state from the canonical store `base`.
+fn holder_in(
+    base: &Store,
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &WaitKey,
+) -> Result<WaitHolder> {
+    let run = run_holder_in(base, dbs, txn, key.run)?;
+    let stamped = HOLDERS.get_lenient(dbs, txn, &holder_key(key))?;
+    let gone = |actor: &EntityId| actor_gone_in_store(base, txn, actor);
     Ok(match stamped {
         Some(WaitHolder::Erased) => WaitHolder::Erased,
         Some(WaitHolder::Kept { actor: Some(actor) }) if gone(&actor) => WaitHolder::Erased,
@@ -170,6 +161,43 @@ pub(super) fn join_wait_in_txn(
 ) -> Result<WaitHolder> {
     let held = holder_in_txn(vault, wtxn, key)?;
     HOLDERS.put(&vault.store, wtxn, &holder_key(key), &held)?;
+    Ok(held)
+}
+
+/// Whether `key`'s run reads its wait's reply as erased, for a room
+/// session's run (FIX 6586): its membership and stamps read through the
+/// session's composed view `read`, the actor's state from the vault's
+/// canonical store `base`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn holder_erased_routed(
+    base: &Store,
+    read: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &WaitKey,
+) -> Result<bool> {
+    Ok(holder_in(base, read, txn, key)?.erased())
+}
+
+/// [`join_wait_in_txn`] for a room session's run (FIX 6586): the holder is
+/// read through the composed view `read` and its row written along the
+/// run's route `write`, in the routed writer `wtxn`, so the membership
+/// rides with the delivery it joins.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn join_wait_routed(
+    base: &Store,
+    read: &impl SideTableDbs,
+    write: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WaitKey,
+) -> Result<WaitHolder> {
+    let held = holder_in(base, read, wtxn, key)?;
+    HOLDERS.put(write, wtxn, &holder_key(key), &held)?;
     Ok(held)
 }
 

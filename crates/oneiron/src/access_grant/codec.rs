@@ -12,7 +12,7 @@ use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, Access
 use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
-pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 4;
+pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 5;
 
 pub use crate::serialize::access_grant_fields::ACCESS_GRANT_BODY_KEYS;
 pub(crate) use crate::serialize::access_grant_fields::{
@@ -34,6 +34,8 @@ pub(super) const KEY_CREATED_AT: &str = ACCESS_GRANT_BODY_KEYS[5];
 pub(super) const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
 
 const KEY_COMPANION_BOUNDS: &str = ACCESS_GRANT_BODY_KEYS[9];
+
+pub(super) const KEY_WITNESS_HISTORY: &str = ACCESS_GRANT_BODY_KEYS[10];
 
 const BOUNDS_KEYS: [&str; 2] = ["issuer_slip", "ceiling"];
 
@@ -96,6 +98,7 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
             Value::from(KEY_COMPANION_BOUNDS),
             encode_companion_bounds(grant.companion_bounds.as_ref())?,
         ),
+        (Value::from(KEY_WITNESS_HISTORY), Value::Nil),
     ]);
 
     let mut out = Vec::new();
@@ -170,7 +173,7 @@ impl GrantTerms {
     }
 }
 
-fn read_body(bytes: &[u8]) -> Result<Value> {
+pub(super) fn read_body(bytes: &[u8]) -> Result<Value> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_grant())?;
     if cursor.position() != bytes.len() as u64 {

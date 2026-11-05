@@ -44,28 +44,55 @@ impl Memory<'_> {
             anchor.snapshot,
             anchor.receive_provenance,
         ])?;
-        let (state, promotion_receipt) =
+        let readiness =
             self.code_repo_import_readiness(owner, imported.manifest_ref, input.accept.as_ref())?;
         Ok(CodeRepoImportView {
             manifest: manifest_view(&imported),
-            state,
-            baseline_revision: input.accept.map(|accept| accept.baseline_revision),
-            promotion_receipt,
+            state: readiness.state,
+            baseline_revision: readiness
+                .baseline
+                .or(input.accept.map(|accept| accept.baseline_revision)),
+            promotion_receipt: readiness.receipt,
+            hold: readiness.hold,
         })
     }
 
-    /// CALL H "import readiness": no acceptance is `manifest_ready` and
-    /// starts no check or review; an acceptance promotes exactly, or holds
-    /// on the Baseline or the review it lacks. Corruption and store
-    /// failures stay errors, never holds.
+    /// CALL H "import readiness": no acceptance starts no check or review,
+    /// and is `promoted` when a promotion of the manifest already holds (an
+    /// approvals-by-manifest read, FIX 7393), else `manifest_ready`; an
+    /// acceptance promotes exactly, or holds on the Baseline or the review
+    /// it lacks, naming it. Corruption and store failures stay errors,
+    /// never holds.
     fn code_repo_import_readiness(
         &self,
         owner: &AuthenticatedOwner,
         manifest_ref: EntityId,
         accept: Option<&CodeImportAcceptance>,
-    ) -> MemoryResult<(CodeRepoImportState, Option<EntityId>)> {
+    ) -> MemoryResult<ImportReadiness> {
+        let readiness = |state, baseline, receipt, hold| ImportReadiness {
+            state,
+            baseline,
+            receipt,
+            hold,
+        };
         let Some(accept) = accept else {
-            return Ok((CodeRepoImportState::ManifestReady, None));
+            return Ok(
+                match self.vault.imported_manifest_promotion(manifest_ref)? {
+                    Ok(Some((baseline, approval))) => {
+                        self.origin_listed([baseline, approval])?;
+                        readiness(
+                            CodeRepoImportState::Promoted,
+                            Some(baseline),
+                            Some(approval),
+                            None,
+                        )
+                    }
+                    Ok(None) => readiness(CodeRepoImportState::ManifestReady, None, None, None),
+                    Err(detail) => {
+                        readiness(CodeRepoImportState::ManifestReady, None, None, Some(detail))
+                    }
+                },
+            );
         };
         Ok(
             match self
@@ -74,19 +101,26 @@ impl Memory<'_> {
             {
                 Ok(approval) => {
                     self.origin_listed([accept.baseline_revision, approval])?;
-                    (CodeRepoImportState::Promoted, Some(approval))
+                    readiness(CodeRepoImportState::Promoted, None, Some(approval), None)
                 }
                 Err(CodeImportHold::Baseline(detail)) => {
-                    tracing::info!(%detail, "an import's promotion holds on its baseline");
-                    (CodeRepoImportState::HeldBaseline, None)
+                    readiness(CodeRepoImportState::HeldBaseline, None, None, Some(detail))
                 }
                 Err(CodeImportHold::Review(detail)) => {
-                    tracing::info!(%detail, "an import's promotion holds on its review");
-                    (CodeRepoImportState::HeldReview, None)
+                    readiness(CodeRepoImportState::HeldReview, None, None, Some(detail))
                 }
             },
         )
     }
+}
+
+/// Where one import's promotion stands, and what it stands on.
+struct ImportReadiness {
+    state: CodeRepoImportState,
+    /// The checked Baseline a promotion read with no acceptance found.
+    baseline: Option<EntityId>,
+    receipt: Option<EntityId>,
+    hold: Option<String>,
 }
 
 /// The manifest as the wire carries it: every file in path order.

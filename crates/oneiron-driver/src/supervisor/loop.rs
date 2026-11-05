@@ -183,10 +183,10 @@ where
         let mut source_rests_until: Option<Instant> = None;
 
         loop {
-            // While the host's pause holds (FIX 6909) the loop reads no
-            // tick, so no deadline arms and no pass starts; an owed tick
-            // waits for the pause to lift.
-            if !wait_unpaused(&factory, &mut shutdown).await {
+            // While the host's pause holds (FIX 6909), service only the
+            // session lifecycle: no ordinary tick is read, no attempt
+            // deadline arms and no pass starts. Owed ticks wait for resume.
+            if !wait_unpaused(&factory, &mut shutdown, &mut ticks).await {
                 break;
             }
             // The source running dry ends the run only once nothing is owed
@@ -352,11 +352,12 @@ where
 }
 
 /// Waits while the host's pause holds (FIX 6909), reading each epoch afresh:
-/// lifting the pause closes the epoch it held. It sleeps on the watch alone,
-/// with no timer. Returns false when shutdown fires first.
-async fn wait_unpaused<F: PassExecutorFactory>(
+/// lifting the pause closes the epoch it held. Only the session lifecycle
+/// stays live; ordinary ticks and passes wait. Returns false on shutdown.
+async fn wait_unpaused<F: PassExecutorFactory, T: TickSource>(
     factory: &F,
     shutdown: &mut ShutdownListener,
+    ticks: &mut T,
 ) -> bool {
     loop {
         let Some(mut pause) = factory.pass_pause() else {
@@ -368,7 +369,8 @@ async fn wait_unpaused<F: PassExecutorFactory>(
         tokio::select! {
             biased;
             () = shutdown.triggered() => return false,
-            _ = pause.wait_for(|held| !*held) => {}
+            _ = pause.wait_for(|held| !*held) => {},
+            () = ticks.service_session_lifecycle() => {},
         }
     }
 }

@@ -154,8 +154,14 @@ async fn serve_prepared<A: AppHost>(
         );
     }
     let cors_layer = crate::commands::build_cors_layer(&server_config)?;
+    let startup_args = config
+        .embedded_holder_overrides
+        .as_ref()
+        .map(|overrides| overrides.serve_args(config.config_path.clone()))
+        .unwrap_or_default();
     let (sync_server, gpu_poller) =
-        crate::commands::build_server(vault, &config, server_config, owner_host).await?;
+        crate::commands::build_server(vault, &config, server_config, owner_host, &startup_args)
+            .await?;
     let sync_server = if artifacts.is_some() {
         sync_server.with_artifact_socket()
     } else {

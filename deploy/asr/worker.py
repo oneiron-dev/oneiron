@@ -26,7 +26,9 @@ import io
 import json
 import math
 import re
+import socket
 import sys
+import time
 import uuid
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,8 +44,8 @@ except ImportError:
 
 KIND = "asr"
 ROUTE = "/v1/audio/transcriptions"
-# The documented default checkpoint an operator's manifest pins; no house pin
-# exists, so the manifest names its commit and every file.
+# The house-pinned checkpoint (`weights = "whisper-large-v3"`); an
+# operator's manifest may still name its commit and every file instead.
 ASR_MODEL_REPO = "openai/whisper-large-v3"
 ASR_BACKEND = "transformers_whisper"
 ASR_DTYPE = "float16"
@@ -59,6 +61,10 @@ WHISPER_WINDOW_SAMPLES = 30 * ASR_SAMPLE_RATE
 # The rates a host records at, as the engine's own WAV checks bound them.
 MIN_INPUT_RATE = 8000
 MAX_INPUT_RATE = 192000
+# How long one request body's read may take (FIX 11378): the loopback Vox
+# default, overridable per launch. Without it a dripping upload holds its
+# transcriber past the wait, with no deadline at all.
+DEFAULT_UPLOAD_READ_DEADLINE_MS = 5000
 
 
 def decode_wav(data):
@@ -119,6 +125,14 @@ class WhisperBackend:
     def __init__(self, weights_dir):
         import torch
         from transformers import WhisperForConditionalGeneration, WhisperProcessor
+        from transformers import __version__ as transformers_version
+        # requirements-asr.txt floors transformers at 4.37: the first release
+        # whose Whisper generate honors return_timestamps with an attention
+        # mask (FIX 11378). The GPU smoke checks the behavior; this fails a
+        # worker whose environment resolved older, before it listens.
+        if tuple(int(p) for p in transformers_version.split(".")[:2]) < (4, 37):
+            raise ValueError(f"transformers {transformers_version} is older than "
+                             f"the required 4.37: rebuild the worker's lock")
         worker_support.require_cuda(torch)
         self.torch = torch
         self.dtype = getattr(torch, ASR_DTYPE)
@@ -190,8 +204,38 @@ class TranscriptionServer(ThreadingHTTPServer):
         super().__init__(address, handler)
 
 
-def handler_for(worker):
+def handler_for(worker, upload_deadline_ms):
     class Handler(BaseHTTPRequestHandler):
+        def read_body(self):
+            # FIX 11378: the Vox worker's bounded read, without its upload
+            # slots. A dripping upload answers 408 instead of holding the
+            # transcriber past the wait.
+            n = int(self.headers.get("Content-Length", "0"))
+            if n < 5:
+                raise ValueError("request size")
+            deadline = time.monotonic() + upload_deadline_ms / 1000
+            parts = []
+            remaining = n
+            try:
+                while remaining:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError("upload deadline")
+                    self.connection.settimeout(left)
+                    piece = self.rfile.read1(min(65536, remaining))
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("upload deadline")
+                    if not piece:
+                        raise ValueError("incomplete upload")
+                    parts.append(piece)
+                    remaining -= len(piece)
+            finally:
+                # Back to the blocking socket everything else already uses;
+                # a leftover slice of the deadline must not time out the
+                # next request line on this keep-alive connection.
+                self.connection.settimeout(None)
+            return b"".join(parts)
+
         def authorized(self):
             if worker_support.authorized(self.headers, worker.credential):
                 return True
@@ -221,11 +265,11 @@ def handler_for(worker):
             # gone or not; it waits for the gate, never refused for room.
             with worker.activity.admit() as ticket:
                 try:
-                    length = int(self.headers.get("Content-Length", ""))
-                    body = self.rfile.read(length)
-                    if len(body) != length:
-                        raise ValueError("incomplete upload")
+                    body = self.read_body()
                     data = worker.transcribe(self.headers.get("Content-Type"), body, ticket)
+                except (TimeoutError, socket.timeout):
+                    self.send_error(408, "upload deadline exceeded")
+                    return
                 except (ValueError, TypeError, UnicodeError, KeyError):
                     self.send_error(400, "invalid transcription request")
                     return
@@ -253,6 +297,9 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--credential-env", required=True,
                         help="the environment variable holding the bearer credential")
+    parser.add_argument("--upload-read-deadline-ms", type=int,
+                        default=DEFAULT_UPLOAD_READ_DEADLINE_MS,
+                        help="how long one request body's read may take (FIX 11378)")
     args = parser.parse_args()
     credential = worker_support.credential(args.credential_env)
     identity = worker_support.verify_launch(KIND, args.model_id, args.weights_dir,
@@ -260,7 +307,8 @@ def main():
     print(f"MODEL_LOAD_START backend={ASR_BACKEND} revision={identity.revision}", flush=True)
     backend = WhisperBackend(args.weights_dir)
     worker = Worker(backend, identity, args.model_id, credential)
-    server = TranscriptionServer((args.host, args.port), handler_for(worker))
+    server = TranscriptionServer((args.host, args.port),
+                                 handler_for(worker, args.upload_read_deadline_ms))
     server.serve_forever()
 
 

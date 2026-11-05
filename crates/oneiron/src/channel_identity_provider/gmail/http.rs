@@ -298,7 +298,32 @@ fn present(field: &Option<String>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
+/// The sensitive `Authorization: Bearer` value for one injected credential.
+pub(super) fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
+    let invalid =
+        || Error::InvalidConfig("gmail credential is not a usable access token".to_owned());
+    let text = std::str::from_utf8(token).map_err(|_| invalid())?.trim();
+    let access_token = if text.starts_with('{') {
+        let value: Value = serde_json::from_str(text).map_err(|_| invalid())?;
+        value
+            .get("access_token")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?
+            .trim()
+            .to_owned()
+    } else {
+        text.to_owned()
+    };
+    if access_token.is_empty() {
+        return Err(invalid());
+    }
+    let mut value =
+        HeaderValue::from_str(&format!("Bearer {access_token}")).map_err(|_| invalid())?;
+    value.set_sensitive(true);
+    Ok(value)
+}
+
+pub(super) fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
     let mut bytes = Vec::new();
     response
         .take(MAX_RESPONSE_BYTES + 1)

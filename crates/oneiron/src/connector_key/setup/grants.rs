@@ -4,6 +4,11 @@
 
 use super::*;
 
+struct PackConnectionCheckSession {
+    principal: String,
+    content_hash: String,
+}
+
 impl Vault {
     /// The owner allowed exactly `allowed` of one connection's permissions.
     /// Each newly allowed permission mints a standing consent grant with its
@@ -151,8 +156,9 @@ impl Vault {
 
     /// Checks one connection through the host's verifier and records the
     /// result. The connection's credentials must be stored and its required
-    /// permissions allowed first; the provider's reported scopes must match
-    /// what the owner allowed, no more and no less. A built-in pack whose
+    /// permissions allowed first; the provider's account and scopes are
+    /// checked against that setup. Its exact owner/source session stays the
+    /// target across the provider call. A built-in pack whose
     /// every connection is then ready qualifies Active in the same flow.
     pub fn verify_pack_connection(
         &self,
@@ -182,7 +188,7 @@ impl Vault {
         connection: &str,
         verifier: &dyn PackConnectionVerifier,
     ) -> Result<PackSetupView> {
-        let (declared, basis, allowed_scopes) =
+        let (declared, basis, allowed_scopes, check_session) =
             self.pack_connection_before_check(actor, pack, content_hash, connection)?;
         let at = crate::unix_seconds_now();
         let check = PackConnectionCheck {
@@ -207,8 +213,8 @@ impl Vault {
             },
         };
         let view =
-            self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(actor, pack, view, Some(verifier))
+            self.record_pack_connection_check(actor, pack, &check_session, &declared, record)?;
+        self.qualify_checked_builtin(actor, pack, &check_session, view, Some(verifier))
     }
 
     /// Checks a connection whose bound connector key is Pending through the
@@ -231,12 +237,17 @@ impl Vault {
         oracle: &dyn GroundingOracle,
     ) -> Result<PackSetupView> {
         let actor = PackSetupActor::Owner(owner);
-        let (declared, basis, _) =
+        let (declared, basis, _, check_session) =
             self.pack_connection_before_check(actor, pack, content_hash, connection)?;
         let key = {
-            let principal = owner.principal_ref_for_read(self)?.to_owned();
             let txn = self.store.env.read_txn()?;
-            let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
+            actor.validate_principal_in_txn(self, &txn, &check_session.principal)?;
+            let binding = self.bind_pack_setup_in_txn(
+                &txn,
+                &check_session.principal,
+                pack,
+                Some(&check_session.content_hash),
+            )?;
             let session = self.require_pack_setup_in_txn(&txn, &binding)?;
             let bound = session
                 .keys
@@ -276,8 +287,8 @@ impl Vault {
             },
         };
         let view =
-            self.record_pack_connection_check(actor, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(actor, pack, view, None)
+            self.record_pack_connection_check(actor, pack, &check_session, &declared, record)?;
+        self.qualify_checked_builtin(actor, pack, &check_session, view, None)
     }
 
     /// A built-in pack qualifies on its checked setup (Engine ruling 10-17):
@@ -289,6 +300,7 @@ impl Vault {
         &self,
         actor: PackSetupActor<'_>,
         pack: &str,
+        check_session: &PackConnectionCheckSession,
         view: PackSetupView,
         verifier: Option<&dyn PackConnectionVerifier>,
     ) -> Result<PackSetupView> {
@@ -297,7 +309,16 @@ impl Vault {
         {
             return Ok(view);
         }
-        self.pack_setup_as(actor, pack, Some(&view.content_hash))
+        let txn = self.store.env.read_txn()?;
+        actor.validate_principal_in_txn(self, &txn, &check_session.principal)?;
+        let binding = self.bind_pack_setup_in_txn(
+            &txn,
+            &check_session.principal,
+            pack,
+            Some(&check_session.content_hash),
+        )?;
+        let session = self.require_pack_setup_in_txn(&txn, &binding)?;
+        self.pack_setup_view_in_txn(&txn, &binding, &session)
     }
 
     /// A connection of an Active pack runs only once checked: some owner's
@@ -573,7 +594,12 @@ impl Vault {
         pack: &str,
         content_hash: Option<&str>,
         connection: &str,
-    ) -> Result<(PackSetupConnection, String, Vec<String>)> {
+    ) -> Result<(
+        PackSetupConnection,
+        String,
+        Vec<String>,
+        PackConnectionCheckSession,
+    )> {
         let txn = self.store.env.read_txn()?;
         let principal = actor.principal_for_read(self, &txn, pack, content_hash)?;
         let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
@@ -606,20 +632,33 @@ impl Vault {
             .filter_map(|permission| permission.scope.clone())
             .collect();
         let basis = self.pack_connection_basis_in_txn(&txn, &declared, &session)?;
-        Ok((declared, basis, allowed_scopes))
+        Ok((
+            declared,
+            basis,
+            allowed_scopes,
+            PackConnectionCheckSession {
+                principal,
+                content_hash: binding.receipt.content_hash,
+            },
+        ))
     }
 
     fn record_pack_connection_check(
         &self,
         actor: PackSetupActor<'_>,
         pack: &str,
-        content_hash: Option<&str>,
+        check_session: &PackConnectionCheckSession,
         declared: &PackSetupConnection,
         record: PackSetupCheckRecord,
     ) -> Result<PackSetupView> {
         self.with_write_txn_grouped(|txn| {
-            let principal = actor.principal_in_txn(self, txn, pack, content_hash)?;
-            let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
+            actor.validate_principal_in_txn(self, txn, &check_session.principal)?;
+            let binding = self.bind_pack_setup_in_txn(
+                txn,
+                &check_session.principal,
+                pack,
+                Some(&check_session.content_hash),
+            )?;
             let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
             // A grant, credential or key that moved while the check ran makes
             // its answer about something else.

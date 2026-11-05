@@ -50,8 +50,9 @@ credential.
   `network`, and one at or after it refuses a profile without it, so profiles
   change with the host library.
 - The managed profile (FIX 6809) adds a required manifest field,
-  `vm_managed_profile_revision: 1`. Its floor is the engine commit that merged
-  FIX 6809. An image before it ignores the profile's files, so its vault would
+  `vm_managed_profile_revision`, now 2: revision 2 (FIX 13706-13708) also reads
+  the posture and checkpoint opt-out files. Its floor is the engine commit that
+  merged that revision. An image before it ignores the profile's files, so its vault would
   start without its tenancy or its owner's choices. The supervisor checks the
   revision, with the hashes and that floor, before it stages any of the files,
   prepares the VMM or hands over F, C or A, and boots no image before the floor
@@ -94,12 +95,42 @@ credential.
   first boot of an image with guest runtime bindings, whose bootstrap imports
   both guest images before the engine starts; later boots import nothing.
   The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
-- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+- The outbox carrier (FIX 6683, FIX 11073): `Ping`'s `vm_outbox_revision`
+  is read live, and `vm_outbox_companion` names the last completed probe's
+  answer: `up` with the revision it reported, `down` when it answered
+  nothing. A `null` means no probe has completed yet, never that the
+  companion is healthy; `down` is not proof its process ended.
   The engine looks at the outbox companion every 5 s, with at most one
   status question in flight. A question that fails (the companion ended, or
   its socket errs) clears the revision, as a VM without one reads; a
   question still unanswered leaves the last answer standing. Restarting a
   companion that ended is the bootstrap's part.
+- Whole sets (FIX 7543). A receiving end journals each set the other end
+  sent before it makes the set's first change: `set-<kind>.json` in its
+  carrier store names each change in the set's order and the record each
+  member gets, and the staged bodies it names are synced first. A set with
+  more than one change on disk also puts a hidden mark, `.vm-outbox-set`,
+  in the kind's root. Then the end makes the changes, writes the records,
+  removes the mark and deletes the journal, and only then answers the
+  set's transfers `durable`. When a step fails, or the end stops midway,
+  the set is unfinished: its transfers are deferred, the journal, the
+  mark and the staged temporaries stay, and the kind waits. The kind's next
+  turn, or the end's next start, puts the mark back and finishes the set
+  from its journal before anything else of the kind runs. Nothing is rolled
+  back or dropped. A put whose staged bytes are gone is logged as
+  `vm_outbox_set_put_lost` and waits in the journal, the mark standing,
+  until the other end sends it again; the kind takes sets meanwhile. A
+  reader of more than one member of a set waits while the mark stands and
+  never refuses for it: `vm_outbox_read_set` in
+  `oneiron_vault_contract::vm_outbox` reads several members as they stood
+  at one point between sets, or answers `None` for a later look, and
+  `vm_outbox_set_unfinished` tells whether the mark stands. In the guest,
+  the engine's escrow recipient look and the cold restore's recipient check
+  read both recipients through `vm_outbox_read_set`, and the publisher
+  training outbox's tick waits on the mark under the outbox's lock.
+  On the host, the node's shippers of a kind whose sets have more than one
+  member (backups with their checkpoint facts, custody batches, e-sign
+  deliveries, training offers) should wait on the mark in the same way.
 - Copies the carrier never agreed on (FIX 11074). When a member's origin
   retires the agreed version and the other end holds a different copy, that
   end takes the retirement for the agreed version and keeps its copy. It
@@ -151,6 +182,16 @@ credential.
   at the member's name is deleted. Other notices carry `action` `answered`.
   These frames are outbox wire revision 4, and each end refuses revision 3
   at the hello.
+- The host's retained member statuses, read only.
+  `managed::read_vm_outbox_member_statuses(&VmOutboxHostRoots)` (`managed/vm_outbox/host_status.rs`,
+  re-exported at `managed::` and `vm_outbox::`) projects the same `store` member records into
+  `VmOutboxHostMemberStatus` (`source_digest_mismatch`, `diverged_unagreed`, `kept_aside`) with
+  answer and removal-failure presence as booleans only. It wakes no guest, opens no carrier, and
+  creates or writes nothing: `None` only when the store root or its `members/` directory is missing,
+  `Some([])` only when a readable `members/` holds no such status, any other read or parse failure
+  is `Err`. What it returns is observed retained metadata (names, digests, lengths, aside names), not
+  live, current, drain, or physical-erase proof. The caller supplies the trusted host roots; there is
+  no new authenticated door.
 
 ## The channel
 
@@ -401,10 +442,10 @@ A NIC does not replace the custody anchor proxy. The host's loopback is not the
 guest's, so an anchor URL on the host's `127.0.0.1` relay still goes through
 1033.
 
-## Managed profile (FIX 6809)
+## Managed profile (FIX 6809, FIX 13706-13708)
 
 A vault VM's engine takes the same managed-profile flags a supervisor passes a
-node's child. In a VM they come from five typed files on the config drive,
+node's child. In a VM they come from seven typed files on the config drive,
 which the guest's bootstrap reads itself. There is no generic argument file and
 no shell parser.
 
@@ -415,6 +456,8 @@ no shell parser.
 | `/config/failure-signal-export` (`VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE`) | `true` or `false` | `--failure-signal-export true` or `--failure-signal-export false` |
 | `/config/failure-signal-training` (`VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE`) | `true` or `false`, apart from the export file | `--failure-signal-training true` or `--failure-signal-training false` |
 | `/config/fast-dims` (`VM_GUEST_FAST_DIMS_FILE`) | Decimal digits: a nonzero width a u16 holds | `--fast-dims <width>` |
+| `/config/privacy-posture` (`VM_GUEST_PRIVACY_POSTURE_FILE`) | `managed`, `relay` or `self-host` | `--privacy-posture <value>`. Our cloud writes `managed`: the hosted checkpoint policy and the host signer before the engine serves (QUORUM-HOST-ROOT = C) |
+| `/config/checkpoint-host-opt-out` (`VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE`) | `true` or `false` | `true`: a bare `--managed-checkpoint-host-opt-out`, the operator's enterprise/advanced capability. `false`: no flag |
 
 - Each body is the whole value, with at most one final LF: no space, CR, sign,
   prefix, comment or second line. Write the hex in lowercase and end each file
@@ -426,7 +469,7 @@ no shell parser.
   bytes or not in its form refuses the provisioning as `provision_failed`. The
   refusal names the file, never its bytes.
 - On each boot that serves (an open or a restore, not an inspection) the
-  bootstrap reads all five with `network.json`, before the vault's key goes in.
+  bootstrap reads all seven with `network.json`, before the vault's key goes in.
   An open's engine and a restore's engine get the same flags.
 - The engine checks the values as it does on a node: `--member-vault` needs
   `--organization-owner`, a shared vault's organization is its derivation
@@ -466,6 +509,39 @@ list the operator holds now, drop the entries they removed, and build the one
 drive an open and a restore both boot with. A RAM resume reads no file again,
 so a changed list takes effect at the next cold boot: drop a published snapshot
 first.
+
+## Descriptor-first outbox sets (FIX 11071 / 6685)
+
+VM outbox wire revision **5** sends every descriptor in a set as an `offer`
+frame, without body chunks. The existing `commit_set` flag marks the last
+offer. The receiver applies the same descriptor and root checks and creates
+the actual staging files for the complete set before answering.
+
+A `go` permits the put bodies, in offer order, but is **not** an ACK or a
+durability receipt. The sender keeps the same prepared file handles and
+recorded transfer identities. Only the existing ordered final `ack` frames
+report each transfer's outcome after the original whole-set commit. A set
+that already fails preflight instead gets those ACKs without sending bodies;
+other members retain the existing `set_incomplete` outcome and retry pacing.
+
+On filesystems with native allocation, each put's declared bytes are reserved
+in its own staging file before `go`. The same file owns that allocation
+through receive, digest checking, publication or drop. Preallocation is not
+received-byte proof: length and digest still count only actual body writes.
+`ENOSPC` and `EDQUOT` keep the existing capacity deferral. If allocation is
+unsupported (`EOPNOTSUPP` or `ENOSYS`), the original streamed-write path stays
+available; no working filesystem is newly refused. A `go` does not promise
+that later writes, publication, metadata or carrier records cannot fail.
+Those failures still receive the original final outcomes, so the full
+capacity-retry work remains partial.
+
+Both native ends and the matching guest companion must speak revision 5;
+the hello rejects other revisions, with no old reader. The matching image
+must advertise that revision and meet the engine commit that merges this
+change before a supervisor adopts it. No image is built, repinned or adopted
+by this source change. Shared contract version 3, the ledger's required
+artifact origins and counts, other protocol revisions, file/set limits,
+retry timing, custody and final ACK ownership are unchanged.
 
 ## RAM snapshot custody (FIX 9497)
 
@@ -543,7 +619,7 @@ overwrite.
   reconcile are the supervisor's.
 - **Host network.** The TAP, its rules, DNS sourcing, operator relays and the
   network's activation are the supervisor's (FIX 6808's host half).
-- **Profile publication.** Writing and removing the five profile files under
+- **Profile publication.** Writing and removing the seven profile files under
   the config drive's lock, building the drive an open and a restore share, and
   holding back a profile until the image's revision and floor check out are the
   supervisor's (FIX 6809's LC half, FIX 7081).

@@ -2,7 +2,7 @@ use crate::entity_id::ENTITY_ID_LEN;
 
 pub(super) const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 /// Schema 1.2 stores six-axis Scope; schema 1.1 is migration input only.
-pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.2";
+pub(crate) use crate::store::policy_record::POLICY_SCHEMA_VERSION;
 pub(super) const LEGACY_POLICY_SCOPE_SCHEMA_VERSION: &str = "1.1";
 pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
@@ -207,7 +207,7 @@ pub(super) const GRANT_SCOPE_KEY: &str = "scope";
 pub(super) const GRANT_SELECTORS_KEY: &str = "selectors";
 pub(super) const GRANT_BUDGET_KEY: &str = "budget";
 pub(super) const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
-pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";
+pub(crate) use crate::store::policy_record::SCOPED_READ_EFFECTOR_CORE_READ;
 pub(super) const SCOPED_READ_EFFECTOR_ONEIRON_READ: &str = "oneiron.read";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_PREFIX: &str = "external:";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX: &str = "external_effect:";

@@ -126,10 +126,7 @@ use std::collections::BTreeSet;
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
-/// The short-id prefix PROJECT is registered under at run time.
-pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
-/// The pack PROJECT is registered under at run time.
-pub(crate) const PROJECT_PACK: &str = "oneiron.project";
+pub(crate) use crate::store::project_kind::{PROJECT_PACK, PROJECT_SHORT_ID_PREFIX};
 const PACK: &str = PROJECT_PACK;
 
 /// The root project's entity id, seeded once at first boot. Key: ().
@@ -547,11 +544,7 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     decode(&body).map(Some)
 }
 
-pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
-    store
-        .structural_kind_registration(kind)
-        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == PROJECT_SHORT_ID_PREFIX)
-}
+pub(crate) use crate::store::project_kind::is_project_type;
 /// Check the dynamic compiled-pack kind through the persisted root binding.
 /// Unseeded test stores have no root and therefore no project hubs.
 pub(crate) fn is_project_entity(

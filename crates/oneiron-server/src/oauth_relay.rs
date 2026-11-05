@@ -187,6 +187,13 @@ fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
     Ok(body)
 }
 
+/// Public identity-provider keys through the existing HTTPS/cache/refresh
+/// path. The caller pins the provider URI and validates its own token claims;
+/// this supplies no relay or core authority.
+pub(crate) fn identity_provider_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
+    fetch_jwks(uri, refresh)
+}
+
 /// Best-effort startup prefetch. Failures intentionally leave an empty or
 /// previous cache so verification remains fail-closed without panicking config.
 pub(crate) fn warm_if_configured(config: &SyncServerConfig) -> Result<(), ApiError> {

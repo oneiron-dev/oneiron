@@ -354,7 +354,7 @@ impl Store {
             return Ok(None);
         }
         for subject in custody.subjects_with_prefix(CustodyKind::WorldPad, &[])? {
-            let derived = crate::world_keys::pad_row_of_item(subject.item());
+            let derived = oneiron_store::world_pad_codec::pad_row_of_item(subject.item());
             if matches!(derived, Ok(Some(found)) if found == *row) {
                 return Ok(WorldPadItem::try_from(subject.item()).ok());
             }
@@ -386,7 +386,7 @@ impl Store {
             return Ok(());
         }
         for subject in custody.subjects_with_prefix(CustodyKind::WorldPad, &[])? {
-            let derived = crate::world_keys::pad_row_of_item(subject.item());
+            let derived = oneiron_store::world_pad_codec::pad_row_of_item(subject.item());
             if matches!(derived, Ok(Some(found)) if found == *row) {
                 let intent = RetirementIntent {
                     subject,
@@ -430,8 +430,8 @@ fn world_pad_retirement_ready(
     }
     let world = item_world(intent.subject.item())?;
     // A world's erase, or a hard erase of the one pad row (KS-5).
-    if !crate::world_keys::world_keys_destroyed_in_txn(store, txn, world)?
-        && !crate::world_keys::pad_row_erased_in_txn(store, txn, intent.subject.item())?
+    if !crate::store::world_pad_rows::world_keys_destroyed_in_txn(store, txn, world)?
+        && !crate::store::world_pad_rows::pad_row_erased_in_txn(store, txn, intent.subject.item())?
     {
         return Err(Error::CorruptedIndex(
             "retiring world key pads have no erase",

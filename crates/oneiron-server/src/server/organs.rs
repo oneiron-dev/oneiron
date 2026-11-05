@@ -9,9 +9,10 @@
 //!
 //! A pack build's tier is its verified provenance alone (FIX 7644): first
 //! party when the operator listed its blake3 (`--trusted-organ-build`), else
-//! third party, which the host refuses to start until filesystem confinement
-//! for organs lands. Owner installation and a content pin prove which bytes
-//! run, not that they are reviewed repo code (ARCH-0075).
+//! third party, which the host starts only inside a filesystem fence
+//! (Landlock on Linux, Seatbelt on macOS, FIX 7885) and refuses on a host
+//! with none. Owner installation and a content pin prove which bytes run,
+//! not that they are reviewed repo code (ARCH-0075).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ use oneiron::skill_hub::pack_catalog::{PackOrgan, PackOrganBuild, host_platform}
 #[cfg(feature = "mesh")]
 use oneiron_organ_host::MeshCancel;
 use oneiron_organ_host::seal::SEAL_ORGAN;
-use oneiron_organ_host::{HostError, OrganSpec, OrganTier, pack_spec};
+use oneiron_organ_host::{HostError, OrganSpec, OrganTier, filesystem_confined, pack_spec};
 
 use super::SyncServer;
 
@@ -185,13 +186,13 @@ impl SyncServer {
                 .and_then(|binary| pack_spec(&binary, &dir, tier));
             match spec {
                 Ok(spec) => {
-                    if tier == OrganTier::ThirdParty {
+                    if tier == OrganTier::ThirdParty && !filesystem_confined() {
                         tracing::warn!(
                             organ = %name,
                             pack = %entry.pack_name,
                             build = %build.blake3,
                             %platform,
-                            "pack organ build is third party: it will not start on this platform until filesystem confinement for organs lands; to run it as first party, the operator lists its blake3 with --trusted-organ-build"
+                            "pack organ build is third party: it will not start on this host, which has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS); to run it as first party, the operator lists its blake3 with --trusted-organ-build"
                         );
                     }
                     self.organs.install(spec);

@@ -40,7 +40,7 @@ impl Store {
         }
         for id in self.port_entity_ids_by_type(txn, ENTITY_TYPE_WORLD_KEY_PAD, None)? {
             let world = self.port_entity_with_raw(txn, &id?, |raw| {
-                Ok(crate::world_keys::pad_body_world(raw).and_then(|world| world.ok()))
+                Ok(crate::store::world_pad_rows::pad_body_world(raw).and_then(|world| world.ok()))
             })?;
             worlds.extend(world.flatten());
         }

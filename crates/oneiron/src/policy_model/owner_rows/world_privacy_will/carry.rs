@@ -228,7 +228,10 @@ impl Vault {
             epoch: state.pact_epoch,
             source_vault: bytes_to_hex_lower(&local),
             recipient_vault: link.vault,
-            world: link.world,
+            world: match leg {
+                ForeignWorldPrivacyLeg::Ask => link.world,
+                ForeignWorldPrivacyLeg::Answer => stored.world,
+            },
             ask,
             agent,
             settings: stored.settings,
@@ -346,7 +349,9 @@ impl Vault {
                 asked_from: Some(ForeignWorldPrivacyLink {
                     pact,
                     vault,
-                    world: world.to_hex(),
+                    world: crate::federation::foreign_world_for(&local, world)?
+                        .entity_id()
+                        .to_hex(),
                     request: Some(ask.to_hex()),
                     agent: agent.as_ref().map(EntityId::to_hex),
                     answer: None,

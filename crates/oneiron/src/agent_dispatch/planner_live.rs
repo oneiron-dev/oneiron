@@ -22,6 +22,7 @@
 
 mod intent;
 mod learning;
+pub(crate) use learning::seat_model_rates_in_txn;
 mod root_plan;
 mod team_launch;
 mod width_outcomes;
@@ -49,7 +50,7 @@ use super::planner::{
     SpawnPlanReceipt, plan_ranked, planned_rung, ranked_quotes,
 };
 use super::task_type_tree::{load_team_type_tree, load_team_type_tree_in_txn, place_in_tree};
-use super::team_shape::{CoordinationPattern, team_shape_skill};
+use super::team_shape::{CoordinationPattern, team_shape_default};
 use super::types::{AgentDispatchInput, AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
 use super::{AgentDispatcher, SpawnSpend, agent_dispatch_actor, decode_agent_dispatch_input};
@@ -67,14 +68,15 @@ pub struct PlannerSkills {
 }
 
 impl PlannerSkills {
-    /// The installed team-shape skill and no rung skills.
+    /// The team-shape workflow default (current head, else the pure
+    /// fallback namespace) and no rung skills.
     ///
     /// # Errors
     ///
-    /// Only an id derivation failure.
-    pub fn seeded() -> Result<Self> {
+    /// Storage errors, or an id derivation failure.
+    pub fn seeded(vault: &crate::Vault) -> Result<Self> {
         Ok(Self {
-            team_shape: team_shape_skill()?,
+            team_shape: team_shape_default(vault)?,
             cheap_classifier: None,
             small_thinking: None,
             strong: None,
@@ -205,7 +207,7 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
+        let (request, _) = request.with_owner_choices(self.vault, project)?;
         let evidence = self.planner_evidence_for(
             project,
             Some(live.id),
@@ -234,16 +236,19 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
+        let (request, owner_choices) = request.with_owner_choices(self.vault, project)?;
         let evidence =
             self.planner_evidence_for(project, Some(live.id), None, &request.need, seats, at)?;
         // The answering rung's workflow skill loads through the same door,
         // so its revision is on the manifest and its executors on the receipt.
-        self.plan_over_evidence(request, team_shape, &evidence, |skill| {
-            let live = self.live_planner_lease(leased)?;
-            self.vault
-                .load_leased_callable_skill_pack(&live, skill, request.executor, at)
-        })
+        let (mut receipt, quotes) =
+            self.plan_over_evidence(&request, team_shape, &evidence, |skill| {
+                let live = self.live_planner_lease(leased)?;
+                self.vault
+                    .load_leased_callable_skill_pack(&live, skill, request.executor, at)
+            })?;
+        receipt.owner_choices = owner_choices;
+        Ok((receipt, quotes))
     }
 
     /// The plan over gathered evidence and a loaded team-shape pack: the

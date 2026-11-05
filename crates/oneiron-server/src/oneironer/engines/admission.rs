@@ -62,6 +62,20 @@ const NOT_PREFERRED_RANK: usize = 4;
 /// stack and platform row. Keys, never a worker.
 static OWNED: Mutex<BTreeSet<(PathBuf, String, &'static str)>> = Mutex::new(BTreeSet::new());
 
+/// A slot's platform rows' absence, by row: MLX first, Core ML second (FIX
+/// 7384). The admission writes each row's [`Absent::as_str`] here as it finds
+/// it, so the slot's status reads it without the admission's engine-internal
+/// enum.
+pub(crate) type PlatformAbsent = Arc<Mutex<[Option<&'static str>; 2]>>;
+/// Index of the MLX row in [`PlatformAbsent`].
+pub(crate) const MLX_ABSENT: usize = 0;
+/// Index of the Core ML row in [`PlatformAbsent`].
+pub(crate) const COREML_ABSENT: usize = 1;
+/// The retained reason when another slot of this process holds the row's
+/// session (FIX 12881): a contention diagnostic read as `state: None`,
+/// `why: Some(_)` by the slot's status, never DOWN, Failed or slot health.
+const SESSION_OWNED_BY_ANOTHER_SLOT: &str = "session_owned_by_another_slot";
+
 /// A slot's platform admission, prepared as the slot is built and started
 /// once by the serving build.
 pub(crate) struct Admission {
@@ -73,6 +87,8 @@ pub(crate) struct Admission {
     baseline_worker: WorkerId,
     /// The slot's card, which the worker must answer as.
     card: ModelCard,
+    /// Where each platform row's absence is retained for the slot's status.
+    absent: PlatformAbsent,
 }
 
 /// What the platform workers of one admission share: the one owner of its
@@ -96,6 +112,7 @@ impl Admission {
         baseline: Serving,
         baseline_worker: WorkerId,
         card: ModelCard,
+        absent: PlatformAbsent,
     ) -> Option<Self> {
         let pooled = config.runtime == OneironerRuntime::Auto
             && config.device == EmbedderDevice::Auto
@@ -107,6 +124,7 @@ impl Admission {
             baseline,
             baseline_worker,
             card,
+            absent,
         })
     }
 
@@ -141,25 +159,37 @@ impl Admission {
         match candidate::discover(&dir, &read.manifest) {
             Ok(candidate) => {
                 let spec = |claim| self.mlx_spec(&dir, &read, &candidate, &contest, claim);
-                self.add(MLX_ROW, &dir, &read.stack_sha16, spec);
+                self.add(MLX_ROW, MLX_ABSENT, &dir, &read.stack_sha16, spec);
             }
-            Err(absent) => absent.log(MLX_ROW),
+            Err(absent) => {
+                absent.log(MLX_ROW);
+                if let Ok(mut retained) = self.absent.lock() {
+                    retained[MLX_ABSENT] = Some(absent.as_str());
+                }
+            }
         }
         match candidate::discover_coreml(&dir, &read.manifest) {
             Ok(candidate) => {
                 let spec = |claim| self.coreml_spec(&dir, &read, &candidate, &contest, claim);
-                self.add(COREML_ROW, &dir, &read.stack_sha16, spec);
+                self.add(COREML_ROW, COREML_ABSENT, &dir, &read.stack_sha16, spec);
             }
-            Err(absent) => absent.log(COREML_ROW),
+            Err(absent) => {
+                absent.log(COREML_ROW);
+                if let Ok(mut retained) = self.absent.lock() {
+                    retained[COREML_ABSENT] = Some(absent.as_str());
+                }
+            }
         }
     }
 
     /// Claims the bundle's `row` session for this process, then adds the
     /// worker `spec` builds. Candle serves alone when another slot of this
-    /// process holds the claim or the spec cannot be built.
+    /// process holds the claim or the spec cannot be built. A held claim is
+    /// retained in the row's [`PlatformAbsent`] cell for the slot's status.
     fn add(
         &self,
         row: &'static str,
+        absent_index: usize,
         dir: &Path,
         stack: &str,
         spec: impl FnOnce(Claim) -> anyhow::Result<WorkerSpec>,
@@ -169,6 +199,9 @@ impl Admission {
                 row,
                 "oneironer platform worker not started: another slot owns its session"
             );
+            if let Ok(mut retained) = self.absent.lock() {
+                retained[absent_index] = Some(SESSION_OWNED_BY_ANOTHER_SLOT);
+            }
             return;
         };
         match spec(claim).and_then(|spec| self.dispatcher.add(spec)) {

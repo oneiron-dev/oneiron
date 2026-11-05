@@ -19,11 +19,9 @@
 //! (`CalendarEventRow::wall_span`), so an all-day EVENT keeps its whole day
 //! busy wherever its owner reads it (FIX 7844).
 //!
-//! Recurrence is a deferred leg. ONE-1785 (CAL-03) lands after this ticket, so
-//! on the 1791 baseline the union covers non-recurring busy occurrences only;
-//! when `expand_window` exists, series masters expand inside the query range
-//! before `normalize_busy` runs and its typed `CalendarError` propagates —
-//! an expansion failure must never degrade to a silently empty union.
+//! Series masters expand inside the query range before busy intervals are
+//! merged. Recurrence projection failures propagate; they never silently
+//! become an empty busy union.
 
 use super::query::{
     CalendarEventRow, CalendarRead, CalendarSel, matches_selectors, validate_selectors,
@@ -119,9 +117,7 @@ fn freebusy_listed_in(
     range: TimeRange,
     mut listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
 ) -> Result<BusyUnion> {
-    // Selection on `CalendarSel.system` is deferred to CAL-02's passport index
-    // (ONE-1784 lands after this ticket); a well-formed selector must not empty
-    // the union in the meantime, so only structural validation runs here.
+    // Validate selector structure before matching calendar passports below.
     validate_selectors(calendars)?;
 
     let bounds = ordered(range);

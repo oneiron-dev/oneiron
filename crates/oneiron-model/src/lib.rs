@@ -6,3 +6,5 @@
 
 pub mod extraction_eval;
 pub mod llm;
+pub mod model_binding;
+pub mod teacher_probe_policy;

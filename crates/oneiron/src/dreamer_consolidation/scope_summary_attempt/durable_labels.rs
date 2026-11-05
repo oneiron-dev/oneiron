@@ -10,9 +10,10 @@ use std::collections::BTreeMap;
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::super::nightly_merge::narrative_labels::durable_text;
+use super::arc_chunks::MemberText;
 use super::arc_evidence::ArcView;
 use super::arc_output::ArcLines;
-use crate::scope_summary::SummaryLineSources;
+use crate::scope_summary::{MemberKind, SummaryLineSources};
 
 /// What each label `labels` assigned stands for once its call is over: its
 /// id, or a claim `view` shows its predicate and value.
@@ -74,8 +75,33 @@ pub(super) fn durable_summary(
 /// An Arc's lines in durable names, through `view`'s labels.
 pub(super) fn durable_arc(lines: ArcLines, view: &ArcView) -> ArcLines {
     let names = label_names(&view.labels, Some(view));
+    durable_arc_with_names(lines, &names)
+}
+
+/// A partitioned Arc also names the source lines its parts showed as `L`
+/// labels, in the same order as their actual members (FIX 12357).
+pub(super) fn durable_arc_parts(
+    lines: ArcLines,
+    view: &ArcView,
+    members: &[MemberText],
+) -> ArcLines {
+    let mut names = label_names(&view.labels, Some(view));
+    for (index, (summary, line)) in members
+        .iter()
+        .filter_map(|member| match &member.member.kind {
+            MemberKind::Line { summary, line } => Some((summary, line)),
+            _ => None,
+        })
+        .enumerate()
+    {
+        names.insert(format!("L{}", index + 1), format!("{summary}:{line}"));
+    }
+    durable_arc_with_names(lines, &names)
+}
+
+fn durable_arc_with_names(lines: ArcLines, names: &BTreeMap<String, String>) -> ArcLines {
     let (text, keep, line_sources) =
-        durable_summary(lines.text, &lines.keep, Some(lines.line_sources), &names);
+        durable_summary(lines.text, &lines.keep, Some(lines.line_sources), names);
     ArcLines {
         text,
         keep,

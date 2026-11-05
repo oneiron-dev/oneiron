@@ -93,6 +93,23 @@ enum ResumeNext<S> {
     Stream { request_id: S, last_event_id: S },
 }
 
+/// Counts serialized bytes without retaining any of their contents.
+struct EncodedSize(usize);
+
+impl std::io::Write for EncodedSize {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or(std::io::ErrorKind::InvalidData)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// One round's sealed resume state, until the call's row keeps it.
 pub(super) struct RoundResume {
     generation: u64,
@@ -159,8 +176,10 @@ impl Worker {
             session,
             next,
         };
-        let mut sealed = Zeroizing::new(Vec::new());
-        serde_json::to_writer(&mut *sealed, &state).ok()?;
+        let mut size = EncodedSize(0);
+        serde_json::to_writer(&mut size, &state).ok()?;
+        let mut sealed = Zeroizing::new(vec![0; size.0]);
+        serde_json::to_writer(&mut sealed.as_mut_slice(), &state).ok()?;
         Some(RoundResume {
             generation: self.generation,
             protocol,

@@ -112,25 +112,25 @@ pub fn admit_repo_sync_frame<'a>(
     context: Option<&LoroDoc>,
 ) -> Result<RepoSyncAdmission<'a>> {
     let projection = SyncSecretProjection::read(vault)?;
-    Ok(
-        match projection.admit_window_blob(&vault.store, payload, context)? {
-            WindowAdmission::Admit(bytes, landings) => {
-                RepoSyncAdmission::Admit(bytes, RepoSyncLandings(landings))
-            }
-            WindowAdmission::Held(held) => {
-                for edit in &held {
-                    tracing::warn!(
-                        window,
-                        source = %edit.source.to_hex(),
-                        cause = ?edit.cause,
-                        "sync: a copy edit is held on its ruled cause; its held record is kept"
-                    );
-                }
-                super::held::record_held_edits(vault, window, &held)?;
-                RepoSyncAdmission::Held
-            }
-        },
-    )
+    let (admitted, held) = match projection.admit_window_blob(&vault.store, payload, context)? {
+        WindowAdmission::Admit(bytes, landings, held) => (
+            RepoSyncAdmission::Admit(bytes, RepoSyncLandings(landings)),
+            held,
+        ),
+        WindowAdmission::Held(held) => (RepoSyncAdmission::Held, held),
+    };
+    for edit in &held {
+        tracing::warn!(
+            window,
+            source = %edit.source.to_hex(),
+            cause = ?edit.cause,
+            "sync: a copy edit is held on its ruled cause; its held record is kept"
+        );
+    }
+    if !held.is_empty() {
+        super::held::record_held_edits(vault, window, &held)?;
+    }
+    Ok(admitted)
 }
 
 /// The generation of the masked repo copies `doc`'s state carries; `None`

@@ -63,6 +63,17 @@ pub(crate) fn run_connector_reply_job(
     result
 }
 
+/// Repays completed jobs through the very same answerability policy as sends,
+/// without drafting, dispatching or charging another reply.
+pub(crate) fn repair_connector_reply_witnesses(
+    vault: &oneiron::Vault,
+    now: u64,
+) -> oneiron::memory::MemoryResult<usize> {
+    vault.repair_connector_reply_witnesses(REPLY_REF, now, |job| {
+        Ok(super::answerable_origin(&job.event, job.agent)?.is_some())
+    })
+}
+
 /// Runs one communication projector pass after a job: the message's inbound
 /// touch, recorded when it was admitted, and the reply's delivered send
 /// receipt become the counterparty's `comm.last_touch`. A pass that fails is
@@ -205,13 +216,18 @@ fn answer(
                 if answer.is_empty() {
                     return Ok(());
                 }
-                vault.save_connector_reply_body(
-                    event_id,
+                let Some(kept) = vault.save_connector_reply_body(
+                    &job.event,
                     agent,
                     reply_ref,
                     answer,
                     super::super::unix_now(),
                 )?
+                else {
+                    result.reason = Some(Error::EntityNotFound.to_string());
+                    return Ok(());
+                };
+                kept
             }
         }
     };

@@ -111,12 +111,54 @@ pub(super) fn pre(
     resume: Option<&VerbResume>,
     turn: Option<Arc<TaskWorkTurn>>,
 ) -> Result<Stopped<VerbHookPre>> {
+    pre_with_saved(vault, storage, call, args, check, resume, turn, false)
+}
+
+/// The caller-only retry of a retained call. No path may turn a missing
+/// saved ask into a new call, including the nested-boundary fast paths.
+pub(super) fn pre_retained(
+    vault: &Vault,
+    storage: VerbHookStorage<'_>,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    turn: Option<Arc<TaskWorkTurn>>,
+) -> Result<Stopped<VerbHookPre>> {
+    pre_with_saved(vault, storage, call, args, check, None, turn, true)
+}
+
+fn pre_with_saved(
+    vault: &Vault,
+    storage: VerbHookStorage<'_>,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    resume: Option<&VerbResume>,
+    turn: Option<Arc<TaskWorkTurn>>,
+    require_saved: bool,
+) -> Result<Stopped<VerbHookPre>> {
+    let unavailable = || {
+        Ok(Err(VerbHookStop::Skipped {
+            hook: String::new(),
+            reason: "this invocation's saved hook call is unavailable".to_owned(),
+        }))
+    };
     if depth() > 0 {
-        return through(call, args);
+        return if require_saved {
+            unavailable()
+        } else {
+            through(call, args)
+        };
     }
     let state = &vault.verb_hook_state;
     let mark = match state.enter(call.invocation, call.actor) {
-        Entered::Nested => return through(call, args),
+        Entered::Nested => {
+            return if require_saved {
+                unavailable()
+            } else {
+                through(call, args)
+            };
+        }
         Entered::Draining(group) => return Ok(Err(ask::pending(call.invocation, group))),
         Entered::Fresh(mark) => mark,
     };
@@ -141,6 +183,7 @@ pub(super) fn pre(
     let expired =
         matches!(storage, VerbHookStorage::Canonical) && state.take_expired(call.invocation);
     let resumed = match saved {
+        ask::Retry::Fresh if require_saved => return unavailable(),
         ask::Retry::Fresh => None,
         ask::Retry::Stop(stop) => return Ok(Err(stop)),
         ask::Retry::Resume {

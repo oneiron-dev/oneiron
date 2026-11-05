@@ -304,7 +304,7 @@ fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
 /// at/below the taint floor. `evidence_taint_blocks_consolidation` is
 /// unchanged, so a `Generated` stamp still blocks nothing: only `ToolOutput`
 /// and `Imported` remain barred from recursively laundering themselves.
-fn scope_with_taint(existing: Option<Value>, taint: ClaimSource) -> Value {
+pub(crate) fn scope_with_taint(existing: Option<Value>, taint: ClaimSource) -> Value {
     let mut entries = match existing {
         Some(Value::Map(entries)) => entries,
         _ => Vec::new(),

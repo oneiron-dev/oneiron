@@ -36,7 +36,7 @@ use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
 use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity_part, mib};
-use super::registry::{self, HostCopy, Phase, Place, Session, send};
+use super::registry::{self, HostCopy, HostReservation, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
 
@@ -179,11 +179,11 @@ impl Restore<'_> {
     }
 
     /// The restore, in order. `Err` with whether the session it registered
-    /// holds the snapshot's pin now. Its host copies (the plaintext, then
-    /// the region made of it) peak at two copies beside the headroom, as a
-    /// park's do: the screen admits the two-copy peak atomically and the
-    /// guard holds it committed through the import, so a concurrent restore
-    /// cannot pass its own screen on the same bytes. The device room is
+    /// holds the snapshot's pin now. The initial reservation is unchanged
+    /// through core open. The opened buffer's actual capacity is then counted
+    /// live, and the guard retains enough credit for the region before it is
+    /// allocated. Each registration consumes its covered credit, so a racer
+    /// cannot reuse it or charge it twice. The device room is
     /// honoured where the ledger knows it, and elsewhere the worker's own
     /// answer decides (`snapshot_busy` is cold).
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
@@ -193,14 +193,14 @@ impl Restore<'_> {
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
-        // The import peaks at two live copies (plaintext plus region).
-        let peak = bytes.saturating_mul(2);
-        let _host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
+        // The canonical wire body and plaintext overlap while the body opens.
+        let peak = bytes.saturating_add(self.record.sealed_bytes);
+        let mut host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
         }
-        let restored = self.import().await;
+        let restored = self.import(&mut host_reserved).await;
         if let Some(ledger) = &ledger {
             ledger.release_hold(&holder);
         }
@@ -236,11 +236,8 @@ impl Restore<'_> {
 
     /// Decrypts the snapshot, imports it into a fresh session, rechecks it
     /// and publishes it ready.
-    async fn import(&self) -> Result<Restored, (Cold, bool)> {
-        // The region doubles the host copy; `run`'s reservation already
-        // holds those bytes committed through this import, so no second
-        // screen is needed here (it would charge the guard twice).
-        let plaintext = self.open().await.ok_or((COLD, false))?;
+    async fn import(&self, host_reserved: &mut HostReservation) -> Result<Restored, (Cold, bool)> {
+        let plaintext = self.open(host_reserved).await.ok_or((COLD, false))?;
         let created = self.create().await.ok_or((COLD, false))?;
         let target = SessionTarget {
             handle: created.handle,
@@ -250,7 +247,7 @@ impl Restore<'_> {
         let region = SnapshotRegion::from_bytes(plaintext.get()).map_err(|_| (COLD, true))?;
         drop(plaintext);
         let region_len = region.len();
-        let region = HostCopy::hold(self.key.anchor.vault, region, region_len);
+        let region = host_reserved.hold(self.key.anchor.vault, region, region_len);
         let body = SessionImport {
             target: target.clone(),
             stamp: SessionOpStamp {
@@ -301,7 +298,10 @@ impl Restore<'_> {
 
     /// The snapshot's plaintext, opened under the turn's admission: a body
     /// that does not open retires its row as it is read.
-    async fn open(&self) -> Option<HostCopy<Zeroizing<Vec<u8>>>> {
+    async fn open(
+        &self,
+        host_reserved: &mut HostReservation,
+    ) -> Option<HostCopy<Zeroizing<Vec<u8>>>> {
         let vault = Arc::clone(&self.vault);
         let admission = self.admission;
         let id = self.record.id;
@@ -315,7 +315,13 @@ impl Restore<'_> {
         .ok()??;
         lifecycle::count(Counted::Open);
         let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
-        Some(HostCopy::hold(self.key.anchor.vault, opened, opened_len))
+        let opened_capacity = u64::try_from(opened.capacity()).unwrap_or(u64::MAX);
+        let plaintext = host_reserved.hold(self.key.anchor.vault, opened, opened_capacity);
+        // The wire body has dropped; only the upcoming region needs reserved credit.
+        host_reserved.release_excess(opened_len);
+        // Count the buffer before awaiting more credit; its region is not allocated yet.
+        host_reserved.ensure(opened_len).await?;
+        Some(plaintext)
     }
 
     /// A fresh session for the turn's key on this incarnation, registered

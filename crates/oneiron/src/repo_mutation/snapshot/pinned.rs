@@ -4,27 +4,24 @@
 //! and snapshot custody keeps out what it keeps out of a captured checkout.
 //! The base encodes as the existing [`StoredRepoSnapshot`] with the commit as
 //! its head, so its hash names it as a captured snapshot's names that one.
-//! A gitlink names another repository's commit and holds no file here, so it
-//! is passed over, as the codebase importer passes over it.
+//! A gitlink retains only its path, mode and OID, without reading the linked
+//! commit or checkout. The walk names
+//! each blob first and reads them all in a few batched reads (FIX 6946).
 
 use std::collections::BTreeMap;
 
 use super::super::git::validate_relative_repo_path;
-use super::{
-    SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
-    encode_snapshot,
-};
+use super::{SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, encode_snapshot};
 use crate::Vault;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::repo_mutation::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoForkHash};
+use crate::store::code_tree_blob::MODE_GITLINK;
 
 /// A tree entry's mode for a subtree.
 const MODE_TREE: u32 = 0o040_000;
 /// A tree entry's mode for a symlink.
 const MODE_SYMLINK: u32 = 0o120_000;
-/// A tree entry's mode for a gitlink (a submodule's commit).
-const MODE_GITLINK: u32 = 0o160_000;
 /// The file-type bits of a tree entry's mode.
 const MODE_TYPE_MASK: u32 = 0o170_000;
 /// The file-type bits of a regular file.
@@ -60,14 +57,45 @@ impl Vault {
         let mut walk = PinnedWalk {
             wire: &wire,
             repo,
-            custody: &custody,
-            entries: Vec::new(),
-            files: BTreeMap::new(),
+            blobs: BTreeMap::new(),
+            gitlinks: Vec::new(),
         };
         walk.tree(&tree, "")?;
-        let PinnedWalk {
-            mut entries, files, ..
-        } = walk;
+        let mut blobs = walk.blobs;
+        let oids: Vec<GitOid> = blobs.keys().cloned().collect();
+        let mut entries: Vec<_> = walk
+            .gitlinks
+            .into_iter()
+            .map(|(path, oid)| custody.gitlink(path, oid))
+            .collect();
+        let mut files = BTreeMap::new();
+        let mut target_not_utf8 = false;
+        let complete = wire.read_blobs(repo, &oids, &mut |oid, content| {
+            for (path, mode) in blobs.remove(oid).unwrap_or_default() {
+                if mode == MODE_SYMLINK {
+                    match std::str::from_utf8(content) {
+                        Ok(target) => entries.push(custody.symlink(path, target.to_owned())),
+                        Err(_) => target_not_utf8 = true,
+                    }
+                    continue;
+                }
+                let kept = custody.file(path, mode & 0o111 != 0, content.to_vec());
+                if kept.kind == StoredRepoSnapshotEntryKind::File {
+                    files.insert(kept.path.clone(), kept.content.clone());
+                }
+                entries.push(kept);
+            }
+        })?;
+        if target_not_utf8 {
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                "repo snapshot symlink target must be UTF-8",
+            )));
+        }
+        if !complete || !blobs.is_empty() {
+            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                "pinned tree names a blob its object store does not hold",
+            )));
+        }
         entries.sort_by(|left, right| left.path.cmp(&right.path));
         let encoded = encode_snapshot(&StoredRepoSnapshot {
             schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
@@ -97,9 +125,10 @@ fn commit_tree(raw: &[u8]) -> Result<GitOid> {
 struct PinnedWalk<'w, 'v> {
     wire: &'w GitWire<'v>,
     repo: &'w GitWireRepo,
-    custody: &'w SnapshotCustody,
-    entries: Vec<StoredRepoSnapshotEntry>,
-    files: BTreeMap<String, Vec<u8>>,
+    /// Each file or symlink blob the tree names, with every path and mode
+    /// that holds it, read after the walk.
+    blobs: BTreeMap<GitOid, Vec<(String, u32)>>,
+    gitlinks: Vec<(String, Vec<u8>)>,
 }
 
 impl PinnedWalk<'_, '_> {
@@ -118,23 +147,11 @@ impl PinnedWalk<'_, '_> {
             validate_relative_repo_path(&path)?;
             match entry.mode {
                 MODE_TREE => self.tree(&entry.oid, &path)?,
-                MODE_GITLINK => {}
-                MODE_SYMLINK => {
-                    let target = String::from_utf8(self.wire.read_object(self.repo, &entry.oid)?)
-                        .map_err(|_| {
-                        Error::Code(CodeError::InvalidRepoMutationRecord(
-                            "repo snapshot symlink target must be UTF-8",
-                        ))
-                    })?;
-                    self.entries.push(self.custody.symlink(path, target));
-                }
-                mode if mode & MODE_TYPE_MASK == MODE_REGULAR => {
-                    let content = self.wire.read_object(self.repo, &entry.oid)?;
-                    let kept = self.custody.file(path, mode & 0o111 != 0, content);
-                    if kept.kind == StoredRepoSnapshotEntryKind::File {
-                        self.files.insert(kept.path.clone(), kept.content.clone());
-                    }
-                    self.entries.push(kept);
+                MODE_GITLINK => self
+                    .gitlinks
+                    .push((path, entry.oid.as_str().as_bytes().to_vec())),
+                mode if mode == MODE_SYMLINK || mode & MODE_TYPE_MASK == MODE_REGULAR => {
+                    self.blobs.entry(entry.oid).or_default().push((path, mode));
                 }
                 _ => {
                     return Err(Error::Code(CodeError::InvalidRepoMutationRecord(

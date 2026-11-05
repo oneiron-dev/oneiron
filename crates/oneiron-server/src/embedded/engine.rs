@@ -57,7 +57,7 @@ use zeroize::Zeroizing;
 
 use super::failure::{EngineErrorKind, cause, failure};
 use crate::commands::{OpenedServedVault, open_served_vault_anchored};
-use crate::config::{ServeArgs, ServeConfig};
+use crate::config::{EmbeddedHolderOverrides, ServeConfig};
 use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
 
@@ -105,16 +105,20 @@ pub fn embedded_serve_config(
     dimensions: Option<usize>,
     config_file: Option<&Path>,
 ) -> anyhow::Result<ServeConfig> {
-    crate::config::resolve_serve_config(&ServeArgs {
-        config: config_file.map(Path::to_path_buf),
-        vault_path: Some(vault_path.to_path_buf()),
+    let overrides = EmbeddedHolderOverrides {
+        vault_path: vault_path.to_path_buf(),
         dimensions,
-        ..ServeArgs::default()
-    })
+    };
+    let mut config = crate::config::resolve_serve_config(
+        &overrides.serve_args(config_file.map(Path::to_path_buf)),
+    )
     .context(cause(
         EngineErrorKind::Config,
         "the embedded engine's serve config did not resolve",
-    ))
+    ))?;
+    config.config_path = config_file.map(Path::to_path_buf);
+    config.embedded_holder_overrides = Some(overrides);
+    Ok(config)
 }
 
 /// The limits an app grants its engine; an absent one is unbounded.
@@ -400,10 +404,28 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         let (host, readied) = embedded_host(state.app.clone(), self.limits);
         let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone())
             .anchored_at(&self.config.backup, self.anchor.clone());
+        let mut config = self.config.clone();
+        // First-run setup commits the model sections to the config file
+        // while the vault stays open; a wake rebuilds the server, so it
+        // reloads those sections instead of silently dropping the models.
+        // Sizing and the vault path never reload: those need a reopen.
+        if let Some(path) = config.config_path.clone() {
+            let reread = crate::config::resolve_serve_config_with_sources(
+                &crate::config::ServeArgs {
+                    config: Some(path),
+                    ..Default::default()
+                },
+                crate::config::EnvConfig::from_process()?,
+                crate::config::default_config_path(),
+            )?;
+            config.embedder = reread.embedder;
+            config.oneironer = reread.oneironer;
+            config.gpu = reread.gpu;
+        }
         let serving = spawn_run(
             host,
             Arc::clone(&self.vault),
-            self.config.clone(),
+            config,
             owner_host,
             self.serve_workers,
         )?;

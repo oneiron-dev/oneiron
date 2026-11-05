@@ -242,7 +242,7 @@ pub(super) fn refresh_with(
                             .as_ref()
                             .map(graph_ask::source_versions)
                             .unwrap_or_default(),
-                        cost_per_thousand: None,
+                        cost_per_thousand: proposal.cost_per_thousand,
                         paired: proposal.paired.clone(),
                         person: Vec::new(),
                         time: None,

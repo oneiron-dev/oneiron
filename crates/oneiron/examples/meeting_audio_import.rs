@@ -2,11 +2,10 @@
 //! See scripts/meeting-audio-adapter/SKILL.md for provisioning and policy boundaries.
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use oneiron::ingest::meeting_audio::{
     AsrRole, AsrRoute, AudioFile, BatchDefault, CleanupPolicy, CohortManifest, CommandAudioConfig,
@@ -121,7 +120,7 @@ impl ModelRoutes {
             return Err("selected model needs a remote MeetingAudioHost adapter; no native inference attempted".into());
         }
         let bytes = fs::read(path)?;
-        if bytes.len() > 1024 * 1024 || format!("{:x}", Sha256::digest(&bytes)) != expected_digest {
+        if format!("{:x}", Sha256::digest(&bytes)) != expected_digest {
             return Err("runtime profile digest mismatch".into());
         }
         let profile: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -133,9 +132,7 @@ impl ModelRoutes {
                 let digest = spec["profile_sha256"]
                     .as_str()
                     .ok_or("missing worker profile digest")?;
-                if worker_bytes.len() > 1024 * 1024
-                    || format!("{:x}", Sha256::digest(&worker_bytes)) != digest
-                {
+                if format!("{:x}", Sha256::digest(&worker_bytes)) != digest {
                     return Err("worker profile digest mismatch".into());
                 }
                 // Keep worker JSON alive until the identity comparison below.
@@ -213,10 +210,6 @@ fn batch_default(
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyLimits {
-    glossary_max_bytes: usize,
-    glossary_max_terms: usize,
-    glossary_max_term_bytes: usize,
-    stage_timeout_seconds: u64,
     cleanup: CleanupPolicy,
 }
 
@@ -253,10 +246,6 @@ impl PrecedencePolicy {
 #[derive(Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyOverride {
-    glossary_max_bytes: Option<usize>,
-    glossary_max_terms: Option<usize>,
-    glossary_max_term_bytes: Option<usize>,
-    stage_timeout_seconds: Option<u64>,
     cleanup: Option<CleanupPolicy>,
 }
 
@@ -273,15 +262,12 @@ impl PolicyLimits {
         let shipped: ShippedPolicy = serde_json::from_str(include_str!(
             "../../../scripts/meeting-audio-adapter/policy-defaults.json"
         ))?;
-        shipped.limits.validate_substrate()?;
         shipped.precedence.validate()?;
         let Some(path) = path else {
             return Ok(shipped.limits);
         };
-        if fs::metadata(path)?.len() > 64 * 1024 {
-            return Err("policy manifest exceeds configuration ceiling".into());
-        }
-        let manifest: PolicyManifest = serde_json::from_slice(&fs::read(path)?)?;
+        let manifest: PolicyManifest =
+            serde_json::from_reader(BufReader::new(fs::File::open(path)?))?;
         let precedence = manifest.precedence.unwrap_or(shipped.precedence);
         precedence.validate()?;
         if !precedence.layers.iter().any(|layer| layer == "holder") && manifest.holder.is_some() {
@@ -294,13 +280,11 @@ impl PolicyLimits {
                 "shipped" => {}
                 "vault" => {
                     current = current.apply(manifest.vault.as_ref());
-                    current.validate_substrate()?;
                     vault = Some(current.clone());
                 }
                 "holder" => {
                     let parent = vault.as_ref().ok_or("policy holder has no vault cap")?;
                     current = current.apply(manifest.holder.as_ref());
-                    current.validate_substrate()?;
                     current.validate_holder_narrowing(parent)?;
                 }
                 _ => return Err("invalid policy layer".into()),
@@ -314,14 +298,6 @@ impl PolicyLimits {
             return self.clone();
         };
         Self {
-            glossary_max_bytes: policy.glossary_max_bytes.unwrap_or(self.glossary_max_bytes),
-            glossary_max_terms: policy.glossary_max_terms.unwrap_or(self.glossary_max_terms),
-            glossary_max_term_bytes: policy
-                .glossary_max_term_bytes
-                .unwrap_or(self.glossary_max_term_bytes),
-            stage_timeout_seconds: policy
-                .stage_timeout_seconds
-                .unwrap_or(self.stage_timeout_seconds),
             cleanup: policy
                 .cleanup
                 .clone()
@@ -330,13 +306,6 @@ impl PolicyLimits {
     }
 
     fn validate_holder_narrowing(&self, vault: &Self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.glossary_max_bytes > vault.glossary_max_bytes
-            || self.glossary_max_terms > vault.glossary_max_terms
-            || self.glossary_max_term_bytes > vault.glossary_max_term_bytes
-            || self.stage_timeout_seconds > vault.stage_timeout_seconds
-        {
-            return Err("holder policy cannot widen the vault ceiling".into());
-        }
         for (language, rule) in &self.cleanup.language_rules {
             let parent = vault
                 .cleanup
@@ -361,38 +330,12 @@ impl PolicyLimits {
         }
         Ok(())
     }
-
-    fn validate_substrate(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // Byte framing and maximum process lifetime are protocol ceilings;
-        // term counts and protected classes belong to policy data.
-        if self.glossary_max_bytes == 0
-            || self.glossary_max_bytes > 1024 * 1024
-            || self.glossary_max_terms == 0
-            || self.glossary_max_term_bytes == 0
-            || self.glossary_max_term_bytes > 1024 * 1024
-            || self.stage_timeout_seconds == 0
-            || self.stage_timeout_seconds > 7200
-        {
-            return Err("policy exceeds substrate ceiling".into());
-        }
-        Ok(())
-    }
 }
 
-fn read_glossary(
-    path: &Path,
-    limits: &PolicyLimits,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    if fs::metadata(path)?.len() > limits.glossary_max_bytes as u64 {
-        return Err("glossary file exceeds policy limit".into());
-    }
-    let glossary: Vec<String> = serde_json::from_slice(&fs::read(path)?)?;
-    if glossary.len() > limits.glossary_max_terms
-        || glossary
-            .iter()
-            .any(|entry| entry.trim().is_empty() || entry.len() > limits.glossary_max_term_bytes)
-    {
-        return Err("invalid glossary under policy".into());
+fn read_glossary(path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let glossary: Vec<String> = serde_json::from_reader(BufReader::new(fs::File::open(path)?))?;
+    if glossary.iter().any(|entry| entry.trim().is_empty()) {
+        return Err("glossary terms must not be blank".into());
     }
     Ok(glossary)
 }
@@ -413,7 +356,7 @@ fn run(config: AdapterConfig) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("invalid source name")?;
     let policy = PolicyLimits::resolve(config.policy_manifest.as_deref())?;
     let options = ProducerOptions {
-        glossary: read_glossary(&config.glossary, &policy)?,
+        glossary: read_glossary(&config.glossary)?,
         batch_default: batch_default(&config.routes.asr, config.measured_e1.as_ref())?,
         diarization_model_id: config.routes.diarization.model_id.clone(),
         cleanup_policy: Some(policy.cleanup.clone()),
@@ -435,13 +378,9 @@ fn run(config: AdapterConfig) -> Result<(), Box<dyn std::error::Error>> {
         ffmpeg: config.ffmpeg,
         workspace: config.workspace,
         model_snapshot: config.model_snapshot,
-        stage_timeout: Duration::from_secs(policy.stage_timeout_seconds),
     };
     let mut host = CommandMeetingAudioHost::new(native, route)?
         .with_runtime_profile(config.runtime_profile, config.runtime_profile_sha256)?;
-    if fs::metadata(&config.audio)?.len() > 256 * 1024 * 1024 {
-        return Err("audio exceeds the native bridge input limit".into());
-    }
     let bytes = fs::read(&config.audio)?;
     let artifact = produce_meeting_transcript(
         &AudioFile {

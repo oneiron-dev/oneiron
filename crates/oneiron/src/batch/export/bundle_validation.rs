@@ -1,7 +1,7 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::archive_index::{self, IndexedArchive, Loc, Section, Tag, edge_key};
 use super::*;
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
@@ -119,12 +119,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     ) -> Result<ExportAgentBundle> {
         let mut skills = Vec::new();
         let mut claims = Vec::new();
-        if let Some(definition) = row
-            .body
-            .to_bytes()
-            .ok()
-            .and_then(|bytes| crate::agent_def::decode_agent_definition(&bytes).ok())
-        {
+        if let Some(definition) = row.body.to_bytes().ok().and_then(|bytes| {
+            crate::store::agent_definition_codec::decode_agent_definition(&bytes).ok()
+        }) {
             let mut named = BTreeSet::new();
             for dependency in &definition.skills {
                 if named.insert(dependency.skill_id.as_str()) {
@@ -432,7 +429,7 @@ fn agent_omissions(
         let available = document_import::parse_id(entity_id)
             .ok()
             .is_some_and(|child| {
-                crate::agent_def::birth_source_id(&child)
+                crate::store::agent_birth_identity::birth_source_id(&child)
                     .ok()
                     .and_then(|carrier| birth(&carrier))
                     .is_some_and(|bytes| {
@@ -642,8 +639,8 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
             if matches!(
                 predicate,
                 Some(
-                    crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT
+                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)

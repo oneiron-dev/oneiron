@@ -30,6 +30,8 @@ mod order;
 mod pad_objects;
 mod publication;
 mod refill;
+mod stage_parts;
+pub(super) mod work;
 
 pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
 pub use self::local_access::grant_local_sealed_pad_access_with_kit;
@@ -48,6 +50,9 @@ pub(super) use self::publication::{Asked, asked_of};
 pub use self::refill::{PadObjectRefill, sealed_bundle_refill};
 pub(crate) use self::refill::{held_pad_object, read_back_generation_in};
 
+use self::stage_parts::{
+    drop_stage_in, retained_stage_whole, stage_identity, stage_parts_prefix, staged_whole,
+};
 use super::bundle_turn::hold_turn_in;
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, MachineDeviceClass, PeerMachine};
@@ -85,8 +90,8 @@ const PARTS: SideTable<String, Vec<u8>, Raw> =
 /// Each staged upload's header.
 pub(super) const STAGES: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE);
-/// Each staged upload's parts.
-const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
+/// Each staged upload's parts, under its header's identity.
+pub(super) const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE_PART);
 
 /// u64be commit order ‖ u64be bundle length ‖ digest ‖ u64be pad object
@@ -95,8 +100,9 @@ const ENTRY_LEN: usize = 8 + 8 + 32 + 8 + 32;
 /// The recovery root id ‖ its anchor key, after an entry whose publisher named
 /// a root.
 const KIT_ROOT_LEN: usize = 32 + 32;
-/// u64be second ‖ generation ‖ u64be total ‖ digest ‖ u64be bytes staged.
-const STAGE_LEN: usize = 8 + 24 + 8 + 32 + 8;
+/// u64be second ‖ generation ‖ u64be total ‖ digest ‖ u64be bytes staged ‖
+/// the stage's immutable identity (16).
+const STAGE_LEN: usize = 8 + 24 + 8 + 32 + 8 + 16;
 
 /// One of a generation's two objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -295,22 +301,34 @@ pub(super) fn owner_machine(
     bundle: bool,
     asked: Asked,
 ) -> Result<EntityId> {
+    let txn = vault.store.env.read_txn()?;
+    owner_machine_in(vault, &txn, peer, bundle, asked)
+}
+
+/// [`owner_machine`] on a transaction the caller holds, a read or a writer's
+/// snapshot: the same admission, no new door.
+pub(super) fn owner_machine_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: PeerMachine,
+    bundle: bool,
+    asked: Asked,
+) -> Result<EntityId> {
     let PeerMachine::Proven { machine, key } = peer else {
         return Err(denied());
     };
     if !holds_sealed_bundle(vault.config.machine_device_class) {
         return Err(denied());
     }
-    let txn = vault.store.env.read_txn()?;
-    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
     let Some(trusted) = fold
         .trusted_machine(machine)
         .filter(|_| fold.machine_proof_key(machine) == Some(key))
     else {
-        return publication::asked_publisher(vault, &txn, &fold, machine, key, asked);
+        return publication::asked_publisher(vault, txn, &fold, machine, key, asked);
     };
     if bundle && !holds_sealed_bundle(trusted.profile.device_class) {
-        return publication::asked_publisher(vault, &txn, &fold, machine, key, asked);
+        return publication::asked_publisher(vault, txn, &fold, machine, key, asked);
     }
     Ok(machine)
 }
@@ -331,18 +349,19 @@ fn part_key(
     format!("{}{offset:016x}", object_prefix(generation, object))
 }
 
-fn encode_stage(at: u64, stage: &SealedBundleStage, staged: u64) -> Vec<u8> {
+fn encode_stage(at: u64, stage: &SealedBundleStage, staged: u64, identity: &[u8; 16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(STAGE_LEN);
     out.extend_from_slice(&at.to_be_bytes());
     out.extend_from_slice(&stage.generation.to_bytes());
     out.extend_from_slice(&stage.total.to_be_bytes());
     out.extend_from_slice(&stage.digest);
     out.extend_from_slice(&staged.to_be_bytes());
+    out.extend_from_slice(identity);
     out
 }
 
 /// A stage header's second, binding and bytes staged; `object` comes from its
-/// key.
+/// key. Its identity is [`stage_identity`]'s.
 pub(super) fn decode_stage(
     raw: &[u8],
     object: SealedBundleObject,
@@ -358,15 +377,8 @@ pub(super) fn decode_stage(
             total: be_u64(&raw[32..40])?,
             digest: raw[40..72].try_into().map_err(|_| Error::InvalidKey)?,
         },
-        be_u64(&raw[72..])?,
+        be_u64(&raw[72..80])?,
     ))
-}
-
-/// Drops one staged upload, its header and its parts.
-fn drop_stage_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &str) -> Result<()> {
-    STAGES.delete(&vault.store, wtxn, &key.to_owned())?;
-    STAGE_PARTS.delete_from(&vault.store, wtxn, format!("{key}:").as_bytes())?;
-    Ok(())
 }
 
 /// Every kept generation, oldest committed first.
@@ -448,10 +460,10 @@ fn retire_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now_slot: u64) -> Result
 
 /// Stages one part of an upload from the machine `peer` proved, bound to
 /// `stage`. `offset` must be the bytes staged so far, and 0 starts the upload
-/// over; a machine stages one bundle and one pad object at a time. Any staged
-/// upload idle for an hour is dropped. Only the machine holding the publisher
-/// turn stages a bundle, and a part it stages renews its turn. Returns the
-/// bytes staged.
+/// over under a fresh identity; a machine stages one bundle and one pad object
+/// at a time. Any staged upload idle for an hour is dropped. Only the machine
+/// holding the publisher turn stages a bundle, and a part it stages renews its
+/// turn. Returns the bytes staged.
 ///
 /// # Errors
 ///
@@ -478,6 +490,7 @@ pub fn stage_sealed_bundle_part(
         // and this one when it starts over.
         let mut dropped = Vec::new();
         let mut staged: Option<u64> = None;
+        let mut identity: Option<[u8; 16]> = None;
         for row in STAGES.iter_raw_from(&vault.store, wtxn, &[])? {
             let (row_key, raw) = row?;
             let Ok(row_key) = String::from_utf8(row_key) else {
@@ -492,10 +505,13 @@ pub fn stage_sealed_bundle_part(
                 .as_ref()
                 .map_or(true, |(at, _, _)| at.saturating_add(STAGE_IDLE_SECS) < now);
             if row_key == key && offset > 0 && !idle {
-                staged = header
-                    .ok()
-                    .filter(|(_, held, _)| held == stage)
-                    .map(|(_, _, staged)| staged);
+                if let Ok((_, held, bytes)) = header
+                    && held == *stage
+                    && let Ok(id) = stage_identity(&raw)
+                {
+                    identity = Some(id);
+                    staged = Some(bytes);
+                }
             } else if row_key == key || idle {
                 dropped.push(row_key);
             }
@@ -507,50 +523,28 @@ pub fn stage_sealed_bundle_part(
         if !hold_turn_in(vault, wtxn, machine, now)? && stage.object == SealedBundleObject::Bundle {
             return Err(denied());
         }
+        let identity = if offset == 0 {
+            stage_parts::reserve_identity(vault, wtxn)?
+        } else {
+            identity.ok_or_else(denied)?
+        };
         for head in &dropped {
             drop_stage_in(vault, wtxn, head)?;
         }
-        STAGES.put(&vault.store, wtxn, &key, &encode_stage(now, stage, end))?;
+        STAGES.put(
+            &vault.store,
+            wtxn,
+            &key,
+            &encode_stage(now, stage, end, &identity),
+        )?;
         STAGE_PARTS.put(
             &vault.store,
             wtxn,
-            &format!("{key}:{offset:016x}"),
+            &format!("{}{offset:016x}", stage_parts_prefix(&identity)),
             &part.to_vec(),
         )?;
         Ok(end)
     })
-}
-
-/// The object the machine staged whole under `object`, with its binding: every
-/// part from offset 0, contiguous, its total long, its digest matching. `None`
-/// otherwise.
-fn staged_whole(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    machine: EntityId,
-    object: SealedBundleObject,
-) -> Result<Option<(SealedBundleStage, Vec<u8>)>> {
-    let key = stage_key(machine, object);
-    let Some(header) = STAGES.get_bytes(&vault.store, txn, &key)? else {
-        return Ok(None);
-    };
-    let Ok((_, stage, _)) = decode_stage(&header, object) else {
-        return Ok(None);
-    };
-    let mut bytes = Vec::new();
-    for row in STAGE_PARTS.iter_raw_from(&vault.store, txn, format!("{key}:").as_bytes())? {
-        let (row_key, part) = row?;
-        if row_key != format!("{key}:{:016x}", bytes.len()).into_bytes()
-            || bytes.len() as u64 + part.len() as u64 > stage.total
-        {
-            return Ok(None);
-        }
-        bytes.extend_from_slice(&part);
-    }
-    Ok(
-        (bytes.len() as u64 == stage.total && *blake3::hash(&bytes).as_bytes() == stage.digest)
-            .then_some((stage, bytes)),
-    )
 }
 
 /// Commits `generation` as the vault's newest, from the bundle and the pad
@@ -777,4 +771,12 @@ fn part_missing(
         }
         SealedBundleObject::Bundle => Err(Error::CorruptedIndex("sealed bundle part")),
     }
+}
+
+/// Work-owned stages are inventoried by the same host disk-floor ledger.
+pub(super) fn work_stages_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<super::bundle_stage::SealedBundleStaged>> {
+    work::stages_in(vault, txn)
 }

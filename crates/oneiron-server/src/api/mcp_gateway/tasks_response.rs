@@ -701,7 +701,7 @@ async fn mcp_task_row<T: Send + 'static>(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
@@ -749,7 +749,7 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {

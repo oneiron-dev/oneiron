@@ -211,15 +211,23 @@ impl DecisionModel for LocalVisionModel {
         let time_left = call.deadline.decision_time_left();
         // The call's input is its question over the state its producer built
         // from the access-checked evidence: those rows, complete (FIX 6990).
-        let run = self.run.sourced(Some(call.evidence.to_vec()));
-        // A rested offer is waited for within the call's own time, not the
-        // vault's longest wait.
+        // A call that carries its caller's run spends on it (FIX 10443).
+        let run = match call.run {
+            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            None => self.run.sourced(Some(call.evidence.to_vec())),
+        };
+        // Cooling waits also keep the vault's limit; sends keep the full work time.
+        let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted
-                    .ladder
-                    .generate_within(&run, admitted.request, None, &|| true, time_left),
+                admitted.ladder.generate_within(
+                    &run,
+                    admitted.request,
+                    None,
+                    &|| true,
+                    wait_budget,
+                ),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))

@@ -41,6 +41,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
             actor,
+            off_record_session: actor.off_record_session.clone(),
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,
@@ -98,6 +99,9 @@ pub(crate) async fn execute_mcp_execute_code(
         server.desktop_seats.end_run(run_id);
         server.browser_seats.end_run(run_id);
         server.lens_frames.close_run(&run_id.to_hex());
+        if let Err(error) = server.vault.seal_code_run_scratchpads(run_id) {
+            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
+        }
     }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states

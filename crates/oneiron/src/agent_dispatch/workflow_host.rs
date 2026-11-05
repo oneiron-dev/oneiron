@@ -8,6 +8,14 @@ use crate::attempt_queue::{
 };
 use crate::context_projection::ResolvedContextProjection;
 use crate::error::Result;
+use crate::self_heal::audit::{AttemptConfession, ObjectiveConfession};
+
+struct WorkflowOutput {
+    id: crate::EntityId,
+    source: crate::compaction::output::OutputRef,
+    bytes: Vec<u8>,
+    held: crate::provenance::body::OwnedBody,
+}
 
 impl AgentDispatcher<'_> {
     /// Run a workflow agent whose host produces raw bytes. Persist the exact
@@ -23,15 +31,52 @@ impl AgentDispatcher<'_> {
     where
         F: FnOnce(&AgentDispatchStatus, ResolvedContextProjection) -> Result<Vec<u8>>,
     {
-        self.run_workflow_step(root, lease_owner, now, |status, context| {
-            let raw = execute(status, context)?;
+        self.run_workflow_step_output_with_confession(root, lease_owner, now, |status, context| {
+            execute(status, context).map(|bytes| (bytes, Vec::new()))
+        })
+    }
+
+    /// Capture a leaf's raw output and seal its objective confessions in the
+    /// transaction that completes that same leased try. A refused seal rolls
+    /// back on its own; the successful output and completion stand.
+    pub fn run_workflow_step_output_with_confession<F>(
+        &self,
+        root: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        execute: F,
+    ) -> Result<WorkflowProgress>
+    where
+        F: FnOnce(
+            &AgentDispatchStatus,
+            ResolvedContextProjection,
+        ) -> Result<(Vec<u8>, Vec<ObjectiveConfession>)>,
+    {
+        self.run_workflow_step_captured(root, lease_owner, now, |status, context| {
+            let (raw, objectives) = execute(status, context)?;
             let entry = crate::compaction::output::OutputContextEntry::capture(
                 self.vault,
                 &raw,
                 now,
                 String::new(),
             )?;
-            AttemptResultRef::new(entry.source.handle())
+            let confession = status
+                .input
+                .target
+                .agent_definition_ref()
+                .ok()
+                .filter(|_| !objectives.is_empty())
+                .map(|subject| AttemptConfession {
+                    attempt: status.attempt.id,
+                    subject,
+                    type_ref: crate::learning::TypeRef::from(&status.input.type_ref),
+                    objectives,
+                });
+            Ok((
+                AttemptResultRef::new(entry.source.handle())?,
+                Some(entry.source),
+                confession,
+            ))
         })
     }
 
@@ -53,6 +98,29 @@ impl AgentDispatcher<'_> {
     where
         F: FnOnce(&AgentDispatchStatus, ResolvedContextProjection) -> Result<AttemptResultRef>,
     {
+        self.run_workflow_step_captured(root, lease_owner, now, |status, context| {
+            execute(status, context).map(|result| (result, None, None))
+        })
+    }
+
+    fn run_workflow_step_captured<F>(
+        &self,
+        root: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        execute: F,
+    ) -> Result<WorkflowProgress>
+    where
+        F: FnOnce(
+            &AgentDispatchStatus,
+            ResolvedContextProjection,
+        ) -> Result<(
+            AttemptResultRef,
+            Option<crate::compaction::output::OutputRef>,
+            Option<AttemptConfession>,
+        )>,
+    {
+        self.vault.store.authorization_now()?;
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
         let wrapper = queue
@@ -64,6 +132,12 @@ impl AgentDispatcher<'_> {
             return self.advance_workflow(root, now);
         }
         let active = queue.retry_tip_in_txn(&txn, record.active)?;
+        if super::workflow::tool_wait::settle_erased_in_txn(self.vault, &mut txn, &active, now)? {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+            self.vault.store.notify_notification_updates();
+            return self.advance_workflow(root, now);
+        }
         match active.state {
             AttemptState::Queued | AttemptState::Scheduled => {}
             AttemptState::Leased | AttemptState::Landing | AttemptState::Paused => {
@@ -108,6 +182,7 @@ impl AgentDispatcher<'_> {
         else {
             return Ok(WorkflowProgress::Waiting(active.id));
         };
+        super::workflow::tool_wait::adopt_claim_in_txn(self.vault, &mut txn, &active, &attempt)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         let status = AgentDispatchStatus { attempt, input };
@@ -119,7 +194,20 @@ impl AgentDispatcher<'_> {
             self.vault.store.authorization_now()?;
         }
         let context = self.resolve_attempt_context(status.attempt.id)?;
-        let result = execute(&status, context)?;
+        let (result, output, confession) = execute(&status, context)?;
+        if output.is_some() {
+            if let Err(error) = crate::skill_attribution::bind_agent_run_attribution(
+                self.vault,
+                status.attempt.id,
+                lease_owner,
+            ) {
+                tracing::warn!(kind = ?error.kind(), "workflow output attribution did not bind");
+            }
+        }
+        // File custody is read before opening the result/completion writer.
+        let output = output
+            .map(|source| self.prepare_workflow_output(&status.attempt, source))
+            .transpose();
         let mut txn = self.vault.store.env.write_txn()?;
         queue.set_result_in_txn(
             &mut txn,
@@ -131,6 +219,40 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
+        match output {
+            Ok(Some(output)) => {
+                // Failed attribution rolls back only its stage. A successful
+                // stage stays inside the raw result/completion transaction,
+                // so a crash cannot leave a root for an uncommitted result.
+                let staged = (|| -> Result<()> {
+                    let mut stage = self.vault.store.env.nested_write_txn(&mut txn)?;
+                    self.put_workflow_output_in_txn(
+                        &mut stage,
+                        &status.attempt,
+                        lease_owner,
+                        &output,
+                        now,
+                    )?;
+                    crate::skill_attribution::witness_agent_run_close_in_txn(
+                        self.vault,
+                        &mut stage,
+                        &status.attempt,
+                        lease_owner,
+                        output.id,
+                    )?;
+                    stage.commit()?;
+                    Ok(())
+                })();
+                if let Err(error) = staged {
+                    tracing::warn!(kind = ?error.kind(), "workflow output close was not recorded");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "workflow output entity was not prepared");
+            }
+        }
+        super::workflow::tool_wait::clear_in_txn(self.vault, &mut txn, &status.attempt)?;
         crate::ports::JobQueue::port_job_complete(
             self.vault,
             &mut txn,
@@ -141,8 +263,141 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
+        if let Some(confession) = confession {
+            let sealed = (|| -> Result<()> {
+                let mut seal = self.vault.store.env.nested_write_txn(&mut txn)?;
+                self.vault
+                    .record_attempt_confession_in_txn(&mut seal, &confession, now)?;
+                seal.commit()?;
+                Ok(())
+            })();
+            if let Err(error) = sealed {
+                tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
+            }
+        }
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         self.advance_workflow(root, now)
+    }
+
+    /// Attribution sidecar for this live leaf's actual captured bytes. The
+    /// attempt and its successors still carry the original output handle.
+    fn prepare_workflow_output(
+        &self,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        output: crate::compaction::output::OutputRef,
+    ) -> Result<WorkflowOutput> {
+        use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+        use crate::{EntityId, Error};
+        use rmpv::Value;
+
+        const RESULT: &[u8] = b"oneiron:workflow-run-result:v1";
+        const BODY: &[u8] = b"oneiron:workflow-run-result-body:v1";
+        let result = EntityId::derive(RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        let inline = {
+            let txn = self.vault.store.env.read_txn()?;
+            self.vault.code_run_body_inline_in_txn(&txn, &output.hash)?
+        };
+        // Probe files before the writer, in the native result TURN's lock order.
+        let location = if inline {
+            BodyLocation::Inline
+        } else if self
+            .vault
+            .store
+            .body_file_present(&output.hash, output.byte_len)?
+        {
+            BodyLocation::File
+        } else {
+            return Err(Error::CorruptedIndex("workflow output body missing"));
+        };
+        let field = |key: &str, value: Value| (Value::from(key), value);
+        let artifact = Value::Map(vec![
+            field("kind", Value::from("workflow.run_result")),
+            field(
+                "attempt_ref",
+                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
+            ),
+            // run_id is an opaque scheduling label, not a typed code-run id.
+            field("run_ref", Value::Nil),
+            field(
+                "task_ref",
+                attempt.task_ref.clone().map_or(Value::Nil, Value::from),
+            ),
+            field(
+                "answer",
+                Value::Map(vec![
+                    field("handle", Value::from(output.handle())),
+                    field("bytes", Value::from(output.byte_len)),
+                ]),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &artifact)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        let held = OwnedBody {
+            owner: result,
+            occurrence: EntityId::derive(BODY, &[result.as_bytes().as_slice()])?,
+            state: BodyState::Complete {
+                body: BodyRef {
+                    blake3: output.hash,
+                    bytes: output.byte_len,
+                    location,
+                },
+            },
+            result: None,
+        };
+        Ok(WorkflowOutput {
+            id: result,
+            source: output,
+            bytes,
+            held,
+        })
+    }
+
+    fn put_workflow_output_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        lease_owner: &str,
+        output: &WorkflowOutput,
+        now: u64,
+    ) -> Result<()> {
+        AttemptQueue::new(self.vault).require_skill_load_lease_in_txn(
+            txn,
+            attempt.id,
+            lease_owner,
+            attempt.attempt_count,
+        )?;
+        if !self
+            .vault
+            .code_run_body_inline_in_txn(txn, &output.source.hash)?
+            && !crate::code_run::code_run_body_held_in_txn(
+                &self.vault.store,
+                txn,
+                &output.source.hash,
+            )?
+        {
+            return Err(crate::Error::CorruptedIndex("workflow output body missing"));
+        }
+        if self
+            .vault
+            .get_entity_type_in_txn(txn, &output.id)?
+            .is_none()
+        {
+            self.vault
+                .batch_in()
+                .put(
+                    &output.id,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    crate::TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &output.bytes,
+                )
+                .apply(txn)?;
+        }
+        crate::provenance::body::publish_body_in_txn(&self.vault.store, txn, &output.held)
     }
 }

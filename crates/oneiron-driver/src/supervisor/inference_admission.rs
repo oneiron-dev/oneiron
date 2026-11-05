@@ -8,7 +8,7 @@
 //! or reap. Unknown capacity admits and records under the lead ruling.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -265,7 +265,14 @@ pub struct DeviceAdmission {
     ledger: Arc<DeviceLedger>,
     state: Mutex<AdmissionState>,
     changed: Notify,
+    /// This admission's own identity (FIX 11960): ticket numbers restart at
+    /// 1 in every admission, so a parent link names its admission with its
+    /// ticket and resolves only against that same live admission.
+    id: u64,
 }
+
+/// The next admission identity, process-wide: never reused.
+static NEXT_ADMISSION_ID: AtomicU64 = AtomicU64::new(1);
 
 impl fmt::Debug for DeviceAdmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -281,6 +288,7 @@ impl DeviceAdmission {
         Self {
             device: device.into(),
             ledger,
+            id: NEXT_ADMISSION_ID.fetch_add(1, Ordering::Relaxed),
             state: Mutex::new(AdmissionState {
                 tickets: BTreeMap::new(),
                 grants: BTreeMap::new(),
@@ -297,6 +305,13 @@ impl DeviceAdmission {
             }),
             changed: Notify::new(),
         }
+    }
+
+    /// This admission's own identity: a parent link names it with its
+    /// ticket, and resolves only against this same live admission.
+    #[must_use]
+    pub fn admission_id(&self) -> u64 {
+        self.id
     }
 
     /// Registers an executor row for status and idle-unload decisions.

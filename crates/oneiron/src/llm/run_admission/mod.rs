@@ -48,7 +48,6 @@ pub use job_maximum::{
 };
 pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
-pub(crate) use person_billing::erase_billing_account_actor_in_txn;
 pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
@@ -59,7 +58,10 @@ pub use receipt::{
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
 pub use settle::CallOutcome;
 pub use wire::{WireCallError, WireSeat};
-pub use work_context::{WorkCancel, WorkContext, WorkId, WorkPhysical};
+pub use work_context::{
+    WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,
+    record_work_parent, take_work_parent,
+};
 
 #[cfg(test)]
 mod tests;

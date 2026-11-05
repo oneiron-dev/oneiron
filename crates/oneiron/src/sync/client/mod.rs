@@ -55,6 +55,7 @@ mod note_session;
 mod own_device;
 mod repo_projection;
 mod residence;
+mod sealed_updates;
 mod sync_frames;
 mod types;
 mod window_pads;
@@ -79,8 +80,9 @@ pub use self::residence::{
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,
     observe_sealed_bundle_relay, pinned_checkpoint_pending, relay_sealed_bundle,
-    retry_refused_retains, search_resident,
+    request_media_vectors, retry_refused_retains, search_resident,
 };
+pub(crate) use self::sealed_updates::{send_sealed_updates, world_relays_sealed};
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,

@@ -1,6 +1,7 @@
 //! A STOP written as a message (FIX 12101). A Slack or LINE counterparty
 //! opts out by writing a stop keyword as their whole message; a Slack
-//! message may lead with user mentions (`<@U123> stop`). An email sender
+//! message may lead with a mention of its receiving bot (`<@UBOT> stop`)
+//! when the archived callback identifies that bot. An email sender
 //! opts out with a stop keyword as the reply's whole subject, after its
 //! `Re:`/`Fwd:` prefixes, or as its whole own text above the quoted block
 //! (FIX 12240). The surface-event drain reads the message's words before
@@ -49,9 +50,6 @@ const LINE_SOURCE_USER_POINTER: &str = "/event/source/userId";
 /// transient failure to admit its OptOut.
 const STOP_REPLY_RETRY_BACKOFF_SECS: u64 = 30;
 
-/// Where a Slack user mention token starts: `<@U123>` or `<@U123|name>`.
-const SLACK_USER_MENTION_OPEN: &str = "<@";
-
 /// The reply and forward prefixes an email subject may lead with, compared
 /// ignoring ASCII case.
 const EMAIL_SUBJECT_REPLY_PREFIXES: &[&str] = &["Re:", "Fwd:", "Fw:"];
@@ -66,22 +64,69 @@ pub fn is_stop_reply(text: &str) -> bool {
         .any(|keyword| folded.eq_ignore_ascii_case(keyword))
 }
 
-/// A Slack message's text without the user mentions and whitespace that
-/// lead it, so `<@U123> stop` and `<@U123|name> stop` read as `stop`. The
-/// text from the first word that is not a mention on is kept as written.
-fn slack_text_for_stop(text: &str) -> &str {
-    let mut rest = text.trim_start();
-    while let Some(mention) = rest.strip_prefix(SLACK_USER_MENTION_OPEN) {
-        let Some((user, after)) = mention.split_once('>') else {
-            break;
-        };
-        let id = user.split_once('|').map_or(user, |(id, _)| id);
-        if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-            break;
-        }
-        rest = after.trim_start();
+/// A leading mention counts only when this callback names the same bot
+/// installation. Missing bot evidence leaves ordinary message handling intact.
+fn slack_bot_addressed_stop(vault: &Vault, payload_ref: &str, text: &str) -> Result<bool> {
+    let Some((user, rest)) = text
+        .trim_start()
+        .strip_prefix("<@")
+        .and_then(|text| text.split_once('>'))
+    else {
+        return Ok(false);
+    };
+    if user.is_empty()
+        || !user.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        || !is_stop_reply(rest)
+    {
+        return Ok(false);
     }
-    rest
+    let Some(body) = vault.read_provider_event(payload_ref)? else {
+        return Ok(false);
+    };
+    let Ok(delivery) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return Ok(false);
+    };
+    if delivery.get("type").and_then(serde_json::Value::as_str) != Some("event_callback") {
+        return Ok(false);
+    }
+    let kind = delivery
+        .pointer("/event/type")
+        .and_then(serde_json::Value::as_str);
+    let direct = kind == Some("message")
+        && delivery
+            .pointer("/event/channel_type")
+            .and_then(serde_json::Value::as_str)
+            == Some("im");
+    if kind != Some("app_mention") && !direct {
+        return Ok(false);
+    }
+    let Some(team) = delivery
+        .get("team_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|team| !team.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Some(authorizations) = delivery
+        .get("authorizations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(false);
+    };
+    Ok(authorizations.iter().any(|authorization| {
+        authorization
+            .get("is_bot")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+            && authorization
+                .get("team_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(team)
+            && authorization
+                .get("user_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(user)
+    }))
 }
 
 /// An email's subject without the reply and forward prefixes that lead it,
@@ -99,8 +144,8 @@ fn email_subject_for_stop(subject: &str) -> String {
 }
 
 /// Whether the message `payload_ref` archives is a STOP, each text compared
-/// whole with [`is_stop_reply`]: a Slack message's text after its leading
-/// mentions, a LINE message's text, and an email's subject after its reply
+/// whole with [`is_stop_reply`]: a Slack message's text after an evidenced
+/// receiving-bot mention, a LINE message's text, and an email's subject after its reply
 /// prefixes or its reply top text
 /// ([`crate::channel_identity_provider::EmailProviderInbound::reply_top_text`]).
 fn message_is_stop_reply(vault: &Vault, channel: &str, payload_ref: &str) -> Result<bool> {
@@ -118,12 +163,13 @@ fn message_is_stop_reply(vault: &Vault, channel: &str, payload_ref: &str) -> Res
     let Some(text) = vault.read_provider_event_text(channel, payload_ref)? else {
         return Ok(false);
     };
-    let text = if channel == SLACK_CHANNEL {
-        slack_text_for_stop(&text)
-    } else {
-        text.as_str()
-    };
-    Ok(is_stop_reply(text))
+    if is_stop_reply(&text) {
+        return Ok(true);
+    }
+    if channel == SLACK_CHANNEL {
+        return slack_bot_addressed_stop(vault, payload_ref, &text);
+    }
+    Ok(false)
 }
 
 /// Admits `event`'s STOP as its sender's OptOut ahead of its dispatch

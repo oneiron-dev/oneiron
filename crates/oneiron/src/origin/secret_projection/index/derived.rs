@@ -1,5 +1,5 @@
 //! The sources a text a model derived from repo bytes stands on (FIX 7608
-//! S3F, FIX 10405): a caption or transcript (ASSET_TEXT) is bound to each
+//! S3F, FIX 10405): a caption, transcript (ASSET_TEXT) or SUMMARY is bound to each
 //! ASSET it was written from by its own `DerivedFrom` edges, never by a
 //! path, a hash string or equal words.
 //!
@@ -14,10 +14,16 @@
 //! the edges as they are now, so a text or an edge written after the mark
 //! is found as well as an older one. Edges are followed with a visited set
 //! and no depth or count cap.
+//!
+//! A marked blob's snapshot record is marked by its id, which the blob's
+//! BLAKE3 derives, so it stays marked once erased. A record a mark covers
+//! by its media bytes alone (an inline envelope) is bound to that blob when
+//! a copy is derived from it ([`bind_envelope_sources_in_txn`]), and reads
+//! marked by that binding once erased (FIX 10887).
 
 use std::collections::BTreeSet;
 
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 
 use super::{RepoIndexMarks, RepoIndexProjectionStamp};
 use crate::Vault;
@@ -25,13 +31,19 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
-use crate::registry::ENTITY_TYPE_ASSET_TEXT;
-use crate::store::ManifestDbs;
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
+use crate::side_table::{self, Named, SideTable};
+use crate::store::{ManifestDbs, Store};
 
 /// The domain of one source's identity.
 const REPO_DERIVED_SOURCE_CONTEXT: &str = "oneiron.repo-index-projection.derived-source.v1";
 /// The domain of a derived text's proof.
 const REPO_DERIVED_PROOF_CONTEXT: &str = "oneiron.repo-index-projection.derived-proof.v1";
+
+/// Each source record a mark covered by its media bytes when a copy was
+/// derived from it, with that blob's whole BLAKE3 (FIX 10887). Key: id16.
+const ENVELOPE_SOURCE_BLOBS: SideTable<EntityId, [u8; 32], Named> =
+    SideTable::new(&side_table::REPO_DERIVED_SOURCE_BLOB);
 
 /// One source a derived text was written from, as it stands now.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +64,10 @@ pub(crate) struct RepoDerivedIndexSources {
     pub(crate) content: [u8; 32],
     /// Every source it names, sorted by id.
     pub(crate) sources: Vec<RepoDerivedSource>,
+    /// Every record of its source chain a mark covers by its media bytes,
+    /// not by its id, with that blob: the bindings
+    /// [`bind_envelope_sources_in_txn`] keeps (FIX 10887).
+    pub(crate) envelope_blobs: Vec<(EntityId, [u8; 32])>,
 }
 
 impl RepoDerivedIndexSources {
@@ -71,7 +87,7 @@ impl RepoDerivedIndexSources {
     }
 }
 
-/// The sources of ASSET_TEXT `entity`, as `view` holds them in `txn`, when
+/// The sources of ASSET_TEXT or SUMMARY `entity`, as `view` holds them in `txn`, when
 /// any of them is marked; `None` for any other record, a text bound to no
 /// source, or one whose sources are all unmarked, which indexes as it
 /// always has.
@@ -91,14 +107,26 @@ pub(crate) fn repo_derived_index_sources_in(
     let Some(row) = view.port_entity_record(txn, entity)? else {
         return Ok(None);
     };
-    if row.entity_type != ENTITY_TYPE_ASSET_TEXT {
+    if !matches!(
+        row.entity_type,
+        ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY
+    ) {
         return Ok(None);
     }
     let mut visited = BTreeSet::from([*entity]);
     let mut sources = Vec::new();
+    let mut envelope_blobs = Vec::new();
     for peer in derived_from(view, txn, entity)? {
-        let (marked, identity) =
-            source_identity(vault, view, txn, marks, &peer, &mut visited)?.unwrap_or_default();
+        let (marked, identity) = source_identity(
+            vault,
+            view,
+            txn,
+            marks,
+            &peer,
+            &mut visited,
+            &mut envelope_blobs,
+        )?
+        .unwrap_or_default();
         sources.push(RepoDerivedSource {
             id: peer,
             identity,
@@ -113,7 +141,28 @@ pub(crate) fn repo_derived_index_sources_in(
         entity: *entity,
         content: *blake3::hash(&row.body).as_bytes(),
         sources,
+        envelope_blobs,
     }))
+}
+
+/// Keeps each binding `sources` found, in the writer that queues or lands
+/// its copy (FIX 10887): a source a mark covers by its media bytes stays
+/// bound to that blob, so it reads marked once erased, as a snapshot record
+/// does by its id. One keyed read per binding, and a write only when new.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn bind_envelope_sources_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    sources: &RepoDerivedIndexSources,
+) -> Result<()> {
+    for (id, blob) in &sources.envelope_blobs {
+        if ENVELOPE_SOURCE_BLOBS.get_lenient(store, wtxn, id)?.as_ref() != Some(blob) {
+            ENVELOPE_SOURCE_BLOBS.put(store, wtxn, id, blob)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every record that derives from one of `roots`, through `DerivedFrom`
@@ -154,7 +203,15 @@ pub(crate) fn repo_source_identity_in(
     marks: &RepoIndexMarks,
     id: &EntityId,
 ) -> Result<Option<(bool, [u8; 32])>> {
-    source_identity(vault, view, txn, marks, id, &mut BTreeSet::new())
+    source_identity(
+        vault,
+        view,
+        txn,
+        marks,
+        id,
+        &mut BTreeSet::new(),
+        &mut Vec::new(),
+    )
 }
 
 /// The records `entity` names by its own outgoing `DerivedFrom` edges.
@@ -168,7 +225,8 @@ fn derived_from(
 }
 
 /// Source `id`'s markedness and identity; `None` for a source that is gone
-/// and no marked blob's snapshot record.
+/// and no marked blob's snapshot record or bound envelope. Each record of
+/// the chain a mark covers by its media bytes goes into `envelopes`.
 fn source_identity(
     vault: &Vault,
     view: &impl ManifestDbs,
@@ -176,11 +234,17 @@ fn source_identity(
     marks: &RepoIndexMarks,
     id: &EntityId,
     visited: &mut BTreeSet<EntityId>,
+    envelopes: &mut Vec<(EntityId, [u8; 32])>,
 ) -> Result<Option<(bool, [u8; 32])>> {
     let Some(row) = view.port_entity_record(txn, id)? else {
         // A marked blob's snapshot record stays marked by its id alone, held
-        // or erased: a text written from it never reads as unmarked.
-        return Ok(marks.source_of(id).map(|source| {
+        // or erased, and a bound envelope by its binding (FIX 10887): a text
+        // written from either never reads as unmarked.
+        let source = match marks.source_of(id) {
+            Some(source) => Some(source),
+            None => erased_envelope_blob(view, txn, marks, id)?,
+        };
+        return Ok(source.map(|source| {
             let mut hasher = blake3::Hasher::new_derive_key(REPO_DERIVED_SOURCE_CONTEXT);
             hasher.update(id.as_bytes());
             hasher.update(&source);
@@ -195,17 +259,40 @@ fn source_identity(
     if let Some(stamp) = repo_source_copy_stamp_in(vault, txn, marks, id, &row.body)? {
         marked = true;
         hasher.update(&stamp.fingerprint());
+        if marks.source_of(id).is_none() {
+            envelopes.push((*id, stamp.source_blake3));
+        }
+    } else if row.body.is_empty()
+        && let Some(blob) = erased_envelope_blob(view, txn, marks, id)?
+    {
+        // An erased shell keeps no bytes to join by: its binding does.
+        marked = true;
+        hasher.update(&blob);
     }
     if visited.insert(*id) {
         for parent in derived_from(view, txn, id)? {
             let (parent_marked, identity) =
-                source_identity(vault, view, txn, marks, &parent, visited)?.unwrap_or_default();
+                source_identity(vault, view, txn, marks, &parent, visited, envelopes)?
+                    .unwrap_or_default();
             marked |= parent_marked;
             hasher.update(parent.as_bytes());
             hasher.update(&identity);
         }
     }
     Ok(Some((marked, *hasher.finalize().as_bytes())))
+}
+
+/// The blob erased record `id` was bound to by its media bytes (FIX
+/// 10887), while a mark still covers it.
+fn erased_envelope_blob(
+    view: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    Ok(ENVELOPE_SOURCE_BLOBS
+        .get_lenient(view, txn, id)?
+        .filter(|blob| marks.is_marked(blob)))
 }
 
 /// The stamp of the copy record `id`, holding `body`, is read as when a
@@ -221,7 +308,16 @@ pub(crate) fn repo_source_copy_stamp_in(
     id: &EntityId,
     body: &[u8],
 ) -> Result<Option<RepoIndexProjectionStamp>> {
+    let logical;
+    let body = match crate::store::asset_file_in_txn(&vault.store, txn, id, body)? {
+        Some(manifest) => {
+            logical = vault.asset_file_body(txn, &manifest)?;
+            logical.as_slice()
+        }
+        None => body,
+    };
     if let Some(source) = marks.source_of(id) {
+        let source = marks.carried_source(id, source, body)?;
         return Ok(marks
             .source_input_in_txn(vault, txn, &source, body.to_vec())?
             .stamp()
@@ -229,10 +325,7 @@ pub(crate) fn repo_source_copy_stamp_in(
     }
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
     let Some(bytes) = crate::embed::repo_media_bytes(body, |blob| {
-        Ok(vault
-            .store
-            .port_entity_record(txn, blob)?
-            .map(|blob| blob.body))
+        crate::embed::repo_blob_body_in_txn(vault, txn, blob)
     })?
     else {
         return Ok(None);

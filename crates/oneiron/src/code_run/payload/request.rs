@@ -43,10 +43,35 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
             ("skill", entity_id_value(call.skill)),
             ("args", Value::from(call.args.to_string())),
         ]),
-        SelfCall::AgentVerb(call) => request_map(vec![
-            ("verb", Value::from(call.verb.as_str())),
-            ("input", Value::from(call.input.to_string())),
-        ]),
+        SelfCall::AgentVerb(call) => {
+            let verb = call.verb.as_str();
+            let input = call.input.to_string();
+            if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+                // Replay compares the exact input; write receipts ignore object-key order.
+                // Both fingerprints are host fields, never markers accepted from the caller.
+                request_map(vec![
+                    ("verb", Value::from(verb)),
+                    ("input", Value::from("")),
+                    (
+                        "input_digest",
+                        Value::Binary(blake3::hash(input.as_bytes()).as_bytes().to_vec()),
+                    ),
+                    (
+                        "input_identity",
+                        Value::Binary(
+                            blake3::hash(canonical_verb_input(&call.input).to_string().as_bytes())
+                                .as_bytes()
+                                .to_vec(),
+                        ),
+                    ),
+                ])
+            } else {
+                request_map(vec![
+                    ("verb", Value::from(verb)),
+                    ("input", Value::from(input)),
+                ])
+            }
+        }
         SelfCall::ConnectorAnswer(request) => request_map(vec![(
             "call",
             Value::from(
@@ -192,6 +217,42 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
             leader_split_request_value(leader, slice)?
         }
     })
+}
+
+/// A verb call's receipt identity. Custody calls keep only the input's digest;
+/// other calls keep the same sorted JSON bytes as their recorded input.
+pub(in crate::code_run) fn agent_verb_call_identity(
+    verb: &str,
+    input: &serde_json::Value,
+) -> Vec<u8> {
+    let input = canonical_verb_input(input).to_string();
+    let mut identity = verb.as_bytes().to_vec();
+    identity.push(0);
+    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+        identity.extend_from_slice(blake3::hash(input.as_bytes()).as_bytes());
+    } else {
+        identity.extend(input.into_bytes());
+    }
+    identity
+}
+
+fn canonical_verb_input(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(fields) => {
+            let mut fields: Vec<_> = fields.iter().collect();
+            fields.sort_unstable_by_key(|(name, _)| *name);
+            serde_json::Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(name, value)| (name.clone(), canonical_verb_input(value)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonical_verb_input).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// The request value of a run repo call: its row and its closed input.

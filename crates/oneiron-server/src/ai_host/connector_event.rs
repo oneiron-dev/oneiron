@@ -28,7 +28,7 @@ use crate::models::ModelRuntime;
 
 mod worker;
 
-pub(crate) use self::worker::run_connector_reply_job;
+pub(crate) use self::worker::{repair_connector_reply_witnesses, run_connector_reply_job};
 
 /// The channels whose directly routed messages the served sink answers on.
 const DIRECT_REPLY_CHANNELS: [&str; 3] = [

@@ -112,7 +112,7 @@ impl PageRequests {
 
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, Unanswered> {
         let (url, status, headers, body) = self.send_spooled(request).await?;
-        let body = body.into_vec().map_err(Unanswered::failed)?;
+        let body = body.into_bytes().map_err(Unanswered::failed)?;
         Ok(HttpResponse {
             url,
             status,

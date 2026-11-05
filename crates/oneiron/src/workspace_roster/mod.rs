@@ -163,25 +163,30 @@ pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
     ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
     guard_goal_claim_put, guard_goal_delete, guard_goal_pointer_put, is_project_entity,
-    is_project_type, leader_chat_allowed, leader_chat_reader_in, leader_chat_record_permitted,
+    leader_chat_allowed, leader_chat_reader_in, leader_chat_record_permitted,
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
-    project_mint_gate_refs_in_txn, project_room_dependency, projects_led_in_txn,
-    reconcile_project_rooms, retire_goal_for_delete, room_facets_in, root_project_in,
-    seed_root_project, settle_leader_chat_record, speaks_as_in_txn,
-    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
-    validate_project_edge_put, validate_project_graph, validate_project_transition,
-    validate_room_body, verify_existing_leader_chat_turn,
+    project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
+    retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
+    settle_leader_chat_record, speaks_as_in_txn, validate_local_leader_chat_turns,
+    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
+    validate_project_graph, validate_project_transition, validate_room_body,
+    verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
-    capture_project_put, check_revision_put, is_project_revision_type, project_revision_type,
-    projects_touched_by_put, rebuild_project_revision_indexes, refresh_project_frontiers,
-    refuse_revision_delete,
+    capture_project_put, check_revision_put, projects_touched_by_put,
+    rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
 };
 #[cfg(feature = "sync")]
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
     inadmissible_revision_carriers,
+};
+// Old paths of items the store layer now names at `store::project_kind` and
+// `batch::export`; only sync code still reads them here.
+#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
+pub(crate) use project::{
+    is_project_revision_type, is_project_type, project_revision_type, project_room_dependency,
 };
 
 mod rooms;

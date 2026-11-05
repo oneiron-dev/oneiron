@@ -158,15 +158,7 @@ impl PolicyRowScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PolicyEvaluationScope {
-    pub(crate) world: Option<EntityId>,
-    pub(crate) project: Option<EntityId>,
-    pub(crate) subproject: Option<EntityId>,
-    pub(crate) thread: Option<EntityId>,
-    /// The caller has not been authorized to learn this world exists.
-    pub(crate) hidden_world: bool,
-}
+pub(crate) use crate::store::policy_record::PolicyEvaluationScope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WhySource {

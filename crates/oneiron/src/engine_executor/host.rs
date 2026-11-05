@@ -307,7 +307,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        self.streamed.write(storage, stream, frame)?;
+        self.streamed.write(storage, self.run_id, stream, frame)?;
         self.gated_write.activity_streamed(frame);
         Ok(true)
     }

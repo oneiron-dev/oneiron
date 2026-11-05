@@ -73,7 +73,7 @@ impl Vault {
         let (existed, had_vector, _ledger_changed) =
             self.soft_erase_active_store_in_txn(&mut wtxn, id, false, None)?;
         if existed && reason == DeleteReason::UserDelete {
-            crate::world_keys::note_world_deleted_in_txn(
+            crate::store::world_pad_rows::note_world_deleted_in_txn(
                 &self.store,
                 &mut wtxn,
                 *id,

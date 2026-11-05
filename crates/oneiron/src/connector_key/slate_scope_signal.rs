@@ -428,7 +428,8 @@ impl Vault {
     /// and ED-05 does not hold it, the writer drafts the proposed delta
     /// slate, or reuses its scope's standing one: nothing is stamped,
     /// granted or widened. A send, a minted grant or a notification answer
-    /// is never a ruling here.
+    /// is never a ruling here. The link holds one of the signal's asks: the
+    /// pinned digest of the held call's ask (FIX 9306, restricts security).
     pub fn record_connector_scope_outcome(
         &self,
         owner: &AuthenticatedOwner,

@@ -1,8 +1,12 @@
 //! Descriptor-relative, no-symlink source snapshot for a foreign VM.
 
 use super::refused;
-use crate::{Result, code_sandbox::SandboxVirtualPath};
-use oneiron_sandbox_contract::{MAX_FILE_BYTES, WorkspacePath, WorkspaceShape};
+use crate::{
+    Result,
+    code_sandbox::{ProposalSpoolFloor, SandboxProposalBody, SandboxVirtualPath},
+    engine_executor::StepCancellation,
+};
+use oneiron_sandbox_contract::{MAX_CHUNK_BYTES, WorkspacePath, WorkspaceShape};
 use std::{
     ffi::CString,
     fs::{self, File},
@@ -12,6 +16,7 @@ use std::{
         unix::{ffi::OsStrExt, fs::OpenOptionsExt},
     },
     path::Path,
+    time::Instant,
 };
 
 /// Snapshot bytes plus the checked tree they came from, empty directories
@@ -24,23 +29,36 @@ pub(super) struct Snapshot {
 /// One source file as the guest is seeded with it.
 pub(super) struct SnapshotFile {
     pub path: SandboxVirtualPath,
-    pub bytes: Vec<u8>,
+    pub body: SandboxProposalBody,
 }
 
-pub(super) fn files(root: &Path) -> Result<Snapshot> {
+pub(super) fn files(
+    root: &Path,
+    spool: Option<&dyn ProposalSpoolFloor>,
+    cancel: &StepCancellation,
+    deadline: Instant,
+) -> Result<Snapshot> {
     let root = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(root)
         .map_err(|_| refused("source snapshot root unavailable"))?;
     let mut stack = vec![(root, String::new())];
-    let mut files = Vec::new();
+    // All source files share one spool descriptor, including wide trees.
+    let mut writer = match spool {
+        Some(floor) => SandboxProposalBody::spool_floored(floor)?,
+        None => SandboxProposalBody::spool()?,
+    };
+    let mut frame = vec![0; MAX_CHUNK_BYTES];
+    let mut ranges = Vec::new();
     let mut shape = WorkspaceShape::new();
     while let Some((directory, prefix)) = stack.pop() {
+        checkpoint(cancel, deadline)?;
         // /proc/self/fd names the directory descriptor, not a mutable pathname.
         let entries = fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))
             .map_err(|_| refused("source snapshot directory unavailable"))?;
         for entry in entries {
+            checkpoint(cancel, deadline)?;
             let entry = entry.map_err(|_| refused("source snapshot entry unavailable"))?;
             let name = entry.file_name();
             let leaf = name
@@ -78,27 +96,57 @@ pub(super) fn files(root: &Path) -> Result<Snapshot> {
                     .map_err(|error| refused(error.reason()))?;
                 stack.push((file, relative));
             } else if metadata.is_file() {
-                if metadata.len() > MAX_FILE_BYTES as u64 {
-                    return Err(refused("source snapshot file limit"));
+                let start = writer.len();
+                let mut hasher = blake3::Hasher::new();
+                let mut file = file;
+                loop {
+                    checkpoint(cancel, deadline)?;
+                    let read = match file.read(&mut frame) {
+                        Ok(0) => break,
+                        Ok(read) => read,
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => return Err(refused("source snapshot read failed")),
+                    };
+                    writer.append(&frame[..read])?;
+                    hasher.update(&frame[..read]);
                 }
-                let mut bytes = Vec::new();
-                file.take((MAX_FILE_BYTES + 1) as u64)
-                    .read_to_end(&mut bytes)
-                    .map_err(|_| refused("source snapshot read failed"))?;
+                let len = writer.len() - start;
                 shape
-                    .add_file(&path, bytes.len())
+                    .add_file(
+                        &path,
+                        usize::try_from(len)
+                            .map_err(|_| refused("source snapshot length overflow"))?,
+                    )
                     .map_err(|error| refused(error.reason()))?;
-                files.push(SnapshotFile {
-                    path: SandboxVirtualPath::try_new(path.as_str())?,
-                    bytes,
-                });
+                ranges.push((
+                    SandboxVirtualPath::try_new(path.as_str())?,
+                    start,
+                    len,
+                    *hasher.finalize().as_bytes(),
+                ));
             } else {
                 return Err(refused("source snapshot special file refused"));
             }
         }
     }
+    let body = writer.finish()?;
+    let mut files = Vec::with_capacity(ranges.len());
+    for (path, start, len, digest) in ranges {
+        files.push(SnapshotFile {
+            path,
+            body: body.slice_with_digest(start, len, digest)?,
+        });
+    }
     files.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
     Ok(Snapshot { files, shape })
+}
+
+fn checkpoint(cancel: &StepCancellation, deadline: Instant) -> Result<()> {
+    cancel.check()?;
+    if Instant::now() >= deadline {
+        return Err(refused("source snapshot deadline exceeded"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

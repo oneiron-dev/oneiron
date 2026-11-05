@@ -12,8 +12,9 @@
 #     --generate-hashes --no-build \
 #     --index-url https://pypi.org/simple \
 #     --extra-index-url https://download.pytorch.org/whl/cu128 \
-#     --index-strategy unsafe-best-match --emit-index-url --no-header \
-#     -o whisper-py312.lock
+#     --index-strategy first-index --emit-index-url --no-header \
+#     -o deploy/asr/whisper-py312.lock
+# (`first-index` prefers cu128 torch over newer PyPI builds.)
 # The CUDA build the host's driver takes, from the PyTorch cu128 index.
 torch
 # Whisper's long-form decoding of a whole clip.

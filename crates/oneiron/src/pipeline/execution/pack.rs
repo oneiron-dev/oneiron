@@ -10,6 +10,7 @@ use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::query_expansion::{
     CompletionCandidate, CompletionRequest, EvidenceVerdict, HydeRequest, ground_query,
     normalized_subqueries,
@@ -178,24 +179,42 @@ impl PipelineBuilder<'_> {
             }
         };
 
-        let hyde_expansion = match self.hyde.as_ref() {
+        // The HyDE request's validations, before anything paid: its options,
+        // the text query it grounds, and the grounded query itself. A
+        // deadline already reached skips the expansion, as ever.
+        let hyde_query = match self.hyde.as_ref() {
             None => None,
             Some(_) if self.deadline_reached() => None,
-            Some((expander, grounding, options)) => {
+            Some((_, grounding, options)) => {
                 options.validate()?;
                 let Some((template, _)) = self.text_search.as_ref() else {
                     return Err(Error::InvalidConfig(
                         "hyde requires search_text query".to_owned(),
                     ));
                 };
-                let query = ground_query(template, grounding)?;
+                Some(ground_query(template, grounding)?)
+            }
+        };
+        // The one final count this execution serves, measured after every
+        // applicable validation and before any paid expansion or scoring.
+        // Best effort: the run serves its rows either way.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
+        // FIX 4451 (L05 YES 11:05): capture the expander id from the SAME
+        // expander whose expansion actually ran, in the arm that ran it. A
+        // configured-but-unused expander (deadline-skipped, unvalidated, or
+        // errored) leaves None: never inferred from configuration.
+        let (hyde_expansion, query_expander_id) = match (self.hyde.as_ref(), hyde_query) {
+            (Some((expander, _, _)), Some(query)) => {
                 let expansion = expander.expand(&HydeRequest {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
                 })?;
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
-                Some(expansion)
+                (Some(expansion), Some(expander.id().to_owned()))
             }
+            _ => (None, None),
         };
 
         if self.text_search.is_some() {
@@ -506,7 +525,8 @@ impl PipelineBuilder<'_> {
             )
             .with_context(self.retrieval_state.clone(), self.retrieval_turn)
             .with_trace(retrieval_trace)
-            .with_quality(&retrieval_quality);
+            .with_quality(&retrieval_quality)
+            .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;

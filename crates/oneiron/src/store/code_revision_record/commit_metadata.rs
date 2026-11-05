@@ -27,7 +27,9 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
 pub(crate) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
     meta.map_or(Value::Nil, |m| {
         Value::Array(vec![
-            Value::Binary(m.author.as_bytes().to_vec()),
+            m.author.map_or(Value::Nil, |author| {
+                Value::Binary(author.as_bytes().to_vec())
+            }),
             Value::from(m.message.clone()),
             Value::Array(
                 m.file_modes
@@ -48,7 +50,11 @@ pub(crate) fn from_value(value: &Value) -> Result<Option<CodeCommitMetadata>> {
         .as_array()
         .filter(|f| f.len() == 3)
         .ok_or_else(invalid)?;
-    let author = super::codec::entity_value(&fields[0], "author")?;
+    let author = if fields[0].is_nil() {
+        None
+    } else {
+        Some(super::codec::entity_value(&fields[0], "author")?)
+    };
     let message = fields[1].as_str().ok_or_else(invalid)?.to_owned();
     let mut file_modes = BTreeMap::new();
     for pair in fields[2].as_array().ok_or_else(invalid)? {

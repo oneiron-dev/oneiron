@@ -33,7 +33,7 @@
 //! ```
 
 mod actors;
-mod address;
+use oneiron_authority::channel_address as address;
 mod alias;
 mod assignment;
 mod auth_mode;
@@ -45,7 +45,7 @@ mod keys;
 mod lifecycle;
 mod record;
 mod sender;
-mod shape;
+use oneiron_authority::channel_identity_shape as shape;
 mod transition;
 mod vault_doors;
 

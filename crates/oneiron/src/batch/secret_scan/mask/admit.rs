@@ -25,8 +25,8 @@ use super::wipe::{PlanValues, replace_wiped, wipe_part};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::KnownValues;
 use crate::side_table::SideTableDbs;
+use crate::store::known_value_index::KnownValues;
 
 /// What a stream's admitted text keeps in place of a secret it may still be
 /// writing: a span that reaches the end of the text so far. The door reads it

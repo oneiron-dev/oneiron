@@ -68,6 +68,7 @@ use serde::Deserialize;
 
 use super::action_routes::{
     ActionBound, action_bound, bind_card_run, execute_validated_ui, require_action_scope,
+    take_action_rows,
 };
 use super::host_doors::support::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
@@ -365,7 +366,8 @@ async fn dispatch_tool(
     };
     let (dispatch, stamp) =
         execute_validated_ui(server, headers, extensions, bound, validated, key).await;
-    let answer = dispatch.and_then(|dispatch| {
+    let answer = dispatch.and_then(|mut dispatch| {
+        let _ = take_action_rows(&mut dispatch);
         Ok(serde_json::json!({
             "outcome": dispatch.outcome_value().map_err(engine)?,
             "readReceipt": dispatch.read_receipt,

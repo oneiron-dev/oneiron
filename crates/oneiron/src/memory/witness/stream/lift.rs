@@ -45,7 +45,10 @@ impl Vault {
             .lock()
             .map_err(|_| Error::InvariantViolation("the message stream registry is poisoned"))?
             .get(message)
-            .cloned();
+            .and_then(|entry| match entry {
+                Resident::Recorded(entry) => Some(Arc::clone(entry)),
+                Resident::Session(_) => None,
+            });
         let Some(entry) = resident else {
             return lift_saved_in_txn(self, txn, stored).map(Some);
         };

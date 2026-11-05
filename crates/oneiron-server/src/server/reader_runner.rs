@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, LAUNCH_COST_PRIOR_UNITS, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
@@ -151,9 +151,12 @@ impl ReaderSeats {
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
             deadline: reader_parent_deadline(clock, now),
-            // A child holds nothing at its claim: it tops up from its
-            // parent's chain as it spends, the cap enforced at each spend.
-            hold_units: 0,
+            // A child holds one model call's prior at its claim, or what its
+            // parent's chain has left below it, so a sibling's spend cannot
+            // take its first call; it tops up from that chain as it spends,
+            // the cap enforced at each spend, and gives back the rest at its
+            // settle (FIX 1836).
+            hold_units: LAUNCH_COST_PRIOR_UNITS,
             window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
             memory_bytes: self.child_memory_bytes,
             // Any eligible model: an agent's run lends its own list
@@ -178,13 +181,20 @@ impl ReaderSeats {
         )
     }
 
-    /// Forgets every parent last noted more than two windows before `now`,
-    /// with its live clock.
+    /// Forgets every parent last noted more than two windows before `now`
+    /// whose live clock has run out, with that clock: one whose lent clock
+    /// still runs keeps its caller's note while its children may (FIX 1837).
     fn forget_before(&self, now: u64) {
         let horizon = now.saturating_sub(DEFAULT_READER_WINDOW_MS.saturating_mul(2));
         let mut callers = lock(&self.callers);
-        callers.retain(|_, (_, noted)| *noted >= horizon);
-        lock(&self.clocks).retain(|run, _| callers.contains_key(run));
+        let mut clocks = lock(&self.clocks);
+        callers.retain(|run, (_, noted)| {
+            *noted >= horizon
+                || clocks
+                    .get(run)
+                    .is_some_and(|clock| clock.remaining_ms() > 0)
+        });
+        clocks.retain(|run, _| callers.contains_key(run));
     }
 }
 
@@ -207,6 +217,11 @@ enum Signal {
     Queued(ReaderJobWake),
     Freed,
 }
+
+/// Every runner started in this process, held weakly: a runner started over
+/// a vault another live one already serves leaves recovery to that one, so
+/// it never claims again the children the first is running (FIX 1840).
+static STARTED: Mutex<Vec<Weak<Shared>>> = Mutex::new(Vec::new());
 
 /// The runner one vault's reader children are woken through.
 pub(crate) struct ReaderRunner {
@@ -272,11 +287,24 @@ impl ReaderRunner {
             running: Mutex::default(),
             per_parent: usize::try_from(per_parent).unwrap_or(usize::MAX),
         });
+        let recovers = {
+            let mut started = lock(&STARTED);
+            started.retain(|other| other.strong_count() > 0);
+            let served = started.iter().filter_map(Weak::upgrade).any(|other| {
+                other
+                    .vault
+                    .upgrade()
+                    .is_some_and(|served| Arc::ptr_eq(&served, vault))
+            });
+            started.push(Arc::downgrade(&shared));
+            !served
+        };
         let worker = Worker {
             shared: Arc::clone(&shared),
             signals: signals.clone(),
             wakes,
             sessions: BTreeSet::new(),
+            recovers,
         };
         let started = std::thread::Builder::new()
             .name("oneiron-reader-runner".to_owned())
@@ -322,6 +350,9 @@ struct Worker {
     wakes: Receiver<Signal>,
     /// The live sessions the runner holds children for.
     sessions: BTreeSet<SessionSeat>,
+    /// Whether it is its vault's first live runner in this process, which
+    /// alone recovers what a stopped one left active.
+    recovers: bool,
 }
 
 impl Worker {
@@ -329,9 +360,12 @@ impl Worker {
         let Some(vault) = self.shared.vault.upgrade() else {
             return;
         };
-        // One runner per vault process: what a stopped one left active is
-        // claimed again at its next generation, or settled past its cutoff.
-        if let Err(error) = ReaderJobs::canonical(&vault).recover(unix_millis_now()) {
+        // The vault's first runner in this process: what a stopped one left
+        // active is claimed again at its next generation, or settled past
+        // its cutoff. A later one finds the first's children running.
+        if self.recovers
+            && let Err(error) = ReaderJobs::canonical(&vault).recover(unix_millis_now())
+        {
             tracing::warn!(%error, "the reader runner could not recover its children; it ticks on");
         }
         drop(vault);

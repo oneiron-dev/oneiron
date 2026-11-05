@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::keys::{ERR_ONE_WAY_EXCEPTION_BYTES, ONE_WAY_EXCEPTION_PREFIX};
 use super::storage::scrub_backlinks_in_place;
@@ -38,11 +38,14 @@ fn decode_exception_holders(raw: &[u8]) -> Result<Vec<EntityId>> {
 /// Holders whose single one-way link points at `target` (`holder -> target`
 /// without the reverse). Empty when no exception record exists.
 pub(super) fn read_one_way_exception_holders(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    match store.hnsw_meta().get(txn, &one_way_exception_key(target))? {
+    match store
+        .index_meta()
+        .get(txn, &one_way_exception_key(target))?
+    {
         Some(raw) => decode_exception_holders(&raw),
         None => Ok(Vec::new()),
     }
@@ -51,7 +54,7 @@ pub(super) fn read_one_way_exception_holders(
 /// Records that `holder` keeps a one-way link to `target` (orphan protection).
 /// Idempotent: a holder already present is not duplicated.
 pub(super) fn record_one_way_exception(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     holder: &EntityId,
@@ -68,7 +71,7 @@ pub(super) fn record_one_way_exception(
         bytes.extend_from_slice(holder.as_bytes());
     }
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, &one_way_exception_key(target), &bytes)?;
     *ops += 1;
     Ok(())
@@ -78,7 +81,7 @@ pub(super) fn record_one_way_exception(
 /// kept a one-way link to. Its forward list names those targets, so no scan;
 /// an emptied record goes with it (H14).
 pub(super) fn forget_one_way_holder(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     holder: &EntityId,
     targets: &[EntityId],
@@ -94,13 +97,13 @@ pub(super) fn forget_one_way_holder(
         }
         let key = one_way_exception_key(target);
         if holders.is_empty() {
-            store.hnsw_meta().delete(wtxn, &key)?;
+            store.index_meta().delete(wtxn, &key)?;
         } else {
             let mut bytes = Vec::with_capacity(holders.len() * ENTITY_ID_LEN);
             for held in &holders {
                 bytes.extend_from_slice(held.as_bytes());
             }
-            store.hnsw_meta().put(wtxn, &key, &bytes)?;
+            store.index_meta().put(wtxn, &key, &bytes)?;
         }
         *ops += 1;
     }
@@ -113,7 +116,7 @@ pub(super) fn forget_one_way_holder(
 /// current list, leaves no stale record behind. Targets still linked keep
 /// their records; orphan protection is unchanged.
 pub(super) fn reconcile_removed_one_way_links(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     holder: &EntityId,
     old: &[EntityId],
@@ -133,7 +136,7 @@ pub(super) fn reconcile_removed_one_way_links(
 /// of a symmetric delete that the deleted node's own forward list cannot reach
 /// (the holders are, by definition, NOT in it). Bounded by the holder count.
 pub(super) fn purge_one_way_exceptions_for_target(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
@@ -147,7 +150,9 @@ pub(super) fn purge_one_way_exceptions_for_target(
     // (e.g. it later became bidirectional and was pruned), so a stale holder is
     // harmless.
     scrub_backlinks_in_place(store, wtxn, id, &holders, ops)?;
-    store.hnsw_meta().delete(wtxn, &one_way_exception_key(id))?;
+    store
+        .index_meta()
+        .delete(wtxn, &one_way_exception_key(id))?;
     *ops += 1;
     Ok(())
 }
@@ -158,18 +163,18 @@ pub(super) fn purge_one_way_exceptions_for_target(
 /// `ONE_WAY_EXCEPTION_PREFIX` keyspace is touched — unrelated `hnsw_meta` rows
 /// (graph/model/schema markers) are preserved.
 pub(super) fn clear_one_way_exceptions(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
     let mut stale_keys: Vec<Vec<u8>> = Vec::new();
-    for entry in store.hnsw_meta().iter(wtxn)? {
+    for entry in store.index_meta().iter(wtxn)? {
         let (key, _) = entry?;
         if key.starts_with(ONE_WAY_EXCEPTION_PREFIX) {
             stale_keys.push(key.to_vec());
         }
     }
     for key in stale_keys {
-        store.hnsw_meta().delete(wtxn, &key)?;
+        store.index_meta().delete(wtxn, &key)?;
     }
     Ok(())
 }
@@ -178,7 +183,7 @@ pub(super) fn clear_one_way_exceptions(
 /// graph: every link `node -> neighbor` whose neighbor row does not point back
 /// is a tracked orphan-protection exception keyed by `neighbor`.
 pub(super) fn rebuild_one_way_exception_index(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     neighbors: &[(EntityId, Vec<EntityId>)],
 ) -> Result<()> {
@@ -204,7 +209,7 @@ pub(super) fn rebuild_one_way_exception_index(
             bytes.extend_from_slice(holder.as_bytes());
         }
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, &one_way_exception_key(&target), &bytes)?;
     }
     Ok(())

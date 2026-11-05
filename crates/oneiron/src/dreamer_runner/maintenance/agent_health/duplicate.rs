@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Attempts, Dispatches, entity};
+use super::{Attempts, Dispatches, entity, settled};
 use crate::agent_dispatch::{TeamRunStamp, attempt_team_stamp};
 use crate::learning::DuplicateWorkKind;
 use crate::team::{TeamPattern, team_spawn_context_for_attempt};
@@ -37,7 +37,7 @@ pub(super) const fn plans_redundancy(pattern: TeamPattern) -> bool {
     )
 }
 
-/// Each pair of attempts updated since `since` in which the second ran an
+/// Each pair of attempts settled or active since `since` in which the second ran an
 /// action the first had run first on the same inputs, with what the repeat
 /// was.
 pub(super) fn digest_duplicates(
@@ -49,10 +49,13 @@ pub(super) fn digest_duplicates(
     // Each digest's runs: when each attempt first ran it.
     let mut runs: BTreeMap<String, Vec<(u64, [u8; 16])>> = BTreeMap::new();
     for key in dispatched.keys() {
-        let Some(record) = attempts
-            .get(key)
-            .filter(|record| record.updated_at >= since)
-        else {
+        let Some(record) = attempts.get(key).filter(|record| {
+            if settled(record.state) {
+                record.settled_at.is_some_and(|at| at >= since)
+            } else {
+                record.updated_at >= since
+            }
+        }) else {
             continue;
         };
         let Some(attempt) = entity(record.id) else {

@@ -66,7 +66,7 @@ pub(crate) fn seeded_without_dreamer_rows(vault: &Vault) -> Result<()> {
     vault.with_write_txn(|txn| {
         vault.store.sync_state.put(
             txn,
-            &crate::gate::seeded_manifest_key(&id),
+            &oneiron_store::manifest_origin_keys::seeded_manifest_key(&id),
             blake3::hash(&old).as_bytes(),
         )?;
         Ok(())

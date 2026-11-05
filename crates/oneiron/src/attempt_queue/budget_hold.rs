@@ -19,9 +19,7 @@ use super::validate::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 
-/// The intervention actor of a budget hold. Reserved: no other intervention
-/// may name it, so a person's pause never reads as a hold.
-pub const BUDGET_HOLD_ACTOR: &str = "engine:budget_hold";
+pub use crate::store::attempt_hold::BUDGET_HOLD_ACTOR;
 
 /// Refusal for an intervention that names [`BUDGET_HOLD_ACTOR`].
 pub(in crate::attempt_queue) const ERR_BUDGET_HOLD_ACTOR_RESERVED: &str =

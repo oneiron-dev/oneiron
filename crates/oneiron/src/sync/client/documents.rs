@@ -8,6 +8,29 @@ impl SyncClient {
         frame: DocumentFrame<'_>,
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         match frame.kind {
+            document_sub_tags::WAITED_OUT => {
+                transport::decode_document_waited_out(frame.payload)?;
+                // A reply uses the subscribed wire id, even when the server
+                // opened a different source behind that copy alias.
+                let subscribed = (|| -> crate::Result<bool> {
+                    let txn = self.vault.store.env.read_txn()?;
+                    crate::sync::documents::DS_E.contains(
+                        &self.vault.store,
+                        &txn,
+                        &crate::side_table::HexId(frame.entity),
+                    )
+                })();
+                match subscribed {
+                    Ok(false) => return Ok(Vec::new()),
+                    Err(error) => self.report_document_retry_error(&error),
+                    Ok(true) => {}
+                }
+                self.document_retries
+                    .lock()
+                    .map_err(|_| TransportError::Storage("document retry state poisoned".into()))?
+                    .insert(frame.entity);
+                return Ok(Vec::new());
+            }
             document_sub_tags::ARTIFACT_RECEIPT => {
                 self.accept_artifact_receipt(frame.entity, frame.payload)
                     .map_err(storage)?;
@@ -57,12 +80,15 @@ impl SyncClient {
                         )
                         .into_result()?,
                     ];
-                    out.extend(
-                        self.manager
-                            .documents()
-                            .pending_note_requests(frame.entity)
-                            .map_err(storage)?,
-                    );
+                    let pending = self
+                        .manager
+                        .documents()
+                        .pending_note_requests(frame.entity)
+                        .map_err(storage)?;
+                    if pending.is_empty() {
+                        self.clear_document_retry(frame.entity)?;
+                    }
+                    out.extend(pending);
                     return Ok(out);
                 }
                 document_sub_tags::NOTE_RECEIPT => {
@@ -85,6 +111,35 @@ impl SyncClient {
         match frame.kind {
             document_sub_tags::ACK => {
                 doc.acknowledge(frame.payload).map_err(storage)?;
+                let settled = (|| -> Result<bool, TransportError> {
+                    if !self
+                        .document_retries
+                        .lock()
+                        .map_err(|_| {
+                            TransportError::Storage("document retry state poisoned".into())
+                        })?
+                        .contains(&frame.entity)
+                        || !doc.pending_frames().map_err(storage)?.is_empty()
+                    {
+                        return Ok(false);
+                    }
+                    let remote = loro::VersionVector::decode(frame.payload)
+                        .map_err(|_| TransportError::InvalidPayload("invalid document ack"))?;
+                    let current =
+                        loro::VersionVector::decode(&doc.version_vector().map_err(storage)?)
+                            .map_err(|_| {
+                                TransportError::InvalidPayload("invalid document vector")
+                            })?;
+                    Ok(matches!(
+                        remote.partial_cmp(&current),
+                        Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+                    ))
+                })();
+                match settled {
+                    Ok(true) => self.clear_document_retry(frame.entity)?,
+                    Ok(false) => {}
+                    Err(error) => self.report_document_retry_error(&error),
+                }
                 Ok(Vec::new())
             }
             document_sub_tags::STATE | document_sub_tags::UPDATE => {
@@ -111,9 +166,14 @@ impl SyncClient {
                 // Text a device-only world keeps here, or a federation peer may
                 // not read now, stays journaled; each reply loop asks again
                 // right before its send.
+                let pending = doc.pending_frames().map_err(storage)?;
+                if pending.is_empty() {
+                    self.clear_document_retry(frame.entity)?;
+                }
+                // Until the remote covers a nonempty journal, keep retrying
+                // even if its resend is withheld or the socket send fails.
                 out.extend(
-                    doc.pending_frames()
-                        .map_err(storage)?
+                    pending
                         .into_iter()
                         .filter(|frame| !self.frame_withheld(frame)),
                 );
@@ -126,6 +186,47 @@ impl SyncClient {
     }
 }
 impl SyncClient {
+    fn clear_document_retry(&self, id: crate::EntityId) -> Result<(), TransportError> {
+        self.document_retries
+            .lock()
+            .map_err(|_| TransportError::Storage("document retry state poisoned".into()))?
+            .remove(&id);
+        Ok(())
+    }
+
+    fn report_document_retry_error(&self, error: &impl std::fmt::Display) {
+        let _ = self.event_tx.send(super::SyncEvent::Error(format!(
+            "Document retry failed: {error}"
+        )));
+    }
+
+    /// Reuse the connection's existing housekeeping tick and outgoing batch.
+    /// Only an absent subscription/deleted row retires a retry without a reply;
+    /// a read/open error leaves it owed and does not close unrelated traffic.
+    pub(crate) fn retry_document_requests(&self) -> Vec<Vec<u8>> {
+        let ids = match self.document_retries.lock() {
+            Ok(retries) => retries.iter().copied().collect::<Vec<_>>(),
+            Err(error) => {
+                self.report_document_retry_error(&error);
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for id in ids {
+            match self.manager.documents().retry_request_frame(id) {
+                Ok(Some(frame)) if !self.frame_withheld(&frame) => out.push(frame),
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if let Err(error) = self.clear_document_retry(id) {
+                        self.report_document_retry_error(&error);
+                    }
+                }
+                Err(error) => self.report_document_retry_error(&error),
+            }
+        }
+        out
+    }
+
     /// A document-only change to a NOTE reaches live queries as its entity
     /// path in the NOTE's learned window.
     fn report_note_document(&self, note: crate::EntityId) -> crate::Result<()> {

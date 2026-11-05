@@ -46,6 +46,7 @@ impl Memory<'_> {
         let writer = origin_authority_writer(input.writer.as_deref(), host)?;
         let authority = self.vault.set_served_origin_authority_as_owner(
             owner,
+            self.owner_surface(),
             &input.repo,
             input.expected_epoch,
             input.residence,
@@ -110,7 +111,7 @@ impl Memory<'_> {
         let author = revision
             .commit_metadata
             .as_ref()
-            .map(|metadata| metadata.author);
+            .and_then(|metadata| metadata.author);
         self.origin_listed(revision.provenance_claim_id.into_iter().chain(author))?;
         let authority = self.origin_export_authority(&input.repo)?;
         let receipt =

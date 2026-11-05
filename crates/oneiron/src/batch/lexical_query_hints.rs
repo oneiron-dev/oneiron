@@ -9,11 +9,11 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -121,7 +121,9 @@ pub(super) fn validate_public_raw_put(
         ENTITY_TYPE_SKILL => {
             crate::write_envelope::skill_record::validate_skill_record_bytes(data)?
         }
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::validate_agent_definition_bytes(data)?
+        }
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only
         // replicated door deliberately does NOT run this check — it accepts a
@@ -163,7 +165,10 @@ pub(super) fn validate_public_raw_put(
 }
 
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
-    let body = crate::note::decode_note_body_using(data, crate::note::NoteKind::wire)?;
+    let body = crate::store::note_body::decode_note_body_using(
+        data,
+        crate::store::note_body::NoteKind::wire,
+    )?;
     if !body.author_ref.is(*author) {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",
@@ -467,11 +472,12 @@ pub(super) struct DeletedLexicalQueryHints {
 }
 
 pub(super) fn delete_lexical_query_hint_claims_for_target(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     keep: &HashSet<EntityId>,
 ) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
     let mut result = DeletedLexicalQueryHints::default();
     let mut pending_targets = VecDeque::from([*target]);
     let mut visited_targets = HashSet::new();
@@ -488,7 +494,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
                 continue;
             }
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                deindex_entity_without_lexical_query_hint_cascade(store, wtxn, &hint_id)?;
+                deindex_entity_without_lexical_query_hint_cascade(write, wtxn, &hint_id)?;
             if existed {
                 pending_targets.push_back(hint_id);
                 result.deleted.push((hint_id, neighbors));

@@ -25,7 +25,7 @@ use crate::{EntityId, Error, Result};
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_sieve_rungs(
-        &mut self,
+        &self,
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
@@ -205,7 +205,9 @@ impl ConsolidationExecutor<'_> {
                 // handed to the driver's settlement with the park (FIX
                 // 11554).
                 Err(error) => {
-                    if let DurableStepError::SpentLlm { usage, .. } = &error {
+                    if let DurableStepError::SpentLlm { usage, .. }
+                    | DurableStepError::SpentFallback { usage, .. } = &error
+                    {
                         charges.record_usage(usage);
                     }
                     return Ok(

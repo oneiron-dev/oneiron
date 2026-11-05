@@ -38,17 +38,16 @@ use oneiron_driver::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use super::super::http::{KeyStyle, MAX_REPLY_BYTES, ProviderHttp};
-use super::bundle::sha256_hex;
+use super::super::ModelHostBudgets;
+use super::super::http::{
+    KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read, holding_chat_replies,
+};
+use super::super::llama_identity::verify_llama_header;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 /// The usage key an EXL3 answer echoes its launch manifest's digest under.
 pub(super) const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
-
-/// The llama.cpp identity manifest schema this probe reads.
-const LLAMA_SCHEMA_VERSION: u64 = 1;
-const LLAMA_BACKEND: &str = "llama_cpp";
 
 /// The one qualification input: a one-token answer to a fixed prompt, with
 /// thinking off.
@@ -221,12 +220,19 @@ impl HouseProbe {
         }
         let path = format!("/{}.json", alias.manifest.as_str());
         let manifest = match http.get_native_within(&path, MAX_REPLY_BYTES).await {
-            Ok(reply) if (200..300).contains(&reply.status) => verify_llama(
-                &reply.body,
-                alias.manifest.as_str(),
-                &alias.epoch,
-                &self.wire_model,
-            ),
+            Ok(reply) => {
+                let _held = charge_read(reply.body.len());
+                if (200..300).contains(&reply.status) {
+                    verify_llama(
+                        &reply.body,
+                        alias.manifest.as_str(),
+                        &alias.epoch,
+                        &self.wire_model,
+                    )
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
         let Some(identity) = manifest else {
@@ -260,8 +266,18 @@ impl WorkerProbe for HouseProbe {
                 Err(_) => return WorkerReadiness::Unverified { observed: None },
             };
             match expected.kind {
-                WorkerKind::Exl3 => self.exl3(http, expected).await,
-                WorkerKind::LlamaCpp => self.llama(http, expected).await,
+                WorkerKind::Exl3 | WorkerKind::LlamaCpp => {
+                    // A shared worker belongs to no vault; each qualification
+                    // owns its default line rather than capturing the first vault.
+                    let budgets = ModelHostBudgets::unhosted();
+                    holding_chat_replies(&budgets, async {
+                        match expected.kind {
+                            WorkerKind::Exl3 => self.exl3(http, expected).await,
+                            _ => self.llama(http, expected).await,
+                        }
+                    })
+                    .await
+                }
                 WorkerKind::VoxCpm2 | WorkerKind::Asr => {
                     let launch = self.launch();
                     super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
@@ -332,13 +348,9 @@ fn failed(failure: WorkerFailure, observed: Option<WorkerDescriptor>) -> WorkerR
     WorkerReadiness::Failed { failure, observed }
 }
 
-/// The fields of a llama.cpp identity manifest this probe checks.
+/// The qualification manifest's identity payload.
 #[derive(Deserialize)]
 struct LlamaManifest {
-    schema_version: u64,
-    backend: String,
-    backend_epoch: CacheEpoch,
-    configured_wire_id: String,
     identity: CacheIdentity,
 }
 
@@ -350,15 +362,9 @@ fn verify_llama(
     epoch: &CacheEpoch,
     wire_model: &str,
 ) -> Option<CacheIdentity> {
-    if sha256_hex(bytes) != digest {
-        return None;
-    }
+    verify_llama_header(bytes, digest, epoch, wire_model)?;
     let manifest: LlamaManifest = serde_json::from_slice(bytes).ok()?;
-    (manifest.schema_version == LLAMA_SCHEMA_VERSION
-        && manifest.backend == LLAMA_BACKEND
-        && manifest.backend_epoch == *epoch
-        && manifest.configured_wire_id == wire_model)
-        .then_some(manifest.identity)
+    Some(manifest.identity)
 }
 
 /// One pinned field of an identity.

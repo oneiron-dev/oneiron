@@ -300,6 +300,7 @@ fn parse_responses_usage(usage: &JsonValue) -> LlmUsage {
             reasoning,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     }
 }
 

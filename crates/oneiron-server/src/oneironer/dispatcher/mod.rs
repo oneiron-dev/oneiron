@@ -60,12 +60,11 @@ mod policy;
 mod worker;
 
 use policy::LIVE_BATCH_CAP;
-use worker::WorkerState;
 
 pub(crate) use capacity::{Completion, DispatchClaim, pending_cap};
 pub(crate) use lifecycle::{DispatcherHandle, Fault, Lifeline, Restart};
 pub(crate) use policy::BULK_BATCH_CAP;
-pub(crate) use worker::{Worker, WorkerDescriptor, WorkerSpec};
+pub(crate) use worker::{Worker, WorkerDescriptor, WorkerSpec, WorkerState};
 
 /// Tool name on every failure the dispatcher reports itself.
 const DISPATCH_TOOL: &str = "oneironer-dispatcher";
@@ -80,6 +79,8 @@ pub(super) struct Job {
     /// (FIX 9518), each run whole and merged into the call's one answer.
     pub(super) windows: InferenceWindows,
     work: ExtractionWork,
+    /// The invocation's vault and native host permission, never a slot-global vault.
+    call_context: Option<oneiron::llm::TaggerCallContext>,
     /// Its longest window in tokens with specials, counted once as it was
     /// submitted: which workers may run it. 0 in a slot that counts none,
     /// whose one worker runs every call.
@@ -102,6 +103,9 @@ struct WorkerHandle {
     /// Inputs one unit of its may hold.
     batch: usize,
     state: WorkerState,
+    /// Why it last changed state: the absence, DOWN or crash reason its
+    /// status reports (FIX 7384).
+    last_why: Option<String>,
     /// Running a unit.
     busy: bool,
     /// Live calls routed to it, each with the rule that routed it.
@@ -310,6 +314,7 @@ impl Shared {
                 return false;
             }
             scheduler.workers[index].state = state;
+            scheduler.workers[index].last_why = why.map(str::to_owned);
             if state != WorkerState::Ready {
                 scheduler.reroute(index);
             }
@@ -418,6 +423,23 @@ impl Dispatcher {
         self.shared.publish_rank(worker.0, rank);
     }
 
+    /// Every worker's descriptor, state and latest transition reason, under
+    /// one scheduler lock, for the slot's status (FIX 7384).
+    pub(crate) fn worker_statuses(&self) -> Vec<(WorkerDescriptor, WorkerState, Option<String>)> {
+        let scheduler = self.shared.lock();
+        scheduler
+            .workers
+            .iter()
+            .map(|worker| {
+                (
+                    worker.descriptor.clone(),
+                    worker.state,
+                    worker.last_why.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// The windows `input` runs as, counted with the slot's tokenizer, one
     /// counted `0` for a slot that counts none: a blocking encode
     /// (FIX 7331, 9518).
@@ -435,6 +457,21 @@ impl Dispatcher {
     ) -> EncoderAttempt {
         let claim = capacity::claim_blocking(&self.shared, work, caller);
         claim.submit(input.clone()).wait()
+    }
+
+    /// The contextual call follows the same room and queue accounting.
+    pub(crate) fn call_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &oneiron::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        let claim = capacity::claim_blocking(&self.shared, work, caller);
+        let planned = self.shared.plan(input.clone());
+        claim
+            .submit_planned_in(planned, Some(context.clone()))
+            .wait()
     }
 
     /// Room for one call in `work`'s class, for an async caller: awaited on
@@ -465,6 +502,7 @@ fn add(shared: &Arc<Shared>, spec: WorkerSpec) -> anyhow::Result<WorkerId> {
         rank: UNRANKED,
         batch: spec.batch().max(1),
         state: WorkerState::Loading,
+        last_why: None,
         busy: false,
         live: VecDeque::new(),
         stop: None,

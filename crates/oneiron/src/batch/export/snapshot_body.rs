@@ -100,7 +100,11 @@ fn note_body<'b>(
     body: &'b [u8],
 ) -> Result<Cow<'b, [u8]>> {
     if entity_type == ENTITY_TYPE_NOTE
-        && crate::note::decode_note_body_using(body, crate::note::NoteKind::wire).is_ok()
+        && crate::store::note_body::decode_note_body_using(
+            body,
+            crate::store::note_body::NoteKind::wire,
+        )
+        .is_ok()
     {
         return crate::note::live_body_in_txn(&vault.store, rtxn, id, entity_type, body);
     }

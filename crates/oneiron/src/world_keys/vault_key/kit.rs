@@ -332,7 +332,7 @@ fn committed_key(
     commitment: &[u8; 32],
     secret: RestoredKitSecret,
 ) -> Result<VaultDataKey> {
-    let key = VaultDataKey(secret.into_bytes());
+    let key = VaultDataKey::from_guarded(secret.into_bytes());
     if key.commitment(vault_id) != *commitment {
         return Err(refused(
             "the kit opens to another key than the one this vault's commitment names",
@@ -403,7 +403,7 @@ impl Vault {
                 cost: issue.cost,
                 only_machine,
             },
-            &key.0,
+            key.guarded_bytes(),
         )
         .map_err(kit_refused)?;
         let manifest = kit.manifest().clone();

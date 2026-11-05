@@ -1,7 +1,8 @@
 //! Duplicate-nonce detection where the caller can see it.
 //!
-//! The real guarantee is the fresh 32-byte salt per envelope: the payload key is
-//! unique per envelope, so a repeated nonce alone does not reuse a key/nonce pair.
+//! The fresh 32-byte random salt makes payload-key reuse across envelopes
+//! overwhelmingly unlikely. Repeating a nonce alone does not reuse a key/nonce
+//! pair when the per-envelope keys differ.
 //! The ledger is a stricter, optional guard on top: it refuses a second envelope
 //! with the same `(key id, nonce)` seen by one ledger. It lives in memory only and
 //! promises nothing across processes.

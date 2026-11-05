@@ -27,7 +27,7 @@ use zeroize::Zeroizing;
 use super::alloc::{buffer_from_vec, free_vec};
 use super::engine_error::engine_failure;
 use super::guard::{ffi_guard, with_optional_slice, write_out};
-use super::parse::{string_from_optional, string_from_required, validate_dimensions};
+use super::parse::{string_from_optional, string_from_required};
 use super::types::{OneironBuffer, OneironByteSlice, OneironStatus, OneironVault};
 
 /// The app's side of an embedded engine, handed to `oneiron_engine_start`:
@@ -275,7 +275,6 @@ pub unsafe extern "C" fn oneiron_engine_start(
         status((move || {
             let path = string_from_required(path_ptr, path_len)?;
             let config_path = string_from_optional(config_path_ptr, config_path_len)?;
-            validate_dimensions(dimensions)?;
             // Crash output never carries world text: the engine's hook goes in
             // before any vault opens (owner ruling 2026-10-14, fix 6).
             oneiron::panic_report::install_panic_hook();

@@ -16,9 +16,13 @@ pub(crate) use agent_grant::{
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
-    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal, ArchiveDeleteRole,
+    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal,
     require_archive_delete_in_txn,
 };
+// The old path of the role the deletion gate now names at
+// `deletion::archive_role`; kept for callers of the federation path.
+#[allow(unused_imports)]
+pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
@@ -89,13 +93,13 @@ pub use shared_creation::{
 };
 // A courtesy ask's recipient copies, read in the caller's writer (FIX 2927).
 pub(crate) mod courtesy_scope;
+pub(crate) mod delivery_record;
+pub use delivery_record::FederationDeliveryRecord;
 mod foreign_world;
-pub(crate) use foreign_world::PactDelivery;
 pub use foreign_world::pact_foreign_world;
+pub(crate) use foreign_world::{PactDelivery, foreign_world_for};
 #[cfg(feature = "sync")]
-pub(crate) use foreign_world::{
-    courtesy_ask_worlds_here, foreign_world_for, guest_claim_withheld, guest_claim_world,
-};
+pub(crate) use foreign_world::{courtesy_ask_worlds_here, guest_claim_withheld, guest_claim_world};
 mod guest;
 mod peer_authority;
 pub mod record_scope;

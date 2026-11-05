@@ -316,7 +316,9 @@ fn read_ledger(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Ledger> {
             {
                 match review_input(&payload.input) {
                     Some(HealthReviewInput::Nightly) => {
-                        ledger.nightly_reviews.push(record.updated_at);
+                        if let Some(settled_at) = record.settled_at {
+                            ledger.nightly_reviews.push(settled_at);
+                        }
                     }
                     Some(HealthReviewInput::Terminal { attempt, .. }) => {
                         ledger.terminal_reviews.insert(*attempt.as_bytes());
@@ -381,7 +383,10 @@ fn cohort(
         if !settled(record.state) {
             continue;
         }
-        let day = record.updated_at / SECONDS_PER_DAY;
+        let Some(settled_at) = record.settled_at else {
+            continue;
+        };
+        let day = settled_at / SECONDS_PER_DAY;
         let within = |days: u64| day < today && day >= today.saturating_sub(days.saturating_mul(2));
         let actor_span = within(periods.vault);
         let project_span = within(periods.of_project(dispatch.project));
@@ -419,7 +424,7 @@ struct Facts {
 /// An attempt's observed waits not on a person, as the nightly review reads
 /// them: queue, backoff and pause spans, their union over its life.
 fn wait_of(record: &AttemptRecord) -> Option<(u64, u64, BTreeMap<String, u64>)> {
-    let life = record.updated_at.saturating_sub(record.created_at);
+    let life = record.settled_at?.saturating_sub(record.created_at);
     if life == 0 {
         return None;
     }
@@ -581,7 +586,10 @@ fn read_checked(
                 scope
             }
         };
-        let end = record.updated_at;
+        let Some(end) = record.settled_at else {
+            checked.push(false);
+            continue;
+        };
         let next = ledger.nightly_reviews.partition_point(|at| *at < end);
         let nightly = ledger
             .nightly_reviews

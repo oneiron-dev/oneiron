@@ -126,14 +126,36 @@ impl PreparedWindowPads {
         sub_tag: u8,
         queue_seq: Option<u64>,
     ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
-        let kind = WindowPadKind::of_sub_tag(sub_tag).ok_or(TransportError::InvalidPayload(
-            "window frame carries no window bytes",
-        ))?;
-        let envelope = self.envelope(kind, queue_seq);
+        let envelope = self.frame_envelope(sub_tag, queue_seq)?;
         Ok((
             envelope.encode_frames(window_key, sub_tag)?,
             envelope.binding(),
         ))
+    }
+
+    /// The same send and receipt binding, sized for node batch members.
+    pub(crate) fn frames_batched(
+        &self,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+    ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
+        let envelope = self.frame_envelope(sub_tag, queue_seq)?;
+        Ok((
+            envelope.encode_batch_frames(window_key, sub_tag)?,
+            envelope.binding(),
+        ))
+    }
+
+    fn frame_envelope(
+        &self,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+    ) -> Result<WindowPadEnvelope, TransportError> {
+        let kind = WindowPadKind::of_sub_tag(sub_tag).ok_or(TransportError::InvalidPayload(
+            "window frame carries no window bytes",
+        ))?;
+        Ok(self.envelope(kind, queue_seq))
     }
 }
 
@@ -314,17 +336,20 @@ pub fn promotion_window_pads(
 /// What this machine did with `envelope`'s pads, a frame of `window` that
 /// passed its admission: a sealed envelope's capsule opened as this machine,
 /// installed into current custody and read back, each pad it owes held. The
-/// caller persists and imports the payload only when the readiness is not
-/// `NotReady`.
+/// pads it owes are those its reference list names and those its payload
+/// itself references (FIX 10480), the payload read over `context`, the
+/// document it imports into, when it is an update. The caller persists and
+/// imports the payload only when the readiness is not `NotReady`.
 pub fn admit_window_pads(
     vault: &Vault,
     window: &WindowKey,
     envelope: &WindowPadEnvelope,
+    context: Option<&LoroDoc>,
 ) -> WindowPadReceipt {
     let readiness = match envelope.form {
         WindowPadForm::PadFree => WindowPadReadiness::PadFree,
         WindowPadForm::Carrier => WindowPadReadiness::KeptCarrier,
-        WindowPadForm::Sealed => match install(vault, window, envelope) {
+        WindowPadForm::Sealed => match install(vault, window, envelope, context) {
             Ok(true) => WindowPadReadiness::Ready,
             Ok(false) => {
                 tracing::warn!(%window, "window pads not all installed here");
@@ -344,7 +369,12 @@ pub fn admit_window_pads(
 
 /// Opens, installs, commits and reads back `envelope`'s capsule; whether
 /// every pad it owes is then held here.
-fn install(vault: &Vault, window: &WindowKey, envelope: &WindowPadEnvelope) -> crate::Result<bool> {
+fn install(
+    vault: &Vault,
+    window: &WindowKey,
+    envelope: &WindowPadEnvelope,
+    context: Option<&LoroDoc>,
+) -> crate::Result<bool> {
     let corrupt = || crate::Error::CorruptedIndex("window pad envelope");
     let sidecar = envelope.sidecar.as_ref().ok_or_else(corrupt)?;
     let world = window.world().ok_or_else(corrupt)?;
@@ -359,7 +389,9 @@ fn install(vault: &Vault, window: &WindowKey, envelope: &WindowPadEnvelope) -> c
         .iter()
         .map(crate::world_keys::WorldKeyId::envelope_key_id)
         .collect();
-    if sealed.world != world || !envelope.refs.iter().all(|item| named.contains(item)) {
+    // Before anything opens or installs: the capsule names every pad owed.
+    let owed = owed_pads(vault, window, envelope, context)?;
+    if sealed.world != world || !owed.is_subset(&named) {
         return Ok(false);
     }
     let opened = open_world_pad_compartment(
@@ -379,5 +411,33 @@ fn install(vault: &Vault, window: &WindowKey, envelope: &WindowPadEnvelope) -> c
         return Ok(false);
     }
     let held: BTreeSet<&[u8; 40]> = installed.held.iter().collect();
-    Ok(envelope.refs.iter().all(|item| held.contains(item)))
+    Ok(owed.iter().all(|item| held.contains(item)))
+}
+
+/// Every pad `envelope` owes (FIX 10480): each its reference list names and
+/// each its payload, read over `context`, references, by full key id. The
+/// namespace hint only spells the projection; no hint is compared.
+///
+/// # Errors
+///
+/// A payload that does not project: nothing then installs and the frame is
+/// answered `NotReady`, as for any other pad that does not install.
+fn owed_pads(
+    vault: &Vault,
+    window: &WindowKey,
+    envelope: &WindowPadEnvelope,
+    context: Option<&LoroDoc>,
+) -> crate::Result<BTreeSet<[u8; 40]>> {
+    let mut owed: BTreeSet<[u8; 40]> = envelope.refs.iter().copied().collect();
+    let hint = vault.store.world_pad_namespace().unwrap_or_default();
+    if let WindowPadProjection::Projected { required_refs, .. } =
+        project_window_pad_refs(window, &envelope.payload, context, &hint)?
+    {
+        owed.extend(
+            required_refs
+                .iter()
+                .map(|reference| reference.key.envelope_key_id()),
+        );
+    }
+    Ok(owed)
 }

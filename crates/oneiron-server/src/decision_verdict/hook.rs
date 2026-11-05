@@ -47,19 +47,21 @@ pub(crate) fn run_hook_verdict(
     let class = context.reader_class();
     let before = line.read().used_units;
     let (answered, settled) = capture_settlements(|| {
-        on_hook_grant(&context.grant, || {
-            on_caller_meter(line, || {
-                on_caller_payer(None, || {
-                    answer_verdict(
-                        server,
-                        principal,
-                        class,
-                        reader,
-                        None,
-                        None,
-                        request,
-                        evidence_read,
-                    )
+        super::with_model_call_context(principal, None, || {
+            on_hook_grant(&context.grant, || {
+                on_caller_meter(line, || {
+                    on_caller_payer(None, || {
+                        answer_verdict(
+                            server,
+                            principal,
+                            class,
+                            reader,
+                            None,
+                            None,
+                            request,
+                            evidence_read,
+                        )
+                    })
                 })
             })
         })

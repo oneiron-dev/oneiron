@@ -22,12 +22,7 @@ pub(crate) struct AgentBirthSource {
     pub(crate) tree: ExportFileTree,
     source_definition: ExportBody,
 }
-pub(crate) fn birth_source_id(child: &EntityId) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron.agent-birth-source.v1",
-        &[child.as_bytes()],
-    )
-}
+pub(crate) use crate::store::agent_birth_identity::birth_source_id;
 pub(crate) fn encode_birth_source(
     child: &EntityId,
     created: &AgentDefinition,

@@ -64,6 +64,12 @@ pub(super) struct AllocationHold {
 }
 
 impl RunPermit {
+    /// The issuing run instance stamped on this call's receipts.
+    #[must_use]
+    pub fn instance(&self) -> crate::EntityId {
+        self.run.instance()
+    }
+
     /// The lease the call carries to the gated backend.
     #[must_use]
     pub fn lease(&self) -> &BudgetLease {

@@ -17,6 +17,20 @@ use super::{
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
 
+/// The authenticated restore's image-write continuation. Only this landing
+/// module can construct it, after the image rows and indexes have landed.
+pub(crate) struct RestoreActorScrubWriter<'write, 'env> {
+    vault: &'write Vault,
+    wtxn: &'write mut heed::RwTxn<'env>,
+    erased: &'write BTreeSet<EntityId>,
+}
+
+impl<'env> RestoreActorScrubWriter<'_, 'env> {
+    pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, &BTreeSet<EntityId>) {
+        (self.vault, &mut *self.wtxn, self.erased)
+    }
+}
+
 impl Vault {
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
@@ -90,7 +104,8 @@ impl Vault {
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
-        let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        let (retired, retired_digests) =
+            carried_bodies::require(&mut image, gate_custody.plan_mut())?;
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -131,6 +146,7 @@ impl Vault {
         // it: only a committed restore keeps them (C8). The config is checked
         // first, as an owned open checks it before it touches the disk.
         Self::check_open_config(&config)?;
+        let claim_row_floor = super::claim_order::plan_floor(&mut image, &opened_entities)?;
         // Each row is counted at the length it lands at (FIX 6025, 6232).
         let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
         // The opened payload rows land beside them, counted the same way.
@@ -169,7 +185,8 @@ impl Vault {
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
-        vault.with_write_txn_grouped(|txn| {
+        let cancelled = vault.with_write_txn_grouped(|txn| {
+            let destination_floor = crate::ports::claim_order::floor_in_txn(&vault.store, txn)?;
             for entry in DB_MANIFEST {
                 let db = vault
                     .store
@@ -181,11 +198,18 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
+            crate::ports::claim_order::observe_in_txn(
+                &vault.store,
+                txn,
+                claim_row_floor.max(destination_floor),
+            )?;
             // Each compartment that opened lands beside them, through its
             // getter's own restore (KS7-5).
-            if let Some(opened) = opened {
-                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?;
-            }
+            let blob_artifacts = if let Some(opened) = opened {
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?
+            } else {
+                Vec::new()
+            };
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
@@ -220,6 +244,9 @@ impl Vault {
                     key.as_slice().try_into().map_err(|_| codec_error())?,
                 )?;
                 let h = crate::batch::EntityMetadataHeader::parse(raw).ok_or_else(codec_error)?;
+                if h.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                    crate::ports::claim_order::observe_in_txn(&vault.store, txn, h.row_version)?;
+                }
                 crate::batch::stage_entity_index_rows(
                     &vault.store,
                     txn,
@@ -235,28 +262,52 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            // Blob versions whose actor retired after the cut can recover
+            // their original actor only from their fully bound native claim.
+            // All getters, custody rows and type indexes are now readable;
+            // the actor sweep below scrubs both copies before this commits.
+            for opened in blob_artifacts {
+                crate::blob_artifact::checkpoint::restore_missing_process_in_txn(
+                    &mut RestoreActorScrubWriter {
+                        vault: &vault,
+                        wtxn: txn,
+                        erased: &erased,
+                    },
+                    opened,
+                )?;
+            }
             // What the live source erased after the cut, read before the
             // sweep below writes anything.
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, &erased)?;
+            let cancelled = crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+                vault: &vault,
+                wtxn: txn,
+                erased: &erased,
+            })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
-            response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
+            response_rows::removals::scrub_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &since,
+            )?;
             // A step claim's response pins go with what the rows no longer
             // hold, now the type index is back: an erased shell's release,
             // an omitted claim's or version's pin goes alone (FIX 6225).
             crate::llm::prune_step_response_pins_in_txn(
-                &vault.store,
+                &crate::secret_custody::CustodyWrite::of(&vault),
                 txn,
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
-            Ok(())
+            Ok(cancelled)
         })?;
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .erased_payload_cancellations_committed(&cancelled);
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         room.admit_derived(destination)?;

@@ -96,6 +96,9 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     let claim_authoring = factory
         .claim_authoring_selector(vault)
         .map_err(PassRunError::PreAdmission)?;
+    // The factory lends the pass deadline to the role runs it builds below
+    // (FIX 11962); a factory that keeps none runs them un-deadlined, as before.
+    factory.set_pass_deadline(&deadline);
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -114,6 +117,10 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
             driver.with_ambiguous_claim_authoring(roots)
         }
     };
+    // The factory lends the pass device-work cancellation beside the
+    // deadline (FIX 11963); a factory that keeps none admits unlinked, as
+    // before.
+    factory.set_device_cancel(driver.device_cancel());
     let executors = if scope == DreamerConsolidationScope::Macro {
         let buckets = oneiron::DreamerRunnerStore::new(vault)
             .macro_bucket_count()

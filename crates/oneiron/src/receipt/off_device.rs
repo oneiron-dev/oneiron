@@ -217,6 +217,33 @@ impl Vault {
             .map(|(page, _)| page)
     }
 
+    /// One raw, ordered source window, screened for this destination, beside
+    /// its last raw position and whether the source was exhausted. Progress
+    /// is captured before screening: an entirely withheld window still moves
+    /// the next read past every receipt it walked.
+    pub(crate) fn receipts_window_for_caller(
+        &self,
+        query: ReceiptQuery,
+        destination: &ReadDestination,
+    ) -> Result<(Vec<ReceiptRecord>, Option<ReceiptScanPosition>, bool)> {
+        let limit = query.limit;
+        let records = self.receipts(query)?;
+        let exhausted = records.len() < limit;
+        let walked = records.last().map(ReceiptScanPosition::of);
+        let records = if destination.is_off_device() {
+            let mut kept = Vec::new();
+            for record in records {
+                if off_device_admits(self, &record, destination)? {
+                    kept.push(record);
+                }
+            }
+            kept
+        } else {
+            records
+        };
+        Ok((records, walked, exhausted))
+    }
+
     /// [`Self::receipts_for_caller`], beside where its walk stopped when the
     /// work cap cut it short of a full page before the receipts ran out: the
     /// position of the last receipt it walked, kept or withheld, so a page

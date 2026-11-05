@@ -1,9 +1,6 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::affect::delete_vad_annotation_metadata_for_type_in_txn;
-use crate::affect::delete_vad_annotation_metadata_in_txn;
-use crate::affect::vad_annotation_delete_scope_exists_in_txn;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::deindex_lexical_query_hints_for_target;
@@ -13,9 +10,12 @@ use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, RetrievalIndexMaintenance, ShortIdStoreMaintenance};
-use crate::ppr;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionId;
+use crate::store::ppr_cache_invalidation as ppr;
+use crate::store::vad_annotation::delete_vad_annotation_metadata_for_type_in_txn;
+use crate::store::vad_annotation::delete_vad_annotation_metadata_in_txn;
+use crate::store::vad_annotation::vad_annotation_delete_scope_exists_in_txn;
 use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::provenance::EdgeRef;
 use crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE;

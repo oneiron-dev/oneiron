@@ -16,7 +16,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::off_record::promote::PromoteInitiator;
 use crate::registry::ENTITY_TYPE_MESSAGE;
-use crate::session_overlay::{JournalRole, OverlaySnapshot, PromotePlan, replayed_subject};
+use crate::session_overlay::{
+    JournalEntry, JournalRole, OverlayKeyspace, OverlaySnapshot, PromotePlan, SnapshotLookup,
+    replayed_subject,
+};
 
 use super::room::{
     Hearing, SavedTurns, post_notice, require_sight_in_txn, turn_put, visible, visible_message,
@@ -36,6 +39,7 @@ impl OffRecordSession<'_> {
         &self,
         initiator: PromoteInitiator,
         room: Option<EntityId>,
+        saver_class: crate::EdgeActorClass,
         authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
         answering: bool,
     ) -> Result<Option<SavedTurns>> {
@@ -47,6 +51,7 @@ impl OffRecordSession<'_> {
                 return Ok(None);
             }
             let snapshot = self.entry.overlay.snapshot()?;
+            let (excluded, remake_turns) = current_save_cut(self.vault, &snapshot)?;
             let (mut plans, mut times, mut appended) = (Vec::new(), Vec::new(), Vec::new());
             for (turn, minted_here) in pending_turns(&snapshot) {
                 let saved_before = state.record.promoted_turns.contains(turn.as_bytes());
@@ -72,9 +77,9 @@ impl OffRecordSession<'_> {
                 // The copy holds what the room showed, as an export does: a
                 // turn that showed nothing new is not saved at all.
                 let plan = if saved_before {
-                    append_plan(&snapshot, turn)?
+                    append_plan(&snapshot, turn, &excluded)?
                 } else {
-                    copy_plan(&snapshot, turn)?
+                    copy_plan(&snapshot, turn, &excluded)?
                 };
                 if let Some(plan) = plan {
                     plans.push(plan);
@@ -117,7 +122,14 @@ impl OffRecordSession<'_> {
             let (saved, hearing) = if plans.is_empty() {
                 (Vec::new(), check(&self.vault.store.env.read_txn()?)?)
             } else {
-                self.promote_plans(&mut state, plans, &initiator, |wtxn| check(wtxn))?
+                self.promote_plans(
+                    &mut state,
+                    plans,
+                    &initiator,
+                    saver_class,
+                    &remake_turns,
+                    |wtxn| check(wtxn),
+                )?
             };
             post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, hearing);
             // The save answers every suggestion that waited for it.
@@ -175,23 +187,30 @@ pub(super) fn turn_times(snapshot: &OverlaySnapshot, turn: EntityId) -> Vec<u64>
 /// edge, and each visible message with its edges and text. A hidden message
 /// (an agent's own reasoning), a summary and anything else of the turn stay
 /// out, and stay in the room. `None` when the turn showed nothing.
-pub(super) fn copy_plan(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<Option<PromotePlan>> {
-    let shown = shown_messages(snapshot, turn)?;
+pub(super) fn copy_plan(
+    snapshot: &OverlaySnapshot,
+    turn: EntityId,
+    excluded: &BTreeSet<EntityId>,
+) -> Result<Option<PromotePlan>> {
+    let shown = shown_messages(snapshot, turn, excluded)?;
     if shown.is_empty() {
         return Ok(None);
     }
     snapshot
-        .plan_promotion_where(turn, |entry| match entry.role {
-            JournalRole::ConversationShell | JournalRole::TurnPut => true,
-            JournalRole::SummaryDerivedFrom => false,
-            JournalRole::MessagePartOf | JournalRole::AttributionEdge => {
-                replayed_subject(&entry.op).is_some_and(|id| shown.contains(&id))
-            }
-            // The TURN's own edge to the room, and a shown message's text.
-            JournalRole::TurnOwnedArtifact => match &entry.op {
-                BatchOp::Edge { src, .. } => *src == turn,
-                op => replayed_subject(op).is_some_and(|id| shown.contains(&id)),
-            },
+        .plan_promotion_where(turn, |entry| {
+            keep_current_entry(entry, excluded)
+                && match entry.role {
+                    JournalRole::ConversationShell | JournalRole::TurnPut => true,
+                    JournalRole::SummaryDerivedFrom => false,
+                    JournalRole::MessagePartOf | JournalRole::AttributionEdge => {
+                        replayed_subject(&entry.op).is_some_and(|id| shown.contains(&id))
+                    }
+                    // The TURN's own edge to the room, and a shown message's text.
+                    JournalRole::TurnOwnedArtifact => match &entry.op {
+                        BatchOp::Edge { src, .. } => *src == turn,
+                        op => replayed_subject(op).is_some_and(|id| shown.contains(&id)),
+                    },
+                }
         })
         .map(Some)
 }
@@ -199,27 +218,38 @@ pub(super) fn copy_plan(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<Op
 /// What a later save adds to `turn`, which this stretch saved before: each
 /// visible message said into it since, with its edges and text, and nothing
 /// of the turn itself. `None` when nothing visible was.
-fn append_plan(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<Option<PromotePlan>> {
-    let shown = shown_messages(snapshot, turn)?;
+fn append_plan(
+    snapshot: &OverlaySnapshot,
+    turn: EntityId,
+    excluded: &BTreeSet<EntityId>,
+) -> Result<Option<PromotePlan>> {
+    let shown = shown_messages(snapshot, turn, excluded)?;
     if shown.is_empty() {
         return Ok(None);
     }
     snapshot
-        .plan_append_where(turn, |entry| match entry.role {
-            JournalRole::MessagePartOf
-            | JournalRole::AttributionEdge
-            | JournalRole::TurnOwnedArtifact => {
-                replayed_subject(&entry.op).is_some_and(|id| shown.contains(&id))
-            }
-            JournalRole::ConversationShell
-            | JournalRole::TurnPut
-            | JournalRole::SummaryDerivedFrom => false,
+        .plan_append_where(turn, |entry| {
+            keep_current_entry(entry, excluded)
+                && match entry.role {
+                    JournalRole::MessagePartOf
+                    | JournalRole::AttributionEdge
+                    | JournalRole::TurnOwnedArtifact => {
+                        replayed_subject(&entry.op).is_some_and(|id| shown.contains(&id))
+                    }
+                    JournalRole::ConversationShell
+                    | JournalRole::TurnPut
+                    | JournalRole::SummaryDerivedFrom => false,
+                }
         })
         .map(Some)
 }
 
 /// The visible messages of `turn` still in the room.
-fn shown_messages(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<BTreeSet<EntityId>> {
+fn shown_messages(
+    snapshot: &OverlaySnapshot,
+    turn: EntityId,
+    excluded: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
     let mut shown = BTreeSet::new();
     for entry in snapshot.journal_entries() {
         if let (
@@ -233,10 +263,82 @@ fn shown_messages(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<BTreeSet
         ) = (&entry.role, &entry.op)
             && *entity_type == ENTITY_TYPE_MESSAGE
             && entry.scope.turn() == turn
+            && keep_current_entry(entry, excluded)
             && visible_message(data)?.is_some()
         {
             shown.insert(*id);
         }
     }
     Ok(shown)
+}
+
+/// Cuts only journal-owned subjects. Base answers distinguish a retired row
+/// from a room-only delete; both leave no staged value in the overlay.
+pub(super) fn current_save_cut(
+    vault: &Vault,
+    snapshot: &OverlaySnapshot,
+) -> Result<(BTreeSet<EntityId>, BTreeSet<EntityId>)> {
+    let txn = vault.store.env.read_txn()?;
+    let mut excluded = BTreeSet::new();
+    let mut remake_turns = BTreeSet::new();
+    for entry in snapshot.journal_entries() {
+        let BatchOp::Put { id, .. } = &entry.op else {
+            continue;
+        };
+        let staged = snapshot
+            .staged_value(OverlayKeyspace::Entities, id.as_bytes())
+            .is_some();
+        let deleted = !staged
+            && (matches!(
+                snapshot.lookup_single(OverlayKeyspace::Entities, id.as_bytes()),
+                SnapshotLookup::Tombstone
+            ) || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, id)?);
+        if deleted || crate::ports::marked_stale_in_overlay(snapshot, id) {
+            excluded.insert(*id);
+            if matches!(
+                entry.role,
+                JournalRole::MessagePartOf | JournalRole::SummaryDerivedFrom
+            ) {
+                remake_turns.insert(entry.scope.turn());
+            }
+        }
+    }
+    // Follow only summary dependencies the typed journal itself records.
+    loop {
+        let mut changed = false;
+        for entry in snapshot.journal_entries() {
+            if entry.role != JournalRole::SummaryDerivedFrom {
+                continue;
+            }
+            let lost_source = matches!(&entry.op,
+                BatchOp::Edge { kind: crate::EdgeKind::DerivedFrom, tgt, .. }
+                    if excluded.contains(tgt) || remake_turns.contains(tgt)
+            );
+            if (remake_turns.contains(&entry.scope.turn()) || lost_source)
+                && let Some(id) = replayed_subject(&entry.op)
+            {
+                changed |= excluded.insert(id);
+                changed |= remake_turns.insert(entry.scope.turn());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    Ok((excluded, remake_turns))
+}
+
+pub(super) fn keep_current_entry(entry: &JournalEntry, excluded: &BTreeSet<EntityId>) -> bool {
+    if excluded.contains(&entry.scope.conversation())
+        || (entry.role != JournalRole::ConversationShell && excluded.contains(&entry.scope.turn()))
+        || replayed_subject(&entry.op).is_some_and(|id| excluded.contains(&id))
+    {
+        return false;
+    }
+    match &entry.op {
+        BatchOp::Edge { tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { tgt, .. }
+        | BatchOp::EdgeWithCreatedAt { tgt, .. } => !excluded.contains(tgt),
+        _ => true,
+    }
 }

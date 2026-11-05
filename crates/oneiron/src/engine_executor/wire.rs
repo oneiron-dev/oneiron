@@ -4,7 +4,6 @@ use super::types::EngineExecutorResult;
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
 };
-use crate::code_sandbox::source::{SourceLanguage, prepare_source};
 use crate::{ContentPart, Error, FinishReason, LlmResponse};
 
 /// Line-oriented markdown fence delimiter. The LANGUAGE SUFFIX after it is
@@ -88,8 +87,14 @@ pub(super) fn heal_executor_reply(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    heal_executor_text(&text)
+}
 
-    let (candidate, trailing) = partition_reply(&text);
+/// [`heal_executor_reply`] over a reply that finished cleanly, as its text:
+/// the post-hook view a step heals, with no copy of the reply made for it
+/// (FIX 448).
+pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecutorReply> {
+    let (candidate, trailing) = partition_reply(text);
     let (cleaned_trailing, trailing_discards) =
         partition_top_level_console_blocks(trailing, ConsoleRegion::Trailing)?;
     let trailing_speak = cleaned_trailing.trim();
@@ -151,9 +156,9 @@ pub(super) fn heal_executor_reply(
 /// A reply that OPENS with a whole markdown fence hands everything after that
 /// fence's closer line to ONE-1686 as trailing prose; anything else is one
 /// undivided candidate, so prose the partition cannot classify stays in front
-/// of the code and fails the mandatory structural gate instead of being
-/// silently split off. Two sibling fenced programs partition the same way and
-/// the second fence reaches that gate as residual structure — they are never
+/// of the code for the sandbox to parse instead of being silently split off.
+/// Two sibling fenced programs partition the same way and the second fence
+/// reaches that gate as residual structure — they are never
 /// joined into one source.
 fn partition_reply(text: &str) -> (&str, &str) {
     let lines = reply_lines(text);
@@ -238,9 +243,8 @@ fn strip_one_whole_exec_wrapper(input: &str) -> Option<&str> {
 /// existing caller-owned re-execute path. No error variant and no second
 /// retry loop is introduced.
 ///
-/// The executable-source preflight is deliberately a shape check, not a
-/// parser: general JavaScript syntax errors are NOT structural garbage and
-/// stay on the existing runtime-error path.
+/// This gate checks wire structure only. Language preparation and the
+/// sandbox parser handle source syntax on the existing runtime-error path.
 fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutorResult<()> {
     if code.is_empty() {
         return Err(Error::InvalidClaimBody("executor LLM response missing plain JS").into());
@@ -256,11 +260,6 @@ fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutor
             "executor LLM response trailed a second program instead of prose",
         )
         .into());
-    }
-    if !looks_like_plain_js(code) && !looks_like_typescript(code) {
-        return Err(
-            Error::InvalidClaimBody("executor LLM response is not executable plain JS").into(),
-        );
     }
     Ok(())
 }
@@ -603,68 +602,4 @@ fn advance_quoted_state(state: &mut SourceState, rest: &str, ch: char) -> usize 
         *state = SourceState::Code;
     }
     ch.len_utf8()
-}
-
-/// The executable-source preflight: a SHAPE check on the healed program.
-///
-/// It refuses prose, not imperfect JavaScript. A structurally clean source
-/// with a genuine syntax error still reaches the sandbox and fails on the
-/// existing runtime-error path, which is the boundary this ticket keeps.
-fn looks_like_plain_js(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    let first_line = trimmed.lines().next().unwrap_or_default().trim_start();
-    [
-        "await ",
-        "const ",
-        "let ",
-        "var ",
-        "if ",
-        "for ",
-        "while ",
-        "switch ",
-        "try ",
-        "return ",
-        "throw ",
-        "function ",
-        "async ",
-        "class ",
-        "import ",
-        "export ",
-        "self.",
-        "ask(",
-        "finish(",
-        "console.log(",
-        "writeOutput(",
-    ]
-    .iter()
-    .any(|prefix| first_line.starts_with(prefix))
-}
-
-/// The first-line openings of a TypeScript program the JavaScript shape list
-/// does not hold (FIX 8276).
-const TYPESCRIPT_OPENINGS: &[&str] = &[
-    "type ",
-    "interface ",
-    "enum ",
-    "namespace ",
-    "declare ",
-    "abstract ",
-    "@",
-];
-
-/// A TypeScript program whose first line opens with syntax the JavaScript
-/// shape list does not hold (FIX 8276). Only one Oxc prepares as TypeScript
-/// passes, so prose that opens with one of these words fails the gate as it
-/// always did, and every reply the JavaScript list passes is unchanged.
-fn looks_like_typescript(text: &str) -> bool {
-    let first_line = text
-        .trim_start()
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim_start();
-    let opens = TYPESCRIPT_OPENINGS
-        .iter()
-        .any(|prefix| first_line.starts_with(prefix));
-    opens && prepare_source(text).language() == SourceLanguage::TypeScript
 }

@@ -139,8 +139,9 @@ def exclusive_tracks(items, duration_ms, error=RuntimeRefusal):
 
 
 class NoUnits:
-    """A runtime no host admits unit by unit: a process port's, whose whole
-    call its parent bridge admitted as one unit. Each call just runs."""
+    """A runtime no host admits unit by unit: standalone use, where each call
+    just runs. Process ports relay each window as one parent unit (FIX 11501)
+    through the parent bridge's own gate instead."""
 
     @staticmethod
     def run(kind, audio_ms, call, usage=None):
@@ -352,12 +353,13 @@ class LocalRuntime:
             return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error, self.units), transcript, duration_ms, self.error)
         if external:
             body = process_pcm(audio, self.error)
-            # The port's whole call is one unit here: its process runs its
-            # windows itself.
-            result = self.units.run("alignment_window", duration_ms, lambda: process_module().call(
+            # Each window the port runs is one unit the host admits (FIX 11501):
+            # the worker relays its unit lines and the port relays each as one
+            # top-level unit; no outer unit wraps the port call itself.
+            result = process_module().call(
                 spec, "alignment", "align_words", body,
                 {"transcript": transcript, "language": language}, self.error, strict_json,
-                progress=self.units.progress))
+                units=self.units)
             model = self.alignment_model(language)
             provenance = checked_process_provenance(result, body, model, self.error)
             if (result.get("aligner_model") != model or provenance.get("language") != language
@@ -379,9 +381,11 @@ class LocalRuntime:
         spec = self.require("diarization")
         if spec.get("backend") == "process":
             body = process_pcm(audio, self.error)
-            result = self.units.run("diarization", duration_ms, lambda: process_module().call(
+            # Each unit the port runs is relayed as one top-level unit the host
+            # admits (FIX 11501); no outer unit wraps the port call itself.
+            result = process_module().call(
                 spec, "diarization", "diarize_full_file", body, {}, self.error, strict_json,
-                progress=self.units.progress))
+                units=self.units)
             provenance = checked_process_provenance(result, body, COMMUNITY, self.error)
             if provenance.get("full_file_samples") != len(audio):
                 raise self.error("ProcessDiarizationBindingMismatch")

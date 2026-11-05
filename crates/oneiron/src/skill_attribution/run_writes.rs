@@ -12,10 +12,9 @@
 //! opens it again from its token ([`with_run_write_token`]).
 
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use crate::agent_def::AgentAuthorLease;
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptQueue;
 use crate::batch::BatchOp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -28,76 +27,36 @@ thread_local! {
     static RUN_WRITES: RefCell<Option<RunWriteToken>> = const { RefCell::new(None) };
 }
 
-/// A leased run's write identity: its attempt, its lease's owner and the
-/// lease's generation, as the host holds them. Only a host lease makes one,
-/// never an actor. A write whose token is absent, or whose lease no longer
-/// holds, records no use of the run and lands as it would (FIX 3103).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunWriteToken(Arc<RunLease>);
+pub use oneiron_store::run_write_token::RunWriteToken;
 
-#[derive(Debug, PartialEq, Eq)]
-struct RunLease {
-    attempt: AttemptId,
-    owner: String,
-    generation: u32,
+/// The token of the run `lease` is the host lease of.
+pub(crate) fn run_write_token_from_lease(lease: &AgentAuthorLease) -> RunWriteToken {
+    RunWriteToken::of(lease.attempt, lease.owner.clone(), lease.generation)
 }
 
-impl RunWriteToken {
-    pub(crate) fn from_lease(lease: &AgentAuthorLease) -> Self {
-        Self::of(lease.attempt, lease.owner.clone(), lease.generation)
-    }
+/// The token of the leased run a host-bound write's `origin` carries:
+/// the sealed lease binding the host read live as it built the origin.
+/// `None` for an origin no leased run binds.
+#[must_use]
+pub fn run_write_token_of_origin(origin: &HostWriteOrigin) -> Option<RunWriteToken> {
+    origin.task_host().map(|binding| {
+        RunWriteToken::of(
+            binding.parent(),
+            binding.lease_owner().to_owned(),
+            binding.attempt_count(),
+        )
+    })
+}
 
-    pub(super) fn of(attempt: AttemptId, owner: String, generation: u32) -> Self {
-        Self(Arc::new(RunLease {
-            attempt,
-            owner,
-            generation,
-        }))
-    }
-
-    /// The token of the leased run a host-bound write's `origin` carries:
-    /// the sealed lease binding the host read live as it built the origin.
-    /// `None` for an origin no leased run binds.
-    #[must_use]
-    pub fn of_origin(origin: &HostWriteOrigin) -> Option<Self> {
-        origin.task_host().map(|binding| {
-            Self::of(
-                binding.parent(),
-                binding.lease_owner().to_owned(),
-                binding.attempt_count(),
-            )
-        })
-    }
-
-    /// The shared allocation this token names and the heap bytes it holds:
-    /// the lease's counts and fields, and its owner at capacity. Tokens that
-    /// share one lease name one allocation, so a holder that keeps many
-    /// counts it once.
-    pub(crate) fn heap_allocation(&self) -> (usize, usize) {
-        let bytes = (2 * std::mem::size_of::<usize>())
-            .saturating_add(std::mem::size_of::<RunLease>())
-            .saturating_add(self.0.owner.capacity());
-        (Arc::as_ptr(&self.0) as usize, bytes)
-    }
-
-    pub(super) fn attempt(&self) -> AttemptId {
-        self.0.attempt
-    }
-
-    pub(super) fn owner(&self) -> &str {
-        &self.0.owner
-    }
-
-    pub(super) fn generation(&self) -> u32 {
-        self.0.generation
-    }
-
-    /// Whether the run's lease holds in `txn`, read only through it.
-    pub(super) fn lease_holds_in_txn(&self, store: &Store, txn: &heed::RoTxn<'_>) -> bool {
-        AttemptQueue::from_store(store)
-            .require_skill_load_lease_in_txn(txn, self.0.attempt, &self.0.owner, self.0.generation)
-            .is_ok()
-    }
+/// Whether `token`'s run lease holds in `txn`, read only through it.
+pub(super) fn run_write_lease_holds_in_txn(
+    token: &RunWriteToken,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> bool {
+    AttemptQueue::from_store(store)
+        .require_skill_load_lease_in_txn(txn, token.attempt(), token.owner(), token.generation())
+        .is_ok()
 }
 
 /// The leased run one verb call writes for. Dropping it restores the
@@ -122,7 +81,7 @@ pub(crate) fn enter_run_write_token(token: Option<RunWriteToken>) -> RunWriteSco
 /// grouped write runs its closure on the caller's thread, so every batch the
 /// call applies sees it.
 pub(crate) fn enter_run_writes(lease: &AgentAuthorLease) -> RunWriteScope {
-    enter_run_write_token(Some(RunWriteToken::from_lease(lease)))
+    enter_run_write_token(Some(run_write_token_from_lease(lease)))
 }
 
 /// Runs `write` under `token`'s envelope on this thread: the synchronous

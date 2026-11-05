@@ -278,7 +278,8 @@ impl Vault {
         let key = crate::store::row_birth::WithheldKey::for_export();
         let mut entities = Vec::with_capacity(records.len());
         for (id, mut record) in records {
-            if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, &txn, &id)?
+            if let Some(birth) =
+                crate::store::birth_record::row_birth_in_txn(&self.store, &txn, &id)?
                 && let Some(fields) = record.as_object_mut()
             {
                 let birth = serde_json::to_value(birth.masked(|row| ships.contains(row), &key))

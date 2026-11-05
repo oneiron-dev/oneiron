@@ -9,17 +9,19 @@ use super::ScopeSummaryExecutor;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::error::Result;
+use crate::scope_summary::ScopeSummaryPlan;
 use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
 
 impl<E> ScopeSummaryExecutor<'_, E> {
     /// The tokens one call's input may fill on the model: the host's count,
     /// else the vault's own row for the model, its context less the output
-    /// it reserves where that is below it, as the host counts. `None` when
-    /// neither is known: a zero context, or a row that did not read.
+    /// it reserves where that is below it, as the host counts. A zero host
+    /// count is unknown and does not fall back to the vault's row. A zero
+    /// registry context or a row that did not read is likewise unknown.
     pub(super) fn session_window(&self, vault: &Vault) -> Option<u64> {
-        if let Some(window) = self.window_tokens.filter(|window| *window > 0) {
-            return Some(window);
+        if let Some(window) = self.window_tokens {
+            return (window > 0).then_some(window);
         }
         let row = match vault.model_registry_row(&self.model) {
             Ok(row) => row?,
@@ -177,4 +179,35 @@ pub(super) fn escaped_cost(rendered: &str) -> Result<u64> {
 /// The tokens `text` counts, as a resident's window counts them.
 fn tokens(text: &str) -> u64 {
     crate::count_context_pack_tokens(text) as u64
+}
+
+/// A paid shim correction that the provider explicitly found over context.
+/// Other request errors and the first call retain their ordinary retry path.
+pub(super) fn correction_overflow(error: &crate::model_step_error::DurableStepError) -> bool {
+    matches!(
+        error,
+        crate::model_step_error::DurableStepError::SpentLlm {
+            source: oneiron_model::llm::LlmError::Fatal(
+                oneiron_model::llm::FatalLlmError::InvalidRequestDetail { code: Some(code), .. }
+            ),
+            ..
+        } if code == "context_length_exceeded"
+    )
+}
+
+/// Search a smaller layout only after a corrective call actually overflowed.
+pub(super) fn smaller_window(window: u64) -> Option<u64> {
+    (window / 2 > 0).then_some(window / 2)
+}
+
+/// The input one summary call reads: the declaration's purpose, the editor's
+/// `keep`, the body it revises and the `records`, as one JSON object.
+pub(super) fn summary_input(plan: &ScopeSummaryPlan, records: &str) -> Result<String> {
+    serde_json::to_string(&serde_json::json!({
+        "purpose": plan.purpose,
+        "keep": plan.keep,
+        "editor_text": plan.editor_text,
+        "records": records,
+    }))
+    .map_err(|_| invalid_consolidation("summary input encoding"))
 }

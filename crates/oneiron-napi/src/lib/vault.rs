@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EdgeActorClass, EntityId,
     Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, parse_actor_key,
@@ -13,10 +14,13 @@ pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
     DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
     parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
-    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64, validate_dimensions,
+    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64,
     validate_entity_payload_len,
 };
-use super::codebase::{CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot};
+use super::codebase::{
+    CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot,
+    measure_codebase_backings, napi_codebase_snapshot,
+};
 use super::email::{core_email_adapter, core_email_inbound};
 use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
@@ -24,7 +28,9 @@ use super::types::{
 };
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 use crate::host_root::HostRootOpenOptions;
+use limit_questions::{NativeLimitCollector, NativeLimitQuestion};
 
+mod limit_questions;
 mod reads;
 
 /// What this embedded vault says to a context pack naming `media` (OF-370):
@@ -85,6 +91,10 @@ pub struct NapiVault {
     binding: Option<RawBinding>,
     /// `openWithHostRoot`'s wrong-root fact (FIX 4730); `false` otherwise.
     wrong_host_root: bool,
+    /// This handle's own engine-question collector, installed where the vault
+    /// opened; `None` on bound views, which share the vault and its sink but
+    /// expose no whole-vault crossing metadata.
+    limit_questions: Option<Arc<NativeLimitCollector>>,
 }
 
 /// The principal a bound vault's app host named, and its off-record
@@ -175,16 +185,24 @@ impl NapiVault {
             config.dict_search_paths = paths.into_iter().map(std::path::PathBuf::from).collect();
         }
 
-        validate_dimensions(config.dimensions).map_err(napi::Error::from_reason)?;
+        // The whole u32 range opens; a zero width is refused by the open itself.
         let dimensions = config.dimensions;
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         // Signing doors (delete receipts) need this install's keys from the keystore.
         vault.install_default_keystore(std::path::Path::new(&path));
+        // This host keeps its own vault's engine questions (FIX 75): install the
+        // collector once the open stands, then the opened width asks once.
+        let limit_questions = NativeLimitCollector::install_on(&vault);
+        let _ = vault.measure_limit(
+            EngineLimit::EmbeddingDimensions,
+            u64::try_from(vault.embedding_dimensions()).unwrap_or(u64::MAX),
+        );
         Ok(Self {
             vault: Arc::new(vault),
             dimensions,
             binding: None,
             wrong_host_root: false,
+            limit_questions: Some(limit_questions),
         })
     }
 
@@ -222,6 +240,19 @@ impl NapiVault {
     #[napi]
     pub fn wrong_host_root(&self) -> bool {
         self.wrong_host_root
+    }
+
+    /// The engine `[limits]` rows this vault crossed, as this host kept them
+    /// (FIX 75): one entry per row that asked, the row's key plus what it stood
+    /// at and what the work measured, both exact. `None` on a bound view, which
+    /// shares the vault and its sink but exposes no whole-vault crossing
+    /// metadata; an empty list where no row crossed yet.
+    #[napi]
+    pub fn native_limit_questions(&self) -> napi::Result<Option<Vec<NativeLimitQuestion>>> {
+        Ok(self
+            .limit_questions
+            .as_ref()
+            .map(|collector| collector.snapshot()))
     }
 
     /// A NEW vault over this same open vault whose writes run as one caller
@@ -267,6 +298,8 @@ impl NapiVault {
                 session,
             }),
             wrong_host_root: false,
+            // Same vault and sink, but a bound view serves no crossings.
+            limit_questions: None,
         })
     }
 
@@ -474,25 +507,27 @@ impl NapiVault {
     // ─── Codebase Metadata ─────────────────────────────────────
 
     /// Attach or replace codebase snapshot metadata for a CODE_ARTIFACT entity.
+    /// SharedArrayBuffer-backed inputs are refused on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing; normal Buffers keep the Node >= 20 promise.
     #[napi]
-    pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
+    pub fn put_codebase_snapshot(
+        &self,
+        env: Env,
+        id: Buffer,
+        snapshot: Object<'_>,
+    ) -> napi::Result<()> {
         self.refuse_bound_host_write()?;
         let eid = parse_entity_id(&id)?;
-        let snapshot = read_codebase_snapshot(snapshot)?;
-        // Take the bodies before conversion consumes the boundary struct, so
-        // custody filtering can hash-check each declared entry.
+        let mut memory = CodebaseMemory::new();
+        let mut id = id;
+        let mut snapshot = read_codebase_snapshot(&self.vault, snapshot, &mut memory)?;
+        // All getters have run once. The native handles root their full
+        // backings in this callback's scope; measure before copying bodies.
+        measure_codebase_backings(&env, &mut id, &mut snapshot, &mut memory)?;
         let file_count = snapshot.files.len();
-        let contents = snapshot
-            .files
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .content
-                    .as_ref()
-                    .map(|bytes| (entry.path.clone(), bytes.to_vec()))
-            })
-            .collect::<std::collections::HashMap<String, Vec<u8>>>();
-        let snapshot = core_codebase_snapshot(snapshot).map_err(napi::Error::from_reason)?;
+        let contents = CodebaseContents::from_files(&snapshot.files, &mut memory)
+            .map_err(napi::Error::from_reason)?;
+        let snapshot =
+            core_codebase_snapshot(snapshot, &mut memory).map_err(napi::Error::from_reason)?;
         // Without any content every entry would quarantine, silently replacing a
         // prior snapshot with an empty manifest. Refuse before touching storage.
         if file_count > 0 && contents.is_empty() {
@@ -500,10 +535,10 @@ impl NapiVault {
                 "codebase snapshot file contents required; refusing all-quarantine empty-manifest persist",
             ));
         }
+        // Scratch stays pending through the serial callbacks; core does
+        // not wait for another reservation while its writer is open.
         self.vault
-            .put_codebase_snapshot(&eid, &snapshot, &move |path: &str| {
-                contents.get(path).cloned()
-            })
+            .put_codebase_snapshot(&eid, &snapshot, &|path: &str| contents.get(path))
             .map_err(to_napi_err)
     }
 

@@ -23,10 +23,11 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
-use crate::secret_custody::{KnownValues, masked_file_in_txn};
 use crate::secret_record::CustodyWrite;
 use crate::side_table::SideTableDecl;
 use crate::store::Store;
+use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::known_value_index::KnownValues;
 
 /// Domain of the id a lifted carrier row's custody records name as where
 /// their keys were found.
@@ -487,7 +488,10 @@ impl MaskedText {
     /// whole.
     pub(crate) fn split_at_stored(&self, cuts: &[usize]) -> Option<Vec<String>> {
         let crosses = self.0.iter().any(|run| {
-            run.handle && cuts.iter().any(|&cut| run.source.start < cut && cut < run.source.end)
+            run.handle
+                && cuts
+                    .iter()
+                    .any(|&cut| run.source.start < cut && cut < run.source.end)
         });
         if !crosses {
             return None;

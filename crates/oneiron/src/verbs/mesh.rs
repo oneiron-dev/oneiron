@@ -4,7 +4,9 @@
 //! (CROSS-ARCH-0019); the rows are local to this machine and never synced.
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "sync")]
 use crate::memory::{Memory, MemoryResult};
+#[cfg(feature = "sync")]
 use crate::sync::mesh_path::{MESH_PATH_RECEIPTS_READ_MAX, MeshPathReceipt};
 
 /// How many receipts one read answers when the caller names no `limit`
@@ -26,6 +28,7 @@ pub struct MeshPathReceiptsRequest {
 impl MeshPathReceiptsRequest {
     /// The bound the read takes.
     #[must_use]
+    #[cfg(feature = "sync")]
     pub fn bound(&self) -> usize {
         self.limit
             .unwrap_or(MESH_PATH_RECEIPTS_DEFAULT)
@@ -35,6 +38,7 @@ impl MeshPathReceiptsRequest {
 
 /// `vault.mesh.path_receipts` on an embedded handle: the vault's own owner
 /// reads the receipts; any other actor is refused.
+#[cfg(feature = "sync")]
 pub fn mesh_path_receipts_as_owner(
     memory: &Memory<'_>,
     input: &MeshPathReceiptsRequest,

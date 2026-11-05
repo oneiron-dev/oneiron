@@ -70,19 +70,7 @@ pub struct EvaluationOutcome {
     pub memo_hit: bool,
 }
 
-/// Progress report for a bounded wake batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WakeEvaluationReport {
-    /// Entities evaluated in this batch.
-    pub evaluated: u32,
-    /// Evaluations answered by a memo.
-    pub memo_hits: u32,
-    /// Stage-2 judgements actually executed.
-    pub judges_run: u32,
-    /// Last entity visited when a bound stopped the batch early. `None` means
-    /// the candidate set was exhausted.
-    pub resume_after: Option<EntityId>,
-}
+pub use crate::store::query_health::WakeEvaluationReport;
 
 pub use crate::store::query_memos::EVIDENCE_HASH_LEN;
 pub use crate::store::query_memos::VerdictMemoRow;

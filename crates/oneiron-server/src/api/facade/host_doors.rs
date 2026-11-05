@@ -114,6 +114,7 @@ pub(crate) use super::skill_default_doors::*;
 pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
+pub(crate) use super::sync_quarantine_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::foreign_code_doors::*;
@@ -154,6 +155,7 @@ pub(crate) use super::seal_doors::*;
 pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
+pub(crate) use super::code_run_secret_lift_doors::*;
 pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.
@@ -204,6 +206,8 @@ pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
 // The owner's witness-read grant revoke (FIX 10895), likewise.
 pub(crate) use super::connector_witness_read_doors::*;
+// The owner's per-call outbound request erase (FIX 11801), likewise.
+pub(crate) use super::outbound_call_erase_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.

@@ -88,14 +88,44 @@ impl Vault {
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
-            proposal.request.presentation.measure(self);
-            CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
-            PRESENTATION.put(self, txn, &(), &proposal.request.presentation)?;
-            POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
-            Ok(())
+            apply_policy_proposal_in_txn(self, txn, claim_ref, &proposal)
         })?;
         self.store.notify_proactivity_changes();
         Ok(())
+    }
+
+    /// A policy member of the exact bundle already rechecked by the consent
+    /// writer. Apply before its Proposed body becomes Approved; an earlier
+    /// exact confirmation only needs the ordinary claim and tray closure.
+    pub(crate) fn confirm_bundled_proactivity_policy_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_ref: EntityId,
+        original: &crate::claim::ClaimBody,
+    ) -> Result<()> {
+        if original.predicate != PROACTIVITY_POLICY_REQUEST_PREDICATE {
+            return Ok(());
+        }
+        let actor = validate_owner_in_txn(self, txn, owner)?;
+        let proposal = load_policy_proposal(self, txn, actor, claim_ref)?;
+        // The bundle hashes the canonical encoding of the reviewed body.
+        // Preserve that binding even if a stored encoding is not canonical.
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &claim_ref)?
+            .ok_or_else(invalid)?;
+        let current = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if crate::claim::encode_claim_body(&current)? != crate::claim::encode_claim_body(original)?
+        {
+            return Err(invalid());
+        }
+        if let Some(confirmed) = POLICY_CONFIRMED.get(&self.store, txn, &claim_ref)? {
+            return if confirmed == proposal.revision {
+                Ok(())
+            } else {
+                Err(invalid())
+            };
+        }
+        apply_policy_proposal_in_txn(self, txn, claim_ref, &proposal)
     }
 
     /// Files a Dreamer-born policy request (FIX 8712): it lands Proposed in
@@ -243,6 +273,20 @@ impl Vault {
         self.store.notify_proactivity_changes();
         Ok(filing)
     }
+}
+
+/// The settings and exact replay marker share their caller's writer.
+fn apply_policy_proposal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    claim_ref: EntityId,
+    proposal: &ProactivityPolicyProposal,
+) -> Result<()> {
+    proposal.request.presentation.measure(vault);
+    CADENCE.put(&vault.store, txn, &(), &proposal.request.cadence)?;
+    PRESENTATION.put(vault, txn, &(), &proposal.request.presentation)?;
+    POLICY_CONFIRMED.put(&vault.store, txn, &claim_ref, &proposal.revision)?;
+    Ok(())
 }
 
 /// The shared rows as stored, in `txn`.

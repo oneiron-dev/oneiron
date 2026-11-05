@@ -126,6 +126,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
+        "vm-outbox-companion-admitted",
+        |args| args.vm_outbox_companion_admitted,
+        ArgvUse::Read,
+    ),
+    (
         "vm-restore-revision",
         |args| args.vm_restore_revision.is_some(),
         ArgvUse::Read,
@@ -178,6 +183,36 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "voice-socket",
         |args| args.voice_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-socket",
+        |args| args.broker_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-uid",
+        |args| args.broker_uid.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-program",
+        |args| args.broker_program.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "broker-extra-roots",
+        |args| args.broker_extra_roots.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-memory-bytes",
+        |args| args.host_memory_bytes.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-cpu-millis",
+        |args| args.host_cpu_millis.is_some(),
         ArgvUse::Read,
     ),
     // The embedder's layered flags: managed mode reads its settings file.
@@ -341,6 +376,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "preview-socket",
+        |args| args.preview_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "artifact-vault-name",
         |args| args.artifact_vault_name.is_some(),
         ArgvUse::Refused(NO_HOST_PORT_REASON),
@@ -377,7 +417,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     // The host's public addresses, which the supervisor owns and passes on:
-    // its https origin and the URLs a kit dials. The settings file never
+    // its https origin, the URLs a kit dials and its Git door. The settings file never
     // sets them, and no auth layer is built from them.
     (
         "oauth-resource-indicator",
@@ -387,6 +427,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "kit-bundle-public-urls",
         |args| args.kit_bundle_public_urls.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "git-door-base",
+        |args| args.git_door_base.is_some(),
         ArgvUse::Read,
     ),
     // The owner's own choices, which the supervisor passes on (FIX 4488).
@@ -400,11 +445,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.failure_signal_training.is_some(),
         ArgvUse::Read,
     ),
-    // Contract v1 has no managed privacy override: refuse instead of dropping it.
+    // Hosting and checkpoint opt-out are explicit operator declarations,
+    // never derived from custody or read from the owner's settings file.
     (
         "privacy-posture",
         |args| args.privacy_posture.is_some(),
-        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "managed-checkpoint-host-opt-out",
+        |args| args.managed_checkpoint_host_opt_out,
+        ArgvUse::Read,
     ),
     (
         "hosted-kms-key-ref",

@@ -129,8 +129,9 @@ pub(crate) use training_swap_ask::{
 };
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
-    TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
-    task_is_blocked_in, task_stored_brief_in, task_text_with_source_in,
+    TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
+    leader_task_brief_in, task_binding, task_is_blocked_in, task_stored_brief_in,
+    task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -394,7 +395,7 @@ pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage}
 pub use linear_store::VaultLinearTaskStore;
 pub(crate) use linear_store::{
     drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
-    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+    mark_mirror_dirty_in, put_mirror_link_in,
 };
 pub(crate) use mirror_edit::prove_task_owner_in;
 
@@ -460,10 +461,6 @@ pub use ask_types::{
     TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
-
-// The lift sweep's typed acceptance for this module's authored side
-// tables (FIX 2680), named by their declarations.
-pub(crate) use self::linear_store::linear_pull_cursor_accepts_masked;
 
 use crate::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};

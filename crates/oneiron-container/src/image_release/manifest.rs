@@ -149,7 +149,7 @@ impl TryFrom<String> for KernelVersion {
             }
             part.parse::<u32>().ok()
         };
-        let malformed = ManifestError::Field("host.kernel_floor");
+        let malformed = ManifestError::Field("guest.kernel_floor");
         let Some((major, minor)) = text.split_once('.') else {
             return Err(malformed);
         };
@@ -202,6 +202,7 @@ pub struct ImageReleaseManifest {
     /// The build receipt (`receipt.json`), the build's provenance record.
     pub provenance: Option<DocumentRef>,
     pub host: HostRequirements,
+    pub guest: GuestRequirements,
     pub snapshot: SnapshotCompatibility,
     /// What the emitter could not measure, named rather than left as a gap.
     pub facts: Vec<ManifestFact>,
@@ -372,10 +373,17 @@ pub struct DocumentRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostRequirements {
-    /// Every launch form needs `/dev/kvm` (the vault boots only as a
-    /// microVM). `false` when the OCI form runs without KVM; that variant's
-    /// Firecracker form still needs it.
+    /// `true` requires KVM in every launch form (the vault boots only as a
+    /// microVM). A microVM launch checks KVM separately, whatever this says.
     pub kvm: bool,
+}
+
+/// What a guest kernel must offer: the fence's floors. A container shares
+/// the host kernel, so a container launch checks these against the host
+/// probe; a microVM guest runs its own kernel, which no host probe observes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestRequirements {
     pub kernel_floor: Option<KernelVersion>,
     /// The fence's Landlock ABI floor; `null` without fence plumbing.
     pub landlock_abi_floor: Option<u32>,

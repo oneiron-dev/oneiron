@@ -14,9 +14,10 @@ impl ScopedRead<'_> {
     /// [`Self::search_text`] narrowed by `scope` before its cut, returning
     /// the unit recall returns (a matched message as its turn). The read's
     /// authority, note visibility and fresh-read recheck are those of the
-    /// plain search. A facet that is no FACET, a kind the registry does not
-    /// name or a world set past its cap is refused with its typed error,
-    /// never searched unscoped; a valid scope with no match is empty.
+    /// plain search. A facet that is no FACET or a kind the registry does
+    /// not name is refused with its typed error, never searched unscoped;
+    /// a valid scope with no match is empty. (FIX 9093: no world-count cap
+    /// exists, so the old "past its cap" clause is dropped.)
     pub(crate) fn search_text_selected(
         self,
         query: &str,

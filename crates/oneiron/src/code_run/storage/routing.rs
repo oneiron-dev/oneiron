@@ -182,7 +182,8 @@ impl SessionBinding<'_> {
     /// so the same transaction fences it and stamps its owner there, as the
     /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
     /// by its owner row, and a write after that erase stays erased. An
-    /// overlay row stamps none.
+    /// overlay row stamps its owner in the overlay, in the same writer, so
+    /// the room's waits know whose run it is (FIX 6586).
     pub(super) fn put_owned_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -200,11 +201,12 @@ impl SessionBinding<'_> {
                     replay_generation_matches(current.as_ref(), expected)?;
                     match write {
                         RoutedDbs::Base(vault) => {
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)?;
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
                         }
                         RoutedDbs::Session(_) => {
+                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
                             REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
                         }
                     }
@@ -272,24 +274,49 @@ impl SessionBinding<'_> {
     }
 
     /// The taint of the occurrence of a body that `owner` holds (the bytes'
-    /// own, with none), from the room's sidecars: a secret-scan mark is live
-    /// taint for good, and so is any taint ref, since a room keeps no view
-    /// of custody rotation.
+    /// own, with none), from the room's sidecars in ONE participant-checked
+    /// composed snapshot: an erased owner's replies read live as
+    /// `response_erased`, a secret-scan mark is live taint for good, an
+    /// unowned occurrence whose sources withdrew reads live, and other refs
+    /// read through the custody records' current generations (FIX 830). No
+    /// rotation answer releases erased or withdrawn content.
     fn result_taint(
         &self,
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<(ArtifactTaintState, Option<String>)> {
-        let key = ResultOccurrence::of(owner, output)?.mark_key(&output.handle);
-        if let Some(reason) =
-            self.answered(|| self.session.side_table_get(&RAW_OUTPUT_SECRETS, &key))?
-        {
-            return Ok((ArtifactTaintState::TaintedLive, Some(reason)));
-        }
-        let refs = self.answered(|| self.session.side_table_get(&RAW_OUTPUT_TAINTS, &key))?;
-        Ok(match refs {
-            Some(refs) if !refs.is_empty() => (ArtifactTaintState::TaintedLive, None),
-            _ => (ArtifactTaintState::Clean, None),
+        let occurrence = ResultOccurrence::of(owner, output)?;
+        let key = occurrence.mark_key(&output.handle);
+        self.answered(|| {
+            self.session.read_composed(|view, txn| {
+                if let Some(owner) = owner {
+                    let owned = super::response_owners::response_owner_in_txn(view, txn, &owner)?;
+                    if owned.is_some_and(|o| o.erased()) {
+                        return Ok((
+                            ArtifactTaintState::TaintedLive,
+                            Some(super::replay_bodies::RESPONSE_ERASED.to_owned()),
+                        ));
+                    }
+                }
+                if let Some(reason) = RAW_OUTPUT_SECRETS.get(view, txn, &key)? {
+                    return Ok((ArtifactTaintState::TaintedLive, Some(reason)));
+                }
+                if owner.is_none() {
+                    let readable = crate::ports::body_readable_in_txn(
+                        view,
+                        txn,
+                        &occurrence.id(),
+                        &[],
+                        crate::ports::BodyStale::Withdrawn,
+                    )?;
+                    if !readable {
+                        return Ok((ArtifactTaintState::TaintedLive, None));
+                    }
+                }
+                let refs = RAW_OUTPUT_TAINTS.get(view, txn, &key)?.unwrap_or_default();
+                let state = crate::secret_rotation::taint_state_for_refs_in_txn(view, txn, &refs)?;
+                Ok((state, None))
+            })
         })
     }
 }
@@ -783,9 +810,26 @@ impl<'a> ExecutorStorage<'a> {
                 Ok((binding.session.body_dirs()?, key))
             })?,
         };
-        Ok(dirs
+        let found = dirs
             .iter()
-            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref())))
+            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref()));
+        // A missing or short index notes one detached rebuild (FIX 1186b) and
+        // reads as today: the sweep rebuilds, never this read. `Some` and
+        // `Err` never enqueue; correctly-sized-but-bad counts return `Some`
+        // above and never reach here.
+        if found.is_none() {
+            match self {
+                Self::Canonical(vault) => {
+                    vault.note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+                Self::Session(binding) => {
+                    binding
+                        .session
+                        .note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// A writer for one result body, where this run's bodies go.
@@ -793,6 +837,14 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.code_run_output_sink(),
             Self::Session(binding) => binding.output_sink(),
+        }
+    }
+
+    /// A bound execution's result body, including its delivered PERSON values.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_output_sink_for(exec_run),
+            Self::Session(binding) => binding.output_sink_for(exec_run),
         }
     }
 
@@ -851,6 +903,63 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.result_share(),
             Self::Session(binding) => binding.session.result_share(),
+        }
+    }
+
+    /// Notes the scan-bound search credit issued for `output`'s window
+    /// (`base`, `len`): the exact emitted (`offset`, `line`, `credit`)
+    /// (FIX 1189 discount, #4311 P1-B). A canonical run's vault keeps it;
+    /// a session-bound run's keeps it on its session's vault.
+    pub(crate) fn note_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        match self {
+            Self::Canonical(vault) => {
+                vault.note_search_credit(output.raw_blake3, base, len, offset, line, credit);
+            }
+            Self::Session(binding) => {
+                binding.session.note_search_credit(
+                    output.raw_blake3,
+                    base,
+                    len,
+                    offset,
+                    line,
+                    credit,
+                );
+            }
+        }
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// `output`'s window (`base`, `len`): the full tuple must match, else
+    /// the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        match self {
+            Self::Canonical(vault) => {
+                vault.valid_search_credit(output.raw_blake3, base, len, offset, line, credit)
+            }
+            Self::Session(binding) => binding.session.valid_search_credit(
+                output.raw_blake3,
+                base,
+                len,
+                offset,
+                line,
+                credit,
+            ),
         }
     }
 }

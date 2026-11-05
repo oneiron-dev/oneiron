@@ -149,6 +149,12 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
         let mut newest: BTreeMap<EntityId, (String, Option<EntityId>, String, u64)> =
             BTreeMap::new();
         for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
+            if let Some(judge) = judgment.judge.as_deref()
+                && crate::skill_attribution::displacing_revision_in_txn(vault, wtxn, judge)?
+                    .is_some()
+            {
+                continue;
+            }
             let Some((attempt_receipt, skill)) = attempt else {
                 continue;
             };

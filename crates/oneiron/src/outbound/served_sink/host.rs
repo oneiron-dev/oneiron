@@ -15,6 +15,7 @@ use crate::outbound_consent::{
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
+use crate::secret_custody::BrokerModelListingHost;
 
 /// Slack's Web API.
 pub const SLACK_API_BASE: &str = "https://slack.com/api";
@@ -147,6 +148,7 @@ pub struct ServedTransports {
     endpoints: ServedEndpoints,
     native_mail: Option<StalwartConfig>,
     connector_calls: Option<Arc<dyn ServedConnectorCalls>>,
+    broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
 }
 
 impl ServedTransports {
@@ -156,6 +158,7 @@ impl ServedTransports {
             endpoints,
             native_mail: None,
             connector_calls: None,
+            broker_model_listing: None,
         }
     }
 
@@ -178,6 +181,18 @@ impl ServedTransports {
     #[must_use]
     pub fn connector_calls(&self) -> Option<Arc<dyn ServedConnectorCalls>> {
         self.connector_calls.clone()
+    }
+
+    /// The host's configured broker-backed model listing. This supplies a
+    /// transport only; each use still presents its own admitted credential.
+    #[must_use]
+    pub fn with_broker_model_listing(mut self, host: Arc<dyn BrokerModelListingHost>) -> Self {
+        self.broker_model_listing = Some(host);
+        self
+    }
+
+    pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {
+        self.broker_model_listing.as_ref()
     }
 
     #[must_use]

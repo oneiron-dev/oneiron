@@ -72,22 +72,15 @@ where
     }
 }
 
-/// The answer to a device's update of window `window_key`, sent under
-/// `sub_tag` with its pads admitted as `receipt`, whose copy edit the
-/// admission held on its ruled cause and recorded (FIX 10598): the
-/// acknowledgment a landed update gets (a residence update's, `residence_seq`,
-/// or an owner-lane update's receipt), so the device retires it from its
-/// queue and stops sending it. Nothing of it persisted, imported or relayed,
-/// and its edit is never applied; the device keeps its operations in its own
-/// window.
+/// The answer to a device's update held on its ruled cause (FIX 10598).
+/// Nothing of it persisted, imported or relayed. A residence send gets a
+/// `RESIDENCE_HELD` reply bound to the same admitted pads: the exchange can
+/// finish, but the device keeps its durable row and delete marker owed.
 ///
-/// A residence update retires on its receipt alone. An owner-lane update
-/// retires only once its window reads converged, and the home's vector
-/// never takes a held edit's operations, so the held fraction is answered
-/// as home's vector with the update's own operations in it — to this socket
-/// only, accumulated in `conn_state` — the document lane's held answer
-/// (`import_document_copy`). An update whose operations do not read gets
-/// no such answer and stays queued, as today.
+/// An owner-lane update keeps its existing receipt and convergence witness:
+/// the home's vector with the update's operations, accumulated for this
+/// socket only (the document lane's held answer, `import_document_copy`). An
+/// update whose operations do not read gets no such witness and stays queued.
 ///
 /// # Errors
 /// The receipt's or the vector's encoding, or a closed reply channel.
@@ -107,7 +100,17 @@ pub(super) fn acknowledge_held(
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<ControlFlow<()>, ProtocolError> {
     if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
-        let frame = super::window_pads::receipt_frame(window_key, sub_tag, receipt)?;
+        let frame = if residence_seq.is_some() {
+            protocol::encode_window_sync(
+                window_key,
+                window_sub_tags::RESIDENCE_HELD,
+                &receipt.encode(),
+            )
+            .into_result()
+            .map_err(|error| ProtocolError::InvalidPayload(protocol::transport_err_msg(error)))?
+        } else {
+            super::window_pads::receipt_frame(window_key, sub_tag, receipt)?
+        };
         direct_tx.send(frame).map_err(|_| {
             ProtocolError::Persistence("held copy edit acknowledgment channel closed".into())
         })?;

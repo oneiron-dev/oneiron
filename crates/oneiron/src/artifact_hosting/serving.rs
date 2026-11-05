@@ -12,6 +12,22 @@ use super::{
 use crate::file_secret_marks::SecretSight;
 
 impl Vault {
+    /// Every stored published pointer id in one read snapshot, sorted and
+    /// deduplicated. Preview pointers are not publications. This inventory
+    /// grants no read scope and does not claim the export is currently live.
+    pub fn published_artifact_ids(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        let keys = ARTIFACT_POINTERS.scan_keys(
+            &self.store,
+            &txn,
+            &[ArtifactPointerChannel::Published.key_byte()],
+        )?;
+        let mut ids: Vec<String> = keys.into_iter().map(|key| key.artifact).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     pub fn artifact_pointer(
         &self,
         artifact: &str,

@@ -18,8 +18,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/entity.rs` | src | m | 13 fn · 1 crate-vis | — | Free fns plus vault lifecycle, health, and entity entry points |
 | `src/lib/guard.rs` | src | s | 6 crate-vis | — | Panic guard and raw-pointer slice/out/vault helpers |
 | `src/lib/host_root.rs` | src | s | 1 fn | — | `oneiron_vault_open_with_host_root`: the raw open that profiles this install from the vault's host root… |
-| `src/lib/mod.rs` | src | s | 6 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
-| `src/lib/parse.rs` | src | s | 18 crate-vis | — | ID/enum/limit/query/format parsing and validation helpers |
+| `src/lib/limit_questions.rs` | src | s | 1 fn · 3 crate-vis | — | The host's own engine-limit questions for a raw-opened vault (FIX 75) |
+| `src/lib/mod.rs` | src | s | 7 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
+| `src/lib/parse.rs` | src | s | 17 crate-vis | — | ID/enum/limit/query/format parsing and validation helpers |
 | `src/lib/query.rs` | src | m | 14 fn | — | Edge, search, vector, context-pack, and graph-traversal entry points |
 | `src/lib/session_reads.rs` | src | s | 12 crate-vis | — | The content reads a bound [`OneironVault`] makes inside the off-record session it names (FIX 8603, 10759)… |
 | `src/lib/tests.rs` | test | m | — | — | Inline ABI tests: layout stability, round-trips, batch/boundary |

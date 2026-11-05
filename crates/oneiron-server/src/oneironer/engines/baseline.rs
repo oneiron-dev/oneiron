@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use super::super::dispatcher::{DispatcherHandle, WorkerId, WorkerSpec};
 use super::super::endpoint::ModelCard;
 use super::super::local::LocalTagger;
-use super::admission::PARITY_FAILED;
+use super::admission::{PARITY_FAILED, PlatformAbsent};
 use super::{Admission, Pick, Serving, survey};
 use crate::config::OneironerConfig;
 
@@ -50,6 +50,8 @@ pub(crate) struct BaselineCalibration {
     /// The slot's serving engine, which the measured choice replaces once
     /// it lands.
     serving: Arc<Mutex<Option<Serving>>>,
+    /// Where the platform admission retains each row's absence.
+    absent: PlatformAbsent,
 }
 
 impl BaselineCalibration {
@@ -64,6 +66,7 @@ impl BaselineCalibration {
         provisional_worker: WorkerId,
         card: ModelCard,
         serving: Arc<Mutex<Option<Serving>>>,
+        absent: PlatformAbsent,
     ) -> Option<Self> {
         (provisional.pick == Pick::Calibrating).then(|| Self {
             config: config.clone(),
@@ -73,6 +76,7 @@ impl BaselineCalibration {
             provisional_worker,
             card,
             serving,
+            absent,
         })
     }
 
@@ -151,6 +155,7 @@ impl BaselineCalibration {
             baseline,
             worker,
             self.card,
+            Arc::clone(&self.absent),
         ) {
             admission.start();
         }

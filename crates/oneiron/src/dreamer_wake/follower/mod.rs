@@ -48,7 +48,8 @@ use crate::store::Store;
 use oneiron_model::llm::Scope;
 
 pub(crate) use keyframe::{
-    FoldWork, KeyframeCommit, Sizing, commit_keyframe_in_txn, erase_in_txn, fold_groups,
+    FoldWork, KeyframeCommit, Sizing, commit_keyframe_in_txn, erase_in_txn, exclude_in_txn,
+    fold_groups,
 };
 use keyframe::{Standing, fold_work, foldable};
 use log::{Log, quote_in};

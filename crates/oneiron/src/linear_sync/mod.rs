@@ -91,6 +91,7 @@ pub(crate) use self::approval::{
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
 pub use self::custody::{LinearBody, LinearBodyRole, LinearFreeze};
+pub(crate) use self::effect::erase_effect_authorized_actor_in_txn;
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::facade_types::{

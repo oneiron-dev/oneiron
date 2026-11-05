@@ -13,24 +13,11 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
-use crate::side_table::{self, Named, SideTable};
+pub use crate::store::person_billing_account::FiledBillingAccount;
+use crate::store::person_billing_account::PERSON_BILLING_ACCOUNT;
 
 /// The longest account reference a PERSON may file, in bytes (CALLS).
 pub const MAX_BILLING_ACCOUNT_BYTES: usize = 256;
-
-/// PERSON -> the billing account that PERSON filed. Key: the PERSON.
-const PERSON_BILLING_ACCOUNT: SideTable<EntityId, FiledBillingAccount, Named> =
-    SideTable::new(&side_table::PERSON_BILLING_ACCOUNT);
-
-/// One PERSON's own billing account, as filed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FiledBillingAccount {
-    /// The account's reference, as the PERSON gave it.
-    pub account: String,
-    /// When it was filed, in the vault's recorded seconds.
-    pub filed_at: u64,
-}
 
 /// `self.billing.account.file`'s input: the caller's own billing account.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -101,14 +88,4 @@ pub fn file_self_billing_account(
     Ok(memory
         .vault()
         .file_own_billing_account(memory.actor(), &input.account)?)
-}
-
-/// An erase of `entity` takes the billing account it filed with it.
-pub(crate) fn erase_billing_account_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    entity: &EntityId,
-) -> Result<()> {
-    PERSON_BILLING_ACCOUNT.delete(&vault.store, wtxn, entity)?;
-    Ok(())
 }

@@ -14,6 +14,7 @@ mod query;
 mod replay;
 mod scoped;
 mod selection;
+mod unfinalized;
 
 pub(super) use self::pack_run::{ContextPackRun, ContextPackTelemetry, HydrateOptions};
 pub use self::pack_run::{SerializedContextPack, UnfinalizedContextPack};

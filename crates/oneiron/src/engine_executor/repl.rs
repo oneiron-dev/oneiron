@@ -32,7 +32,7 @@ use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
 };
-use super::wire::{HealedExecutorReply, heal_executor_reply};
+use super::wire::{HealedExecutorReply, heal_executor_text};
 use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
@@ -221,12 +221,9 @@ impl EngineNativeExecutor<'_> {
                     .await
             }?;
             let execution_text = self.post_turn_hooks(turn, &response)?;
-            // Only the post-hook execution view is healed below. The raw
-            // provider response stays separate as evidence (FIX 9840).
-            let mut execution_response = response.clone();
-            execution_response.message.content = vec![ContentPart::Text {
-                text: execution_text,
-            }];
+            // Only the post-hook execution view is healed below, as its text:
+            // no copy of the reply is made for it (FIX 448). The raw provider
+            // response stays separate as evidence (FIX 9840).
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).
             self.gated_write
@@ -242,11 +239,17 @@ impl EngineNativeExecutor<'_> {
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
             // staged, hashed, or replayed; the reply's own console bytes are
             // already gone, and `trailing_speak` belongs to ONE-1686.
+            if response.finish_reason != crate::FinishReason::Stop {
+                return Err(Error::InvalidClaimBody(
+                    "executor LLM response did not finish cleanly",
+                )
+                .into());
+            }
             let HealedExecutorReply {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_reply(&execution_response)?;
+            } = heal_executor_text(&execution_text)?;
             record_script_output(
                 &self.storage,
                 &mut record,
@@ -267,6 +270,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            self.gated_write.observe_consumed_code_replies(&record)?;
             let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
@@ -378,7 +382,7 @@ impl EngineNativeExecutor<'_> {
             // store; none is held whole here.
             let step_bodies = host
                 .take_streamed()
-                .into_step_bodies(&self.storage, &step_outcome)
+                .into_step_bodies(&self.storage, record.run_id, &step_outcome)
                 .map_err(Into::into)
                 .and_then(|bodies| {
                     validate_runtime_outputs(&record, completed_steps, &bodies.files)

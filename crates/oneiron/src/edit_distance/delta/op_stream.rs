@@ -10,7 +10,7 @@
 //! window inserted and kept when their whitespace-collapsed contents match.
 
 use loro::event::Diff;
-use loro::{ContainerID, ContainerType, Frontiers, TextDelta};
+use loro::{ContainerID, ContainerType, Frontiers, IdSpan, JsonOpContent, JsonTextOp, TextDelta};
 
 use crate::edit_distance::myers::collapse_whitespace;
 use crate::edit_distance::{FinalizedProposalText, LoroOpRef, OpSpan};
@@ -94,8 +94,11 @@ struct Site {
 /// runs are all whitespace (re-spacing, re-wrapping, a word split by a space)
 /// counts nothing. Text typed and then deleted again by a later change counts
 /// on both sides; that churn is what this lane sees and an endpoint diff
-/// cannot. A move pairs the two runs' charges, so it leaves `ins` and `del`
-/// in the unit they were charged in.
+/// cannot. Text typed and deleted inside ONE change counts too (FIX 11536):
+/// the net diff between the change's versions is blind to it, so the change's
+/// own JSON ops supply the mass while the diff keeps supplying the content
+/// move-pairing reads. A move pairs the two runs' charges, so it leaves `ins`
+/// and `del` in the unit they were charged in.
 ///
 /// # Errors
 ///
@@ -112,7 +115,12 @@ pub(super) fn read_window(
     let mut inserted: Vec<InsertedRun> = Vec::new();
     let mut deleted: Vec<DeletedRun> = Vec::new();
     let body = ContainerID::new_root(BODY_TEXT, ContainerType::Text);
+    let mut hidden_ins = 0_u32;
+    let mut ops_del = 0_u32;
     for (_, span) in &record.ops_by_actor {
+        let (span_hidden_ins, span_hidden_del) = change_ops_mass(document, span, &body);
+        hidden_ins = hidden_ins.saturating_add(span_hidden_ins);
+        ops_del = ops_del.saturating_add(span_hidden_del);
         let mut cursor = 0_usize;
         let mut site: Option<Site> = None;
         for delta in change_deltas(document, span, &body)? {
@@ -186,6 +194,16 @@ pub(super) fn read_window(
         .iter()
         .fold(0_u32, |total, run| total.saturating_add(run.mass));
     let moved = pair_moves(&deleted, &inserted);
+    // Within-change churn (FIX 11536, REVIEW-4322 P1): what the ops wrote
+    // over the net diff. The diff keeps the content pairing reads; the hidden
+    // insert lane counts same-change typed-then-deleted fragments directly —
+    // never the ops total minus the net lane, whose site separator charges
+    // would eat the hidden mass (insert x, delete x, retain a "y " prefix
+    // leaves ops_ins == net ins while the x insert is gone but its delete is
+    // charged). Delete churn is the collapsed same-change hidden mass
+    // measured below, never a raw ops length minus the diff's collapsed mass.
+    let churn_ins = hidden_ins;
+    let churn_del = ops_del;
     let kept: String = chars
         .iter()
         .zip(&origins)
@@ -193,8 +211,8 @@ pub(super) fn read_window(
         .map(|(c, _)| *c)
         .collect();
     Ok(LoggedRuns {
-        ins: ins.saturating_sub(moved),
-        del: del.saturating_sub(moved),
+        ins: ins.saturating_sub(moved).saturating_add(churn_ins),
+        del: del.saturating_sub(moved).saturating_add(churn_del),
         moved,
         kept: collapsed_len(&kept),
         before_len: collapsed_len(&proposed),
@@ -277,6 +295,69 @@ fn change_deltas(
             _ => None,
         })
         .unwrap_or_default())
+}
+
+/// The hidden mass one recorded change wrote to the body, read from the
+/// change's own JSON ops (FIX 11536, REVIEW-4322 P1): the collapsed mass of
+/// text inserted and deleted by that same change, so typing and deleting
+/// inside one commit counts on both sides even when the net
+/// [`change_deltas`] diff cannot see it. Deletes of older text stay in the
+/// diff lane.
+///
+/// Only `Text` insert and delete ops on the body container count; `Mark` ops
+/// are style, not text, and other containers are not the proposal body. A
+/// delete names its first character's id, so same-change inserts supply the
+/// deleted fragments' text and both lanes use the same collapsed frame. The
+/// insert side counts the same fragments directly: the deleted fragment is
+/// exactly the typed text, so its mass is the hidden insert mass.
+fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (u32, u32) {
+    let end = span.counter.saturating_add_unsigned(span.len);
+    let id_span = IdSpan::new(span.peer_id, span.counter, end);
+    let mut hidden_ins = 0_u32;
+    let mut hidden_del = 0_u32;
+    for change in document.doc.export_json_in_id_span(id_span) {
+        let mut inserts = Vec::new();
+        for op in &change.ops {
+            if op.container != *body {
+                continue;
+            }
+            if let JsonOpContent::Text(JsonTextOp::Insert { text, .. }) = &op.content {
+                inserts.push((op.counter, text.chars().collect::<Vec<_>>()));
+            }
+        }
+        inserts.sort_by_key(|(counter, _)| *counter);
+        for op in &change.ops {
+            if op.container != *body {
+                continue;
+            }
+            let JsonOpContent::Text(JsonTextOp::Delete { len, start_id, .. }) = &op.content else {
+                continue;
+            };
+            if start_id.peer != change.id.peer {
+                continue;
+            }
+            let delete_start = i64::from(start_id.counter);
+            let delete_end = delete_start.saturating_add(i64::from(len.unsigned_abs()));
+            for (insert_counter, run) in &inserts {
+                let insert_start = i64::from(*insert_counter);
+                if insert_start >= delete_end {
+                    break;
+                }
+                let insert_end = insert_start.saturating_add(run.len() as i64);
+                if insert_end <= delete_start {
+                    continue;
+                }
+                let overlap_start = delete_start.max(insert_start);
+                let overlap_end = delete_end.min(insert_end);
+                let from = (overlap_start - insert_start) as usize;
+                let to = (overlap_end - insert_start) as usize;
+                let fragment: String = run[from..to].iter().collect();
+                hidden_ins = hidden_ins.saturating_add(collapsed_len(&fragment));
+                hidden_del = hidden_del.saturating_add(collapsed_len(&fragment));
+            }
+        }
+    }
+    (hidden_ins, hidden_del)
 }
 
 /// Charges relocated: a deleted run of proposal text paired with a kept

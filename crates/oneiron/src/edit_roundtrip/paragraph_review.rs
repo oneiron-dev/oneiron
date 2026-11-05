@@ -18,16 +18,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-/// Persisted-row structural ceiling; a decoder must accept every row we write.
-pub(crate) const MAX_PARAGRAPH_JUDGMENTS: usize = 4096;
-
 /// One answered paragraph, bound to its native comment and the exact source
-/// version. Settlement keeps it with the consume-once receipt.
+/// version. Settlement keeps it with the consume-once receipt. Its hashes
+/// are hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParagraphJudgment {
     /// The paragraph's stable block id: the comment's target.
     pub block: String,
     /// Hash of the paragraph text the call read, which the comment quotes.
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub text_hash: [u8; 32],
     /// The shared ladder's decision and receipt.
     pub decision: TypedDecision,
@@ -37,6 +36,7 @@ pub struct ParagraphJudgment {
     pub author: String,
     /// Runtime display words pinned so settle can recheck comment semantics.
     pub labels: SlideReviewLabels,
+    #[serde(with = "oneiron_docedit::hex_digest")]
     pub frontier: [u8; 32],
     pub judged_version: Option<u64>,
     /// The document's live body when it was asked: an edit to it never
@@ -70,11 +70,7 @@ impl Vault {
         ask.validate()?;
         request.labels.validate()?;
         let author = request.author.trim();
-        if author.is_empty()
-            || author.len() > 256
-            || request.blocks.is_empty()
-            || request.blocks.len() > MAX_PARAGRAPH_JUDGMENTS
-        {
+        if author.is_empty() || author.len() > 256 || request.blocks.is_empty() {
             return Err(invalid("invalid paragraph ask selection"));
         }
         // A document with a live body is read there at its head, pinned with
@@ -328,10 +324,7 @@ fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
         .get("ops")
         .and_then(Value::as_array)
         .ok_or_else(mismatch)?;
-    if proposal.format != OfficeFormat::Docx
-        || rows.len() > MAX_PARAGRAPH_JUDGMENTS
-        || ops.len() != rows.len()
-    {
+    if proposal.format != OfficeFormat::Docx || ops.len() != rows.len() {
         return Err(mismatch());
     }
     let text = |op: &Value, key: &str| op.get(key).and_then(Value::as_str).map(str::to_owned);

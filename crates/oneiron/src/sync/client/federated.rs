@@ -7,6 +7,8 @@ use crate::batch::export::{
 };
 use crate::error::SyncProtocolValidation;
 use crate::federation::PactDelivery;
+use crate::sync::asset_body::references::bound_refs;
+use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
@@ -302,6 +304,29 @@ impl SyncClient {
         staged: StagedVaultImport,
         confirmation: VaultImportConfirmation,
     ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
+        self.confirm_staged_vault_import_with_bodies(
+            staged,
+            confirmation,
+            &std::collections::HashMap::new(),
+        )
+    }
+
+    /// Confirms a staged artifact with detached ASSET bodies supplied by its
+    /// caller. Only references in the digest-pinned admitted artifact are
+    /// attempted, at the receipt's federated tier, while its births are watched.
+    /// The live carrier and the body's measured facts are checked by the usual
+    /// body landing door; successful births release their staged facet stamps.
+    ///
+    /// Missing bodies and failed or withheld landings keep today's pending-row
+    /// behavior and do not fail confirmation. This door fetches no body over a
+    /// socket. An already-confirmed receipt returns its existing result without
+    /// attempting later body delivery.
+    pub fn confirm_staged_vault_import_with_bodies(
+        &mut self,
+        staged: StagedVaultImport,
+        confirmation: VaultImportConfirmation,
+        bodies: &std::collections::HashMap<crate::EntityId, Vec<u8>>,
+    ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
         // Serializes the staged-import admission and the terminal receipt
         // transition for THIS vault; the durable reread remains the
         // cross-process guard when a true CAS is unavailable. The lock lives on
@@ -360,12 +385,6 @@ impl SyncClient {
                 "staged receipt status mismatch",
             ));
         }
-        if staged.admitted_update.len() > MAX_DECODED_PAYLOAD_BYTES {
-            return Err(TransportError::FrameTooLarge {
-                size: staged.admitted_update.len(),
-                max: MAX_DECODED_PAYLOAD_BYTES,
-            });
-        }
         let expected = durable
             .admitted_update_digest
             .ok_or(TransportError::InvalidPayload(
@@ -376,6 +395,18 @@ impl SyncClient {
             return Err(TransportError::InvalidPayload(
                 "admitted update digest mismatch",
             ));
+        }
+        let parts = crate::batch::export::decode_staged_import_parts(&staged.admitted_update)
+            .map_err(map_federated_admission_err)?;
+        if let Some(size) = parts
+            .iter()
+            .map(|part| part.update.len())
+            .find(|size| *size > MAX_DECODED_PAYLOAD_BYTES)
+        {
+            return Err(TransportError::FrameTooLarge {
+                size,
+                max: MAX_DECODED_PAYLOAD_BYTES,
+            });
         }
         // The bytes were admitted under the policy resolved at STAGE time, and a
         // durable Pending receipt may sit unconfirmed indefinitely. Re-resolve
@@ -392,37 +423,69 @@ impl SyncClient {
         // artifact permanently unimportable under its re-derived id even after the
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
-        let admission_key = WindowKey::try_new(durable.window_key.as_str())
-            .ok_or(TransportError::InvalidWindowKey)?;
-        revalidate_admitted_federated_claims(
-            &self.vault,
-            &admission_key,
-            &staged.admitted_update,
-            durable.role,
-        )
-        .map_err(map_federated_admission_err)?;
-        revalidate_admitted_facet_stamps(&admission_key, &staged.admitted_update)
-            .map_err(map_federated_admission_err)?;
+        let mut carried = Vec::with_capacity(parts.len());
+        for part in &parts {
+            let (admission_key, update) = (&part.key, &part.update);
+            revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
+                .map_err(map_federated_admission_err)?;
+            revalidate_admitted_facet_stamps(admission_key, update)
+                .map_err(map_federated_admission_err)?;
+            let carried_bodies = if bodies.is_empty() {
+                Vec::new()
+            } else {
+                let admitted = crate::sync::schema::create_window_doc(
+                    "federation-staged-bodies",
+                    admission_key,
+                );
+                admitted.import(update).map_err(|_| {
+                    TransportError::InvalidPayload("admitted body references unreadable")
+                })?;
+                bound_refs(&admitted)
+                    .into_iter()
+                    .filter_map(|body| bodies.get(&body.id).map(|bytes| (body, bytes.as_slice())))
+                    .collect()
+            };
+            carried.push(carried_bodies);
+        }
         let births = staged_births(
             &self.vault,
-            &admission_key,
             (&durable.receipt_id, durable.staged_stamps_digest),
-            &staged.admitted_update,
+            &parts,
         )
         .map_err(map_federated_admission_err)?;
-        let window = self.ensure_window(&durable.window_key)?;
-        let vault = std::sync::Arc::clone(&self.vault);
-        let born = watch_births(&vault, births.births(), || {
-            self.import_accepted_window_update(
-                &durable.window_key,
-                &window,
-                &staged.admitted_update,
+        for ((part, births), carried_bodies) in parts.iter().zip(births).zip(carried) {
+            let (admission_key, update) = (&part.key, &part.update);
+            let window = self.ensure_window(admission_key.as_str())?;
+            let vault = std::sync::Arc::clone(&self.vault);
+            crate::sync::ingest::record_peer_rows(
+                &vault,
+                admission_key.as_str(),
+                births.peer_rows(),
             )
-        })?;
-        let released = births
-            .release(&self.vault, &admission_key, &born)
             .map_err(map_federated_admission_err)?;
-        self.import_released_stamps(&durable.window_key, released)?;
+            let born = watch_births(&vault, births.births(), || {
+                self.import_accepted_window_update(admission_key.as_str(), &window, update)?;
+                let lane = AssetBodyLane::FederationReceive { role: durable.role };
+                with_manager_peer(&self.manager, lane, |peer| {
+                    for (body, bytes) in &carried_bodies {
+                        if let Err(error) = land_carried_body(peer, admission_key, body, bytes) {
+                            tracing::warn!(
+                                %error,
+                                entity = %body.id.to_hex(),
+                                "staged asset body not landed"
+                            );
+                        }
+                    }
+                });
+                Ok::<_, TransportError>(())
+            })?;
+            crate::sync::selector::keep_carried_born_with(&vault, &part.born_with)
+                .map_err(map_federated_admission_err)?;
+            let released = births
+                .release(&self.vault, admission_key, &born)
+                .map_err(map_federated_admission_err)?;
+            self.import_released_stamps(admission_key.as_str(), released)?;
+        }
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;
@@ -516,13 +579,8 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         crate::sync::ingest::record_peer_rows(&self.vault, window_key, part.peer_rows())
             .map_err(map_federated_admission_err)?;
-        let delivery = delivery.map(|delivery| {
-            Delivery::new(
-                &self.vault,
-                (delivery.pact, delivery.epoch),
-                part.delivered(),
-            )
-        });
+        let delivery =
+            delivery.map(|delivery| Delivery::new(&self.vault, grant, delivery, part.delivered()));
         if let Some(delivery) = &delivery {
             delivery
                 .record_intents(&self.vault)

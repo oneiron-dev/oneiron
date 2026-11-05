@@ -97,7 +97,7 @@ impl CredentialFences {
     /// evidence; one that does not read is warned, and reads unread.
     pub(crate) fn at_vault(
         root: &Path,
-        page_seal: Option<&crate::world_keys::VaultPageSeal>,
+        page_seal: Option<&oneiron_store::vault_page_seal::VaultPageSeal>,
     ) -> Self {
         let read = crate::world_keys::read_sealed(root, page_seal, || {
             crate::store::read_existing_vault_meta(root, &evidence_prefixes())

@@ -53,7 +53,14 @@ impl EngineNativeExecutor<'_> {
                 crate::engine_executor::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_context_output(&self.storage, record, &script_output_path(seq))?,
+                // A step's program, as its observation, is carried up to the
+                // window's bytes, read by range (FIX 311).
+                load_script_context(
+                    &self.storage,
+                    record,
+                    &script_output_path(seq),
+                    Some(COMPACTION_OBSERVATION_WINDOW_BYTES),
+                )?,
                 load_observation_window(
                     &self.storage,
                     record,

@@ -1,0 +1,410 @@
+//! Row staging, preflight, budget checks, read probes.
+use std::sync::Arc;
+
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
+
+use super::super::journal::JournalEntry;
+use super::super::keyspace::{
+    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayValue, project_mutation, unbudgeted_row,
+};
+use super::super::snapshot::OverlaySnapshot;
+use super::ACTIVE_SEGMENT;
+use super::lifecycle::SessionOverlay;
+use super::retained::{mutation_heap, staged_entry_heap};
+use oneiron_contracts::error::OffRecordError;
+
+impl SessionOverlay {
+    // Budget failures belong exclusively to preflight, before the base commit.
+    // This apply helper deliberately has no budget input or budget-error branch.
+    pub fn put(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
+        // The room's bookkeeping spends none of its budget: `unbudgeted_row`
+        // rows, and a row a write marked as its own (`mark_bookkeeping_row`),
+        // whose growth the preflight below then counts as none.
+        if !unbudgeted_row(keyspace, key) && !self.holds_bookkeeping_row(keyspace, key) {
+            self.reject_unbudgetable_payload(key, value)?;
+        }
+        let mutation = OverlayMutation::Put {
+            keyspace,
+            key: key.to_vec(),
+            value: value.to_vec(),
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
+    }
+
+    /// Marks `key` of `keyspace`, in this thread's active segment, as the
+    /// bookkeeping of the write that segment stages: a run's write receipt
+    /// beside its room row (WILL L11-01 S01-2a, Engine 10-19), under
+    /// #3160's rule for `unbudgeted_row` rows. For as long as the room holds
+    /// the row, its puts are neither refused for the room's budget nor
+    /// counted in its total, so a room at its limit takes exactly the writes
+    /// it took before; a delete of the row, or a clear of its keyspace, ends
+    /// the mark. The mark commits or aborts with the segment, as its rows do.
+    pub fn mark_bookkeeping_row(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+    ) -> Result<()> {
+        self.stage_mutation(OverlayMutation::Bookkeeping {
+            keyspace,
+            key: key.to_vec(),
+        })
+    }
+
+    /// Whether the active segment's view of the room holds `key` of
+    /// `keyspace` as a write's bookkeeping (`mark_bookkeeping_row`).
+    fn holds_bookkeeping_row(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> bool {
+        ACTIVE_SEGMENT.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self))
+                .is_some_and(|segment| {
+                    segment
+                        .preview
+                        .bookkeeping
+                        .get(&keyspace.slot())
+                        .is_some_and(|marked| marked.contains(key))
+                })
+        })
+    }
+
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 witness/retrieval supplies the first lib-target overlay delete"
+    )]
+    pub fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
+        self.delete_with_base_backing(keyspace, key, true)
+    }
+
+    pub fn delete_with_base_backing(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+        base_backed: bool,
+    ) -> Result<()> {
+        let mutation = OverlayMutation::Delete {
+            keyspace,
+            key: key.to_vec(),
+            base_backed,
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
+    }
+
+    pub fn delete_duplicate(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+        value: &[u8],
+        base_backed: bool,
+    ) -> Result<()> {
+        self.reject_unbudgetable_payload(key, value)?;
+        let mutation = OverlayMutation::DeleteDuplicate {
+            keyspace,
+            key: key.to_vec(),
+            value: value.to_vec(),
+            base_backed,
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
+    }
+
+    /// Stages `mutations` as one group: their net growth is preflighted once
+    /// against the room's budget, over the active segment's view with each
+    /// earlier mutation of the group applied, and only then does each
+    /// stage. A refused group stages none of them.
+    pub(in crate::session_overlay) fn stage_mutation_group(
+        self: &Arc<Self>,
+        mutations: Vec<OverlayMutation>,
+    ) -> Result<()> {
+        for mutation in &mutations {
+            if let OverlayMutation::Put {
+                keyspace,
+                key,
+                value,
+            } = mutation
+                && !unbudgeted_row(*keyspace, key)
+                && !self.holds_bookkeeping_row(*keyspace, key)
+            {
+                self.reject_unbudgetable_payload(key, value)?;
+            }
+        }
+        ACTIVE_SEGMENT.with(|slot| {
+            let slot = slot.borrow();
+            let Some(segment) = slot.as_ref() else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            if !Arc::ptr_eq(&segment.overlay, self) {
+                return Err(Error::InvariantViolation(
+                    "the active txn segment belongs to another session overlay",
+                ));
+            }
+            let current_bytes = segment
+                .preview
+                .bytes_used
+                .checked_add(segment.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            let mut projected = segment.preview.as_ref().clone();
+            for mutation in &mutations {
+                projected = project_mutation(&projected, mutation)?;
+            }
+            self.ensure_mutation_budget(
+                current_bytes,
+                segment.preview.bytes_used,
+                projected.bytes_used,
+            )?;
+            let incoming = mutations.iter().map(mutation_heap).sum::<usize>();
+            self.charge_to(self.retained_with(Some(segment), incoming));
+            Ok(())
+        })?;
+        for mutation in mutations {
+            self.stage_mutation(mutation)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear(self: &Arc<Self>, keyspace: OverlayKeyspace) -> Result<()> {
+        let mutation = OverlayMutation::Clear { keyspace };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
+    }
+
+    /// Stages one typed, role-tagged journal op into the active txn segment.
+    ///
+    /// The ONLY journal staging surface: every staged op carries its
+    /// [`JournalRole`] and the witnessing write's own `learned_at`/`occurred`,
+    /// so promote can never fall back on inferring ownership from index keys
+    /// or on restamping the room clock.
+    pub fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
+        // Keep the stored vocabulary inside the payloads this journal can
+        // scrub and the session replay path can understand. The substrate
+        // oracle also stages a payload-free Delete to check journal atomicity.
+        if !matches!(
+            entry.op,
+            crate::batch_op::BatchOp::Put { .. }
+                | crate::batch_op::BatchOp::Edge { .. }
+                | crate::batch_op::BatchOp::Text { .. }
+                | crate::batch_op::BatchOp::Vector { .. }
+                | crate::batch_op::BatchOp::MediaVector { .. }
+                | crate::batch_op::BatchOp::Delete { .. }
+        ) {
+            return Err(Error::InvariantViolation(
+                "session journal cannot stage an unsupported batch op",
+            ));
+        }
+        let incoming_bytes = entry.byte_size();
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot.as_mut() else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            if !Arc::ptr_eq(&segment.overlay, self) {
+                return Err(Error::InvariantViolation(
+                    "the active txn segment belongs to another session overlay",
+                ));
+            }
+            let current_bytes = segment
+                .preview
+                .bytes_used
+                .checked_add(segment.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            self.ensure_budget(current_bytes, incoming_bytes)?;
+            // Charged at what the room retains before the entry is kept,
+            // never refused or waited on (FIX 5991, 10104).
+            self.charge_to(self.retained_with(Some(&*segment), staged_entry_heap(&entry)));
+            segment.journal.push(entry);
+            segment.journal_bytes = segment.journal_bytes.checked_add(incoming_bytes).ok_or(
+                Error::ArithmeticOverflow("overlay staged journal byte count"),
+            )?;
+            Ok(())
+        })
+    }
+
+    fn stage_mutation(self: &Arc<Self>, mutation: OverlayMutation) -> Result<()> {
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot.as_mut() else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            if !Arc::ptr_eq(&segment.overlay, self) {
+                return Err(Error::InvariantViolation(
+                    "the active txn segment belongs to another session overlay",
+                ));
+            }
+            segment.preview = Self::apply_preflighted_to_state(
+                segment.preview.clone(),
+                std::slice::from_ref(&mutation),
+                &[],
+            )?;
+            segment.mutations.push(mutation);
+            Ok(())
+        })
+    }
+
+    fn preflight_segment_mutation(self: &Arc<Self>, mutation: &OverlayMutation) -> Result<()> {
+        ACTIVE_SEGMENT.with(|slot| {
+            let slot = slot.borrow();
+            let Some(segment) = slot.as_ref() else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            if !Arc::ptr_eq(&segment.overlay, self) {
+                return Err(Error::InvariantViolation(
+                    "the active txn segment belongs to another session overlay",
+                ));
+            }
+            let current_bytes = segment
+                .preview
+                .bytes_used
+                .checked_add(segment.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            let projected = project_mutation(&segment.preview, mutation)?;
+            self.ensure_mutation_budget(
+                current_bytes,
+                segment.preview.bytes_used,
+                projected.bytes_used,
+            )?;
+            // Charged at what the room retains before the copy is made, never
+            // refused or waited on; the publish settles it to what the
+            // overlay retains then (FIX 5991, 10104).
+            self.charge_to(self.retained_with(Some(segment), mutation_heap(mutation)));
+            Ok(())
+        })
+    }
+
+    fn ensure_mutation_budget(
+        &self,
+        current_bytes: usize,
+        old_mutation_bytes: usize,
+        new_mutation_bytes: usize,
+    ) -> Result<()> {
+        let Some(net_increase) = new_mutation_bytes.checked_sub(old_mutation_bytes) else {
+            return Ok(());
+        };
+        if net_increase == 0 {
+            return Ok(());
+        }
+        self.ensure_budget(current_bytes, net_increase)
+    }
+
+    /// Reject a payload whose own bytes exceed the entire budget before it is cloned
+    /// into an owned mutation. Any such mutation is unconditionally rejected by the
+    /// net-delta preflight anyway (a single key of that size alone exceeds the budget),
+    /// so this only fast-paths the guaranteed rejection while capping transient
+    /// allocation at the budget. Admittable mutations have payload <= budget and are
+    /// unaffected, so shrink/overwrite-at-cap admission is preserved.
+    fn reject_unbudgetable_payload(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let payload_bytes = key
+            .len()
+            .checked_add(value.len())
+            .ok_or(Error::ArithmeticOverflow("overlay payload byte count"))?;
+        if payload_bytes > self.budget_bytes {
+            return Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
+                budget_bytes: self.budget_bytes,
+                attempted_bytes: payload_bytes,
+            }));
+        }
+        Ok(())
+    }
+
+    fn ensure_budget(&self, current_bytes: usize, incoming_bytes: usize) -> Result<()> {
+        let attempted_bytes = current_bytes
+            .checked_add(incoming_bytes)
+            .ok_or(Error::ArithmeticOverflow("overlay attempted byte count"))?;
+        if attempted_bytes > self.budget_bytes {
+            return Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
+                budget_bytes: self.budget_bytes,
+                attempted_bytes,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Lock-free taint-set membership exported through the registry's
+    /// immutable session snapshot. Closed overlays retain this immutable
+    /// state until the registry drops them, so close cannot create a false
+    /// negative between classification and the write-door decision.
+    pub fn contains_entity(&self, id: &EntityId) -> Result<bool> {
+        let state = self.state.load();
+        let KeyspaceState::Single { rows, .. } =
+            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+        else {
+            return Err(Error::InvariantViolation(
+                "entities overlay keyspace unexpectedly uses DUP_SORT",
+            ));
+        };
+        Ok(matches!(
+            rows.get(id.as_bytes().as_slice()),
+            Some(OverlayValue::Present(_))
+        ))
+    }
+
+    pub fn has_entities(&self) -> Result<bool> {
+        let state = self.state.load();
+        let KeyspaceState::Single { rows, .. } =
+            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+        else {
+            return Err(Error::InvariantViolation(
+                "entities overlay keyspace unexpectedly uses DUP_SORT",
+            ));
+        };
+        Ok(rows
+            .values()
+            .any(|value| matches!(value, OverlayValue::Present(_))))
+    }
+
+    /// Whether this overlay stages anything at all, in any keyspace: a row,
+    /// a tombstone over base or a cleared keyspace. A read through it may
+    /// reflect any of them, an entity, a vector, a posting or a deletion.
+    pub fn stages_anything(&self) -> bool {
+        let state = self.state.load();
+        state
+            .keyspaces
+            .iter()
+            .any(|keyspace| match keyspace.as_ref() {
+                KeyspaceState::Single { clear_base, rows } => *clear_base || !rows.is_empty(),
+                KeyspaceState::DupSort { clear_base, rows } => *clear_base || !rows.is_empty(),
+            })
+    }
+
+    pub fn snapshot(self: &Arc<Self>) -> Result<OverlaySnapshot> {
+        let active = ACTIVE_SEGMENT.with(|slot| {
+            let slot = slot.borrow();
+            slot.as_ref().and_then(|segment| {
+                Arc::ptr_eq(&segment.overlay, self)
+                    .then(|| (segment.generation, segment.preview.clone()))
+            })
+        });
+
+        if let Some((generation, preview)) = active {
+            let mut lease = self.acquire_existing_lease(generation)?;
+            let state = lease.hold_preview(preview);
+            return Ok(OverlaySnapshot { state, lease });
+        }
+
+        let mut lease = self.acquire_read_lease()?;
+        let state = lease.hold_published();
+        Ok(OverlaySnapshot { state, lease })
+    }
+
+    #[allow(
+        dead_code,
+        reason = "ONE-1726 budget oracle introspection; production admission uses the private field"
+    )]
+    pub const fn budget_bytes(&self) -> usize {
+        self.budget_bytes
+    }
+}

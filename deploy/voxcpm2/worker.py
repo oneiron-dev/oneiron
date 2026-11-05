@@ -7,7 +7,9 @@ Under the engine's supervisor (FIX 8318) it is launched with `--weights-dir`,
 the weights manifest and the launch manifest: the launch and every pinned file
 are checked before the weights load from that directory alone, and each render
 answers with the worker's verified identity and the launch manifest's digest.
-Without them it downloads its pinned revision (`VOXCPM_REV`) as before.
+Started by hand with `--weights-dir` (or `VOXCPM_WEIGHTS_DIR`, FIX 11376)
+it loads that directory unverified under its pinned revision (`VOXCPM_REV`).
+Without either it downloads that revision as before.
 """
 import argparse
 import hmac
@@ -35,7 +37,13 @@ except ImportError:
     # Run from the source tree, where the shared module sits beside this
     # directory; a supervisor's bundle holds both side by side.
     sys.path.append(str(Path(__file__).resolve().parent.parent / "media-worker"))
-    import worker_support
+    try:
+        import worker_support
+    except ImportError:
+        # A copy of this file alone cannot start (FIX 11376): it needs its
+        # shared module beside it, as the supervised bundle carries both.
+        raise ImportError("worker_support is missing: copy deploy/media-worker/"
+                          "worker_support.py next to this file") from None
 
 KIND = "vox_cpm2"
 
@@ -83,7 +91,14 @@ def unpack(body):
     meta = json.loads(body[4:4+n])
     if not isinstance(meta, dict):
         raise ValueError("invalid metadata")
-    return meta, body[4+n:]
+    rest = body[4+n:]
+    if "transcript_bytes" not in meta:
+        return meta, rest
+    count = meta["transcript_bytes"]
+    if type(count) is not int or not 0 <= count <= len(rest):
+        raise ValueError("invalid transcript framing")
+    meta["transcript"] = rest[:count].decode("utf-8")
+    return meta, rest[count:]
 
 
 class UnsupportedEncoding(ValueError):
@@ -139,6 +154,21 @@ class Worker:
         # the worker was started by hand.
         self.identity = identity
         self.wire_model = wire_model
+        # The reply must fit even with the smallest allowed target: its
+        # actual warm identity, narrowed limits and nonempty reference ids.
+        minimum_limits = {key: 1 for key in FIELDS}
+        minimum_limits["max_ref_bytes"] = 12
+        minimum_limits["max_header_bytes"] = self.limits["max_header_bytes"]
+        # Rust sends a 32-hex EntityId and at least the fence's 32-byte
+        # digest in hex; an optional incarnation only lengthens that revision.
+        minimum_target = {"voice_id": "x", "register": "x",
+                          "owner": "0" * 32, "reference_revision": "0" * 64}
+        minimum_target.update(warm=self.target(), limits=minimum_limits)
+        managed = len(json.dumps(self.answer_meta(minimum_target),
+                                 separators=(",", ":")).encode())
+        if self.limits["max_header_bytes"] < managed:
+            raise ValueError(f"max_header_bytes {self.limits['max_header_bytes']} is below "
+                             f"the managed reply header's {managed} bytes")
 
     def target(self):
         return {"model": "VoxCPM2", "checkpoint": self.checkpoint,
@@ -264,7 +294,7 @@ def handler_for(worker):
             if self.path != "/ready":
                 self.send_error(404)
                 return
-            data = json.dumps(worker.target()).encode()
+            data = json.dumps({**worker.target(), "transcript_frame": True}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -341,18 +371,38 @@ def handler_for(worker):
     return Handler
 
 
+#: A hand start's weights directory, named without the supervised launch's
+#: manifests: loaded unverified (FIX 11376).
+HAND_WEIGHTS_DIR_ENV = "VOXCPM_WEIGHTS_DIR"
+
+
 def supervised_launch(args):
     """A supervised launch's verified identity, checked before anything
-    loads; None for a worker started by hand, which names no weights
-    directory."""
+    loads; None for a worker started by hand, which names no manifests. A
+    hand start may still name `--weights-dir` alone (FIX 11376)."""
     managed = (args.weights_dir, args.weights_manifest, args.launch_manifest, args.model_id)
     if not any(managed):
+        return None
+    if args.weights_dir and not any(managed[1:]):
         return None
     if not all(managed):
         raise ValueError("--weights-dir, --weights-manifest, --launch-manifest and --model-id "
                          "go together")
     return worker_support.verify_launch(KIND, args.model_id, args.weights_dir,
                                         args.weights_manifest, args.launch_manifest)
+
+
+def hand_weights_dir(args):
+    """A hand start's weights directory: `--weights-dir`, else
+    `VOXCPM_WEIGHTS_DIR` when it names one (FIX 11376)."""
+    named = args.weights_dir or os.environ.get(HAND_WEIGHTS_DIR_ENV) or ""
+    path = Path(named)
+    if not named:
+        return None
+    if not path.is_dir():
+        raise ValueError(f"weights directory is missing: {named} "
+                         f"(--weights-dir or {HAND_WEIGHTS_DIR_ENV})")
+    return path
 
 
 def main():
@@ -363,7 +413,8 @@ def main():
     parser.add_argument("--policy-file", required=True)
     parser.add_argument("--credential-env", default="VOXCPM_TOKEN",
                         help="the environment variable holding the bearer credential")
-    parser.add_argument("--weights-dir", help="the verified checkpoint directory (supervised)")
+    parser.add_argument("--weights-dir", help="the checkpoint directory: verified under "
+                        "the supervised manifests, unverified for a hand start (FIX 11376)")
     parser.add_argument("--weights-manifest", help="the manifest it was verified against")
     parser.add_argument("--launch-manifest", help="the supervisor's launch manifest")
     parser.add_argument("--model-id", help="the wire model the supervisor calls this worker by")
@@ -384,8 +435,14 @@ def main():
         # The verified directory alone: nothing is fetched.
         snapshot = args.weights_dir
     else:
-        from huggingface_hub import snapshot_download
-        snapshot = snapshot_download(repo_id=MODEL_ID, revision=revision)
+        hand = hand_weights_dir(args)
+        if hand is not None:
+            # A hand start's own directory, unverified by any supervisor.
+            print(f"hand-started weights are unverified: {hand}", flush=True)
+            snapshot = hand
+        else:
+            from huggingface_hub import snapshot_download
+            snapshot = snapshot_download(repo_id=MODEL_ID, revision=revision)
     model = VoxCPM.from_pretrained(snapshot, load_denoiser=False,
                                    device=worker_support.MEDIA_DEVICE, local_files_only=True)
     policy = load_policy(args.policy_file)

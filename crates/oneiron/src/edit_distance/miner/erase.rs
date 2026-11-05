@@ -17,7 +17,7 @@ use rmpv::Value;
 
 use super::config::{MARK_KIND_PREFERENCE, MINED_EVIDENCE_RECEIPTS_KEY, MINED_EVIDENCE_ROW_LABEL};
 use super::emission::{MINT_MARK, mined_evidence_record_id};
-use super::feedback::DECISION;
+use super::feedback::{CLAIM_RECEIPTS, DECISION};
 use super::influence::is_mined_preference;
 use super::model::{StoredMinedEvidence, SubstitutionCluster};
 use super::store::{SKILL_EDIT, decode_row};
@@ -46,16 +46,17 @@ enum Reach {
 ///
 /// Storage errors.
 pub(crate) fn erase_source_claim_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let is_claim = record_in_txn(store, &*txn, id)?
         .is_some_and(|record| record.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
     if !is_claim {
         return Ok(());
     }
-    erase_teaching_copies_in_txn(store, txn, id, Reach::SourceClaim)
+    erase_teaching_copies_in_txn(write, txn, id, Reach::SourceClaim)
 }
 
 /// The decision table's declared scrub: an actor's erase, and a restored
@@ -69,7 +70,12 @@ pub(crate) fn erase_principal_decision_entity_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    erase_teaching_copies_in_txn(&vault.store, txn, id, Reach::Entity)
+    erase_teaching_copies_in_txn(
+        &crate::secret_custody::CustodyWrite::of(&vault),
+        txn,
+        id,
+        Reach::Entity,
+    )
 }
 
 /// Whether every receipt `cluster` cites still holds its decision, read in
@@ -89,30 +95,90 @@ pub(super) fn receipts_stand_in_txn(
 }
 
 fn erase_teaching_copies_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     reach: Reach,
 ) -> Result<()> {
+    let store = write.store;
     let mut receipts = BTreeSet::new();
     let mut actors = BTreeSet::new();
-    for row in DECISION.iter_raw_from(store, &*txn, &[])? {
-        let (key, bytes) = row?;
-        let (Some(receipt), Ok(decision)) =
-            (String::decode_key(&key), DECISION.decode_value(&bytes))
-        else {
-            tracing::warn!("a principal decision row does not decode: the erase passes it over");
-            continue;
-        };
-        let reached = decision.claim == Some(*id)
-            || (reach == Reach::Entity && (decision.actor == *id || decision.principal == *id));
-        if reached {
-            actors.insert(decision.actor);
-            receipts.insert(receipt);
+    // The claim's teaching receipts come from the index alone (FIX 11347): no
+    // vault predates it, so there is no fallback scan for unindexed rows.
+    let mut stale = Vec::new();
+    match CLAIM_RECEIPTS.get(store, &*txn, id) {
+        Ok(Some(indexed)) => {
+            for receipt in indexed {
+                match DECISION.get(store, &*txn, &receipt) {
+                    Ok(Some(decision)) => {
+                        if decision.claim == Some(*id) {
+                            actors.insert(decision.actor);
+                            receipts.insert(receipt);
+                        }
+                    }
+                    Ok(None) => stale.push(receipt),
+                    Err(error) => {
+                        tracing::warn!(%error, "a principal decision row does not decode: the erase passes it over");
+                        stale.push(receipt);
+                    }
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, "a claim-receipt index row does not decode: the erase passes it over");
+        }
+    }
+    if !stale.is_empty()
+        && let Ok(Some(mut indexed)) = CLAIM_RECEIPTS.get(store, &*txn, id)
+    {
+        indexed.retain(|receipt| !stale.contains(receipt));
+        if indexed.is_empty() {
+            CLAIM_RECEIPTS.delete(store, txn, id)?;
+        } else {
+            CLAIM_RECEIPTS.put(store, txn, id, &indexed)?;
+        }
+    }
+    // An entity erase also reaches decisions naming it as actor or principal
+    // (no index covers those; the scan stays for them).
+    if reach == Reach::Entity {
+        for row in DECISION.iter_raw_from(store, &*txn, &[])? {
+            let (key, bytes) = row?;
+            let (Some(receipt), Ok(decision)) =
+                (String::decode_key(&key), DECISION.decode_value(&bytes))
+            else {
+                tracing::warn!(
+                    "a principal decision row does not decode: the erase passes it over"
+                );
+                continue;
+            };
+            if decision.actor == *id || decision.principal == *id {
+                actors.insert(decision.actor);
+                receipts.insert(receipt);
+            }
         }
     }
     if receipts.is_empty() {
         return Ok(());
+    }
+    // Index hygiene: each deleted receipt leaves its claim's row, and an
+    // emptied row goes with the copies it named.
+    for receipt in &receipts {
+        let claim = match DECISION.get(store, &*txn, receipt) {
+            Ok(Some(decision)) => decision.claim,
+            Ok(None) | Err(_) => None,
+        };
+        let Some(claim) = claim else {
+            continue;
+        };
+        if let Ok(Some(mut indexed)) = CLAIM_RECEIPTS.get(store, &*txn, &claim) {
+            indexed.retain(|kept| kept != receipt);
+            if indexed.is_empty() {
+                CLAIM_RECEIPTS.delete(store, txn, &claim)?;
+            } else {
+                CLAIM_RECEIPTS.put(store, txn, &claim, &indexed)?;
+            }
+        }
     }
     // The decisions go first: a downstream claim's own delete re-enters the
     // derived-row eraser, and must find nothing left to follow.
@@ -128,7 +194,7 @@ fn erase_teaching_copies_in_txn(
     for copy in copies {
         // A mined claim is MACHINE-signed: its history controls go with it.
         let (_, vector, graph, neighbors) =
-            crate::batch::deindex_entity_with_machine_history(store, txn, &copy)?;
+            crate::batch::deindex_entity_with_machine_history(write, txn, &copy)?;
         crate::batch::stage_cascade_tombstone_in_txn(store, txn, &copy)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &copy, &neighbors)?;
         if graph {

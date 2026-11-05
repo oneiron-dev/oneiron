@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::context_pack::PackStats;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
+use crate::tokenizer::PackTokenizer;
 
 use super::pack_entry::PreparedEntity;
 use super::token_budget::{
@@ -16,13 +16,13 @@ pub(super) fn apply_item_budget_with_depth_limit(
     entity: &mut PreparedEntity,
     max_item_tokens: usize,
     stats: &mut PackStats,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     if max_item_tokens == 0 {
         return true;
     }
 
-    let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
     if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
         <= max_item_tokens
     {

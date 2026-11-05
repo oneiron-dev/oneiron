@@ -24,6 +24,27 @@ use super::publication_types::{
 // ---------------------------------------------------------------------------
 
 impl Vault {
+    /// Stages the stable projection's owner after its physical root is written
+    /// under the repository coordinator. The caller commits this row with
+    /// ENGINE_EXPORTS, independently of any publication's lifetime.
+    pub(in crate::origin) fn keep_engine_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_id: &EntityId,
+        oid: &GitOid,
+        revision: EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let key = keep_owner_key(
+            repo_id,
+            oid,
+            OriginKeepRefKind::EngineExport,
+            &revision.to_hex(),
+        );
+        KEEP_OWNER.put(&self.store, txn, &key, &learned_at.to_le_bytes())?;
+        Ok(())
+    }
+
     /// Pins one git object behind a physical keep-ref and one logical owner.
     ///
     /// Crate-local inherent impl in the feature module: `vault.rs` is never
@@ -69,8 +90,8 @@ impl Vault {
     /// The owner row goes first and the keep-ref second, for the same reason
     /// [`Vault::pin_origin_object`] writes them the other way round: an
     /// interrupted release leaves an unclaimed keep-ref, never a claim with no
-    /// root. Deletion happens ONLY when no publication, change, conflict,
-    /// recovery or snapshot owner still references the object.
+    /// root. Deletion happens ONLY when no logical owner still references
+    /// the object.
     pub fn unpin_origin_object(
         &self,
         git: &GitWire<'_>,
@@ -105,8 +126,26 @@ impl Vault {
     /// ([`super::origin_publication_intent_claim`]); `repo.*` is engine-owned,
     /// so this is the one door that writes it.
     pub fn put_origin_publication_intent(&self, request: &OriginPublicationRequest) -> Result<()> {
+        match self.put_origin_publication_intent_checked(request, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(()) => Ok(()),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::put_origin_publication_intent`] whose writer judges `check`
+    /// first (FIX 7179): a refusal writes no intent, so nothing publishes.
+    pub(crate) fn put_origin_publication_intent_checked<R>(
+        &self,
+        request: &OriginPublicationRequest,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<(), R>> {
         let body = super::origin_publication_intent_claim(request)?;
         self.with_write_txn_grouped(|wtxn| {
+            if let Err(refused) = check(wtxn)? {
+                return Ok(Err(refused));
+            }
             // An erased intent is never named again (FIX 3877).
             let id = &request.provenance_claim_id;
             crate::origin::actor_erase::refuse_renaming_in_txn(self, wtxn, id, &body)?;
@@ -116,7 +155,8 @@ impl Vault {
                 &body,
                 request.occurred,
                 request.learned_at,
-            )
+            )?;
+            Ok(Ok(()))
         })
     }
 
@@ -258,7 +298,7 @@ impl Vault {
     ///
     /// `None` includes every repository. The list is whole: the scan never
     /// refuses for its length, and past its threshold row it raises an
-    /// [`ScanCheck`](crate::scan_check::ScanCheck).
+    /// [`ScanCheck`](crate::store::ScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

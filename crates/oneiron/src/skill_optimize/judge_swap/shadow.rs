@@ -60,14 +60,13 @@ fn retest(
     probe: JudgeShadowAnswer,
     now: u64,
 ) -> Result<JudgeSwapReport> {
-    let scorer = scorer()?;
-    // With the judge SKILL gone the noise has no subject to be kept under,
-    // so nothing is retested or asked of the host (FIX 8079).
-    let present = {
+    // With no live judge head the noise has no subject to be kept under,
+    // so nothing is retested or asked of the host (FIX 8079, FIX 9076).
+    let scorer = {
         let rtxn = vault.store.env.read_txn()?;
-        crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &scorer)?.is_live()
+        scorer(vault, &rtxn)?
     };
-    if !present {
+    let Some(scorer) = scorer else {
         tracing::warn!(
             reason = NOISE_SUBJECT_ABSENT,
             "the judge's retest noise was not recorded: its subject is absent"
@@ -76,7 +75,7 @@ fn retest(
             judge: incumbent.to_owned(),
             retests: 0,
         });
-    }
+    };
     let mut probe = Some(probe);
     let mut retests = 0;
     for case in own {
@@ -187,7 +186,14 @@ fn shadow(
             disagreements.push((*case, disagreement(vault, incumbent, case, answer)?));
         }
     }
-    let noise = learning_estimate(vault, &noise_cell(incumbent)?)?;
+    let noise = {
+        let rtxn = vault.store.env.read_txn()?;
+        noise_cell(vault, &rtxn, incumbent)?
+    };
+    let noise = match &noise {
+        Some(cell) => learning_estimate(vault, cell)?,
+        None => None,
+    };
     let noise = noise.as_ref().filter(|noise| noise.runs > 0.0);
     let (mut verdict, threshold_source, threshold) = match policy.pinned_divergence {
         Some(rate) => (

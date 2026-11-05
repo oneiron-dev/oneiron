@@ -65,7 +65,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_FACTS_MAP: &str = "room_facts";
 
 /// The largest side row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 16;
+use super::room_parts::ROOM_FACT_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 /// The key prefix of a room's host pin cell.
 const PIN: &str = "pin/";

@@ -26,7 +26,7 @@ use crate::store::ManifestDbs;
 /// Whether the row `carrier` names is of a shared family.
 fn shared(carrier: &[u8]) -> bool {
     carrier_row(carrier).is_some_and(|(db, key)| {
-        db == ResponseDb::VaultMeta && crate::code_run::settled_wait_key(key)
+        db == ResponseDb::VaultMeta && crate::store::executor_wait_delivery::settled_wait_key(key)
     })
 }
 
@@ -47,7 +47,7 @@ pub(super) fn still_held<D: SideTableDbs>(
     let Some((_, key)) = carrier_row(carrier).filter(|_| shared(carrier)) else {
         return Ok(false);
     };
-    if !crate::code_run::settled_reply_held_in_txn(dbs, txn, key)? {
+    if !crate::store::executor_wait_delivery::settled_reply_held_in_txn(dbs, txn, key)? {
         return Ok(false);
     }
     for row in RESPONSE_OWNERS.iter_raw_from(dbs, txn, &[])? {

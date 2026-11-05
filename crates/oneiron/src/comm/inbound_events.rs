@@ -2,9 +2,9 @@
 //! for the projector's next pass.
 
 use super::claims::CommError;
-use super::parties::resolve_or_create_party_in_txn;
+use super::parties::{resolve_or_create_party_in_txn, validate_party_key};
 use super::projector::put_source_event_in_txn;
-use super::records::{CommEventKind, validate_channel_class, validate_key_string};
+use super::records::{CommEventKind, validate_channel_class};
 use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::error::Error;
@@ -60,7 +60,7 @@ fn record_inbound_event_in_txn(
     occurred_at: u64,
 ) -> crate::error::Result<()> {
     let channel_class = normalize_channel_class(channel_class);
-    if validate_key_string(party).is_err() || validate_channel_class(&channel_class).is_err() {
+    if validate_party_key(party).is_err() || validate_channel_class(&channel_class).is_err() {
         return Ok(());
     }
     resolve_or_create_party_in_txn(vault, wtxn, party)

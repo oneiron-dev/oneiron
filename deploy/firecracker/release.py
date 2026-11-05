@@ -188,7 +188,8 @@ def emit(args) -> None:
         "binaries": {"guest": None, "fence": None, "relay": None},
         "sbom": None,
         "provenance": {"media_type": RECEIPT_MEDIA_TYPE, "path": "receipt.json", "sha256": "sha256:" + receipt_sha},
-        "host": {"kvm": True, "kernel_floor": None, "landlock_abi_floor": None, "seccomp_user_notify": False},
+        "host": {"kvm": True},
+        "guest": {"kernel_floor": None, "landlock_abi_floor": None, "seccomp_user_notify": False},
         "snapshot": {
             "qualified": False,
             "rootfs_ext4_blake3": rootfs["blake3"],

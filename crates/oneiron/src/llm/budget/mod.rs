@@ -5,7 +5,6 @@ mod resident;
 mod rsi;
 pub mod rsi_doors;
 
-pub(crate) use resident::erase_resident_share_actor_in_txn;
 pub use resident::{ResidentShareRead, VaultResidentLedger};
 
 pub use rsi::{

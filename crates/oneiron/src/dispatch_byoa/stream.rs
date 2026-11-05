@@ -18,10 +18,9 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::code_sandbox::{SandboxProposalBody, SandboxProposalBodyWriter};
+use crate::code_sandbox::{ProposalSpoolFloor, SandboxProposalBody, SandboxProposalBodyWriter};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::origin::smart_http::SpillFloor;
 
 use super::connector::BYOA_EXHAUST_INLINE_BYTES;
 use super::error::{ByoaError, ByoaResult};
@@ -39,12 +38,12 @@ enum Body {
 
 impl ByoaStream {
     /// A stream to capture into: held in memory up to
-    /// [`BYOA_EXHAUST_INLINE_BYTES`], then spooled. `floor` is asked before
-    /// each write to the spool and `deadline` before each append; they are
-    /// the stream's only stops.
+    /// [`BYOA_EXHAUST_INLINE_BYTES`], then spooled. `floor` reserves each
+    /// spooled write on the host's shared disk ledger; `deadline` is checked
+    /// before each append. They are the stream's only stops.
     #[must_use]
     pub fn writer(
-        floor: Option<Arc<dyn SpillFloor>>,
+        floor: Option<Arc<dyn ProposalSpoolFloor>>,
         deadline: Option<Instant>,
     ) -> ByoaStreamWriter {
         ByoaStreamWriter {
@@ -192,7 +191,7 @@ impl std::fmt::Debug for ByoaStream {
 pub struct ByoaStreamWriter {
     held: Vec<u8>,
     spool: Option<SandboxProposalBodyWriter>,
-    floor: Option<Arc<dyn SpillFloor>>,
+    floor: Option<Arc<dyn ProposalSpoolFloor>>,
     deadline: Option<Instant>,
 }
 
@@ -220,17 +219,17 @@ impl ByoaStreamWriter {
         // held again when they fit the budget, else written straight on. The
         // spool goes on the disk the floor measures when it names one.
         if self.spool.is_none() {
-            let spool = match self.floor.as_deref().and_then(SpillFloor::spool_dir) {
-                Some(dir) => SandboxProposalBody::spool_in(&dir),
+            let spool = match self.floor.as_deref() {
+                Some(floor) => SandboxProposalBody::spool_floored(floor),
                 None => SandboxProposalBody::spool(),
             };
             self.spool = Some(spool.map_err(spool_error)?);
         }
         if let Some(spool) = &mut self.spool {
-            spool_write(spool, self.floor.as_deref(), &self.held)?;
+            spool_write(spool, &self.held)?;
             self.held.clear();
             if bytes.len() > BYOA_EXHAUST_INLINE_BYTES {
-                spool_write(spool, self.floor.as_deref(), bytes)?;
+                spool_write(spool, bytes)?;
             } else {
                 self.held.extend_from_slice(bytes);
             }
@@ -246,14 +245,12 @@ impl ByoaStreamWriter {
     /// Returns the floor's refusal or the failure of the spool's last write,
     /// as [`Self::append`] does.
     pub fn finish(self) -> ByoaResult<ByoaStream> {
-        let Self {
-            held, spool, floor, ..
-        } = self;
+        let Self { held, spool, .. } = self;
         let Some(mut spool) = spool else {
             return Ok(ByoaStream(Body::Inline(held)));
         };
         if !held.is_empty() {
-            spool_write(&mut spool, floor.as_deref(), &held)?;
+            spool_write(&mut spool, &held)?;
         }
         Ok(ByoaStream(Body::Spooled(
             spool.finish().map_err(spool_error)?,
@@ -261,15 +258,8 @@ impl ByoaStreamWriter {
     }
 }
 
-/// One write to a stream's spool, asked of the floor first.
-fn spool_write(
-    spool: &mut SandboxProposalBodyWriter,
-    floor: Option<&dyn SpillFloor>,
-    bytes: &[u8],
-) -> ByoaResult<()> {
-    if floor.is_some_and(|floor| !floor.has_room_for(bytes.len() as u64)) {
-        return Err(ByoaError::SpoolAtDiskFloor);
-    }
+/// One write to a stream's spool, admitted by its retained floor claim.
+fn spool_write(spool: &mut SandboxProposalBodyWriter, bytes: &[u8]) -> ByoaResult<()> {
     spool.append(bytes).map_err(spool_error)
 }
 
@@ -277,6 +267,9 @@ fn spool_write(
 /// its own error.
 fn spool_error(error: Error) -> ByoaError {
     match error {
+        Error::Code(crate::error::CodeError::SandboxProposalDiskFloor { .. }) => {
+            ByoaError::SpoolAtDiskFloor
+        }
         Error::Io(io) if io.kind() == std::io::ErrorKind::StorageFull => {
             ByoaError::SpoolAtDiskFloor
         }

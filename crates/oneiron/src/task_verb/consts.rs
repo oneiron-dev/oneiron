@@ -11,7 +11,7 @@
 /// key is optional and absent means the landed standard Dreamer-routed task.
 pub(super) const TASK_VERB_BODY_SCHEMA_VERSION: u8 = 2;
 pub(super) const TASK_VERB_BODY_SCHEMA_VERSIONS: [u8; 2] = [1, TASK_VERB_BODY_SCHEMA_VERSION];
-pub(super) const TASK_VERB_BODY_SUBKIND: &str = "typed";
+pub(super) use crate::store::linear_task_revision::TASK_VERB_BODY_SUBKIND;
 pub(super) const TASK_REALIZE_ATTEMPT_KIND: &str = "tasks.realize";
 /// Shared task-follow-up idempotency namespace. ONE-1699 owns the
 /// `consult_expired` stage; ONE-1708's human follow-up stages key the same way,

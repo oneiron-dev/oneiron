@@ -26,6 +26,7 @@ const SCHEMA_VERSION: u64 = 1;
 /// `runtime`.
 #[derive(Serialize)]
 pub(super) struct BuildSection<'a> {
+    /// The scripts this worker kind runs, not unrelated files in the install directory.
     pub(super) bundle_sha256: &'a str,
     pub(super) env_freeze_sha256: Option<&'a str>,
     pub(super) env_lock_sha256: Option<&'a str>,
@@ -45,6 +46,7 @@ pub(super) struct LaunchManifest<'a> {
     /// What the backend's identity names as its loaded weights: EXL3's
     /// weights-manifest digest, or the target GGUF's SHA-256.
     pub(super) backend_model: Option<&'a str>,
+    /// Kind-scoped code digest; the install directory has its own whole-bundle digest.
     pub(super) bundle_sha256: &'a str,
     pub(super) draft_record_sha256: Option<&'a str>,
     pub(super) env_freeze_sha256: Option<&'a str>,

@@ -35,7 +35,9 @@ use rmpv::Value;
 
 mod receipt_erase;
 pub(crate) use receipt_erase::erase_section_fit_receipts_in_txn;
-pub(crate) use receipt_erase::scrub_section_fit_receipt_actors_in_txn;
+pub(crate) use receipt_erase::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
+};
 
 /// The engine-owned receipt a fitted install leaves on its skill. `skill.*`
 /// is a reserved namespace: no generic claim door can write one, so only

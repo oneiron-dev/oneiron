@@ -27,6 +27,8 @@ use crate::llm::run_admission::LeaseUnit;
 use crate::side_table::{self, LegacyJson, SideTable};
 
 use super::AgentDispatcher;
+use super::spend_record::{SCOPE, SpendCalibrationSample, SpendScope, SpendState};
+use super::widen_record::invalid;
 
 /// The expected spend of an agent with no settled launch yet. A PRIOR, never
 /// a calibration: one model call's default reservation
@@ -39,7 +41,7 @@ pub(super) const CALIBRATION: SideTable<String, AgentSpendCalibration, LegacyJso
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_CALIBRATION);
 
 /// What one agent's settled launches spent, in one unit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSpendCalibration {
     pub samples: u64,
@@ -378,8 +380,9 @@ impl AgentDispatcher<'_> {
         unit: &LeaseUnit,
         units: u64,
         now: u64,
-    ) -> Result<AgentSpendCalibration> {
+    ) -> Result<SpendCalibrationSample> {
         self.fold_sample_in_txn(txn, calibration_key(&agent, unit), units, now)
+            .map(|(before, _)| SpendCalibrationSample { before })
     }
 
     /// Folds one landed consult's measured spend into its peer's consult
@@ -393,6 +396,7 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<AgentSpendCalibration> {
         self.fold_sample_in_txn(txn, consult_calibration_key(&peer, unit), units, now)
+            .map(|(_, row)| row)
     }
 
     fn fold_sample_in_txn(
@@ -401,10 +405,62 @@ impl AgentDispatcher<'_> {
         key: String,
         units: u64,
         now: u64,
-    ) -> Result<AgentSpendCalibration> {
+    ) -> Result<(Option<AgentSpendCalibration>, AgentSpendCalibration)> {
         let previous = CALIBRATION.get(&self.vault.store, txn, &key)?;
-        let row = AgentSpendCalibration::fold(previous, units, now);
+        let row = AgentSpendCalibration::fold(previous.clone(), units, now);
         CALIBRATION.put(&self.vault.store, txn, &key, &row)?;
-        Ok(row)
+        Ok((previous, row))
+    }
+
+    /// Corrects a settled sample without losing later samples of the same
+    /// agent. Only the changed ordinal and its suffix are folded again.
+    pub(in crate::agent_dispatch) fn revise_spend_calibration_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        changed: &SpendScope,
+    ) -> Result<()> {
+        let (Some(agent), Some(sample)) = (changed.agent, &changed.calibration_sample) else {
+            return Ok(());
+        };
+        let ordinal = sample.ordinal();
+        let mut suffix = Vec::new();
+        for row in SCOPE.iter_from(&self.vault.store, txn, b"")? {
+            let (_, scope) = row?;
+            if scope.state == SpendState::Closed
+                && scope.agent == Some(agent)
+                && scope.unit == changed.unit
+                && scope
+                    .calibration_sample
+                    .as_ref()
+                    .is_some_and(|sample| sample.ordinal() >= ordinal)
+            {
+                suffix.push(scope);
+            }
+        }
+        suffix.sort_by_key(|scope| scope.calibration_sample.as_ref().unwrap().ordinal());
+        let mut previous = sample.before.clone();
+        for mut scope in suffix {
+            let closed_at = scope
+                .closed_at
+                .ok_or_else(|| invalid("a calibrated spend scope has no close time"))?;
+            scope.calibration_sample = Some(SpendCalibrationSample {
+                before: previous.clone(),
+            });
+            previous = Some(AgentSpendCalibration::fold(
+                previous,
+                scope.spent_units,
+                closed_at,
+            ));
+            SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
+        }
+        if let Some(row) = previous {
+            CALIBRATION.put(
+                &self.vault.store,
+                txn,
+                &calibration_key(&agent, &changed.unit),
+                &row,
+            )?;
+        }
+        Ok(())
     }
 }

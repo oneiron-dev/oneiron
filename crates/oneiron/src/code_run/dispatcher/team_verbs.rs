@@ -33,6 +33,8 @@ impl HostSelfDispatcher<'_> {
             Err(code) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::Team,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             }),
         })
     }

@@ -1,4 +1,4 @@
-//! One wake pass's partition window (FIX 12487): plain Micro
+//! One wake pass's partition window (FIX 12487): plain Micro or Meso
 //! partitions admitted back to back, up to the selection policy's
 //! width, extracted side by side by the executor and settled here one
 //! by one in admission order through the same settle path as a serial
@@ -51,8 +51,9 @@ impl SettleFlow {
 }
 
 /// A window member is exactly what the executor's window contract
-/// holds: a plain Micro partition (the consolidation kind, the scope's
-/// own attempt type) whose preparation is Ready at this wake revision.
+/// holds: a plain Micro or Meso partition (the scope's consolidation
+/// kind, its own attempt type) whose preparation is Ready at this wake
+/// revision, or a sieve rung job this wake's frozen preparation holds.
 /// A budget-pressure warning failure and a raised cancellation keep
 /// their serial pre-dispatch arms instead of joining.
 pub(super) fn window_eligible(
@@ -62,17 +63,24 @@ pub(super) fn window_eligible(
     cancel_requested: bool,
     parallelism: usize,
 ) -> bool {
-    parallelism > 1
-        && pressure_ok
-        && !cancel_requested
-        && admitted.status.attempt.kind
-            == crate::dreamer_runner::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
-        && admitted.status.payload.attempt_type
-            == crate::dreamer_runner::DreamerConsolidationScope::Micro.as_str()
-        && matches!(
-            prepared_wake.preparation(admitted.status.attempt.id),
+    parallelism > 1 && pressure_ok && !cancel_requested && window_member(admitted, prepared_wake)
+}
+
+/// A plain Micro or Meso partition whose preparation is Ready, or a sieve
+/// rung job the frozen preparation holds; a rung it does not hold takes
+/// the serial backlog wait instead.
+fn window_member(admitted: &DreamerAdmittedAttempt, prepared_wake: &PreparedWake) -> bool {
+    let attempt = &admitted.status.attempt;
+    let attempt_type = &admitted.status.payload.attempt_type;
+    if crate::dreamer_consolidation::selection::windowed_partition(&attempt.kind, attempt_type) {
+        matches!(
+            prepared_wake.preparation(attempt.id),
             Some(crate::dreamer_consolidation::AttemptPreparation::Ready(_))
         )
+    } else {
+        crate::dreamer_consolidation::selection::windowed_rung(&attempt.kind, attempt_type)
+            && prepared_wake.contains_attempt(attempt.id)
+    }
 }
 
 impl DreamerWakeDriver<'_> {
@@ -327,12 +335,17 @@ impl DreamerWakeDriver<'_> {
                 ) {
                     report.sources_truncated = report.sources_truncated.saturating_add(1);
                 }
+                // Pre-dispatch sync (FIX 11963), as a serial dispatch:
+                // a wake ask raised while the window filled trips the
+                // device work these attempts are about to admit under.
+                sync_wake_cancel(cancel, &self.device_cancel);
                 window_args.push((
                     &slot.admitted,
                     WakeAttemptContext {
                         vault: self.vault,
                         deadline: &self.deadline,
                         cancel: Some(cancel),
+                        device_cancel: Some(self.device_cancel.clone()),
                         budget_id: &slot.line,
                         now_ms: input.now.saturating_mul(1_000),
                         prepared_wake: Some(prepared_wake),

@@ -4,18 +4,10 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
 
-/// Declared hints for kinds with human-facing identities. None is unique.
-pub fn identity_fields_for_kind(kind: u8) -> &'static [&'static str] {
-    match kind {
-        ENTITY_TYPE_PERSON => &["name", "aliases", "phonetic", "contact_handle"],
-        ENTITY_TYPE_ORG | ENTITY_TYPE_PLACE => &["name", "aliases", "phonetic"],
-        _ => &[],
-    }
-}
+pub use oneiron_store::identity_hints::identity_fields_for_kind;
 
 pub(crate) fn identity_hint_body(kind: u8, bytes: &[u8]) -> Option<serde_json::Value> {
     // Checked before the decode: a kind without identity fields, a custody

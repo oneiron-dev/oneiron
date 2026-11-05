@@ -118,7 +118,7 @@ pub(crate) fn append_redaction_sweep_completion_in_txn(
         sweep_complete_at: Some(now),
         ..receipt.clone()
     };
-    let identity = crate::identity::ensure_device_identity_in_txn(vault, wtxn)?;
+    let identity = crate::store::install_identity::ensure_device_identity_in_txn(vault, wtxn)?;
     let body = sign_redaction_audit_receipt(completion, &completion_id, now, &identity)?;
     validate_redaction_receipt_body(&body)?;
     crate::off_record::FloorWrites::new(&vault.store).append_redaction_audit(

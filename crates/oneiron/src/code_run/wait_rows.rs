@@ -43,12 +43,16 @@ fn entry<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
         .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
 }
 
-/// Whether `outcome` records a park on `wait_id`.
-pub(crate) fn parks_on(outcome: &Value, wait_id: EntityId) -> bool {
+/// The wait named by an actual durable-wait outcome, never its prompt.
+pub(super) fn parked_wait_id(outcome: &Value) -> Option<EntityId> {
     wait_entries(outcome)
         .and_then(|entries| entry(entries, WAIT_ID))
         .and_then(|value| entity_value(value).ok())
-        == Some(wait_id)
+}
+
+/// Whether `outcome` records a park on `wait_id`.
+pub(crate) fn parks_on(outcome: &Value, wait_id: EntityId) -> bool {
+    parked_wait_id(outcome) == Some(wait_id)
 }
 
 /// The rows the durable wait recorded in `outcome` kept from its delivered

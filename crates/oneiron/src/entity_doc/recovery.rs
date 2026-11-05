@@ -724,6 +724,7 @@ fn bind_rows(
                     .as_ref()
                     .ok_or(invalid("entity document fork metadata"))?,
             )?;
+            super::document::restate_birth(&branch.doc);
             branch.doc.commit();
             ENTITY_DOC_FORK_SNAPSHOT.put(
                 store,

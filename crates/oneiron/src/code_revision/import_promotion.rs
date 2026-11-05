@@ -17,8 +17,8 @@ use super::import_anchor::{
     baseline_import_approval_in_txn, import_manifest_in_txn, import_snapshot_custody_in_txn,
 };
 use super::import_types::{
-    CodeImportAcceptance, CodeImportApproval, CodeImportManifest, approval_id, catalog_digest,
-    manifest_digest,
+    CodeImportAcceptance, CodeImportApproval, CodeImportManifest, IMPORT_APPROVAL_PREDICATE,
+    approval_id, catalog_digest, manifest_digest,
 };
 use super::integrity::verify_or_build_code_revision_integrity_record_in_txn;
 use super::promotion::{promotion_receipt_in_txn, put_promotion_receipt_in_txn};
@@ -166,6 +166,13 @@ impl Vault {
                 "a checked baseline's receipt is not its import approval",
             ));
         }
+        // The recorded approver is judged again too: an approval stands
+        // only while its approver is still a live owner here (FIX 7393).
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &approval.approver)? {
+            return Ok(Err(
+                "the import approval's approver is no longer an owner of this vault".to_owned(),
+            ));
+        }
         let Some(manifest) = import_manifest_in_txn(self, txn, approval.manifest)? else {
             return Ok(Err("the approved import manifest is gone".to_owned()));
         };
@@ -212,6 +219,52 @@ impl Vault {
             ));
         }
         Ok(Ok(()))
+    }
+}
+
+impl Vault {
+    /// The checked Baseline the import manifest `manifest_ref` promotes now,
+    /// with its approval, read with no acceptance (FIX 7393): the approval
+    /// about the manifest that its Baseline's promotion receipt names, judged
+    /// again. `Ok(Err(detail))` when one is recorded but no longer holds;
+    /// `Ok(Ok(None))` when none is.
+    ///
+    /// # Errors
+    /// Corruption or a store failure.
+    pub(crate) fn imported_manifest_promotion(
+        &self,
+        manifest_ref: EntityId,
+    ) -> Result<std::result::Result<Option<(EntityId, EntityId)>, String>> {
+        let txn = self.store.env.read_txn()?;
+        let mut approvals = Vec::new();
+        self.find_claim_for_subject_in_txn(&txn, &manifest_ref, |id, body| {
+            if body.predicate == IMPORT_APPROVAL_PREDICATE {
+                approvals.push((*id, body.clone()));
+            }
+            None::<()>
+        })?;
+        let mut held = None;
+        for (id, body) in approvals {
+            let approval = CodeImportApproval::from_claim(&body)?;
+            let Some(stored) =
+                promotion_receipt_in_txn(&self.store, &txn, &approval.baseline_revision)?
+            else {
+                continue;
+            };
+            let Some(baseline) =
+                get_code_revision_in_txn(&self.store, &txn, &approval.baseline_revision)?
+            else {
+                continue;
+            };
+            if stored != [id.to_hex()] {
+                continue;
+            }
+            match self.require_imported_baseline_promotion_in_txn(&txn, &baseline, &stored)? {
+                Ok(()) => return Ok(Ok(Some((baseline.revision_id, id)))),
+                Err(detail) => held = Some(detail),
+            }
+        }
+        Ok(held.map_or(Ok(None), Err))
     }
 }
 

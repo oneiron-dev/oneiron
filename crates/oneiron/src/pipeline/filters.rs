@@ -166,6 +166,17 @@ pub(super) fn import_claim_gate_decisions_for_scores(
         };
         claim_gate.decisions.entry(scored.id).or_insert(decision);
     }
+    // FIX 199: the fetch drops gate-rejected rows before they reach the
+    // fused union, so their suppressions must travel with the run even when
+    // they back no score. Import the probe's remaining rejections (None
+    // only: an allowed-but-unfetched row is not suppressed, and importing
+    // its body would inflate claim_bodies) so the D19 site and
+    // PackStats::claims_suppressed see them.
+    for (id, decision) in std::mem::take(&mut probe_gate.decisions) {
+        if decision.is_none() {
+            claim_gate.decisions.entry(id).or_insert(None);
+        }
+    }
 }
 
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the

@@ -550,6 +550,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_MACHINE,
                 occurred: TimeRange { start: at, end: at },
                 learned_at: at,
+                row_version: 0,
                 body,
             },
         )?;

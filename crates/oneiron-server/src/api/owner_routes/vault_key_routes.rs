@@ -19,6 +19,7 @@ use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::header;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::inference_snapshot::SnapshotLockReceipt;
 use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, VaultKeyWrapInfo};
 use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,16 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: Some(RestShape::json(unlock_body_schema, vault_key_report_schema)),
             },
             post(unlock),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/lock",
+                summary: "Drops this server's vault key after closing snapshot admission and asking the runtime to release its copies; reports the actual release outcome.",
+                row: None,
+                shape: Some(RestShape::no_body(snapshot_lock_receipt_schema)),
+            },
+            post(lock),
         ),
         (
             OwnerRoute {
@@ -178,6 +189,18 @@ async fn prf_input(
     let query = query_params(query)?;
     let input = blocking(move || Ok(view::prf_input(server.vault(), &query.credential)?)).await?;
     Ok(Json(input))
+}
+
+/// `POST /v1/owner/vault-key/lock`: closes snapshot admission, asks the
+/// attached runtime to release its state, then drops this handle's vault key.
+/// The native receipt retains any timeout or outstanding-copy outcome.
+async fn lock(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<SnapshotLockReceipt> {
+    owner(&auth, &server)?;
+    let receipt = server.vault().lock_vault_key().await;
+    Ok(Json(receipt))
 }
 
 /// Secret text a request carries, read straight into a guard that wipes it
@@ -516,6 +539,47 @@ pub(crate) fn retire_escrow_body_schema() -> serde_json::Value {
 /// (FIX 11611): [`EscrowRetirement`].
 pub(crate) fn escrow_retirement_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<EscrowRetirement>()
+}
+
+/// The native lock receipt's wire shape. The core type is Serialize-only.
+fn snapshot_lock_receipt_schema() -> serde_json::Value {
+    let counter = serde_json::json!({"type": "integer", "format": "uint64", "minimum": 0.0});
+    serde_json::json!({
+        "type": "object",
+        "required": ["closed_generation", "bound_ms", "release"],
+        "properties": {
+            "closed_generation": counter,
+            "bound_ms": {"type": ["integer", "null"], "format": "uint64", "minimum": 0.0},
+            "release": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "required": ["released", "aborted", "timed_out", "elapsed_ms", "host_copies", "host_copies_left"],
+                        "properties": {
+                            "released": counter,
+                            "aborted": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["worker_id", "epoch", "reaped"],
+                                    "properties": {
+                                        "worker_id": {"type": "string"},
+                                        "epoch": {"type": "string"},
+                                        "reaped": {"type": "boolean"}
+                                    }
+                                }
+                            },
+                            "timed_out": {"type": "boolean"},
+                            "elapsed_ms": counter,
+                            "host_copies": counter,
+                            "host_copies_left": counter
+                        }
+                    }
+                ]
+            }
+        }
+    })
 }
 
 /// The OpenAPI schema of `POST /v1/owner/vault-key/unlock`'s body

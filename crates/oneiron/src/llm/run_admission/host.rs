@@ -10,6 +10,7 @@ use super::declaration::LeaseUnit;
 use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
+pub use crate::store::resident_budget_rows::AllocationRef;
 
 /// Who pays the provider for a call an offer serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -360,13 +361,6 @@ impl PaidConnector {
 fn identity(binding: &impl Serialize) -> String {
     let bytes = serde_json::to_vec(binding).expect("an offer binding serializes");
     blake3::hash(&bytes).to_hex().to_string()
-}
-
-/// Which allocation a lease draws on: its id and generation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AllocationRef {
-    pub id: String,
-    pub generation: u64,
 }
 
 /// The money one vault may commit, as the host issued it.

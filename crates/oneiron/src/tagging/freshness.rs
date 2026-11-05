@@ -62,9 +62,9 @@ pub(crate) fn tagging_freshness_in_txn(
         }
         TurnInput::Gone | TurnInput::Empty => false,
     };
-    let pending_retag = match vault.config.tagging.as_ref() {
+    let pending_retag = match vault.tagging_marker_config() {
         Some(config) => AttemptQueue::from_store(&vault.store)
-            .pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &dedupe_key(turn, config))?
+            .pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &dedupe_key(turn, &config))?
             .is_some(),
         None => false,
     };

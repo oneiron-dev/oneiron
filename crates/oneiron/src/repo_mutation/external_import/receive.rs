@@ -79,7 +79,12 @@ impl Vault {
         update: &ImportRefUpdate,
         importer: Option<EntityId>,
     ) -> Result<Option<ImportReceive>> {
-        for (provenance, row) in self.received_code_ingress_rows(store)? {
+        for (provenance, row) in self.received_code_ingress_rows_for_update(
+            store,
+            update.name.as_str(),
+            update.old.as_ref().map(GitOid::as_str),
+            update.new.as_str(),
+        )? {
             if row.source.ref_name != update.name.as_str()
                 || row.source.old_oid.as_deref() != update.old.as_ref().map(GitOid::as_str)
                 || row.source.new_oid.as_deref() != Some(update.new.as_str())

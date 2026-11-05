@@ -15,8 +15,8 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::learning::{Retest, RetestScore, record_retest};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
-    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalTaskInput, HeldOutReplayNotes,
-    JudgeRubric, MeasurementState, MeasurementUnavailable, seat_model_role,
+    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalSeat, EvalTaskInput,
+    HeldOutReplayNotes, JudgeRubric, MeasurementState, MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{BudgetExhaustionPolicy, Vault};
 
@@ -27,11 +27,12 @@ mod helper;
 mod legs;
 mod offer;
 mod score;
+mod seat_score;
 
 pub(super) use helper::request_helper_measurements;
 pub(super) use offer::attach_measured_card;
 
-use legs::{Arms, Generated, Opened};
+use legs::{Arms, Generated, NativeArms, NativeOpened, Opened, SeatGenerated};
 use score::Scored;
 
 /// The job's clock: every generation and judgment of one measurement runs
@@ -60,6 +61,12 @@ impl Leg {
     }
 }
 
+/// Generative arms keep the existing leg path; non-generative seats use their own.
+enum JobArms {
+    Generative(Arms),
+    Native(NativeArms),
+}
+
 /// One claimed measurement's run.
 struct Job<'a> {
     server: &'a SyncServer,
@@ -67,7 +74,7 @@ struct Job<'a> {
     judge: &'static ServeReplayJudge,
     row: EvalMeasurement,
     digest: [u8; 32],
-    arms: Arms,
+    arms: JobArms,
     run: oneiron::llm::run_admission::RunAdmission,
     clock: RetrievalDeadline,
     rubric: Option<JudgeRubric>,
@@ -75,12 +82,20 @@ struct Job<'a> {
 
 /// Why the row cannot be measured at all, read before the claim: settled
 /// Partial at once, with nothing counted or paid.
+fn native_seat(seat: &EvalSeat) -> bool {
+    matches!(
+        seat,
+        EvalSeat::Embedder | EvalSeat::ExtractionTagger | EvalSeat::Router | EvalSeat::Decision
+    )
+}
+
 fn refusal(judge: &ServeReplayJudge, row: &EvalMeasurement) -> Option<MeasurementUnavailable> {
     let request = &row.request;
-    if seat_model_role(&request.seat).is_none() {
+    if !native_seat(&request.seat) && seat_model_role(&request.seat).is_none() {
         return Some(MeasurementUnavailable::NoModelRole);
     }
-    (judge.judge_revision() != request.scorer).then_some(MeasurementUnavailable::ScorerMoved)
+    (!native_seat(&request.seat) && judge.judge_revision() != request.scorer)
+        .then_some(MeasurementUnavailable::ScorerMoved)
 }
 
 /// Runs one leased `coach.eval_measurement` attempt.
@@ -108,12 +123,23 @@ pub(super) fn run(
         vault.fail_eval_measurement(&digest, &[reason], now)?;
         return Ok(());
     }
-    let arms = match legs::open(server, vault, &row, &admitted.status.attempt, now)? {
-        Opened::Ready(arms) => arms,
-        Opened::Unserved => return Ok(()),
-        Opened::Refused(reason) => {
-            vault.fail_eval_measurement(&digest, &[reason], now)?;
-            return Ok(());
+    let arms = if native_seat(&row.request.seat) {
+        match legs::open_native(server, vault, &row, &admitted.status.attempt, now)? {
+            NativeOpened::Ready(arms) => JobArms::Native(arms),
+            NativeOpened::Unserved => return Ok(()),
+            NativeOpened::Refused(reason) => {
+                vault.fail_eval_measurement(&digest, &[reason], now)?;
+                return Ok(());
+            }
+        }
+    } else {
+        match legs::open(server, vault, &row, &admitted.status.attempt, now)? {
+            Opened::Ready(arms) => JobArms::Generative(arms),
+            Opened::Unserved => return Ok(()),
+            Opened::Refused(reason) => {
+                vault.fail_eval_measurement(&digest, &[reason], now)?;
+                return Ok(());
+            }
         }
     };
     let row = vault.claim_eval_measurement(&digest, now)?;
@@ -223,12 +249,18 @@ impl Job<'_> {
 
     /// One leg: the arm's answer, kept, then scored blind.
     fn leg(&self, task: &EvalTaskInput, leg: Leg) -> oneiron::Result<EvalLegRecord> {
+        if let JobArms::Native(arms) = &self.arms {
+            return self.native_leg(arms, task, leg);
+        }
+        let JobArms::Generative(arms) = &self.arms else {
+            unreachable!()
+        };
         let arm = match leg {
-            Leg::Candidate => &self.arms.candidate,
-            Leg::Incumbent | Leg::Retest => &self.arms.incumbent,
+            Leg::Candidate => &arms.candidate,
+            Leg::Incumbent | Leg::Retest => &arms.incumbent,
         };
         let prompt = legs::task_text(task);
-        let (answer, served) = match self.arms.generate(
+        let (answer, served) = match arms.generate(
             self.server,
             self.vault,
             &self.run,
@@ -267,7 +299,84 @@ impl Job<'_> {
             task,
             &prompt,
             &answer,
+            &self.run,
         )? {
+            Scored::Score { value, judge } => {
+                record.score = Some(value);
+                record.judge = judge;
+            }
+            Scored::Unavailable(reason) => record.unavailable = Some(reason),
+        }
+        Ok(record)
+    }
+
+    /// One non-generative leg, stored in the same record shape with a fixed-code score.
+    fn native_leg(
+        &self,
+        arms: &NativeArms,
+        task: &EvalTaskInput,
+        leg: Leg,
+    ) -> oneiron::Result<EvalLegRecord> {
+        let arm = match leg {
+            Leg::Candidate => &arms.candidate,
+            Leg::Incumbent | Leg::Retest => &arms.incumbent,
+        };
+        let (bytes, served, scored) =
+            match arms.generate(self.server, self.judge, &self.run, arm, task, &self.clock) {
+                SeatGenerated::Text { text, served } => {
+                    let scored = seat_score::exact_match(&text, &task.labels);
+                    (text.into_bytes(), served, scored)
+                }
+                SeatGenerated::Embed {
+                    task: vector,
+                    anchors,
+                    served,
+                } => {
+                    let scored = seat_score::embed_similarity(&vector, &anchors, &task.labels);
+                    (
+                        serde_json::to_vec(&vector).map_err(|_| {
+                            oneiron::Error::InvariantViolation("an eval embedding did not encode")
+                        })?,
+                        served,
+                        scored,
+                    )
+                }
+                SeatGenerated::Spans { output, served } => {
+                    let predicted = output
+                        .spans
+                        .iter()
+                        .map(|span| span.label.clone())
+                        .collect::<Vec<_>>();
+                    let scored = seat_score::tag_recall(&predicted, &task.labels);
+                    (
+                        serde_json::to_vec(&output).map_err(|_| {
+                            oneiron::Error::InvariantViolation("an eval span output did not encode")
+                        })?,
+                        served,
+                        scored,
+                    )
+                }
+                SeatGenerated::Unavailable(reason) => {
+                    return Ok(EvalLegRecord::unavailable(reason));
+                }
+            };
+        let output = oneiron::compaction::output::store_output_sourced(
+            self.vault,
+            &bytes,
+            task.source_rows.clone(),
+        )?;
+        let mut record = EvalLegRecord {
+            output: Some(output),
+            receipt: Some(format!(
+                "eval_measurement:{}:{}:{}",
+                self.row.digest,
+                task.case.to_hex(),
+                leg.name()
+            )),
+            served,
+            ..EvalLegRecord::default()
+        };
+        match scored {
             Scored::Score { value, judge } => {
                 record.score = Some(value);
                 record.judge = judge;
@@ -281,6 +390,9 @@ impl Job<'_> {
     /// the judge on the incumbent. With no judge rubric in force there is no
     /// scoring subject to keep it under.
     fn retest(&self, record: &EvalCaseMeasurement, now: u64) -> oneiron::Result<()> {
+        if matches!(&self.arms, JobArms::Native(_)) {
+            return Ok(());
+        }
         let (Some(rubric), Some(first), Some(second)) = (
             self.rubric.as_ref(),
             record.incumbent.score,

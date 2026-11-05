@@ -193,7 +193,7 @@ fn validate_reach(reach: &TrustedContactReach) -> Result<()> {
 
 /// Closes every open ask about `person`'s naming of `contact`, in the
 /// transaction that revokes or replaces that naming.
-fn supersede_open_asks_in_txn(
+pub(super) fn supersede_open_asks_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     person: EntityId,
@@ -636,5 +636,34 @@ impl Vault {
             fire.asked += 1;
         }
         Ok(fire)
+    }
+}
+
+impl Vault {
+    /// Whether the trusted-contact naming (`person`, `contact`, `version`)
+    /// still stands in `txn` (FIX 4325): the exact relation row, unrevoked
+    /// at that version, both sides live PERSONs. The authority's own
+    /// liveness read for a contact-bound slip; the contact's doors recheck
+    /// it in their own transaction too.
+    pub(crate) fn trusted_contact_binding_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        contact: EntityId,
+        version: u64,
+    ) -> Result<bool> {
+        if person == contact || version == 0 {
+            return Ok(false);
+        }
+        if !crate::consent::person_is_live_in_txn(self, txn, &person)? {
+            return Ok(false);
+        }
+        if !crate::consent::person_is_live_in_txn(self, txn, &contact)? {
+            return Ok(false);
+        }
+        let stands = RELATIONS
+            .get(&self.store, txn, &(person, contact))?
+            .is_some_and(|relation| relation.version == version && relation.revoked.is_none());
+        Ok(stands)
     }
 }

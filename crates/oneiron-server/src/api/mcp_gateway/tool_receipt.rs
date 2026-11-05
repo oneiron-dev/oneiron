@@ -66,6 +66,7 @@ pub(super) fn mcp_call_receipt(
             served: Vec::new(),
         },
     );
+    super::claimed_release::stamp_receipt(&stamp);
     match called {
         Ok(mut result) => {
             crate::mcp::mcp_stamp_call_receipt(&mut result, &stamp);

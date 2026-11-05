@@ -1,6 +1,7 @@
 //! Submitted-byte federation merge-back and company PR staging. No personal-vault read door.
 use super::{HubPackage, package_codec::invalid};
-use crate::side_table::{self, LegacyJson, SideTable};
+pub(super) use crate::store::claim_refinement_control::SHARED_DELTA;
+pub use crate::store::claim_refinement_control::{SharedSkillDelta, SharedSkillLane};
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -9,29 +10,6 @@ use crate::{
     temporal::TimeRange,
 };
 
-/// Shared-skill merge delta computed for one candidate. `pub(super)` because
-/// retiring a skill refinement's control drops its offered delta row.
-pub(super) const SHARED_DELTA: SideTable<EntityId, SharedSkillDelta, LegacyJson> =
-    SideTable::new(&side_table::SKILL_HUB_SHARED_DELTA);
-
-/// Both lanes offer bytes to the receiving base. Neither grants access to the sender's vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum SharedSkillLane {
-    FederationMergeBack,
-    CompanyPullRequest,
-}
-/// Durable offered delta; author and foreign fork are source assertions, never authority.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedSkillDelta {
-    pub candidate: String,
-    pub base: String,
-    pub base_binding: String,
-    pub content_hash: String,
-    pub lane: SharedSkillLane,
-    pub submitted_by: String,
-    pub submitted_fork: String,
-}
 impl Vault {
     /// Offers a clean package to THIS vault's base. The API accepts submitted bytes,
     /// not a source vault handle, source path, or a callback that could read one.

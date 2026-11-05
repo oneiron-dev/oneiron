@@ -7,7 +7,7 @@ use heed::{RoTxn, RwTxn};
 use crate::config::VaultConfig;
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::store::{ManifestDbs, Store};
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::discipline::{
     LinkDiscipline, increment_legacy_snapshot_rebuilds, mark_symmetric_links, read_link_discipline,
@@ -23,7 +23,7 @@ use super::storage::{detach_reverse_link_in_memory, prune_neighbors_for_node, wr
 use super::types::RebuiltHnswGraph;
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     vector_ids: &[EntityId],
@@ -112,16 +112,16 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
 }
 
 pub(crate) fn write_rebuilt_hnsw(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     rebuilt: &RebuiltHnswGraph,
     discipline: LinkDiscipline,
 ) -> Result<()> {
-    store.hnsw_neighbors().clear(wtxn)?;
+    store.index_neighbors().clear(wtxn)?;
     // Rebuild owns only the live graph shape. Preserve unrelated metadata such as
     // graph/version markers, persisted model ids, and schema/config keys.
-    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
-    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    store.index_meta().delete(wtxn, COUNT_KEY)?;
+    store.index_meta().delete(wtxn, ENTRY_POINT_KEY)?;
     // The old one-way exception records describe the replaced graph; drop them
     // (only the `ow1:` keyspace, never unrelated metadata) and re-derive them
     // from the rebuilt rows for symmetric graphs below.
@@ -129,11 +129,11 @@ pub(crate) fn write_rebuilt_hnsw(
 
     if let Some(entry_point) = rebuilt.entry_point {
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
     }
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &rebuilt.count.to_le_bytes())?;
 
     for (id, neighbors) in &rebuilt.neighbors {
@@ -144,7 +144,7 @@ pub(crate) fn write_rebuilt_hnsw(
         rebuild_one_way_exception_index(store, wtxn, &rebuilt.neighbors)?;
         mark_symmetric_links(store, wtxn)?;
     } else {
-        store.hnsw_meta().delete(wtxn, SYMMETRIC_LINKS_KEY)?;
+        store.index_meta().delete(wtxn, SYMMETRIC_LINKS_KEY)?;
     }
 
     // ONE-1933 / OF-447: every PERSISTED complete rebuild — manual
@@ -152,24 +152,24 @@ pub(crate) fn write_rebuilt_hnsw(
     // rehydrates the graph shape, so the SLIM dropped marker is cleared here,
     // in the same transaction as the neighbors, count and entry point, and
     // never before the graph write above succeeded.
-    store.hnsw_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
+    store.index_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
 
     Ok(())
 }
 
 /// Removes the old vector graph while retaining model-independent compatibility metadata.
 pub(crate) fn clear_hnsw_graph_in_txn(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
-    store.vectors().clear(wtxn)?;
-    crate::embed::clear_all_embedding_devices_in_txn(store, wtxn)?;
-    store.hnsw_neighbors().clear(wtxn)?;
-    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
-    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    store.index_vectors().clear(wtxn)?;
+    store.index_clear_embedding_devices(wtxn)?;
+    store.index_neighbors().clear(wtxn)?;
+    store.index_meta().delete(wtxn, COUNT_KEY)?;
+    store.index_meta().delete(wtxn, ENTRY_POINT_KEY)?;
     // The source corpus itself is gone, so an inherited SLIM dropped marker
     // would describe nothing: clear it with the shape it referred to.
-    store.hnsw_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
+    store.index_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
     clear_one_way_exceptions(store, wtxn)
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn clear_hnsw_graph_in_txn(
 /// first-use routes so a search-served graph and a write-persisted graph are
 /// byte-for-byte the same rebuild.
 pub(super) fn rebuild_dropped_graph_from_snapshot(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     txn: &RoTxn<'_>,
 ) -> Result<(RebuiltHnswGraph, LinkDiscipline)> {
@@ -196,7 +196,7 @@ pub(super) fn rebuild_dropped_graph_from_snapshot(
 /// NOT set the symmetric marker — pre-migration vaults keep their legacy
 /// shape until `maintain().rebuild_hnsw()` migrates them.
 pub(super) fn rebuild_hnsw_from_current_snapshot(
-    store: &Store,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
@@ -208,7 +208,7 @@ pub(super) fn rebuild_hnsw_from_current_snapshot(
 }
 
 pub(crate) fn collect_vector_ids(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<EntityId>> {
     let parse = |key: &[u8]| {
@@ -217,15 +217,15 @@ pub(crate) fn collect_vector_ids(
             other => other,
         })
     };
-    let capacity = usize::try_from(store.vectors().len(txn)?).unwrap_or(0);
+    let capacity = usize::try_from(store.index_vectors().len(txn)?).unwrap_or(0);
     let mut vector_ids = Vec::with_capacity(capacity);
-    for entry in store.vectors().iter(txn)? {
+    for entry in store.index_vectors().iter(txn)? {
         let (key, _) = entry?;
         vector_ids.push(parse(key.as_ref())?);
     }
     // A row a room hides is still a node of the graph the room inherits (see
     // `load_vector`), so the room's rebuild keeps it, in key order.
-    let hidden = store.vectors().hidden_keys(txn)?;
+    let hidden = store.index_vectors().hidden_keys(txn)?;
     if !hidden.is_empty() {
         for key in hidden {
             vector_ids.push(parse(key.as_slice())?);

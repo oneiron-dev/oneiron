@@ -134,7 +134,12 @@ impl<T> ConsolidationBranchPlan<T> {
             Some(thing) => {
                 hasher.update(&[1]);
                 hash_optional_entity(&mut hasher, thing.entity.as_ref());
-                hash_optional_entity(&mut hasher, thing.audience.as_ref());
+                match thing.audience {
+                    Some(audience) => audience.hash_into(&mut hasher),
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                }
             }
             None => {
                 hasher.update(&[0]);

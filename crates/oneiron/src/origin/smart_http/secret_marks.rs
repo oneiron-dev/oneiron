@@ -35,7 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
-use crate::secret_custody::KnownSource;
+use crate::store::known_value_index::KnownSource;
 
 /// A record's frame: its place, its payload's length, its payload's BLAKE3.
 const FRAME_HEADER_BYTES: usize = 8 + 8 + 32;
@@ -256,11 +256,13 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
     }
 
     fn open_spool(&self) -> Result<MarkSpool> {
+        // The plans carry key bytes: no copy outlives the spool (FIX 8030).
         let held = HeldBytes::new(
             ORIGIN_COMMAND_SECTION_MEMORY_BYTES,
             origin_door_root(self.vault).ok(),
         )
-        .with_floor(self.floor.cloned());
+        .with_floor(self.floor.cloned())
+        .wiping();
         Ok(MarkSpool {
             marks: HeldMarks {
                 held,

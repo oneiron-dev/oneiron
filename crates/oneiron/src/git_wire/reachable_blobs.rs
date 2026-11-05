@@ -405,6 +405,134 @@ impl GitWire<'_> {
         Ok(complete)
     }
 
+    /// Hands `visit` each object `oids` names, in order and with its index
+    /// (FIX 7229): one size call, then one `cat-file --batch` child for each
+    /// bounded batch of bytes, never two children an object. Each must be
+    /// a `kind` object (`blob` or `tree`). `visit` answers whether to read
+    /// on; `Ok(false)` when it stopped the read.
+    ///
+    /// # Errors
+    /// An object this store does not hold as a `kind`, a failed read, or an
+    /// error `visit` answered.
+    pub fn read_objects_in_order(
+        &self,
+        repo: &GitWireRepo,
+        oids: &[GitOid],
+        kind: &str,
+        visit: &mut dyn FnMut(usize, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let mut sizes = Vec::with_capacity(oids.len());
+        for chunk in oids.chunks(SIZE_BATCH_OIDS) {
+            let output = self.run_read(repo, &FrozenGitArgv::object_info(chunk))?;
+            for (_, sized) in parse_object_sizes(&output.stdout)? {
+                match sized {
+                    Some((found, size)) if found == kind => sizes.push(size),
+                    _ => {
+                        return Err(invalid(
+                            "git object is not of the asked type in this object store",
+                        ));
+                    }
+                }
+            }
+        }
+        if sizes.len() != oids.len() {
+            return Err(invalid("git object sizes do not answer every blob"));
+        }
+        let mut start = 0;
+        while start < oids.len() {
+            let mut end = start + 1;
+            let mut bytes = sizes[start];
+            while end < oids.len() && bytes.saturating_add(sizes[end]) <= READ_BATCH_BYTES {
+                bytes = bytes.saturating_add(sizes[end]);
+                end += 1;
+            }
+            let output = self.run_read(repo, &FrozenGitArgv::read_objects(&oids[start..end]))?;
+            let (mut next, mut stopped, mut failed) = (start, false, None);
+            let complete = parse_batch_objects(&output.stdout, &mut |oid, found, body| {
+                if stopped || failed.is_some() {
+                    return;
+                }
+                if oids.get(next) != Some(oid) || found != kind {
+                    failed = Some(invalid("git batch answered another object"));
+                    return;
+                }
+                match visit(next, body) {
+                    Ok(true) => {}
+                    Ok(false) => stopped = true,
+                    Err(error) => failed = Some(error),
+                }
+                next += 1;
+            })?;
+            if let Some(error) = failed {
+                return Err(error);
+            }
+            if stopped {
+                return Ok(false);
+            }
+            if !complete || next != end {
+                return Err(invalid("git batch did not answer every blob"));
+            }
+            start = end;
+        }
+        Ok(true)
+    }
+
+    /// Reads each of `oids` that is a blob into `visit`, sized and read in
+    /// bounded batches: a few `cat-file` children for a whole tree's files,
+    /// never two a file (FIX 6946). `Ok(false)` when one was gone.
+    pub(crate) fn read_blobs(
+        &self,
+        repo: &GitWireRepo,
+        oids: &[GitOid],
+        visit: &mut impl FnMut(&GitOid, &[u8]),
+    ) -> Result<bool> {
+        self.visit_small_blobs(repo, oids, u64::MAX, visit)
+    }
+
+    /// Hands `visit` the whole bytes of each of `blobs`, sized in batches of
+    /// [`SIZE_BATCH_OIDS`] and read in batches of [`READ_BATCH_BYTES`] (FIX
+    /// 10976): a few Git calls for any number of files, never two a file. A
+    /// blob of a batch's size or more is read alone. `Ok(false)` when one is
+    /// not a blob this store holds; every other is still visited.
+    ///
+    /// # Errors
+    /// A failed read.
+    pub fn for_each_blob(
+        &self,
+        repo: &GitWireRepo,
+        blobs: &[GitOid],
+        mut visit: impl FnMut(&GitOid, &[u8]),
+    ) -> GitWireResult<bool> {
+        let mut complete = true;
+        let mut batch = Vec::new();
+        let mut batch_bytes = 0_u64;
+        for chunk in blobs.chunks(SIZE_BATCH_OIDS) {
+            let output = self.run_read(repo, &FrozenGitArgv::object_info(chunk))?;
+            for (oid, sized) in parse_object_sizes(&output.stdout)? {
+                let Some((_, size)) = sized.filter(|(kind, _)| kind == "blob") else {
+                    complete = false;
+                    continue;
+                };
+                if size >= READ_BATCH_BYTES {
+                    let bytes = self.read_object(repo, &oid)?;
+                    visit(&oid, &bytes);
+                    continue;
+                }
+                if !batch.is_empty() && batch_bytes.saturating_add(size) > READ_BATCH_BYTES {
+                    complete &= self.read_blob_batch(repo, &batch, &mut visit)?;
+                    batch.clear();
+                    batch_bytes = 0;
+                }
+                batch_bytes = batch_bytes.saturating_add(size);
+                batch.push(oid);
+            }
+        }
+        if !batch.is_empty() {
+            complete &= self.read_blob_batch(repo, &batch, &mut visit)?;
+        }
+        Ok(complete)
+    }
+
     /// Reads one batch of blobs into `visit`; `Ok(false)` when one was gone.
     fn read_blob_batch(
         &self,
@@ -413,7 +541,11 @@ impl GitWire<'_> {
         visit: &mut impl FnMut(&GitOid, &[u8]),
     ) -> Result<bool> {
         let output = self.run_read(repo, &FrozenGitArgv::read_objects(oids))?;
-        parse_batch_objects(&output.stdout, visit)
+        parse_batch_objects(&output.stdout, &mut |oid, kind, body| {
+            if kind == "blob" {
+                visit(oid, body);
+            }
+        })
     }
 }
 
@@ -508,9 +640,12 @@ fn parse_object_sizes(stdout: &[u8]) -> Result<Vec<(GitOid, Option<(String, u64)
     Ok(sized)
 }
 
-/// Walks `cat-file --batch` output, handing each blob's bytes to `visit`.
-/// `Ok(false)` when an object was missing.
-fn parse_batch_objects(mut rest: &[u8], visit: &mut impl FnMut(&GitOid, &[u8])) -> Result<bool> {
+/// Walks `cat-file --batch` output, handing each object's type and bytes
+/// to `visit`. `Ok(false)` when an object was missing.
+fn parse_batch_objects(
+    mut rest: &[u8],
+    visit: &mut impl FnMut(&GitOid, &str, &[u8]),
+) -> Result<bool> {
     let mut complete = true;
     while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
         let (header, after) = rest.split_at(end);
@@ -538,9 +673,7 @@ fn parse_batch_objects(mut rest: &[u8], visit: &mut impl FnMut(&GitOid, &[u8])) 
         let Some(tail) = tail.strip_prefix(b"\n") else {
             return Err(invalid("git batch object is not terminated"));
         };
-        if kind == "blob" {
-            visit(&oid, body);
-        }
+        visit(&oid, kind, body);
         rest = tail;
     }
     if !rest.is_empty() {

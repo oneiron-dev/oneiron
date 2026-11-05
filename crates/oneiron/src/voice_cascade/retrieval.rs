@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::memory::{Memory, MemoryResult, RecallScope};
 use crate::pipeline::ScoredEntity;
 use crate::speculative::{
     SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession,
@@ -67,7 +68,28 @@ impl SpeculativeRetrievalBridge {
         utterance_id: impl Into<String>,
         config: SpeculativeSessionConfig,
     ) -> Result<UtteranceHandle> {
-        let utterance_id = utterance_id.into();
+        let session = SpeculativeSession::new(Arc::clone(&self.vault), config);
+        self.open_session(utterance_id.into(), session)
+    }
+
+    /// Opens on the caller's actual read binding, on this bridge's vault.
+    pub fn open_scoped_utterance(
+        &mut self,
+        utterance_id: impl Into<String>,
+        config: SpeculativeSessionConfig,
+        memory: &Memory<'_>,
+        scope: &RecallScope,
+    ) -> MemoryResult<UtteranceHandle> {
+        let session = memory.speculative_session(Arc::clone(&self.vault), config, scope)?;
+        self.open_session(utterance_id.into(), session)
+            .map_err(Into::into)
+    }
+
+    fn open_session(
+        &mut self,
+        utterance_id: String,
+        session: SpeculativeSession,
+    ) -> Result<UtteranceHandle> {
         if utterance_id.trim().is_empty() || self.open.is_some() {
             return Err(invalid(
                 "utterance id must be nonempty and no utterance may be open",
@@ -85,7 +107,7 @@ impl SpeculativeRetrievalBridge {
         self.open = Some(OpenUtterance {
             handle: handle.clone(),
             last_revision: None,
-            session: SpeculativeSession::new(Arc::clone(&self.vault), config),
+            session,
         });
         Ok(handle)
     }
@@ -105,12 +127,18 @@ impl SpeculativeRetrievalBridge {
             .ok_or_else(|| invalid("no open utterance"))?;
         let decision = open.session.observe_partial(as_partial(text, &enriched))?;
         let context = match &decision {
-            SpeculativeFireDecision::Fired { run_id, partial } => Some(project(
-                open.session.warm_candidates(),
-                *run_id,
-                false,
-                *partial,
-            )),
+            SpeculativeFireDecision::Fired { run_id, partial } => {
+                Some(if open.session.is_scoped() {
+                    project(
+                        &open.session.scoped_warm_candidates()?.value,
+                        *run_id,
+                        false,
+                        *partial,
+                    )
+                } else {
+                    project(open.session.warm_candidates(), *run_id, false, *partial)
+                })
+            }
             _ => None,
         };
         // Retrieval/enrichment errors leave the revision retryable, just as an
@@ -134,7 +162,12 @@ impl SpeculativeRetrievalBridge {
             .open
             .take()
             .ok_or_else(|| invalid("no open utterance"))?;
-        match open.session.finalize(as_partial(text, &enriched))? {
+        let finalized = if open.session.is_scoped() {
+            open.session.finalize_scoped(as_partial(text, &enriched))?.0
+        } else {
+            open.session.finalize(as_partial(text, &enriched))?
+        };
+        match finalized {
             SpeculativeFinal::Promoted {
                 scores,
                 run_id,

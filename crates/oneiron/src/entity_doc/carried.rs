@@ -427,7 +427,7 @@ fn purged_at_carried_floor(
         PurgeConflictPolicy::Defer => Ok(Err(DocumentMerge::Deferred(reason))),
     };
     if crate::store::legal_hold::held_in_txn(&vault.store, txn, message.as_bytes())? {
-        return waits("a legal hold keeps its history");
+        return waits("a hold or selected storage-only restriction keeps its history");
     }
     // The purge door's refusals are a floor this vault cannot reach.
     let refused = |error: Error| match error {
@@ -495,7 +495,12 @@ fn switched_in(
         )));
     }
     let left = std::mem::replace(&mut head.document, carried.document.clone());
-    storage::move_pointer(&vault.store, txn, message, &head.document)?;
+    storage::move_pointer(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        message,
+        &head.document,
+    )?;
     storage::persist(vault, txn, message, &mut head, &doc, None)?;
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(

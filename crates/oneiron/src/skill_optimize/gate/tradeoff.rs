@@ -43,6 +43,9 @@ pub(super) use self::ladder::{TradeoffPlan, apply_in_txn, plan};
 pub use self::ladder::{
     settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent,
 };
+pub(crate) use self::ladder::{
+    settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn,
+};
 
 const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
 const ASK_PREFIX: &[u8] = b"skill_optimize/tradeoff_ask/v1\0";

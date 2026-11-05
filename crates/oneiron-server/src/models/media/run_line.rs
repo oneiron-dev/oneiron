@@ -199,6 +199,7 @@ impl MediaRuntime {
             FatalLlmError::InvalidRequestDetail {
                 message: "a scoped media job needs a runtime that keeps its jobs (FIX 11496)"
                     .to_owned(),
+                code: None,
             }
             .into()
         })

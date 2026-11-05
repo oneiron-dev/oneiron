@@ -192,13 +192,7 @@ impl Vault {
                     }
                 };
                 let new_head = self.write_thread_head_in_txn(
-                    wtxn,
-                    artifact,
-                    &plan.head,
-                    actor,
-                    op,
-                    occurred,
-                    now,
+                    wtxn, artifact, &plan.head, actor, op, occurred, now,
                 )?;
                 self.supersede_claim_in_txn(wtxn, &new_head, &plan.thread.head_claim_id, now)?;
                 written = written.saturating_add(1);
@@ -407,7 +401,8 @@ impl Vault {
             return;
         }
         let read = (|| -> Result<Filed> {
-            let Some(bytes) = self.read_blob_artifact_version_in_txn(txn, artifact, version)? else {
+            let Some(bytes) = self.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
                 return Ok(Filed::Missing);
             };
             match docx_blocks(&bytes, &self.text_limits_in_txn(txn)?)? {
@@ -588,7 +583,10 @@ fn move_body_locator(
                 axes: now,
             },
             Locator::Xlsx { .. },
-        ) => Some(replay_locator(locator, &sheet_ops(before, was, after, now)?)),
+        ) => Some(replay_locator(
+            locator,
+            &sheet_ops(before, was, after, now)?,
+        )),
         (_, OfficeBodyUnits::Pptx(after), Locator::Pptx { .. }) => {
             move_deck_locator(after, locator)
         }

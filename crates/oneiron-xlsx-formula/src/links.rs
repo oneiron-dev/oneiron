@@ -76,10 +76,6 @@ const UNJOINED: &str = "external link list the edit gate cannot join";
 /// `u:cell` would replace a saved value).
 const OUT_OF_PLACE: &str = "external link markup outside its SpreadsheetML place";
 
-/// The most workbook names one formula's check reads through, nested or
-/// repeated; a name may use another, or itself.
-const MAX_NAME_EXPANSIONS: usize = 256;
-
 /// The workbook's links, in `<externalReferences>` order (`[1]` first).
 #[derive(Debug, Default)]
 pub(crate) struct LinkedBooks {
@@ -227,27 +223,45 @@ impl LinkedBooks {
         formula: &'a ASTNode,
         names: &'a BTreeMap<String, LinkedName>,
     ) -> Result<()> {
-        let mut pending = vec![(formula, Parent::Root)];
-        let mut expansions = 0;
+        let mut pending = vec![Entry::Node(formula, Parent::Root)];
+        let mut active: BTreeSet<*const ASTNode> = BTreeSet::new();
+        let mut completed: BTreeSet<NameCheck<'a>> = BTreeSet::new();
         let mut handed_on = false;
-        while let Some((node, parent)) = pending.pop() {
+        while let Some(entry) = pending.pop() {
+            let (node, parent) = match entry {
+                Entry::NameDone(done) => {
+                    active.remove(&done.expression);
+                    completed.insert(done);
+                    continue;
+                }
+                Entry::Node(node, parent) => (node, parent),
+            };
             passed_on(node, &parent, names)?;
             match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
                     // A name holding an expression over linked values is
                     // checked as if its formula were written here.
                     if let Some(expression) = self.reference(reference, &parent, names)? {
-                        expansions += 1;
-                        if expansions > MAX_NAME_EXPANSIONS {
+                        let check = NameCheck {
+                            expression: expression as *const ASTNode,
+                            parent: parent.context(),
+                        };
+                        if completed.contains(&check) {
+                            continue;
+                        }
+                        if !active.insert(check.expression) {
                             return Err(unsupported(
-                                "workbook names over linked workbooks nested past the check's limit",
+                                "workbook names over linked workbooks in a reference cycle",
                             ));
                         }
-                        pending.push((expression, parent));
+                        pending.push(Entry::NameDone(check));
+                        pending.push(Entry::Node(expression, parent));
                     }
                 }
                 ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
-                ASTNodeType::UnaryOp { op, expr } => pending.push((expr, Parent::Operator(op))),
+                ASTNodeType::UnaryOp { op, expr } => {
+                    pending.push(Entry::Node(expr, Parent::Operator(op)));
+                }
                 ASTNodeType::BinaryOp { op, left, right } => {
                     // The fork has no intersection, union or range of linked
                     // references, however they are reached (`INDEX(...) INDEX(...)`).
@@ -256,8 +270,8 @@ impl LinkedBooks {
                     {
                         return Err(unsupported("external reference in a reference operator"));
                     }
-                    pending.push((left, Parent::Operator(op)));
-                    pending.push((right, Parent::Operator(op)));
+                    pending.push(Entry::Node(left, Parent::Operator(op)));
+                    pending.push(Entry::Node(right, Parent::Operator(op)));
                 }
                 ASTNodeType::Function { name, args } => {
                     let bare = bare_name(name);
@@ -282,7 +296,7 @@ impl LinkedBooks {
                             }
                         );
                     for (index, arg) in args.iter().enumerate() {
-                        pending.push((
+                        pending.push(Entry::Node(
                             arg,
                             Parent::Argument {
                                 reference: reads_reference(&bare) || (through && index == 0),
@@ -299,11 +313,18 @@ impl LinkedBooks {
                     if args.iter().any(|arg| mentions_link(arg, names)) {
                         return Err(unsupported(BOUND));
                     }
-                    pending.push((callee, Parent::Operator("")));
-                    pending.extend(args.iter().map(|arg| (arg, Parent::Operator(""))));
+                    pending.push(Entry::Node(callee, Parent::Operator("")));
+                    pending.extend(
+                        args.iter()
+                            .map(|arg| Entry::Node(arg, Parent::Operator(""))),
+                    );
                 }
                 ASTNodeType::Array(rows) => {
-                    pending.extend(rows.iter().flatten().map(|arg| (arg, Parent::Operator(""))));
+                    pending.extend(
+                        rows.iter()
+                            .flatten()
+                            .map(|arg| Entry::Node(arg, Parent::Operator(""))),
+                    );
                 }
             }
         }
@@ -835,6 +856,60 @@ enum Parent<'a> {
         args: &'a [ASTNode],
         reference: bool,
     },
+}
+
+/// A use of a workbook name holding an expression over linked values: the
+/// exact expression the map holds, by identity, and the complete incoming
+/// context that the checks read.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct NameCheck<'a> {
+    expression: *const ASTNode,
+    parent: ParentContext<'a>,
+}
+
+/// Every semantic input the checks read from a `Parent`: the operator
+/// itself, or the function's bare upper-case name, the argument's index,
+/// whether the function reads it as a reference, and the exact argument
+/// list by identity (its contents do not change during the check).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ParentContext<'a> {
+    Root,
+    Operator(&'a str),
+    Argument {
+        function: String,
+        index: usize,
+        reference: bool,
+        args: *const ASTNode,
+        len: usize,
+    },
+}
+
+impl<'a> Parent<'a> {
+    fn context(&self) -> ParentContext<'a> {
+        match self {
+            Parent::Root => ParentContext::Root,
+            Parent::Operator(op) => ParentContext::Operator(*op),
+            Parent::Argument {
+                function,
+                index,
+                args,
+                reference,
+            } => ParentContext::Argument {
+                function: function.clone(),
+                index: *index,
+                reference: *reference,
+                args: args.as_ptr(),
+                len: args.len(),
+            },
+        }
+    }
+}
+
+/// One item of `admit`'s worklist: a formula node to check, or the end of
+/// a workbook name's expression, whose context is then complete.
+enum Entry<'a> {
+    Node(&'a ASTNode, Parent<'a>),
+    NameDone(NameCheck<'a>),
 }
 
 /// Whether `parent` reads a range of a closed linked workbook as Excel does:

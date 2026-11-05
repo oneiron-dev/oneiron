@@ -50,43 +50,7 @@ pub(crate) fn archive_deck_marks_table() -> crate::batch::export::LentSideTable 
 
 const MAX_RENDERER_BYTES: usize = 256;
 
-/// Which side of the diff a review image shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DeckRenderSide {
-    /// The pinned base version.
-    Base,
-    /// The proposal's candidate bytes.
-    Candidate,
-}
-
-/// Host-rendered review evidence for one slide. The engine renders nothing;
-/// the renderer's identity is kept so LibreOffice evidence stays provisional
-/// beside the PowerPoint oracle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckRender {
-    pub side: DeckRenderSide,
-    /// The slide part the image shows.
-    pub slide: String,
-    /// BLAKE3 of the image bytes.
-    pub image_hash: [u8; 32],
-    pub renderer: String,
-}
-
-/// Who made the operations and what they answer; kept with the receipt.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckEditContext {
-    /// The actor the operations are attributed to (ARCH-0035 made_by).
-    #[serde(default)]
-    pub made_by: Option<EntityId>,
-    /// The open anchored thread this proposal answers. A standing-grant
-    /// settle must ride that thread's brief.
-    #[serde(default)]
-    pub thread: Option<EntityId>,
-    /// Before/after review images, attached by the host after proposing.
-    #[serde(default)]
-    pub renders: Vec<DeckRender>,
-}
+pub use crate::blob_artifact::deck_context::{DeckEditContext, DeckRender, DeckRenderSide};
 
 /// One line of the semantic diff for a deck transaction.
 pub(super) fn render_report(report: &str) -> String {
@@ -126,55 +90,7 @@ pub struct DeckEditRejection {
     pub refusal: TransactionError,
 }
 
-/// The base a refused deck transaction ran over, read as a deck (FIX 4486):
-/// its native edit targets as `vault.artifacts.inspect_deck` reads them, and
-/// every part its package holds, or that it could not be read. Never a
-/// workbook's sheets or flags. An unreadable base is reported as such beside
-/// the transaction's own refusal, which it never replaces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum DeckRejectionInspection {
-    /// The base read as a deck: slides, shapes, fingerprints, duplicate
-    /// identities and marks, and its package's part names in order.
-    Inspected {
-        deck: DeckInspection,
-        parts: Vec<String>,
-    },
-    /// The base did not open as a package, or not as a deck.
-    Unreadable { reason: String },
-}
-
-impl DeckRejectionInspection {
-    /// `base` read as a deck under the transaction's own package `limits`.
-    /// A resource refusal is the engine's error (FIX 10587), never unreadable.
-    fn of_base(base: &[u8], limits: Limits) -> Result<Self> {
-        let package = match Package::open(base, limits, &crate::office_body::document_resources()) {
-            Ok(package) => package,
-            Err(error) => {
-                if let Some(refusal) = error.resource() {
-                    return Err(crate::office_body::document_refused(refusal));
-                }
-                return Ok(Self::Unreadable {
-                    reason: format!("the deck package cannot be opened: {error}"),
-                });
-            }
-        };
-        match inspect_deck(&package) {
-            Ok(deck) => {
-                let parts = package.names().map(str::to_owned).collect();
-                Ok(Self::Inspected { deck, parts })
-            }
-            Err(error) => {
-                if let Some(refusal) = error.resource() {
-                    return Err(crate::office_body::document_refused(refusal));
-                }
-                Ok(Self::Unreadable {
-                    reason: format!("the deck cannot be read: {error}"),
-                })
-            }
-        }
-    }
-}
+pub use crate::blob_artifact::deck_inspection::DeckRejectionInspection;
 
 /// Run one deck transaction over `input` and return an uncommitted
 /// proposal, or a rejection naming the refused step. The transaction's marks
@@ -455,6 +371,31 @@ impl Assets for VaultAssets<'_, '_> {
     }
 }
 
+/// Lists the image artifact, exact version CLAIM and ASSET read for each
+/// successfully resolved picture, under the resolver's transaction.
+struct ListingAssets<'v, 't> {
+    held: VaultAssets<'v, 't>,
+    rows: std::cell::RefCell<Vec<EntityId>>,
+}
+
+impl Assets for ListingAssets<'_, '_> {
+    fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        let resolved = self.held.resolve(asset)?;
+        let artifact = EntityId::from_hex(&resolved.0.artifact).ok()?;
+        let version = self
+            .held
+            .vault
+            .blob_artifact_version_metadata_in_txn(self.held.txn, &artifact, resolved.0.version)
+            .ok()??;
+        let asset_row =
+            crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash).ok()?;
+        self.rows
+            .borrow_mut()
+            .extend([artifact, version.claim_id, asset_row]);
+        Some(resolved)
+    }
+}
+
 impl crate::Vault {
     /// The deck's managed native-id history; empty before its first settle.
     pub(crate) fn deck_id_marks_in_txn(
@@ -483,6 +424,9 @@ impl crate::Vault {
     /// head. The result is uncommitted: it is kept or discarded through the
     /// ordinary consent-gated, consume-once settlement door. A named thread
     /// must be open on this artifact.
+    ///
+    /// Outcome-only wrapper over
+    /// [`Self::propose_blob_artifact_deck_edit_with_reads`].
     pub fn propose_blob_artifact_deck_edit(
         &self,
         artifact_id: &EntityId,
@@ -490,6 +434,28 @@ impl crate::Vault {
         run_ref: &str,
         context: DeckEditContext,
     ) -> Result<DeckEditOutcome> {
+        let (outcome, _) = self.propose_blob_artifact_deck_edit_with_reads(
+            artifact_id,
+            transaction_json,
+            run_ref,
+            context,
+        )?;
+        Ok(outcome)
+    }
+
+    /// Same as [`Self::propose_blob_artifact_deck_edit`], also returning the
+    /// rows each `set_picture` asset resolved from: per picture, the image
+    /// artifact, the exact version CLAIM and the ASSET
+    /// (`blob_artifact_asset_entity_id` over the version's content hash),
+    /// read in the same transaction (FIX 12261(a), FIX 9312 sidecar). Empty
+    /// when the transaction resolved no held picture.
+    pub fn propose_blob_artifact_deck_edit_with_reads(
+        &self,
+        artifact_id: &EntityId,
+        transaction_json: &str,
+        run_ref: &str,
+        context: DeckEditContext,
+    ) -> Result<(DeckEditOutcome, Vec<EntityId>)> {
         let limits = self.docedit_package_limits()?;
         if let Some(thread) = context.thread {
             let open = self
@@ -514,9 +480,12 @@ impl crate::Vault {
             .read_blob_artifact_version_in_txn(&rtxn, artifact_id, head.version)?
             .ok_or(Error::EntityNotFound)?;
         let history = self.deck_id_marks_in_txn(&rtxn, artifact_id)?;
-        let assets = VaultAssets {
-            vault: self,
-            txn: &rtxn,
+        let listing = ListingAssets {
+            held: VaultAssets {
+                vault: self,
+                txn: &rtxn,
+            },
+            rows: std::cell::RefCell::new(Vec::new()),
         };
         let mut outcome = run_deck_transaction(
             &bytes,
@@ -524,13 +493,14 @@ impl crate::Vault {
             run_ref,
             limits,
             &history,
-            &assets,
+            &listing,
             context,
         )?;
         if let DeckEditOutcome::Proposed(proposal) = &mut outcome {
             proposal.base_version = Some(head.version);
         }
-        Ok(outcome)
+        let reads = listing.rows.into_inner();
+        Ok((outcome, reads))
     }
 }
 

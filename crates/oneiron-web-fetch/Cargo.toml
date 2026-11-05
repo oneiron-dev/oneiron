@@ -1,0 +1,30 @@
+[package]
+name = "oneiron-web-fetch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Web acquisition of the oneiron engine: the fetch and crawl vocabulary and the renderer ladder"
+repository.workspace = true
+
+[dependencies]
+blake3 = { workspace = true, features = ["zeroize"] }
+dom_smoothie = "0.18"
+encoding_rs = "0.8"
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "brotli",
+    "charset",
+    "deflate",
+    "gzip",
+    "json",
+    "rustls-tls-native-roots",
+] }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["net", "sync", "time"] }
+
+[lints]
+workspace = true

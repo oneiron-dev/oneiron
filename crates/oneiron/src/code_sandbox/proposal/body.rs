@@ -14,17 +14,18 @@ use std::{
 };
 
 /// The settled bytes of one proposed file: their length, their BLAKE3 digest
-/// and the unnamed temp file that holds them. Clones share the one file,
-/// which is removed when the last clone drops.
+/// and the unnamed temp file that holds them. Clones and snapshot ranges share
+/// the one file, which is removed when the last body or reader drops.
 #[derive(Clone)]
 pub struct SandboxProposalBody {
     spooled: Arc<Spooled>,
+    offset: u64,
+    len: u64,
+    digest: [u8; 32],
 }
 
 struct Spooled {
     file: Mutex<File>,
-    len: u64,
-    digest: [u8; 32],
     /// The floor claim the file holds until the last clone drops, given
     /// back after the file is closed.
     _claim: Option<Box<dyn ProposalSpoolClaim>>,
@@ -98,25 +99,24 @@ impl SandboxProposalBody {
 
     #[must_use]
     pub fn len(&self) -> u64 {
-        self.spooled.len
+        self.len
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.spooled.len == 0
+        self.len == 0
     }
 
     /// BLAKE3 of the whole body, computed as it was spooled.
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
-        self.spooled.digest
+        self.digest
     }
 
     /// Whether the body is exactly `bytes`, decided by length and digest.
     #[must_use]
     pub fn is(&self, bytes: &[u8]) -> bool {
-        self.spooled.len == bytes.len() as u64
-            && self.spooled.digest == *blake3::hash(bytes).as_bytes()
+        self.len == bytes.len() as u64 && self.digest == *blake3::hash(bytes).as_bytes()
     }
 
     /// The `len` bytes at `offset`. A range past the end is refused. Host
@@ -126,7 +126,7 @@ impl SandboxProposalBody {
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         if offset
             .checked_add(len as u64)
-            .is_none_or(|end| end > self.spooled.len)
+            .is_none_or(|end| end > self.len)
         {
             return Err(Error::InvalidClaimBody("proposal body range out of bounds"));
         }
@@ -136,9 +136,29 @@ impl SandboxProposalBody {
             .file
             .lock()
             .map_err(|_| Error::InvalidClaimBody("proposal body poisoned"))?;
-        file.seek(SeekFrom::Start(offset))?;
+        file.seek(SeekFrom::Start(self.offset + offset))?;
         file.read_exact(&mut bytes)?;
         Ok(bytes)
+    }
+
+    /// A snapshot span whose digest the trusted snapshot walker computed while
+    /// appending those exact bytes. Views retain the one spool, not a new fd per
+    /// source file. The immutable parent and range bounds pin the bytes.
+    pub(in crate::code_sandbox) fn slice_with_digest(
+        &self,
+        offset: u64,
+        len: u64,
+        digest: [u8; 32],
+    ) -> Result<Self> {
+        if offset.checked_add(len).is_none_or(|end| end > self.len) {
+            return Err(Error::InvalidClaimBody("proposal body range out of bounds"));
+        }
+        Ok(Self {
+            spooled: self.spooled.clone(),
+            offset: self.offset + offset,
+            len,
+            digest,
+        })
     }
 
     /// Reads the body from its start, one call's buffer at a time.
@@ -154,11 +174,8 @@ impl SandboxProposalBody {
 impl std::fmt::Debug for SandboxProposalBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SandboxProposalBody")
-            .field("len", &self.spooled.len)
-            .field(
-                "digest",
-                &blake3::Hash::from_bytes(self.spooled.digest).to_hex(),
-            )
+            .field("len", &self.len)
+            .field("digest", &blake3::Hash::from_bytes(self.digest).to_hex())
             .finish()
     }
 }
@@ -166,7 +183,7 @@ impl std::fmt::Debug for SandboxProposalBody {
 /// Two bodies are equal when their bytes are: same length, same digest.
 impl PartialEq for SandboxProposalBody {
     fn eq(&self, other: &Self) -> bool {
-        self.spooled.len == other.spooled.len && self.spooled.digest == other.spooled.digest
+        self.len == other.len && self.digest == other.digest
     }
 }
 impl Eq for SandboxProposalBody {}
@@ -232,10 +249,11 @@ impl SandboxProposalBodyWriter {
         Ok(SandboxProposalBody {
             spooled: Arc::new(Spooled {
                 file: Mutex::new(self.file),
-                len: self.len,
-                digest: *self.hasher.finalize().as_bytes(),
                 _claim: self.claim,
             }),
+            offset: 0,
+            len: self.len,
+            digest: *self.hasher.finalize().as_bytes(),
         })
     }
 }
@@ -269,7 +287,7 @@ impl Read for SandboxProposalBodyReader {
             .file
             .lock()
             .map_err(|_| std::io::Error::other("proposal body poisoned"))?;
-        file.seek(SeekFrom::Start(self.at))?;
+        file.seek(SeekFrom::Start(self.body.offset + self.at))?;
         file.read_exact(&mut buffer[..take])?;
         self.at += take as u64;
         Ok(take)

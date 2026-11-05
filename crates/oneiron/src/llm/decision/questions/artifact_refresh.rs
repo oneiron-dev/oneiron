@@ -132,9 +132,7 @@ impl<'a> Selection<'a> {
             } => Self::Paragraphs {
                 blocks,
                 author,
-                labels: serde_json::from_value(labels.clone()).map_err(|_| {
-                    Error::InvalidConfig("a paragraph question names its labels".into())
-                })?,
+                labels: labels.clone(),
             },
             ArtifactAskUnits::FolderItems {
                 sheet,

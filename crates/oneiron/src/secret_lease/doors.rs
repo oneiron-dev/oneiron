@@ -140,6 +140,33 @@ impl Vault {
         Ok((generation, value))
     }
 
+    /// The revoke-only value copy for an accepted local hard erase. The
+    /// native cloud binding supplied this exact slot and generation in the
+    /// same writer; no owner or general token-use grant is minted here.
+    pub(crate) fn cloud_registration_revoke_value_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slot: &EntityId,
+        generation: u32,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let Some(rec) =
+            crate::secret_record::read_secret_custody_admission_in_txn(&self.store, txn, slot)?
+        else {
+            return Ok(None);
+        };
+        let name = format!("{}{}", crate::secret_record::SLOT_PREFIX, slot.to_hex());
+        if rec.name != name || rec.rotation_generation != generation {
+            return Ok(None);
+        }
+        let (_, value) = self.admit_t0_value_in_txn(
+            txn,
+            slot,
+            &rec,
+            crate::secret_custody::CloudRegistrationTokenUse::Revoke.effector(),
+        )?;
+        Ok(Some(value))
+    }
+
     /// The return token of a T0 door: name, effector, time, generation and
     /// taint, never value bytes.
     pub(super) fn door_injection_receipt(

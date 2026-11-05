@@ -120,6 +120,14 @@ impl CloudRegistration {
         let Some(handle) = handle else {
             return Ok(Started::Cancelled);
         };
+        // The owner's hard erase may have committed while the start's
+        // request ran: probe the committed marker fresh, outside the
+        // flows guard, and take only this exact handle-plus-actor when
+        // it proves the erase. Never the global cancel: unrelated
+        // co-owners' flows stay.
+        if self.take_flow_if_owner_erased(vault, &handle, &actor) {
+            return Ok(Started::Cancelled);
+        }
         Ok(Started::Pending {
             flow: handle,
             verification_uri: answer.verification_uri.clone(),
@@ -173,12 +181,22 @@ impl CloudRegistration {
             if !self.flows().put_back(handle.to_owned(), flow, epoch) {
                 return Ok(Polled::Cancelled { revoke: None });
             }
+            // Put back first, its guard dropped, then probe fresh: an
+            // erase whose wake was consumed while this flow was taken
+            // still proves here. Only this exact handle-plus-actor takes.
+            if self.take_flow_if_owner_erased(vault, handle, &actor) {
+                return Ok(Polled::Cancelled { revoke: None });
+            }
             return Ok(pending);
         }
         let http = match Http::new() {
             Ok(http) => http,
             Err(failure) => {
                 self.flows().put_back(handle.to_owned(), flow, epoch);
+                // Cleanup only: put back first, then probe fresh and take
+                // only this exact handle-plus-actor when the owner is
+                // proven erased. The Failed shape stays.
+                let _ = self.take_flow_if_owner_erased(vault, handle, &actor);
                 return Ok(Polled::Failed {
                     reason: failure.reason(),
                 });
@@ -249,6 +267,11 @@ impl CloudRegistration {
             }
         };
         if !self.flows().put_back(handle.to_owned(), flow, epoch) {
+            return Ok(Polled::Cancelled { revoke: None });
+        }
+        // Put back first, its guard dropped, then probe fresh, as above:
+        // only this exact handle-plus-actor takes when proven erased.
+        if self.take_flow_if_owner_erased(vault, handle, &actor) {
             return Ok(Polled::Cancelled { revoke: None });
         }
         Ok(polled)

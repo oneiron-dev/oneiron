@@ -77,6 +77,9 @@ pub struct NapiCheckpointPinBinding {
     pub slhdsa: String,
     /// The crypto epoch the key signs at.
     pub epoch: i64,
+    /// What keeps the install's checkpoint signing seed at rest, as the owner
+    /// is told it: `hardware` | `platform` | `software` | `process`.
+    pub assurance: String,
     pub signature: NapiCheckpointPinSignature,
 }
 
@@ -157,6 +160,7 @@ fn binding_from_engine(
         install: hex(&binding.install),
         slhdsa: hex(&binding.slhdsa),
         epoch,
+        assurance: binding.assurance.clone(),
         signature: signature_from_engine(&binding.signature),
     })
 }

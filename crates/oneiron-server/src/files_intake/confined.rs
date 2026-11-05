@@ -107,6 +107,26 @@ pub(crate) fn walk_notes(
     walk(&open_root(root)?, root, NOTES, visit)
 }
 
+/// A notes rescan names folders that do not open or list and goes on, so
+/// their earlier notes stay until a later scan can read them (FIX 10246).
+/// Opening or listing the root, an unreadable file and a walk refusal still
+/// fail as on an initial import.
+pub(crate) fn walk_notes_rescan(
+    root: &Path,
+    unopened_dir: &mut dyn FnMut(&Path),
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut left = NOTES.entries;
+    let mut skips = Skips {
+        excluded: &nothing_excluded,
+        unopened: &mut nothing_unopened,
+        unopened_dir,
+        hold_dirs: true,
+        vault: None,
+    };
+    walk_below(open_root(root)?, root, NOTES, &mut skips, &mut left, visit)
+}
+
 /// Why a walk is refused whole; nothing under it is imported.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum WalkRefused {
@@ -228,6 +248,7 @@ pub(crate) fn walk(
         excluded: &nothing_excluded,
         unopened: &mut nothing_unopened,
         unopened_dir: &mut nothing_unopened,
+        hold_dirs: false,
         vault: None,
     };
     walk_below(
@@ -250,6 +271,7 @@ struct Skips<'a> {
     excluded: &'a dyn Fn(&Path) -> bool,
     unopened: &'a mut dyn FnMut(&Path),
     unopened_dir: &'a mut dyn FnMut(&Path),
+    hold_dirs: bool,
     vault: VaultIdentity,
 }
 
@@ -333,6 +355,7 @@ pub(crate) fn walk_files(
         excluded,
         unopened,
         unopened_dir,
+        hold_dirs: true,
         vault,
     };
     walk_below(root_dir, root, FILES, &mut skips, &mut left, visit)?;
@@ -452,12 +475,11 @@ impl Traversal {
                     });
                 match opened {
                     Ok(()) => {}
-                    // A Files walk names a folder that does not open and
-                    // goes on (FIX 10246); a refusal of the whole walk (its
-                    // entry budget) still refuses, and any other walk
-                    // refuses as before.
+                    // Files walks and notes rescans name an unreadable
+                    // folder and go on (FIX 10246). A whole-walk refusal
+                    // still refuses; imports and log walks do too.
                     Err(error)
-                        if wanted.every_file && error.downcast_ref::<WalkRefused>().is_none() =>
+                        if skips.hold_dirs && error.downcast_ref::<WalkRefused>().is_none() =>
                     {
                         (skips.unopened_dir)(&path);
                     }

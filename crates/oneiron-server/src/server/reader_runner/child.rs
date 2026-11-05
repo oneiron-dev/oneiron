@@ -165,10 +165,14 @@ impl Child {
                 guard.clone(),
                 payer.clone(),
                 Some(live.state()),
+                job.binding.listed.clone(),
             )
         });
         let per_rung = scoped_backend.is_some();
-        let backend = scoped_backend.or_else(|| self.provider.reader_backend(guard.clone(), payer));
+        let backend = scoped_backend.or_else(|| {
+            self.provider
+                .reader_backend(guard.clone(), payer, job.binding.listed.clone())
+        });
         let Some(backend) = backend else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
@@ -314,6 +318,7 @@ impl Child {
                         listed,
                         worlds: Vec::new(),
                         served: None,
+                        learning: None,
                     };
                     let provider = self.provider.as_ref();
                     // No read scope is threaded here: the birth inherits (FIX 11768).

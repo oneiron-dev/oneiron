@@ -393,8 +393,14 @@ pub(super) async fn safeguard_verdict(
     }
     let decisions = match outcome {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
-        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
-            return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
+        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(denied))) => {
+            let reason = match denied {
+                crate::llm::BudgetDenied::Exhausted => PolicySkipReason::BudgetExhausted,
+                crate::llm::BudgetDenied::LeaseInvalid
+                | crate::llm::BudgetDenied::AdmissionDenied
+                | crate::llm::BudgetDenied::HostCheck => PolicySkipReason::AdmissionDenied,
+            };
+            return Ok(skipped(reason, audit));
         }
         // A raw read never traps, and a backend the read could not reach
         // gave no answer.

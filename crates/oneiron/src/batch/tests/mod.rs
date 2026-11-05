@@ -83,7 +83,7 @@ fn agent_birth_source_asset_inherits_batch_mask_on_both_terminals() -> Result<()
     use crate::registry::ENTITY_TYPE_ASSET;
 
     let agent = entity(0x58);
-    let source = crate::agent_def::birth_source_id(&agent)?;
+    let source = crate::store::agent_birth_identity::birth_source_id(&agent)?;
     let mask = entity(0x36);
     let definition = AgentDefinition::new(
         "fixture.masked-agent",

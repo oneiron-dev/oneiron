@@ -53,9 +53,10 @@ pub(in crate::live) struct PlotTarget {
 /// PowerPoint's Change Chart Type lays them out for a whole chart or for one
 /// series. `held` is each held plot's family and series count; `resolved`
 /// is each series' family. A held plot stays while a series is drawn in its
-/// family; one no series is drawn in goes (FIX 12256), so the export never
-/// writes a plot empty. One plot stays, so a chart emptied of its series
-/// still reads back. A family no held plot draws gets a new plot after
+/// family; one whose own series all moved to a family no plot draws is
+/// converted to it on its own axes (FIX 10294). A plot with no assigned
+/// series goes (FIX 12256), but one stays when the chart has no series so
+/// it still reads back. A family no held plot draws gets a new plot after
 /// them. When no held plot stays, the first is converted to the first
 /// family. A chart with no series takes `family`. Each series stays in
 /// `own`, the held plot it was drawn in,
@@ -87,6 +88,46 @@ pub(in crate::live) fn plot_plan(
             kind,
         })
         .collect();
+    // A held plot whose own series all moved to another family, while
+    // another held plot still draws one of its own in its family, is
+    // converted to its movers' family on its own axes, as PowerPoint
+    // converts it, where no plot draws that family yet; else it draws
+    // nothing and goes (FIX 10294).
+    let draws = |at: usize| {
+        own.iter()
+            .zip(resolved)
+            .any(|(plot, kind)| *plot == Some(at) && *kind == held[at].0)
+    };
+    let mover = |at: usize| {
+        own.iter()
+            .zip(resolved)
+            .find(|(plot, kind)| **plot == Some(at) && **kind != held[at].0)
+            .map(|(_, kind)| *kind)
+    };
+    let emptied: Vec<(usize, ChartKind)> = targets
+        .iter()
+        .enumerate()
+        .filter_map(|(place, target)| {
+            let at = target.held?;
+            let to = mover(at).filter(|_| !draws(at))?;
+            let elsewhere = targets.iter().any(|other| {
+                other.kind == target.kind
+                    && other.held.is_some_and(|other| other != at && draws(other))
+            });
+            elsewhere.then_some((place, to))
+        })
+        .collect();
+    let mut gone = Vec::new();
+    for (place, to) in emptied {
+        if targets.iter().any(|target| target.kind == to) {
+            gone.push(place);
+        } else {
+            targets[place].kind = to;
+        }
+    }
+    for place in gone.into_iter().rev() {
+        targets.remove(place);
+    }
     if targets.is_empty()
         && !held.is_empty()
         && let Some(&kind) = families.first()

@@ -61,6 +61,11 @@ impl AdmittedUpdate {
         self.bytes
     }
 
+    /// The text admission allowed beside the rows, outside their Loro bytes.
+    pub(crate) fn born_with(&self) -> &[super::super::born_with::CarriedText] {
+        &self.born_with
+    }
+
     /// The writes the update asks of this vault: its rows and edges, and the
     /// stamps that wait out of it (Astra-b F2 on #1432).
     pub(crate) fn writes(&self) -> u64 {
@@ -198,10 +203,16 @@ pub(in crate::sync) fn release_landed_stamps(
 pub(crate) struct StagedBirths {
     lane: String,
     births: Vec<(EntityId, Vec<u8>)>,
+    peer_rows: Vec<(EntityId, [u8; 32])>,
 }
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
+    /// The peer-origin rows recomputed from the receipt-bound admitted bytes.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+        &self.peer_rows
+    }
+
     /// The rows the confirmation's import must watch, each with the bytes
     /// the artifact brings.
     pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
@@ -224,25 +235,47 @@ impl StagedBirths {
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn staged_births(
     vault: &Vault,
-    key: &WindowKey,
     (receipt_id, stamps_digest): (&[u8; 32], Option<[u8; 32]>),
-    admitted_update: &[u8],
-) -> Result<StagedBirths> {
-    let admitted = create_window_doc("federation-staged", key);
-    admitted.import(admitted_update).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "import admitted update",
-            source,
-        })
-    })?;
+    parts: &[crate::batch::export::StagedWindowPart],
+) -> Result<Vec<StagedBirths>> {
     let lane = staged_lane(receipt_id);
-    // The held table restores live and maintenance sweeps it, so a hold can
-    // be gone while its receipt is Pending. The receipt's own record holds
-    // every staged stamp again before its birth is judged: an owner's import
-    // never lands a row without the facets it staged (Astra-c F1 on #1432).
-    let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?;
-    let stamps = HeldStamp::from_receipt_record(&record.unwrap_or_default(), stamps_digest)?;
-    hold_stamps(vault, key, (&lane, None), &stamps, false)?;
-    let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
-    Ok(StagedBirths { lane, births })
+    // A receipt binds all per-window records before any is selected or held.
+    let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?
+        .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
+    if stamps_digest != Some(*blake3::hash(&record).as_bytes()) {
+        return Err(Error::CorruptedIndex("staged facet stamps"));
+    }
+    let mut records = crate::batch::export::decode_staged_window_parts(&record)?
+        .into_iter()
+        .map(|(key, record)| (key.as_str().to_owned(), record))
+        .collect::<BTreeMap<_, _>>();
+    if records.len() != parts.len() {
+        return Err(Error::CorruptedIndex("staged facet stamps"));
+    }
+    let mut staged = Vec::with_capacity(parts.len());
+    for part in parts {
+        let (key, update) = (&part.key, &part.update);
+        let record = records
+            .remove(key.as_str())
+            .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
+        let stamps =
+            HeldStamp::from_receipt_record(&record, Some(*blake3::hash(&record).as_bytes()))?;
+        let admitted = create_window_doc("federation-staged", key);
+        admitted.import(update).map_err(|source| {
+            Error::Sync(SyncError::CrdtDecodeError {
+                context: "import admitted update",
+                source,
+            })
+        })?;
+        // Maintenance may have cleared a Pending receipt's holds. Restore
+        // each record only under the actual window whose rows it precedes.
+        hold_stamps(vault, key, (&lane, None), &stamps, false)?;
+        let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
+        staged.push(StagedBirths {
+            lane: lane.clone(),
+            births,
+            peer_rows: crate::sync::ingest::admitted_peer_rows(&admitted),
+        });
+    }
+    Ok(staged)
 }

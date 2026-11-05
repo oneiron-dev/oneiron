@@ -108,6 +108,9 @@ pub(super) fn channel_holding(
                 ChannelIdentityShape::DedicatedHandle => ShapeSelfHeld::DedicatedHandle,
                 ChannelIdentityShape::SharedPresence => ShapeSelfHeld::SharedPresence,
                 ChannelIdentityShape::DelegatedGrant => return None,
+                // The enum is `#[non_exhaustive]` in `oneiron-authority`; every
+                // variant it has today is matched above, so this arm never runs.
+                _ => return None,
             },
         },
     };

@@ -31,7 +31,7 @@ use super::{FIELD_EXPORT_EXCLUDED, FIELD_EXPORT_EXCLUDED_REASONS, TrainingPair};
 use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
-use crate::disclosure::{DisclosureTier, RoomParty, bound_room_party_in, disclosure_tier};
+use crate::disclosure::{DisclosureTier, disclosure_tier, room_party_entry_in};
 use crate::edit_distance::text_ref::retained_proposal_in_txn;
 use crate::edit_distance::{PROPOSAL_ARTIFACT, ProposalArtifactRef, RetainedProposal};
 use crate::entity_id::EntityId;
@@ -208,10 +208,10 @@ enum PreTick {
     Source { source: EntityId, entity_type: u8 },
 }
 
-/// The pair's row check, its PROPOSAL_ARTIFACT source lookup and the
-/// source's row check: the checks `refusal_in` and `ticked_source_in` used
-/// to carry as two copies (FIX 11721). Same order, same values, same `?`
-/// propagation points as both copies.
+/// The pair's row check, its PROPOSAL_ARTIFACT source lookup, each MadeBy
+/// input's row check and the source's row check: the checks `refusal_in`
+/// and `ticked_source_in` used to carry as two copies (FIX 11721). Same
+/// order, same values, same `?` propagation points as both copies.
 fn pre_tick_checks_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -223,10 +223,24 @@ fn pre_tick_checks_in(
         RowCheck::Unreadable => return Ok(PreTick::Refused(PAIR_UNREADABLE)),
         RowCheck::Withheld => return Ok(PreTick::Refused(PAIR_WITHHELD)),
     }
-    let Some(source) = PROPOSAL_ARTIFACT
+    let (source, inputs) = PROPOSAL_ARTIFACT
         .get(&vault.store, rtxn, &artifact)?
-        .and_then(|stored| stored.record.source_turn_ref)
-    else {
+        .map(|stored| (stored.record.source_turn_ref, stored.record.made_by_inputs))
+        .unwrap_or((None, Vec::new()));
+    // Each MadeBy input goes through the same row check as the source (FIX
+    // 11350): an input that does not read holds the pair, exactly as an
+    // unreadable source does. Checked before the source, under the same reason
+    // codes, and even when the pair has no turn source.
+    for input in &inputs {
+        match row_check_in(vault, rtxn, readable, *input)? {
+            RowCheck::Passes(_) => {}
+            RowCheck::Absent | RowCheck::Unreadable => {
+                return Ok(PreTick::Refused(SOURCE_UNREADABLE));
+            }
+            RowCheck::Withheld => return Ok(PreTick::Refused(SOURCE_WITHHELD)),
+        }
+    }
+    let Some(source) = source else {
         return Ok(PreTick::NoSource);
     };
     match row_check_in(vault, rtxn, readable, source)? {
@@ -298,8 +312,8 @@ fn row_check_in(
 /// Who `source` holds. A TURN's source is its conversation, and its people
 /// are everyone that ledger ever joined. Any other row is its own source,
 /// and its people are the authors its `AuthoredBy` edges name. The acting
-/// owner and the vault's own agents (`bound_room_party_in`) are the owner's
-/// side. A room or ledger that cannot be read, or no one to class, is
+/// owner and the vault's own agents (the entry's `vault_agent`) are the
+/// owner's side. A room or ledger that cannot be read, or no one to class, is
 /// unknown. A never-joined imported conversation's recorded speakers decide
 /// (FIX 11353).
 fn source_people_in(
@@ -361,8 +375,9 @@ fn source_people_in(
         return Ok(SourcePeople::Unknown(key));
     }
     for person in people {
-        if person != run.actor
-            && bound_room_party_in(vault, rtxn, &run.fold, person)? != RoomParty::VaultAgent
+        // The entry's agent standing is the agent set this test has always
+        // read (bound owners excluded), so no consent cell moves (FIX 6558).
+        if person != run.actor && !room_party_entry_in(vault, rtxn, &run.fold, person)?.vault_agent
         {
             return Ok(SourcePeople::Others(key));
         }

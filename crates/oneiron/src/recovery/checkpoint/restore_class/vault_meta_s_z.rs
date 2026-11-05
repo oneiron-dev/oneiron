@@ -41,12 +41,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
     (&t::SECRET_HANDLE_LABEL, LIVE),
+    (&t::SECRET_HANDLE_PURPOSE, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_LEASE_GRANT, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
+    (&t::SECRET_LIFT_CONTRIBUTION, LIVE),
     (&t::SECRET_LIFT_MARK, CONTENT),
     (&t::SECRET_LIFT_NOTICE, LIVE),
     (&t::SECRET_LIFT_PROPOSAL, CONTENT),
@@ -89,6 +91,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::POLICY_SETTING_ACT, LIVE),
+    (&t::ACCESS_GRANT_OWNER_ACT, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::ROOM_THREADS_ADMIN_DELETE, LIVE),
@@ -236,6 +239,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE, CONTENT),
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
+    // A change to a source's readers is history, restored with the rows it
+    // admitted; the policy itself is live authority: a restore never gives
+    // back a reader removed since, or takes away one added (FIX 12559).
+    (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
+    (&t::SOURCE_AUDIENCE_POLICY, LIVE),
+    // A row's birth binding stands with the row as the image holds it.
+    (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
+    (&t::SOURCE_AUDIENCE_THREAD, CONTENT),
     (&t::SPAWN_PLANNED_INTENT, LIVE),
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
@@ -369,6 +380,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WEB_CONNECTOR_SETTING, CONTENT),
     (&t::WEB_CONNECTOR_USAGE, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT_FENCE, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),
