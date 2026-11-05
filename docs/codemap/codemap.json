@@ -40551,7 +40551,7 @@
      "path": "src/inbox/list.rs",
      "purpose": "OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -44321,7 +44321,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "re-export": 4,
       "struct": 5
@@ -44398,7 +44398,7 @@
      "path": "src/llm/registry/stored_rows.rs",
      "purpose": "The registry's stored rows",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -83133,7 +83133,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Vault"
@@ -83142,6 +83142,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 17,
+      "fn": 1,
       "re-export": 8,
       "struct": 1
      }
@@ -85396,7 +85397,7 @@
       "VaultReceiptsRequest"
      ],
      "path": "src/verbs/receipts_page.rs",
-     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, served at most…",
+     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on the gate ledger and at…",
      "surface": {
       "re-export": 1,
       "struct": 1
@@ -93389,7 +93390,7 @@
      "path": "src/request_limits.rs",
      "purpose": "Request boundary limits and pure validators",
      "surface": {
-      "const": 14,
+      "const": 13,
       "fn": 13
      }
     },
@@ -102798,7 +102799,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -102848,7 +102849,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 1,
       "struct": 10
      }
@@ -106385,7 +106386,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 29
      }
     },
     {
