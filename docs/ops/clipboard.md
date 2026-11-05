@@ -1,4 +1,4 @@
-# Clipboard native storage doors
+# Clipboard storage and Mac intake
 
 The native Clipboard backend is available through `oneiron::clipboard`.
 The macOS watcher, private-copy routing, quiet secret-purpose questions,
@@ -77,3 +77,61 @@ They do **not** claim measured free filesystem pages, immediate LMDB file
 shrinkage, backup removal completion, sync delivery, or secret-custody-byte
 reclamation. Host scheduling and a working low-disk observation remain
 required before claiming automatic cleanup.
+
+## Mac app intake and owner IPC
+
+The Mac app registers one `root_rekey::clipboard` watcher after its embedded
+vault state is managed. Startup reads only a pasteboard change-count baseline,
+not the previous payload or a clipboard-history database. The worker polls
+observed changes every 500 ms. This is observation-based capture, not a claim
+that polling preserves copies replaced between observations. `copied_at` is
+the host's observation time in seconds, not an OS-supplied copy timestamp.
+
+All pasteboard calls run on the main thread. Types are classified before any
+payload read. A changed count during classification/read discards and wipes
+the result rather than trusting type evidence from an earlier copy. Only
+wiping Rust buffers cross to the serial worker. A failed capture retries the
+still-current copy; a private failure never falls back to ordinary intake.
+Exit signals both the idle worker and a pending main-thread reply wait; it
+does not join on the main thread or hold an owner lease across that wait.
+
+Known confidential markers go through `private_copy::capture_private_copy`
+to native private secret custody. The host generates a content-free
+`private-copy-<fresh-id>` name and passes CustodyPortable, T0Doored, no effector
+bindings and no manifest. The native private-copy flag, not the tier, prevents
+model reveal. The returned handle is not copied into ordinary clip text.
+Private viewing retains the separate Touch ID/Mac-password owner command and
+its explicit authentication override.
+
+The generic transient marker establishes neither producer nor secrecy. Its
+initial routing policy is private custody, with an explicit owner override;
+this is not a claim that every transient copy came from Enpass. Private-copy
+`device_only` is a separate explicit input, initially false. It is not a
+substitute for the Clipboard world's separate privacy/residence switch.
+
+The owner IPC commands are:
+
+- `clipboard_settings` and `set_clipboard_settings`: the native retention
+  arms plus device-local capture settings `enabled` (initially true),
+  `transient_as_private` (initially true) and `private_device_only`
+  (initially false). Routing settings are one coherent device preference,
+  sampled before each observed copy's payload. Changes apply to the next
+  observation, not an already observed copy.
+- `clipboard_entries`: the native owner page, with its exclusive position
+  and full requested positive limit.
+- `clipboard_erase`: the native clip/range/all hard-delete selection.
+
+These commands use the existing owner-act mutex, a fresh writer lease and
+the actual local owner. They do not add agent grants or a settings layout.
+Every 60 seconds the same worker obtains Foundation's actual free-byte
+observation for the vault's filesystem and attempts native cleanup. A failed
+observation never becomes a fabricated free-space value. Native current-policy
+checks and delete outcomes still govern the work; selected text bytes are
+not measured disk reclamation.
+
+This source does not supply the quiet detected-secret-purpose question,
+separate Cmd-K/related-clip consumer, default recall isolation or end-to-end
+sync/key-release proof. The ordinary scanner still masks at the native CLAIM
+door; no handle is guessed from text to pretend a purpose question exists.
+No pasteboard, GUI, runtime, deployment or automatic-cleanup result is claimed
+by this source description.

@@ -19,6 +19,8 @@
 //! for it ([`Vault::hold_writer_lease_for_owner_act`]).
 
 #[cfg(target_os = "macos")]
+pub(crate) mod clipboard;
+#[cfg(target_os = "macos")]
 pub(crate) mod private_copy;
 
 use std::path::PathBuf;
