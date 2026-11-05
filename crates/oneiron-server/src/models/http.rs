@@ -538,6 +538,10 @@ impl ProviderHttp {
         send: MediaSend,
     ) -> Result<StreamedReply, HttpFailure> {
         let response = self.media_response(path, send).await?;
+        Self::streamed_response(response).await
+    }
+
+    async fn streamed_response(response: reqwest::Response) -> Result<StreamedReply, HttpFailure> {
         if response.status().is_success() {
             return Ok(StreamedReply::Body(MediaStream(response)));
         }
@@ -550,6 +554,35 @@ impl ProviderHttp {
             body,
             held,
         }))
+    }
+
+    /// A reference upload whose bank and call-local release both hold at every send.
+    pub(super) async fn send_octets_streamed_released(
+        &self,
+        path: &str,
+        octets: Vec<u8>,
+        admission: &UploadAdmission,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<StreamedReply, HttpReleaseError> {
+        let url = self.url(path);
+        let request = || {
+            self.client
+                .post(url.as_str())
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        };
+        let dispatch = || {
+            if !admission() {
+                return Err(oneiron::FatalLlmError::InvalidRequest.into());
+            }
+            release()
+        };
+        let response = self
+            .send_body_released(path, request, octets, &dispatch, lease)
+            .await?;
+        Self::streamed_response(response)
+            .await
+            .map_err(HttpReleaseError::Transport)
     }
 
     /// Sends one media exchange at `path`: its answer, its body unread.

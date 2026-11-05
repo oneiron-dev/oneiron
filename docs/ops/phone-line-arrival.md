@@ -116,8 +116,20 @@ admitted run and filter its ladder through the frozen native model list, includi
 owner-selected fallback rungs. Voice routing filters eligible backend bindings before
 selecting the route, rather than stopping at an unlisted primary when a listed route
 can serve it. Existing media callers pass no agent context and keep their prior routing
-and billing. These ports do not yet activate a phone media door or prove provider-send
-release checks.
+and billing. The optional phone media door rechecks the original credential and
+current line before native inference admission. Its worker binds release to the exact
+queued speech generation, not the latest generation. OpenAI-compatible direct and
+brokered speech, Cartesia, ElevenLabs and VoxCPM2 render uploads forward that callback
+to physical sends and retries. VoxCPM2 also retains its current-reference upload check;
+its readiness probe is not counted as an inference attempt. Old media callers keep
+`None` release and their existing paths.
+
+A credential, model list or generation label does not supply a whole source set. These
+media calls still assert no whole set unless their actual producer supplies it. The
+prepared phone output check uses its original captured consent, sources and audience;
+complete instruction, history, tool and saved-control accounting, live ASR withdrawal
+and the actual answering factory remain open. These ports are not phone activation or
+provider/runtime proof.
 
 A phone-bound host refuses speaker matching and roster departures before accessing
 any roster. Ordinary voice hosts keep their existing matching and departure behavior.
