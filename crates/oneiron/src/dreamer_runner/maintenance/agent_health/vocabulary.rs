@@ -301,6 +301,12 @@ pub struct AgentHealthCard {
     pub diagnostics: Vec<EntityId>,
     /// Receipt and attempt ids, newest last.
     pub evidence: Vec<EntityId>,
+    /// Host-local model-input read-row union behind the merged numbers.
+    /// `None` when any contributing read is unknown. These may be native
+    /// side-table keys, not primary entities or authority/erasure proofs.
+    /// Routing, recipients and owner-copy policy are outside this union.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub source_rows: Option<Vec<EntityId>>,
     pub window_from: u64,
     pub window_to: u64,
     /// The number the dial was held against, and the dial.
@@ -383,6 +389,7 @@ pub(super) struct Finding {
     /// exists at emission (an actor-only call stream).
     pub(super) generation: Option<u32>,
     pub(super) evidence: Vec<EntityId>,
+    pub(super) source_rows: Option<Vec<EntityId>>,
     pub(super) window: (u64, u64),
     /// The stable number the DIAGNOSTIC carries, and the dial.
     pub(super) actual: i64,

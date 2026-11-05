@@ -1999,6 +1999,8 @@ pub struct AgentHealthCard {
     pub diagnostics: Vec<String>,
     #[serde(rename = "evidence")]
     pub evidence: Vec<String>,
+    #[serde(rename = "source_rows", default)]
+    pub source_rows: Option<Vec<String>>,
     #[serde(rename = "window_from")]
     pub window_from: u64,
     #[serde(rename = "window_to")]
