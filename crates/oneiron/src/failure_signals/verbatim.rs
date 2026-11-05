@@ -7,8 +7,9 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use oneiron_retrieval::analyzer::{ScriptClass, ScriptRunSplitter, TokenKind, icu};
+use oneiron_retrieval::analyzer::{TokenKind, icu};
 use unicode_normalization::UnicodeNormalization;
+use unicode_script::{Script, UnicodeScript};
 
 /// A run of this many words shared with any source turn withholds the
 /// example.
@@ -78,39 +79,48 @@ fn windows(words: &[Word], span: usize) -> impl Iterator<Item = &[Word]> {
 }
 
 fn words(text: &str) -> Vec<Word> {
-    let folded: String = text.nfkc().flat_map(char::to_lowercase).collect();
     let mut out = Vec::new();
     let mut word = String::new();
-    for run in ScriptRunSplitter::new().runs(&folded) {
-        let text = run.as_slice(&folded);
+    let mut dictionary_run = String::new();
+    for ch in text.nfkc().flat_map(char::to_lowercase) {
+        let script = ch.script();
         if matches!(
-            run.script,
-            ScriptClass::Thai | ScriptClass::Lao | ScriptClass::Khmer | ScriptClass::Myanmar
-        ) {
+            script,
+            Script::Thai | Script::Lao | Script::Khmer | Script::Myanmar
+        ) || (script == Script::Inherited && !dictionary_run.is_empty())
+        {
             flush(&mut word, &mut out);
-            let mut tokens = Vec::new();
-            icu::analyze(text, 0, 0, &mut tokens);
-            out.extend(
-                tokens
-                    .into_iter()
-                    .filter(|token| token.kind == TokenKind::Word)
-                    .map(|token| (token.term.into_string(), WORD)),
-            );
+            dictionary_run.push(ch);
             continue;
         }
-        for ch in text.chars() {
-            if is_cjk(ch) {
-                flush(&mut word, &mut out);
-                out.push((ch.to_string(), CHAR));
-            } else if ch.is_alphanumeric() {
-                word.push(ch);
-            } else {
-                flush(&mut word, &mut out);
-            }
+        flush_dictionary(&mut dictionary_run, &mut out);
+        if is_cjk(ch) {
+            flush(&mut word, &mut out);
+            out.push((ch.to_string(), CHAR));
+        } else if ch.is_alphanumeric() {
+            word.push(ch);
+        } else {
+            flush(&mut word, &mut out);
         }
     }
+    flush_dictionary(&mut dictionary_run, &mut out);
     flush(&mut word, &mut out);
     out
+}
+
+fn flush_dictionary(run: &mut String, out: &mut Vec<Word>) {
+    if run.is_empty() {
+        return;
+    }
+    let mut tokens = Vec::new();
+    icu::analyze(run, 0, 0, &mut tokens);
+    out.extend(
+        tokens
+            .into_iter()
+            .filter(|token| token.kind == TokenKind::Word)
+            .map(|token| (token.term.into_string(), WORD)),
+    );
+    run.clear();
 }
 
 fn flush(word: &mut String, out: &mut Vec<Word>) {
