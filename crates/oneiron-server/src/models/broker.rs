@@ -387,6 +387,39 @@ pub(super) async fn call_with_key_released(
     release: Option<oneiron::llm::DispatchRelease<'_>>,
     lease: Option<&BudgetLease>,
 ) -> LlmResult<oneiron_broker::BrokerReply> {
+    let (connection, key) = connect_with_key_released(client, keys, secret, release, lease).await?;
+    connection
+        .call(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens the same released broker call, leaving its reply for the caller's
+/// incremental reader. Connection, key custody and release share the buffered
+/// call's exact prelude.
+pub(super) async fn open_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let (connection, key) = connect_with_key_released(client, keys, secret, release, lease).await?;
+    connection
+        .open(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+async fn connect_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<(oneiron_broker::BrokerConnection, Zeroizing<Vec<u8>>)> {
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
     let secret = secret.to_owned();
@@ -406,10 +439,7 @@ pub(super) async fn call_with_key_released(
     if let Some(lease) = lease {
         lease.begin_physical_attempt();
     }
-    connection
-        .call(header, body, key)
-        .await
-        .map_err(broker_error)
+    Ok((connection, key))
 }
 
 /// The provider's status and headers when it answered, or the error a call
@@ -456,7 +486,7 @@ fn no_streaming(model: &ModelId) -> LlmError {
     .into()
 }
 
-fn broker_error(error: BrokerError) -> LlmError {
+pub(super) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
         BrokerError::Unreachable => RetryableLlmError::StreamCut.into(),
