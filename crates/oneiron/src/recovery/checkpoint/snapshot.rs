@@ -292,6 +292,10 @@ impl Vault {
                 .is_some_and(|rows| observed.matches_rows(rows))
         });
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // Each window the payload split rides as its carrier (FIX 10277).
+        let window_carriers = payload
+            .as_ref()
+            .map_or_else(Vec::new, |payload| payload.window_carriers.clone());
         // The artifact's snapshot id, minted before anything is sealed to
         // it: the host-order member binds it, never the image's digest.
         let mut snapshot = [0u8; 32];
@@ -309,6 +313,7 @@ impl Vault {
             checkpoint_sequence: None,
             host_holds,
             snapshot: None,
+            window_carriers,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         tracing::info!(
