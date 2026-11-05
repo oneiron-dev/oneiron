@@ -410,13 +410,30 @@ pub(crate) fn put_stored_custody_in_txn(
     stored: &StoredCustody,
     occurred_at: u64,
 ) -> Result<()> {
+    put_stored_custody_with_context_in_txn(
+        &super::doors::CustodyWrite::of(vault),
+        wtxn,
+        id,
+        stored,
+        occurred_at,
+    )
+}
+
+/// Re-puts a stored record through the native batch write context.
+pub(crate) fn put_stored_custody_with_context_in_txn(
+    write: &super::doors::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    stored: &StoredCustody,
+    occurred_at: u64,
+) -> Result<()> {
     let data = encode_stored_body(stored)?;
     let at = crate::temporal::TimeRange {
         start: occurred_at,
         end: occurred_at,
     };
     super::doors::apply_custody_body_in_txn(
-        &super::doors::CustodyWrite::of(vault),
+        write,
         wtxn,
         id,
         &stored.record,
