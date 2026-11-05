@@ -340,11 +340,22 @@ fn build_provider(
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;
+            let engine_models = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             Arc::new(AnthropicMessagesBackend::new(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
                     cap: output_cap(provider),
+                    engine_models,
                 },
             ))
         }
