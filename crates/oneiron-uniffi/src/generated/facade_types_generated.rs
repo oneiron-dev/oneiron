@@ -25737,6 +25737,8 @@ pub struct MessageResultAttachment {
     pub lines: u64,
     #[serde(rename = "complete")]
     pub complete: bool,
+    #[serde(rename = "erased")]
+    pub erased: bool,
     #[serde(rename = "preview")]
     pub preview: String,
     #[serde(rename = "preview_truncated")]

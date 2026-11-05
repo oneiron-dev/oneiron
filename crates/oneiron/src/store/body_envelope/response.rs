@@ -601,11 +601,12 @@ impl ResponseFamily {
     /// Storage errors.
     pub(crate) fn retire_in_txn(
         self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         wtxn: &mut RwTxn<'_>,
         key: &[u8],
         carriage: &ResponseCarriage,
     ) -> Result<()> {
+        let store = write.store;
         let kept = || {
             carriage
                 .stub
@@ -616,7 +617,7 @@ impl ResponseFamily {
                 ))
         };
         match self {
-            Self::StepClaim => crate::llm::retire_step_claim_in_txn(store, wtxn, key),
+            Self::StepClaim => crate::llm::retire_step_claim_in_txn(write, wtxn, key),
             Self::ProgramStep
             | Self::StepState
             | Self::Replay
