@@ -4178,7 +4178,7 @@ class Oneiron:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
     class _VaultMailPackVerbs:
         def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
     class _VaultMailSourcesVerbs:
         def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
             """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""

@@ -3719,7 +3719,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.custody.members.drain.commit": { description: "The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.custody.members.drain.folder": { description: "The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.custody.members.reenrol": { description: "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.mail.pack.install": { description: "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.mail.pack.install": { description: "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.mail.sources.connect": { description: "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.mail.sources.list": { description: "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.mail.sources.settings.set": { description: "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -6574,7 +6574,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       },
       mail: {
         pack: {
-          /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+          /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
           install: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.mail.pack.install">[K] => invoke("vault.mail.pack.install", input, options, newInvocation()),
         },
         sources: {

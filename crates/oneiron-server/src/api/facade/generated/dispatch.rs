@@ -37599,19 +37599,31 @@ async fn vault_mail_pack_install(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.pack.install")?;
     let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.mail.pack.install",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("vault.mail.pack.install", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.pack.install", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::vault_mail_pack_install(
+                server,
+                auth,
+                facade_door_input(&mut hooks)?,
+            )
+            .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_mail_sources_connect(
     server: &Arc<SyncServer>,

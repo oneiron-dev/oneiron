@@ -5763,7 +5763,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def install(self, spec=None):
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
             return json.loads(_translate(lambda: self._client.vault_mail_pack_install(json.dumps({} if spec is None else spec))))
     class _VaultMailSourcesVerbs:
         def __init__(self, client: _NativeClient) -> None:

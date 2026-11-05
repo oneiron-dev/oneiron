@@ -6509,7 +6509,7 @@ declare const vault: Sdk.VaultHost & {
     /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
     inbox(input: Sdk.MailInboxRequest): Promise<Sdk.MailInboxPage | StoredResult>;
     pack: {
-      /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+      /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
       install(input: Sdk.EmptyRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     };
     sources: {
