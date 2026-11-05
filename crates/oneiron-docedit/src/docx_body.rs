@@ -320,9 +320,11 @@ pub enum DocxChange {
         block: String,
         text: String,
     },
-    /// Replace one authored header/footer story paragraph's text and inline
-    /// marks as one whole-paragraph tracked redline, not the body's granular
-    /// formatting pass. Notes and comments refuse instead of dropping marks.
+    /// Replace one story paragraph's text and inline marks as one
+    /// whole-paragraph tracked redline, not the body's granular formatting
+    /// pass: an authored header/footer paragraph, or one paragraph within a
+    /// footnote/endnote story by its story-local id. Comments refuse instead
+    /// of dropping marks.
     SetStoryRuns {
         scope: DocxStoryScope,
         block: String,

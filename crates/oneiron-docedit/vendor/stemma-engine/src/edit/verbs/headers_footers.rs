@@ -35,14 +35,14 @@ use super::super::story_addr::{
     story_blocks_mut,
 };
 use super::super::{
-    ContentFragment, EditError, InlineMarkSet, MaterializationMode, ParagraphContent,
-    apply_replace_paragraph_text, apply_segment_replace_paragraph, collect_anchor_inventory,
-    extract_text_sections, is_identity_replacement, next_revision, normalize_expect_punctuation,
-    paragraph_visible_text, set_mark_surface, validate_block_is_editable, validate_preserved_inlines,
+    EditError, MaterializationMode, ParagraphContent, apply_replace_paragraph_text,
+    apply_segment_replace_paragraph, collect_anchor_inventory, extract_text_sections,
+    is_identity_replacement, next_revision, normalize_expect_punctuation, paragraph_visible_text,
+    set_exact_replacement_marks, validate_block_is_editable, validate_preserved_inlines,
 };
 use crate::domain::{
-    BlockNode, CanonDoc, FooterStory, HeaderFooterKind, HeaderStory, InlineNode, MarkValue, NodeId,
-    ParagraphNode, RevisionInfo, SectionProperties, SectionPropertyChange, TrackedBlock, TrackingStatus,
+    BlockNode, CanonDoc, FooterStory, HeaderFooterKind, HeaderStory, NodeId, ParagraphNode,
+    RevisionInfo, SectionProperties, SectionPropertyChange, TrackedBlock, TrackingStatus,
     normal_tracked_block,
 };
 use crate::semantic_hash::check_block_guard;
@@ -189,60 +189,6 @@ pub(crate) fn apply_edit(
     }
 
     Ok(())
-}
-
-/// The shared segment builder emits one inline per fragment in its single
-/// Inserted segment. Set only those new text nodes; Deleted source runs and
-/// preserved opaque/break nodes keep their original formatting and history.
-fn set_exact_replacement_marks(para: &mut ParagraphNode, content: &ParagraphContent) {
-    for segment in &mut para.segments {
-        if !matches!(segment.status, TrackingStatus::Inserted(_)) {
-            continue;
-        }
-        for (inline, fragment) in segment.inlines.iter_mut().zip(&content.fragments) {
-            let InlineNode::Text(node) = inline else {
-                continue;
-            };
-            let target = match fragment {
-                ContentFragment::Text(_) => InlineMarkSet::default(),
-                ContentFragment::StyledText { marks, .. } => *marks,
-                _ => continue,
-            };
-            set_mark_surface(&mut node.marks, &mut node.style_props, target);
-            if target.underline
-                && node.style_props.underline_style == Some(crate::domain::UnderlineStyle::None)
-            {
-                node.style_props.underline_style = None;
-            }
-            // Absence is explicit OFF, not inheritance from the paragraph or
-            // character style. All unrelated run properties stay as built.
-            node.rpr_authored.bold = true;
-            node.rpr_authored.bold_off = !target.bold;
-            node.rpr_authored.italic = true;
-            node.rpr_authored.italic_off = !target.italic;
-            node.rpr_authored.bold_cs = true;
-            node.rpr_authored.italic_cs = true;
-            node.style_props.bold_cs = if target.bold {
-                MarkValue::On
-            } else {
-                MarkValue::Off
-            };
-            node.style_props.italic_cs = if target.italic {
-                MarkValue::On
-            } else {
-                MarkValue::Off
-            };
-            node.rpr_authored.underline = true;
-            node.rpr_authored.underline_off = !target.underline;
-            node.rpr_authored.vert_align = true;
-            node.rpr_authored.strike = true;
-            node.style_props.strike = if target.strike {
-                MarkValue::On
-            } else {
-                MarkValue::Off
-            };
-        }
-    }
 }
 
 /// `CreateHeader` / `CreateFooter` — author a NET-NEW, blank header/footer story
