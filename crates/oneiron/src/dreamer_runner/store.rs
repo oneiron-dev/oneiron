@@ -528,7 +528,7 @@ impl<'a> DreamerRunnerStore<'a> {
         reader: crate::claim::WeaveDigestReader,
         scheduled_for: u64,
         rendered_at: u64,
-        report_revision: EntityId,
+        report_revision: crate::EntityId,
         enqueued_at: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         let input = crate::claim::weave_lens_attempt_input(
