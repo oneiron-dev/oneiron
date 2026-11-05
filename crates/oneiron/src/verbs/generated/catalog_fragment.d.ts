@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4581 declarations.
+// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4583 declarations.
 // Replies: 1113 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -4109,8 +4109,10 @@ declare namespace Sdk {
   type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
   type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
   type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationDocumentImage = { doc: string; at: number[] };
+  type ConsolidationSourceImage = { learned_at: number; body_hash: number[]; document?: ConsolidationDocumentImage | null };
   type ConsolidationDeliveryOrigin = { source_ref: string; delivering_pact: string; consent_epoch: number; grant_ref: string; source_vault: string; delivered_row_hash: string };
-  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[]; delivery_history?: ConsolidationDeliveryOrigin[] | null };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[]; current_image: ConsolidationSourceImage; delivery_history?: ConsolidationDeliveryOrigin[] | null };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
   type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string[] | null; project: string };
   type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null };
