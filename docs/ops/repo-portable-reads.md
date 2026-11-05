@@ -33,9 +33,22 @@ CODE, hit state, current Grant bounds, and run lease. A changed selection
 returns a retryable error without writing rows. An absent or unknown id
 keeps the existing fallback behavior.
 
-These selectors do not change native Git, work, or view doors. Native repo
-admission checks the same typed selector against the existing EntityId
-Grant bounds; it grants no new rights. Served-anchor lookup still has no
-portable selector. Reads and imports add no grants and do not change
-masking, owner approval, or repo admission rules. A manifest alone never
-grants access.
+`self.code.work.open` also accepts the selector. Its queue, green snapshot,
+read lane, returned rows, and fresh work receipt use the selected CODE.
+The receipt writer re-resolves the same selector and keeps all current
+Grant, path, and lease checks. Later view reads, symbol declarations,
+proposals, and queue entries use that work's stored repo and current native
+admission. A later portable mapping never retargets an existing work.
+
+The run host's existing write gate for imports and work opens admits and
+records the selected CODE, not the fallback repo. After the gate returns,
+the native door admits the selector again and compares its repo and hit
+state with the gate's selection before reading or preparing bytes. Its
+writer checks the same selection again. Direct native and live-run facade
+calls keep their existing native admission without adding a host gate.
+
+These run selectors do not change native Git. Native repo admission checks
+the same typed selector against the existing EntityId Grant bounds; it
+grants no new rights. Served-anchor lookup still has no portable selector.
+Reads, imports, and work opens add no grants and do not change masking,
+owner approval, or repo admission rules. A manifest alone never grants access.

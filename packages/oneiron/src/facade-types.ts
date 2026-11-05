@@ -5565,7 +5565,7 @@ export type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPor
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsIngestOutput` */
 export type RepoSnapshotsIngestOutput = RepoSnapshotView
 /** `oneiron::memory::repo_doors::types::RepoWorkOpenInput` */
-export type RepoWorkOpenInput = { repo: EntityId; ref: string }
+export type RepoWorkOpenInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string }
 /** `oneiron::memory::repo_doors::types::RepoWorkOpenOutput` */
 export type RepoWorkOpenOutput = RepoWorkView
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDeclareInput` */
