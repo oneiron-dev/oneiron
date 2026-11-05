@@ -129,16 +129,34 @@ declare interface QuerySelection {
   limit?: number;
   cursor?: QueryCursor;
 }
-declare interface QueryCursor { offset?: number; row?: number; skip?: number }
+declare interface QueryCursor {
+  offset?: number;
+  row?: number;
+  /** Document candidate ordinal, or a picked value within a table row. */
+  skip?: number;
+  /** Continue the same query within one selected JSON value, in bytes. */
+  within?: number;
+}
+/** Re-encoded JSON bytes, not a range of the source result. Resume the same
+ * query with QueryReply.next; these offsets cannot be passed to slice. */
+declare interface QueryValuePage {
+  start: number;
+  end: number;
+  bytes: number;
+  text: string;
+  done: boolean;
+}
 /** `value` for a path that picks one value, `values` for a `[*]` path,
- * `rows` with `columns` or `where`. A selection too big for one reply is
- * stored as a new result of the run and comes back as `derived`. */
+ * `rows` with `columns` or `where`. A new selection too big for one reply is
+ * stored as a new result of the run and comes back as `derived`. An explicit
+ * byte continuation returns `paged`; its next query cursor continues it. */
 type QueryReply =
   | {
       ref: string;
       value?: unknown;
       values?: unknown[];
       rows?: Record<string, unknown>[];
+      paged?: QueryValuePage | (SliceReply & { bytes: number });
       count: number;
       done: boolean;
       next?: QueryCursor;
