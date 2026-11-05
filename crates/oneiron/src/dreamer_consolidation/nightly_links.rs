@@ -429,6 +429,13 @@ impl ConsolidationExecutor<'_> {
                         charges.record_usage(usage);
                     }
                 }
+                if let Some(usage) = decided
+                    .as_ref()
+                    .err()
+                    .and_then(DurableStepError::spent_usage)
+                {
+                    charges.record_usage(usage);
+                }
                 return super::residency::spent_or_deferred(error, ctx, charges)
                     .map(ControlFlow::Break);
             }
