@@ -49,6 +49,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         Bm25Formula::Okapi => json!({"kind": "okapi"}),
         Bm25Formula::Plus { delta } => json!({"kind": "plus", "delta": delta}),
     };
+    let mut fields_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
     let fields = bm25
         .fields
         .iter()
@@ -57,6 +61,13 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                "length_policy": field.length_policy.manifest_tag()})
         })
         .collect::<Vec<_>>();
+    if let Some(memory) = fields_memory.as_mut() {
+        memory.materialized(
+            0,
+            (fields.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+        );
+    }
     let temporal = builder.temporal_search.as_ref().map(|t| {
         json!({
             "anchor_start": t.anchor_start, "anchor_end": t.anchor_end,
@@ -237,6 +248,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     });
     let floors = builder.no_match_floors();
     let space = builder.vault.evidence_space();
+    let mut kinds_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
     let kinds = floors.keyed.get(space).map(|kinds| {
         kinds
             .iter()
@@ -245,6 +260,13 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             })
             .collect::<Vec<_>>()
     });
+    if let (Some(memory), Some(kinds)) = (kinds_memory.as_mut(), kinds.as_ref()) {
+        memory.materialized(
+            0,
+            (kinds.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+        );
+    }
     inputs.config["vector_evidence"] = json!({
         "floor": floors.pair.floor,
         "strong": floors.pair.strong,
