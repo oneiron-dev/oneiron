@@ -18912,7 +18912,7 @@
      "path": "src/code_sandbox/firecracker/config.rs",
      "purpose": "Host-only image pins and jailer profile validation",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 2
      }
     },
