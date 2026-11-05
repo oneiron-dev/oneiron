@@ -57,6 +57,10 @@ pub(super) struct AnsweredCall {
     pub(super) request: LlmRequest,
     /// The model the answering rung's wire named.
     pub(super) wire_model: String,
+    /// The weights identity the answering worker reported for the call
+    /// (its inference receipt's `CacheIdentity` model digest), the identity
+    /// a drafter target names; `None` when no receipt names one.
+    pub(super) target_model: Option<String>,
     /// The terminal's message: its reasoning, tool calls and text, in order.
     pub(super) generated: LlmMessage,
     pub(super) finish_reason: FinishReason,
@@ -183,6 +187,11 @@ impl Capture {
             *slot = Some(AnsweredCall {
                 request: sent_request(&call.request, binding),
                 wire_model: route.wire_model.clone(),
+                target_model: usage
+                    .inference_calls()
+                    .last()
+                    .and_then(|receipt| receipt.worker.identity.model.as_ref())
+                    .map(|model| model.as_str().to_owned()),
                 generated: message.clone(),
                 finish_reason: finish_reason.clone(),
             });

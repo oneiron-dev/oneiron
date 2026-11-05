@@ -374,7 +374,7 @@ impl Vault {
         let mut off_record: BTreeMap<EntityId, bool> = BTreeMap::new();
         let mut candidates = Vec::with_capacity(records.len());
         for (id, record) in records {
-            if record.wire_model != target.model {
+            if record.target_model != target.model {
                 omit(&mut omitted, OMIT_OTHER_MODEL);
                 continue;
             }

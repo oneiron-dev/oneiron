@@ -506,8 +506,12 @@ pub(super) fn seal_and_publish(
 }
 
 /// Removes every job directory under `root` whose version `keep` does not
-/// name: a job that ended, or whose version no longer trains. Entries not
-/// named as a job are left alone.
+/// name: a job that ended, or whose version no longer trains (an erased
+/// one included). Entries not named as a job are left alone. A worker that
+/// still holds its directory's lock (one a killed server left running, on
+/// that directory's plaintext and its GPU) has its whole process group
+/// stopped first, and the directory, with its pid and lock, stays until the
+/// lock is free, so the next pass stops it again rather than losing it.
 pub(super) fn sweep(root: &Path, keep: impl Fn(&EntityId) -> bool) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
@@ -525,7 +529,22 @@ pub(super) fn sweep(root: &Path, keep: impl Fn(&EntityId) -> bool) {
         if keep(&version) {
             continue;
         }
-        if let Err(error) = fs::remove_dir_all(entry.path()) {
+        let path = entry.path();
+        // Only a held lock names a live worker, so a pid is killed only
+        // while its worker still runs, never a reused one.
+        if worker_alive(&path.join(OUTPUT_DIR).join(LOCK_FILE)) {
+            let pid = fs::read_to_string(path.join(PID_FILE))
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            if let Some(pid) = pid {
+                super::process::kill_group(pid);
+            }
+            tracing::warn!(
+                "a drafter job's worker outlived its version; its process group was stopped and the next pass removes its directory"
+            );
+            continue;
+        }
+        if let Err(error) = fs::remove_dir_all(&path) {
             tracing::warn!(%error, "a drafter job directory did not go; the next pass retries");
         }
     }

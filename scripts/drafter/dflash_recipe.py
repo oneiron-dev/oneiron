@@ -62,6 +62,9 @@ SETTINGS = (
     ("context_window", "optional_positive_count"), ("tap_max_gpu_mib", "optional_positive_count"),
     ("export_args", "strings"),
 )
+# The evaluator's qualification rule (crates/oneiron/src/drafter/evaluation.rs
+# DRAFTER_QUALIFICATION_KEY): pinned in the same recipe settings, never a trainer setting.
+QUALIFICATION_KEY = "qualification"
 # The drafter's own tensors per layer, as the DFlash checkpoint names them.
 LAYER_TENSORS = (
     "input_layernorm.weight", "post_attention_layernorm.weight",
@@ -86,9 +89,13 @@ def need(condition: object, reason: str) -> None:
 
 
 def parse_settings(value: object) -> dict:
-    """The recipe's settings, closed: every key in `SETTINGS`, each of its kind, nothing else."""
+    """The recipe's trainer settings, closed: every key in `SETTINGS`, each of its kind, nothing
+    else, beside the evaluator's optional `QUALIFICATION_KEY` rule, which rides the same pinned
+    settings and which the trainer neither reads nor returns."""
     keys = {name for name, _ in SETTINGS}
-    need(isinstance(value, dict) and set(value) == keys, f"recipe.settings needs keys {sorted(keys)}")
+    need(isinstance(value, dict), "recipe.settings must be an object")
+    value = {name: item for name, item in value.items() if name != QUALIFICATION_KEY}
+    need(set(value) == keys, f"recipe.settings needs keys {sorted(keys)} (plus an optional {QUALIFICATION_KEY})")
     for name, kind in SETTINGS:
         item, where = value[name], f"recipe.settings.{name}"
         number = type(item) in (int, float) and math.isfinite(item)

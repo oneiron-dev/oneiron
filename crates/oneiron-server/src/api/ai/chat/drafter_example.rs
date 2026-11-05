@@ -60,8 +60,10 @@ pub(super) fn reply_example(
     }
     let sources = call.sources?;
     let answered = answered.lock().ok().and_then(|mut slot| slot.take())?;
+    // The worker's reported weights identity, never the wire's model name,
+    // is what a drafter target names.
     let served = crate::models::drafter_retrain_target()
-        .is_some_and(|target| target.model == answered.wire_model);
+        .is_some_and(|target| answered.target_model.as_deref() == Some(target.model.as_str()));
     if !served {
         return None;
     }
@@ -86,6 +88,10 @@ pub(super) fn keep_reply_example(vault: &Vault, example: ReplyExample) {
         generation,
         call,
     } = example;
+    // `reply_example` kept only a call whose worker named the target.
+    let Some(target_model) = call.target_model else {
+        return;
+    };
     let kept = crate::server::blocking(|| {
         vault.keep_drafter_example(DrafterTrafficReply {
             reply,
@@ -94,6 +100,7 @@ pub(super) fn keep_reply_example(vault: &Vault, example: ReplyExample) {
             requester,
             sources,
             wire_model: call.wire_model,
+            target_model,
             request: call.request,
             generated: call.generated,
             finish_reason: call.finish_reason,

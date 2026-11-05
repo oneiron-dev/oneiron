@@ -103,6 +103,9 @@ pub struct DrafterTrafficReply {
     pub sources: Vec<EntityId>,
     /// The model the answering rung's wire named.
     pub wire_model: String,
+    /// The weights identity the answering worker reported for the call, the
+    /// identity a [`super::DrafterTarget`]'s `model` names.
+    pub target_model: String,
     /// The request exactly as the answering rung sent it.
     pub request: LlmRequest,
     /// The span the reply generated: its reasoning, tool calls and text, in
@@ -133,6 +136,9 @@ pub(super) struct DrafterExampleRecord {
     pub(super) agent: EntityId,
     pub(super) requester: EntityId,
     pub(super) wire_model: String,
+    /// The weights identity the answering worker reported: the export keeps
+    /// only examples of its target's.
+    pub(super) target_model: String,
     /// Its source family: the hex BLAKE3 of the request's canonical bytes.
     pub(super) family: String,
     /// Every record it was read from, walked in the write that kept it.
@@ -204,6 +210,7 @@ impl Vault {
             requester,
             sources,
             wire_model,
+            target_model,
             request,
             generated,
             finish_reason,
@@ -274,6 +281,7 @@ impl Vault {
                 agent,
                 requester,
                 wire_model: wire_model.clone(),
+                target_model: target_model.clone(),
                 family: family.clone(),
                 dependencies: walk.into_dependencies(),
                 body: DrafterExampleSeal {

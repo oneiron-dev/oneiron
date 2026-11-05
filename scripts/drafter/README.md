@@ -54,6 +54,8 @@ them; a kept parent's trainable files must match the BLAKE3 the request names.
 
 ## Settings (`recipe.settings`): every key required, none has a default
 
+The same settings may also hold `qualification`, the evaluator's rule (epsilon, cases, schedule, slowdown metrics; `crates/oneiron/src/drafter/evaluation.rs`). The trainer accepts it and never reads it.
+
 | Key | Meaning |
 |---|---|
 | `seed` | The seed of the window order and torch. |
