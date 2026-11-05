@@ -7,6 +7,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
   `import`, `files`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
 - [Retry a publisher issue signature](publisher-signature-retry.md) — an explicit owner new logical send after proved non-delivery, with the same frozen signature and normal outbound checks.
+- [Call receipts after actor erasure](call-receipt-erase.md) — deferred writes keep their receipt while applying the native hard-erased actor identity scrub.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
   restore left pending, `secrets import-supplement` for an export's secret supplements, and a
