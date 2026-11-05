@@ -332,6 +332,7 @@ fn finding(
         task,
         attempt,
         generation,
+        source_rows: None,
         evidence,
         window,
         actual: count as i64,

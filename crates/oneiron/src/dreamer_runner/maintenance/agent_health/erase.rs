@@ -219,6 +219,18 @@ pub(crate) fn erase_sources_in_txn(
             }
         }
     }
+    // The numbers' local read-row witness is separate from draft membership.
+    // A remaining subset cannot explain the whole merged observation.
+    for (key, mut card) in CARDS.scan(store, txn)? {
+        if card
+            .source_rows
+            .as_ref()
+            .is_some_and(|rows| rows.contains(id))
+        {
+            card.source_rows = None;
+            CARDS.put(store, txn, &key, &card)?;
+        }
+    }
     Ok(())
 }
 
