@@ -36,6 +36,7 @@ mod media_worker;
 mod probe;
 #[cfg(unix)]
 mod process;
+mod replacement;
 mod session;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -78,6 +79,7 @@ struct WorkerHost {
     /// Whether this process may launch managed workers.
     launch_permitted: AtomicBool,
     workers: Mutex<BTreeMap<String, Hosted>>,
+    pending_replacements: Mutex<Vec<Arc<replacement::Replacement>>>,
     stores: Arc<Stores>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
     admissions: Mutex<BTreeMap<String, Arc<DeviceAdmission>>>,
@@ -332,6 +334,7 @@ pub(crate) fn permit_worker_launch() {
     for worker in managed {
         worker.start();
     }
+    host.replace_workers(Vec::new());
 }
 
 /// Attaches this process's snapshot port to `vault` (V2-R3): its lock
@@ -597,6 +600,9 @@ pub(super) fn configure(
     providers: &BTreeMap<String, ProviderConfig>,
 ) -> Vec<WorkerStatus> {
     if rows.is_empty() {
+        if let Some(host) = HOST.get() {
+            host.replace_workers(Vec::new());
+        }
         return Vec::new();
     }
     let host = HOST.get_or_init(WorkerHost::default);
@@ -647,17 +653,7 @@ pub(super) fn configure(
     for worker in started {
         host.begin(&worker);
     }
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        for (old, new, old_device) in replaced {
-            runtime.spawn(async move {
-                old.retire().await;
-                if let Some(device) = old_device {
-                    stop_device_admission_if_unused(host, &device);
-                }
-                host.begin(&new);
-            });
-        }
-    }
+    host.replace_workers(replaced);
     statuses
 }
 
