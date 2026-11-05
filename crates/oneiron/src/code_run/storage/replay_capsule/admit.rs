@@ -42,7 +42,7 @@ const START_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:start";
 const RESPONSE_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:fork_response";
 
 /// Why a capsule writer's transaction rolled back.
-enum Unwritten {
+pub(super) enum Unwritten {
     /// Its masked bodies past the inline bound need this many body
     /// instances, minted before a writer opens: a writer never mints.
     Unreserved(usize),
@@ -56,13 +56,13 @@ impl From<Error> for Unwritten {
 }
 
 /// How many bodies of `lens` bytes spill past `bound`.
-fn spilling(bound: u64, lens: &[usize]) -> usize {
+pub(super) fn spilling(bound: u64, lens: &[usize]) -> usize {
     lens.iter().filter(|&&len| len as u64 > bound).count()
 }
 
 /// Where a writer's bodies go: inline within the bound, past it into the
 /// instances minted before the writer opened.
-struct Spill {
+pub(super) struct Spill {
     bound: u64,
     mint: BodyMint,
     reserved: usize,
@@ -71,7 +71,7 @@ struct Spill {
 impl Spill {
     /// Rolls the writer back, before anything spills, when bodies of `lens`
     /// bytes need more instances than it holds.
-    fn holds(&self, lens: &[usize]) -> std::result::Result<(), Unwritten> {
+    pub(super) fn holds(&self, lens: &[usize]) -> std::result::Result<(), Unwritten> {
         let needed = spilling(self.bound, lens);
         if needed > self.reserved {
             return Err(Unwritten::Unreserved(needed));
@@ -82,7 +82,7 @@ impl Spill {
     /// Publishes `bytes` as the complete body run `owner` holds at `path`, in
     /// `wtxn`: its row, the secret mark of the run's occurrence when the
     /// sink's own scan hits, and its descriptor. Its size is measured.
-    fn publish_in_txn(
+    pub(super) fn publish_in_txn(
         &self,
         vault: &Vault,
         wtxn: &mut RwTxn<'_>,
@@ -104,7 +104,7 @@ impl Spill {
 /// Runs `write` in one write transaction with `reserved` body instances
 /// minted before it opens. When its masked bodies need more, it rolls back,
 /// and runs again with as many minted first.
-fn with_spill<T>(
+pub(super) fn with_spill<T>(
     vault: &Vault,
     mut reserved: usize,
     write: impl Fn(&mut RwTxn<'_>, &Spill) -> std::result::Result<T, Unwritten>,
@@ -604,6 +604,7 @@ pub(crate) fn store_fork_response(
             expected.receipt.clone_from(&kept.receipt);
             expected.response_path.clone_from(&kept.response_path);
             expected.passed = kept.passed;
+            expected.execution.clone_from(&kept.execution);
             expected.generated_at = kept.generated_at;
             return Ok((expected == kept).then_some(kept));
         }

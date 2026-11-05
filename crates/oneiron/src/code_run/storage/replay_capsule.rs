@@ -1,7 +1,8 @@
 //! The step replay capsule and contribution fork rows (FIX 3028): each
 //! capsule's metadata keyed by its attempt, lease generation and step, each
 //! matched pair's fork receipts or the reason it is unavailable, and the
-//! request, start and response bodies they name, owned by the original run.
+//! request, start and response bodies they name, an engine step's fork's
+//! executed bodies too ([`execution`], FIX 3607), owned by the original run.
 //!
 //! Each body is written as the side-row wall admits it, in the writer that
 //! puts its capsule ([`admit`]), and an erase of the capsule's actor
@@ -11,6 +12,7 @@
 
 mod admit;
 mod erase;
+mod execution;
 mod fork_erase;
 mod spawn_erase;
 mod start_parts;
@@ -34,6 +36,7 @@ pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;

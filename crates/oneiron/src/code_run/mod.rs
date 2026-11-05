@@ -91,9 +91,11 @@ pub(crate) use self::consent_wait::{
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
-    ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
-    ContributionReplayUnavailable, ForkMismatch, ForkScoring, ForkScoringIdentity, ForkTreatment,
-    ReplayAnchor, ScoredFork, contribution_fork_receipts, run_contribution_forks,
+    ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
+    ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ExecutedBody,
+    ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidence,
+    ForkExecutionPin, ForkMismatch, ForkScoring, ForkScoringIdentity, ForkTreatment, ReplayAnchor,
+    ScoredFork, contribution_fork_receipts, execute_contribution_fork, run_contribution_forks,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
