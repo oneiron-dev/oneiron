@@ -4688,7 +4688,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 48,
       "mod": 2,
       "re-export": 70
      }
@@ -4721,6 +4721,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/origin_cut.rs",
+     "purpose": "Folds the owner's signed cuts of a repository's origin authority (FIX 15740, Engine 11-06 02:54 A2…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ActAuthority",
       "GrantedAct",
@@ -4744,7 +4754,7 @@
      "path": "src/authority/owner_choice.rs",
      "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "struct": 1
      }
     },
@@ -53752,7 +53762,7 @@
      "path": "src/origin/repo_manifest/refresh.rs",
      "purpose": "Refresh of a standing manifest's refs (FIX 6870 phase 1, rulings 7-8)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -89436,7 +89446,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 251,
+     "files": 252,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90950,7 +90960,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6367,
+   "source_files": 6368,
    "test_files": 895
   },
   "oneiron-android": {
@@ -91334,7 +91344,22 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 33
+      "re-export": 34
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginCut"
+     ],
+     "path": "src/authority/origin_cut.rs",
+     "purpose": "The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: \"Refs are…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -91965,7 +91990,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92030,7 +92055,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 59,
+   "source_files": 60,
    "test_files": 1
   },
   "oneiron-base": {
@@ -97231,7 +97256,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 72,
+      "const": 73,
       "crate-vis": 1
      }
     },
