@@ -7,6 +7,9 @@ use crate::skill::{SkillRecord, SkillStateWrite};
 use crate::{EntityId, Vault, WriteActor};
 use heed::RoTxn;
 
+mod pending;
+pub(in crate::batch) use pending::PendingNativeSkillPut;
+
 /// Constructed only by this apply module, after its ordinary put checks.
 /// It remains provisional until the batch's actor effects and terminal succeed.
 pub(crate) struct NativeSkillPostGate<'a> {
