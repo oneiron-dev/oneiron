@@ -90,6 +90,50 @@ pub(super) fn re_paired_standing(
     Ok(Some(folded.clone()))
 }
 
+/// A redemption that revises a machine the roster already holds (its class,
+/// FIX 3835) must carry that machine key's `possession` signature over this
+/// redemption's binding transcript (FIX 11715), as a re-pairing does. The
+/// request's enrolment proof alone is no fresh evidence: Ed25519 proofs are
+/// deterministic, so a class the machine signed before has its proof in the
+/// log, and anyone holding a link could replay it to take a credential as
+/// that machine. A machine the roster does not hold joins on its enrolment
+/// proof as before. The key checked is the one the roster holds; the
+/// revision's own checks (same keys, live, role) stay the enrolment's.
+pub(super) fn held_machine_possession(
+    fold: &AuthorityFold,
+    request: &MachineEnrolmentRequest,
+    possession: Option<(&[u8; 64], &[u8])>,
+) -> Result<()> {
+    let Some(folded) = fold
+        .machine(request.machine)
+        .filter(|folded| folded.roster.is_some())
+    else {
+        return Ok(());
+    };
+    let Some((proof, binding_transcript)) = possession else {
+        return Err(invalid_authority());
+    };
+    let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+    heads.sort_by_key(|head| head.profile.revision);
+    let current = heads.last().ok_or_else(invalid_authority)?;
+    let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+    if vault_id != request.vault_id || current.profile.machine_key != request.machine_key {
+        return Err(invalid_authority());
+    }
+    let key =
+        VerifyingKey::from_bytes(&current.profile.machine_key).map_err(|_| invalid_authority())?;
+    key.verify_strict(
+        &machine_possession_transcript(
+            &vault_id,
+            request.machine,
+            &current.profile.machine_key,
+            binding_transcript,
+        ),
+        &Signature::from_bytes(proof),
+    )
+    .map_err(|_| invalid_authority())
+}
+
 impl Vault {
     /// The client half: this install's machine key's signature over
     /// [`machine_possession_transcript`] for `request` and the redemption's

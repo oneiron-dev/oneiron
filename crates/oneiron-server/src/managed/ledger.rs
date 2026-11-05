@@ -162,6 +162,20 @@ impl WakeLedger {
         )
     }
 
+    /// The existing widen transcript over a body's counted length and exact bytes.
+    pub(super) fn widen_transcript(
+        &self,
+        holder_ref: &str,
+        body_len: u64,
+    ) -> oneiron_vault_contract::ManagedWidenTranscript {
+        oneiron_vault_contract::ManagedWidenTranscript::new(
+            &self.token,
+            &self.vault_name,
+            holder_ref,
+            body_len,
+        )
+    }
+
     pub(super) fn verify_widen_action(
         &self,
         action: &oneiron_vault_contract::ManagedWidenAction,

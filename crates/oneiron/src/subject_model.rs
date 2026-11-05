@@ -184,6 +184,7 @@ fn write_actor_subject_anchor(
                 "actor.subject_ref subject kind mismatch",
             ));
         }
+        body.scope_facet = actor_subject_facet_in_txn(vault, wtxn, actor_ref)?;
         write_head_in_txn(vault, wtxn, &claim_id, &body, at)
     })?;
     Ok(claim_id)
@@ -356,18 +357,15 @@ pub(crate) fn ensure_actor_subject_in_txn(
 ) -> Result<()> {
     validate_anchor_entities_in_txn(vault, txn, actor, subject)?;
     validate_writer_in_txn(vault, txn, writer)?;
-    ensure_fact_in_txn(
-        vault,
-        txn,
-        subject_fact(
-            PREDICATE_ACTOR_SUBJECT_REF,
-            actor,
-            Value::from(subject.to_hex()),
-            writer,
-            at,
-        )?,
+    let mut body = subject_fact(
+        PREDICATE_ACTOR_SUBJECT_REF,
+        actor,
+        Value::from(subject.to_hex()),
+        writer,
         at,
-    )
+    )?;
+    body.scope_facet = actor_subject_facet_in_txn(vault, txn, actor)?;
+    ensure_fact_in_txn(vault, txn, body, at)
 }
 
 /// An existing meat or malformed substrate is not an absent model fact.
@@ -431,6 +429,27 @@ fn ensure_fact_in_txn(
         };
     }
     write_head_in_txn(vault, txn, &vault.store.clock.entity_id()?, &body, at)
+}
+
+// Only PERSON puts create the constructor's subject-derived substrate FACET.
+// Other actors use the same stored birth-facet/default rule as provenance.
+fn actor_subject_facet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<EntityId> {
+    if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
+        return crate::claim::substrate_facet_id(actor);
+    }
+    match crate::federation::record_scope::birth_facet(&vault.store, txn, actor)? {
+        Some(facet)
+            if vault.get_entity_type_in_txn(txn, &facet)?
+                == Some(crate::registry::ENTITY_TYPE_FACET) =>
+        {
+            Ok(facet)
+        }
+        _ => crate::claim::default_facet_in(&vault.store, txn),
+    }
 }
 
 fn subject_fact(

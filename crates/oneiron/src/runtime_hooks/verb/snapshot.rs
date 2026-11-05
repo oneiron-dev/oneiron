@@ -110,6 +110,7 @@ impl VerbHookPreSnapshot {
             session: self.session,
             // A rebuilt post-only pre never compensates a pre failure (FIX 1431).
             resumed_ask: None,
+            read_capture: None,
         }
     }
 }

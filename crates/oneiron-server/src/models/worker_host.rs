@@ -713,9 +713,10 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
 
 /// The external chat workers on `provider_name` bound at construction: for
 /// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker and its row's manifest pin, keyed by wire model.
-/// Endpoint-split and media rows are left out. The map holds bound workers
-/// and their pins only, never secrets.
+/// the actual worker and its row's manifest pin, keyed by wire model. A row
+/// whose endpoint names a different target than its provider's base URL
+/// stays out, as do media rows. The map holds bound workers and their pins
+/// only, never secrets.
 pub(super) fn external_workers(
     provider_name: &str,
     provider: &ProviderConfig,
@@ -729,7 +730,10 @@ pub(super) fn external_workers(
     for row in rows {
         if row.binding.provider != provider_name
             || row.mode != WorkerMode::External
-            || row.endpoint.is_some()
+            || row
+                .endpoint
+                .as_deref()
+                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
             || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
         {
             continue;
