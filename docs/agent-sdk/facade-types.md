@@ -3688,7 +3688,7 @@ export type DrafterVersionView = { id: EntityId; target: DrafterTarget; parent: 
 /** `oneiron::drafter::doors::DrafterStatusRequest` */
 export type DrafterStatusRequest = { events_after?: EntityId | null }
 /** `oneiron::drafter::types::DrafterRecipe` */
-export type DrafterRecipe = { id: string; revision: SourcePin; settings: unknown }
+export type DrafterRecipe = { id: string; revision: SourcePin; settings: unknown; gpu_seconds: number; device_memory_mib: number }
 /** `oneiron::drafter::types::DrafterActor` */
 export type DrafterActor = { owner: EntityId } | { agent: EntityId } | "coach" | "host" | "erase" | "erased"
 /** `oneiron::drafter::policy::DrafterPolicy` */
@@ -3702,9 +3702,11 @@ export type DrafterServedView = { target: DrafterTarget; serving?: DrafterServin
 /** `oneiron::drafter::types::DrafterSkipReason` */
 export type DrafterSkipReason = "policy_off"
 /** `oneiron::drafter::types::DrafterHoldReason` */
-export type DrafterHoldReason = "no_trainer_recipe"
+export type DrafterHoldReason = "no_trainer_recipe" | "no_drafter_target" | "policy_moved" | "empty_corpus" | "corpus_missing" | "training_in_progress" | "no_admission"
+/** `oneiron::drafter::types::DrafterTrainingFailure` */
+export type DrafterTrainingFailure = "refused" | "trainer_failed" | "receipt_unverified" | "seal_failed" | "over_budget" | "lost" | "cancelled" | "erased"
 /** `oneiron::drafter::types::DrafterRetrainOutcome` */
-export type DrafterRetrainOutcome = { skipped: { reason: DrafterSkipReason } } | { held: { reason: DrafterHoldReason } }
+export type DrafterRetrainOutcome = { skipped: { reason: DrafterSkipReason } } | { held: { reason: DrafterHoldReason } } | { trained: { version: EntityId } } | { failed: { version: EntityId; reason: DrafterTrainingFailure } }
 /** `oneiron::drafter::types::DrafterRollbackReason` */
 export type DrafterRollbackReason = "slowdown" | "output_mismatch" | "worker_error"
 /** `oneiron::drafter::types::DrafterEventKind` */

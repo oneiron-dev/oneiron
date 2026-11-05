@@ -9378,6 +9378,8 @@ class DrafterRecipe(TypedDict):
     id: str
     revision: SourcePin
     settings: Any
+    gpu_seconds: int
+    device_memory_mib: int
 class DrafterActorOwner(TypedDict):
     owner: EntityId
 class DrafterActorAgent(TypedDict):
@@ -9408,7 +9410,8 @@ class DrafterServedView(TypedDict):
     applying: bool
     reason: NotRequired[DrafterUnservedReason | None]
 DrafterSkipReason = Literal["policy_off"]
-DrafterHoldReason = Literal["no_trainer_recipe"]
+DrafterHoldReason = Literal["no_trainer_recipe", "no_drafter_target", "policy_moved", "empty_corpus", "corpus_missing", "training_in_progress", "no_admission"]
+DrafterTrainingFailure = Literal["refused", "trainer_failed", "receipt_unverified", "seal_failed", "over_budget", "lost", "cancelled", "erased"]
 class DrafterRetrainOutcomeSkippedBody(TypedDict):
     reason: DrafterSkipReason
 class DrafterRetrainOutcomeSkipped(TypedDict):
@@ -9417,7 +9420,16 @@ class DrafterRetrainOutcomeHeldBody(TypedDict):
     reason: DrafterHoldReason
 class DrafterRetrainOutcomeHeld(TypedDict):
     held: DrafterRetrainOutcomeHeldBody
-DrafterRetrainOutcome = DrafterRetrainOutcomeSkipped | DrafterRetrainOutcomeHeld
+class DrafterRetrainOutcomeTrainedBody(TypedDict):
+    version: EntityId
+class DrafterRetrainOutcomeTrained(TypedDict):
+    trained: DrafterRetrainOutcomeTrainedBody
+class DrafterRetrainOutcomeFailedBody(TypedDict):
+    version: EntityId
+    reason: DrafterTrainingFailure
+class DrafterRetrainOutcomeFailed(TypedDict):
+    failed: DrafterRetrainOutcomeFailedBody
+DrafterRetrainOutcome = DrafterRetrainOutcomeSkipped | DrafterRetrainOutcomeHeld | DrafterRetrainOutcomeTrained | DrafterRetrainOutcomeFailed
 DrafterRollbackReason = Literal["slowdown", "output_mismatch", "worker_error"]
 class DrafterEventKindRetrainBody(TypedDict):
     attempt: AttemptId

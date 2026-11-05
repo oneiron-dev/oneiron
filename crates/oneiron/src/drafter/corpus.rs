@@ -47,8 +47,8 @@
 //! Each side is sealed chunk by chunk under its own erasable key, minted
 //! under the version (purpose `DrafterArtifact`), so an erase of the version
 //! retires both. The sealed files sit under `drafter-corpora/<version>/`;
-//! [`Vault::sweep_drafter_corpora`] removes every directory no prepared
-//! version names.
+//! [`Vault::sweep_drafter_corpora`] removes every directory no prepared,
+//! training or returned version names.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -1055,7 +1055,8 @@ impl Vault {
         open_side(&sealing, side, &file, &sealed).map(Some)
     }
 
-    /// Removes every sealed corpus directory no prepared version names, and
+    /// Removes every sealed corpus directory no prepared, training or
+    /// returned version names, and
     /// every file in a kept one its corpus does not name: a superseded,
     /// rejected or erased version's, a damaged row's, a write's leftover. An
     /// erase retires the keys in its own transaction; this removes the
@@ -1080,7 +1081,17 @@ impl Vault {
                 .to_str()
                 .and_then(|name| EntityId::from_hex(name).ok())
                 .and_then(|id| VERSIONS.get(&self.store, &txn, &id).ok().flatten())
-                .filter(|row| row.state == DrafterVersionState::Prepared)
+                // FIX 14974: a version keeps its corpus while it trains (its
+                // host stages the training side) and once it returned (its
+                // evaluator opens the held-out side).
+                .filter(|row| {
+                    matches!(
+                        row.state,
+                        DrafterVersionState::Prepared
+                            | DrafterVersionState::Training
+                            | DrafterVersionState::Returned
+                    )
+                })
                 .and_then(|row| row.corpus);
             let Some(corpus) = corpus.filter(|_| path.is_dir()) else {
                 if path.is_dir() {

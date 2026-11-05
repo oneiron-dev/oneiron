@@ -24,13 +24,15 @@
 //! artifact sits under its own erasable key ([`DrafterSealing`]).
 //!
 //! The nightly job, `coach.drafter_retrain`, pins the policy revision and
-//! its cutoff and records how the night ended. With a recipe chosen and a
-//! target its host serves a drafter for, the night exports the vault's own
-//! corpus for that target (FIX 14973, `corpus.rs`) and writes a `prepared`
-//! version with the corpus sealed under the version's keys, its split and
-//! its dependency set. No trainer recipe is wired on any host yet, so every
-//! night with the policy on holds with `no_trainer_recipe`, nothing trains,
-//! and every target serves stock.
+//! its cutoff and records how the night ended. With a recipe a trainer
+//! connector of its host lists and a target its host serves a drafter for,
+//! the night exports the vault's own corpus for that target (FIX 14973,
+//! `corpus.rs`) and writes a `prepared` version with the corpus sealed under
+//! the version's keys, its split and its dependency set. The host trains it
+//! (FIX 14974, `training`): its quote admitted, the version `training`
+//! before the trainer starts, its output sealed under the version's own key
+//! and published as `returned`. The night stays open while it trains and
+//! then records `trained` or `failed`; any other night records why it held.
 //!
 //! A host serves a binding on its own managed worker through
 //! [`DrafterServingRuntime`] (FIX 14976, `serving`): it reads each target's
@@ -49,6 +51,7 @@ mod nightly;
 mod policy;
 mod report;
 mod serving;
+mod training;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -69,12 +72,17 @@ pub use doors::{
 };
 pub(crate) use erase::{erase_drafter_actor_in_txn, erase_drafters_for_source_in_txn};
 pub use load_set::{SEALED_CHUNK_BYTES, drafter_file_name_is_plain, drafter_load_set_blake3};
+pub use nightly::DrafterNightStep;
 pub use policy::{DrafterPolicy, DrafterPolicySetRequest, set_drafter_policy_as_owner};
 pub(crate) use report::unseen_drafter_line_in_txn;
 pub use report::{DRAFTER_GROUP, DRAFTER_VIEW, DigestDrafter, DigestDrafterItem};
 pub use serving::{
     DrafterLoadSetPlan, DrafterMaterialized, DrafterServedView, DrafterServingPlan,
     DrafterServingPlans, DrafterServingRuntime, DrafterUnservedReason,
+};
+pub use training::{
+    DRAFTER_TRAINABLE_PREFIX, DrafterParentLoadSet, DrafterTrainingDispatch, DrafterTrainingJob,
+    DrafterTrainingMark,
 };
 pub use types::*;
 
