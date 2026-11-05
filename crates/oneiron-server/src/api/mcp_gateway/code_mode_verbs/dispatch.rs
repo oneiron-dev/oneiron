@@ -265,6 +265,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
+        // Reading the reason is capture-only; a missing key must not refuse the decline.
+        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
+            return Ok(self.host_turn_read_key());
+        }
         // A search reads on the credential's lane, a facet stamp places only
         // a row that lane reads, a consult lands only refs it reads, and a
         // TASK binding reads its TASK and workflow there (FIX 5316).
