@@ -40,6 +40,7 @@ mod claims;
 mod key_value;
 mod proposal_results;
 mod proposals;
+mod skill_callables;
 mod wire_json;
 
 /// Lowers a foreign value into the engine type `T`.

@@ -72,6 +72,11 @@ stays present as JSON `null`. Namespace segments, keys, revisions, unsigned
 second timestamps and put-receipt metadata retain their existing types and
 values. Optional lookup absence and search order remain unchanged.
 
+`self.skills.callables` uses an owned callable-card lift. Both required
+`arguments` and `returns` JSON leaves are consumed before an encoding error
+returns; null stays present. Skill identity, version, description, reference,
+card order and the native catalog's read checks stay unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

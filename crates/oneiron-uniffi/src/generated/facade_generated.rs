@@ -4349,7 +4349,7 @@ export_facade! {
 "self.skills.callables" => fn self_skills_callables(&self) -> Vec<CallableCardView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.skills.callables")?;
     let output = client.self_skills_callables(&input)?;
-    crate::codec::lift_record("self.skills.callables", &output)
+    Lift::lift(output)
 };
 "vault.skills.callable.amend" => fn vault_skills_callable_amend(&self, input: CallableAmendRequest) -> CallableAmendReceipt = |client| {
     let input: oneiron::skill::helper::CallableAmendRequest = crate::codec::lower_record("vault.skills.callable.amend", input)?;
