@@ -29,6 +29,7 @@ enum Shown {
         call_id: String,
         name: String,
         input: Option<JsonValue>,
+        signature: Option<String>,
     },
     Image {
         media_type: String,
@@ -103,11 +104,23 @@ impl Emitted {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: None,
+                    signature: None,
                 },
             ),
-            Event::ToolCallEnd { part_id, input, .. } => {
-                if let Some(Shown::Tool { input: shown, .. }) = self.parts.get_mut(part_id) {
+            Event::ToolCallEnd {
+                part_id,
+                input,
+                signature,
+                ..
+            } => {
+                if let Some(Shown::Tool {
+                    input: shown,
+                    signature: shown_signature,
+                    ..
+                }) = self.parts.get_mut(part_id)
+                {
                     *shown = Some(input.clone());
+                    shown_signature.clone_from(signature);
                 }
             }
             Event::ImageStart {
@@ -186,11 +199,12 @@ impl Emitted {
                     call_id,
                     name,
                     input,
+                    signature,
                 } => Some(ContentPart::ToolCall {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone()?,
-                    signature: None,
+                    signature: signature.clone(),
                 }),
                 Shown::Image { media_type, image } => Some(ContentPart::Image {
                     media_type: media_type.clone(),
