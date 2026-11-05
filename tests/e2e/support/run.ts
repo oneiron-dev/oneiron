@@ -33,6 +33,10 @@ export class Redactor {
       .replace(/(\/pair)#[^\s"'<>]+/g, "$1#[REDACTED]")
       .replace(/((?:authorization|x-oneiron-binding|x-oneiron-mcp-credential|cookie|set-cookie|x-api-key|api-key|binding_key|auth_secret|password|secret|token|credential|seed)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\n,;]+)/gi, "$1[REDACTED]");
   }
+  privateStderr(value: string): unknown {
+    try { return JSON.stringify(this.value(JSON.parse(value))).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") }
+    catch { return "[WITHHELD non-JSON private stderr]" }
+  }
   value(value: unknown): unknown {
     if (typeof value === "string") return this.text(value);
     if (Array.isArray(value)) return value.map(v => this.value(v));
@@ -131,7 +135,7 @@ export class ManagedProcess {
           signal: result.signal, logs: options.privateOutput ? [] : this.ring,
           stdoutTruncated: this.truncated.stdout, stderrTruncated: this.truncated.stderr,
           stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : this.truncated.stdout ? "[WITHHELD truncated stdout]" : redactor.text(this.stdout).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]"),
-          stderr: this.truncated.stderr ? "[WITHHELD truncated stderr]" : redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
+          stderr: this.truncated.stderr ? "[WITHHELD truncated stderr]" : options.privateOutput ? redactor.privateStderr(this.stderr) : redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
       } finally {
         if (ownerFile) await rm(ownerFile,{force:true});
         owned.delete(this);

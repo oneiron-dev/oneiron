@@ -339,8 +339,10 @@ and registration errors. A harness error remains a FAIL but does not replace an 
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
-Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld;
-CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
+Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld.
+Private stderr is retained only as decoded JSON with its fields redacted before serialization;
+non-JSON private stderr is withheld. This also redacts registered values containing quotes
+that were escaped in an SDK error envelope. CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
 stdin or credentials. SDK top-level failures also write their error envelope to stderr for
 redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values. Any truncated stdout/stderr
 stream is withheld entirely, with a truncation flag, because a cut secret fragment cannot be
