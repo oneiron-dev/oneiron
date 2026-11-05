@@ -4,9 +4,12 @@
 //! row reads to the people it read to.
 //!
 //! Capture keeps each binding of a final row the window carries, and every
-//! revision of a policy those bindings reach, a thread's source included;
-//! and beside them this vault's current binding and closure of each final
-//! row. A carried value that contradicts this vault's refuses the capture.
+//! revision of a policy those bindings reach, a thread's source included,
+//! except a revision naming an actor this vault erased: a window loaded
+//! before the erase can still hold one, and its family's highest revision
+//! rides redacted under its own next revision instead. Beside them go this
+//! vault's current binding and closure of each final row. A carried value
+//! that contradicts this vault's refuses the capture.
 //! Validation refuses a key or bytes not in their canonical form and keys
 //! out of order: a restriction is never dropped. Before a recovery checks,
 //! writes or compares anything ([`CanonicalSnapshot::settle_source_audiences_here`]),
@@ -127,14 +130,24 @@ pub(super) fn capture(
                 reached.insert(*source);
             }
         }
+        let mut families: BTreeMap<EntityId, Vec<(String, Vec<u8>, SourceAudiencePolicy)>> =
+            BTreeMap::new();
         for (key, value, entry) in decoded {
-            let kept = match &entry {
-                Carrier::Record { row, .. } => finals.contains(row),
-                Carrier::Policy { id, .. } => reached.contains(id),
-            };
-            if kept {
-                keep(&mut rows, key, value)?;
+            match entry {
+                Carrier::Record { row, .. } => {
+                    if finals.contains(&row) {
+                        keep(&mut rows, key, value)?;
+                    }
+                }
+                Carrier::Policy { id, policy } => {
+                    if reached.contains(&id) {
+                        families.entry(id).or_default().push((key, value, policy));
+                    }
+                }
             }
+        }
+        for (id, revisions) in families {
+            erase_scrubbed_family(vault, txn, &mut rows, &id, revisions)?;
         }
     }
     for row in &finals {
@@ -170,6 +183,46 @@ pub(super) fn capture(
         );
     }
     Ok(())
+}
+
+/// Files the carried revisions of policy `id` that name no actor this vault
+/// erased. When the family's highest revision names one, the family still
+/// ends at least as high and as narrow: this vault's head stands when it is
+/// as high, else that revision's redaction rides under its own next
+/// revision, as a stored window's erase writes it.
+fn erase_scrubbed_family(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &mut BTreeMap<String, Vec<u8>>,
+    id: &EntityId,
+    revisions: Vec<(String, Vec<u8>, SourceAudiencePolicy)>,
+) -> Result<()> {
+    let Some(top) = revisions
+        .iter()
+        .map(|(_, _, policy)| policy)
+        .max_by_key(|policy| policy.revision)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    for (key, value, policy) in revisions {
+        if !source_audience::names_erased_actor_in(vault, txn, &policy)? {
+            keep(rows, key, value)?;
+        }
+    }
+    if !source_audience::names_erased_actor_in(vault, txn, &top)? {
+        return Ok(());
+    }
+    let head = match source_audience::policy_in(vault, txn, id)? {
+        Some(held) if held.revision >= top.revision => held,
+        _ => top,
+    };
+    let head = if source_audience::names_erased_actor_in(vault, txn, &head)? {
+        source_audience::redacted_successor_in(vault, txn, &head)?
+    } else {
+        head
+    };
+    keep(rows, policy_key(id, head.revision), encode_policy(&head)?)
 }
 
 /// Each carrier is in its canonical form, and the keys sort strictly: a
