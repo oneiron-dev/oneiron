@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4482 generated types.
+// UniFFI census: 1232 facade rows, 4486 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -59135,6 +59135,52 @@ pub struct EsignSigningEvidence {
     pub intent: EsignSigningIntent,
 }
 
+/// `oneiron::blob_artifact::esign::sealer::SealProfile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealProfile {
+    #[serde(rename = "baseline_b")]
+    BaselineB,
+    #[serde(rename = "baseline_t")]
+    BaselineT,
+    #[serde(rename = "baseline_lt")]
+    BaselineLt,
+    #[serde(rename = "baseline_lta")]
+    BaselineLta,
+}
+
+/// `oneiron::blob_artifact::esign::sealer::SealDegradeReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealDegradeReason {
+    #[serde(rename = "timestamp_unavailable")]
+    TimestampUnavailable,
+    #[serde(rename = "validation_material_unavailable")]
+    ValidationMaterialUnavailable,
+    #[serde(rename = "document_timestamp_unavailable")]
+    DocumentTimestampUnavailable,
+}
+
+/// `oneiron::blob_artifact::esign::sealer::SealDegrade`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealDegrade {
+    #[serde(rename = "requested")]
+    pub requested: SealProfile,
+    #[serde(rename = "achieved")]
+    pub achieved: SealProfile,
+    #[serde(rename = "reason")]
+    pub reason: SealDegradeReason,
+}
+
+/// `oneiron::blob_artifact::esign::sealer::SealProfileEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealProfileEvidence {
+    #[serde(rename = "requested")]
+    pub requested: SealProfile,
+    #[serde(rename = "achieved")]
+    pub achieved: SealProfile,
+    #[serde(rename = "degraded")]
+    pub degraded: Vec<SealDegrade>,
+}
+
 /// `oneiron::blob_artifact::esign::model::EsignEvent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "event")]
@@ -59203,6 +59249,8 @@ pub enum EsignEvent {
         rejected: bool,
         #[serde(rename = "item_sha256")]
         item_sha256: Vec<Vec<u8>>,
+        #[serde(rename = "item_profiles")]
+        item_profiles: Vec<SealProfileEvidence>,
     },
     #[serde(rename = "reseal_requested")]
     ResealRequested {
@@ -59839,6 +59887,8 @@ pub struct EsignSealedItemView {
     pub sealed_version: u64,
     #[serde(rename = "sha256")]
     pub sha256: String,
+    #[serde(rename = "profile")]
+    pub profile: SealProfileEvidence,
 }
 
 /// `oneiron::blob_artifact::esign::door::EsignSealedView`.
