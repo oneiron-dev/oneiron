@@ -1,6 +1,9 @@
 //! Consume the real record phases before publishing either native view.
 
-use heed::{RoTxn, RwTxn};
+mod pending;
+pub(crate) use pending::PendingRecordDocument;
+
+use heed::RwTxn;
 
 use super::{RecordDocumentCandidate, document_rows_digest};
 use crate::batch::AdmittedRecordDocumentPut;
@@ -149,22 +152,58 @@ impl InstalledRecordDocument<'_> {
         entity: &EntityId,
         data: &[u8],
     ) -> Result<bool> {
+        self.require_identity_in_txn(store, txn, entity, data)?;
+        if !self
+            .admitted
+            .phases
+            .refinement()
+            .installed_origin_matches(store, txn)?
+        {
+            return Err(invalid(
+                "installed record document changed before projections",
+            ));
+        }
+        self.require_documents_in_txn(store, txn)?;
+        Ok(self.admitted.phases.refinement().has_source_origin())
+    }
+
+    fn require_rows_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &mut RwTxn<'_>,
+        entity: &EntityId,
+        data: &[u8],
+    ) -> Result<()> {
+        self.require_identity_in_txn(store, txn, entity, data)?;
+        self.require_documents_in_txn(store, txn)
+    }
+
+    fn require_identity_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &mut RwTxn<'_>,
+        entity: &EntityId,
+        data: &[u8],
+    ) -> Result<()> {
         let candidate = self.admitted.candidate();
         if !candidate.applies_to(store, entity, data)
             || !candidate.selected.recheck_transport_in_txn(store, txn)?
             || store.port_entity_raw(txn, entity)?.as_deref() != Some(candidate.physical_raw())
             || storage::record_head_bytes(store, txn, entity)?.as_deref()
                 != Some(self.head.as_slice())
-            || !self
-                .admitted
-                .phases
-                .refinement()
-                .installed_origin_matches(store, txn)?
         {
             return Err(invalid(
                 "installed record document changed before projections",
             ));
         }
+        Ok(())
+    }
+
+    fn require_documents_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
         for (slot, digest) in &self.documents {
             if document_rows_digest(store, txn, *slot)? != *digest {
                 return Err(invalid(
@@ -172,6 +211,6 @@ impl InstalledRecordDocument<'_> {
                 ));
             }
         }
-        Ok(self.admitted.phases.refinement().has_source_origin())
+        Ok(())
     }
 }

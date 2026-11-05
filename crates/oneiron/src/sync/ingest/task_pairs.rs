@@ -47,7 +47,7 @@ pub(super) fn put_or_stage(
     header: &EntityMetadataHeader,
     blob: &[u8],
     data: &[u8],
-) -> Result<Option<crate::entity_doc::RecordDocumentStand>> {
+) -> Result<crate::batch::IngestedPutOutcome> {
     let occurred = TimeRange {
         start: header.occurred_start,
         end: header.occurred_end,
@@ -62,7 +62,7 @@ pub(super) fn put_or_stage(
             row_version: header.row_version,
             data: data.to_vec(),
         });
-        return Ok(None);
+        return Ok(crate::batch::IngestedPutOutcome::Applied);
     }
     // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
     // its own-device lane to the put, and the batch threads it to the witness
@@ -78,7 +78,7 @@ pub(super) fn put_or_stage(
         Some(header.row_version),
         data,
     );
-    match &ctx.authority_beside {
+    let outcome = match &ctx.authority_beside {
         Some(authority) => put.apply_ingested(
             wtxn,
             Some(&|| authority.rows()),
@@ -86,7 +86,11 @@ pub(super) fn put_or_stage(
             record_document.as_ref(),
         ),
         None => put.apply_ingested(wtxn, None, own_device.as_ref(), record_document.as_ref()),
+    }?;
+    if let crate::batch::IngestedPutOutcome::NativeRecordApplied(applied) = &outcome {
+        applied.require_entity(&id)?;
     }
+    Ok(outcome)
 }
 
 /// The TASK components of one delta or pass: rows that change a stored TASK

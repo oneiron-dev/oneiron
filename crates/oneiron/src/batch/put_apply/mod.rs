@@ -71,6 +71,8 @@ pub(super) enum EffectiveEntity {
 
 pub(super) struct AppliedPut {
     #[cfg(feature = "sync")]
+    pub(super) record_document: Option<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
     pub(super) pending_native_skill_put: Option<PendingNativeSkillPut>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
     /// Revision companions a PROJECT put captured, for the batch to write next.

@@ -25,6 +25,8 @@ use super::vad_postcommit;
 
 #[cfg(feature = "sync")]
 pub(crate) use self::native_skill::NativeSkillFinalInput;
+#[cfg(feature = "sync")]
+pub(crate) use self::record_document::IngestedPutOutcome;
 pub(crate) use self::ops::BatchOp;
 use self::puts::CommitCheck;
 
