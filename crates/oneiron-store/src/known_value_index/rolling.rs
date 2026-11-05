@@ -101,19 +101,19 @@ impl Drop for RollingKey {
 
 /// The rolling values of one window length's entries, as a 65,536-bit map.
 /// Wiped when dropped.
-struct RollingSet(pub Box<[u64; SET_WORDS]>);
+struct RollingSet(Box<[u64; SET_WORDS]>);
 
 impl RollingSet {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self(Box::new([0; SET_WORDS]))
     }
 
-    pub fn insert(&mut self, value: u16) {
+    fn insert(&mut self, value: u16) {
         let value = usize::from(value);
         self.0[value >> 6] |= 1 << (value & 63);
     }
 
-    pub fn contains(&self, value: u16) -> bool {
+    fn contains(&self, value: u16) -> bool {
         let value = usize::from(value);
         (self.0[value >> 6] >> (value & 63)) & 1 != 0
     }
@@ -153,12 +153,12 @@ impl RollingSets {
 
 /// One window length's rolling state over a text.
 struct Lane<'k> {
-    pub window: usize,
+    window: usize,
     /// `base^window`, mod 2^32.
-    pub leaving: u32,
+    leaving: u32,
     /// The state of the window at the scan's offset, while it fits the text.
-    pub state: u32,
-    pub set: &'k RollingSet,
+    state: u32,
+    set: &'k RollingSet,
 }
 
 /// The rolling values of every window length over one text, read at
