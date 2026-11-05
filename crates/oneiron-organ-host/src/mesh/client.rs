@@ -299,24 +299,28 @@ impl AttemptReceipts<'_> {
     /// The serving host records what the organ was lent, in call order.
     /// Keep those facts, adding this node's own signing fact when present.
     fn reconcile(&mut self, mut peer: Vec<crate::receipt::AskReceipt>) {
-        let mut unmatched = false;
+        let mut used = vec![false; peer.len()];
+        let mut unmatched = Vec::new();
         for local in self.lines.drain(..) {
-            let matched = peer.iter_mut().find(|line| {
-                line.id == local.id
+            let matched = peer.iter_mut().zip(&mut used).find(|(line, used)| {
+                !**used
+                    && line.id == local.id
                     && line.verb == local.verb
                     && line.value_digest == local.value_digest
             });
-            if let Some(line) = matched {
+            if let Some((line, used)) = matched {
+                *used = true;
                 if local.signed.is_some() {
                     line.signed = local.signed;
                 }
             } else {
-                // A missing peer line cannot erase an actual local signature.
-                peer.push(local);
-                unmatched = true;
+                // Match only original peer lines, once each, even when an
+                // organ repeats an ask identity. Keep every local callback.
+                unmatched.push(local);
             }
         }
-        if unmatched {
+        if !unmatched.is_empty() {
+            peer.extend(unmatched);
             // AskLine allocates ids in call order; only this attempt's one
             // serving call is here, never ids from another call or retry.
             peer.sort_by_key(|line| line.id);
