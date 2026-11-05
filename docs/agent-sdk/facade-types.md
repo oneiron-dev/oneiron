@@ -7442,7 +7442,7 @@ export type MemoryPolicyDenial = { level: string; row_ref: string; role: string;
 /** `oneiron_contracts::memory::error::MemoryWrongRoot` */
 export type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string }
 /** `oneiron_contracts::error::hook::VerbHookStop` */
-export type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null }
+export type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown; hook_notice?: boolean | null } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null }
 /** `oneiron_contracts::memory::error::MemoryError` */
 export type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null }
 /** `oneiron::blob_artifact::esign::document_view::EsignDocumentTrail` */

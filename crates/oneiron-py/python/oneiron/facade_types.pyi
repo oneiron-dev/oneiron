@@ -18939,6 +18939,7 @@ class VerbHookStopCompleted(TypedDict):
     status: Literal["completed"]
     invocation: str
     result: Any
+    hook_notice: NotRequired[bool | None]
 class VerbHookStopCompletedWithError(TypedDict):
     status: Literal["completed_with_error"]
     invocation: str

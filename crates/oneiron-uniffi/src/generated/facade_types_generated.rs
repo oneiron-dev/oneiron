@@ -59396,6 +59396,12 @@ pub enum VerbHookStop {
         invocation: String,
         #[serde(rename = "result")]
         result: crate::WireJson,
+        #[serde(
+            rename = "hook_notice",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        hook_notice: Option<bool>,
     },
     #[serde(rename = "completed_with_error")]
     CompletedWithError {
