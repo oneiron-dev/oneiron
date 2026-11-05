@@ -820,7 +820,7 @@ class Oneiron:
             """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
         def result(self, spec: Facade.OfferPassRef) -> Facade.OfferPassResult | None:
             """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
-        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerRecord:
+        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerReply:
             """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
         def undo(self, spec: Facade.OfferRef) -> Facade.OfferUndoReceipt:
             """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
@@ -1366,6 +1366,8 @@ class Oneiron:
         @property
         def fit(self) -> "Oneiron._VaultSkillsFitVerbs": ...
         @property
+        def advisory_ask(self) -> "Oneiron._VaultSkillsAdvisoryAskVerbs": ...
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
@@ -1388,6 +1390,9 @@ class Oneiron:
     class _VaultSkillsFitVerbs:
         def set(self, spec: Facade.SkillFitSetRequest) -> Facade.HubConsentReceipt:
             """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+    class _VaultSkillsAdvisoryAskVerbs:
+        def set(self, spec: Facade.SkillAdvisoryAskRequest) -> Facade.HubConsentReceipt:
+            """The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""

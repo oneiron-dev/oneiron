@@ -45,15 +45,19 @@ pub(super) fn connector_dispatch_request(
     // Ledger identity is the logical-send id (derived from the task
     // idempotency key) so fresh retry attempts stay the same paid intent.
     request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
-    // Local wall-clock time is derived from the FROZEN offset at THIS
+    // Local wall-clock time is seeded from the FROZEN offset at THIS
     // attempt's `now`, never from schedule time. No offset ⇒ no local
     // minute ⇒ the door fails closed instead of guessing midnight. The door
     // reads the clock again for this send, so the time an earlier send in
-    // the drain spent moves this minute on (FIX 8817).
+    // the drain spent moves this minute on (FIX 8817); the frozen IANA label
+    // rides alongside for delivery-time resolution.
     if let Some(offset) = task.utc_offset_minutes {
         request = request
             .delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset))
             .delivery_window_clock(offset, drain_clock);
+        if let Some(zone) = task.iana_timezone.as_ref() {
+            request = request.delivery_window_iana_timezone(zone.clone());
+        }
     }
     if let Some(level) = task.apns_interruption_level {
         request = request.delivery_window_apns_interruption_level(level);
