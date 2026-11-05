@@ -112,7 +112,7 @@ impl Carrier {
             link.read_data(descriptor_length(&item.descriptor), None)?;
             return Ok(());
         };
-        let outcome = match link.read_data(item.descriptor.length, Some(staged))? {
+        let outcome = match link.read_data(item.descriptor.length, Some(staged.as_mut()))? {
             Some(error) => Some(self.io_outcome(item.descriptor.kind, &error)),
             None if staged.version().blake3 != item.descriptor.blake3 => {
                 Some(VmOutboxOutcome::refused(
