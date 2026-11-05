@@ -274,18 +274,19 @@ fn result_body(
     let output = attachment.output()?;
     let occurrence = attachment.message_occurrence(message)?;
     let source = &attachment.source;
-    let held = crate::provenance::body::owned_body_in_txn(&vault.store, txn, &message, &occurrence)?
-        .filter(|hold| {
-            hold.state.held().is_some_and(|body| {
-                body.blake3 == output.raw_blake3 && body.bytes == output.raw_len
+    let held =
+        crate::provenance::body::owned_body_in_txn(&vault.store, txn, &message, &occurrence)?
+            .filter(|hold| {
+                hold.state.held().is_some_and(|body| {
+                    body.blake3 == output.raw_blake3 && body.bytes == output.raw_len
+                })
             })
-        })
-        .and_then(|hold| hold.result)
-        .is_some_and(|held| {
-            held.run_id == source.run_id
-                && held.occurrence == source.occurrence
-                && held.path == source.path
-        });
+            .and_then(|hold| hold.result)
+            .is_some_and(|held| {
+                held.run_id == source.run_id
+                    && held.occurrence == source.occurrence
+                    && held.path == source.path
+            });
     Ok(Some(if held {
         ResultBody::Held(output)
     } else {
