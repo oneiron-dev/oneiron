@@ -220,6 +220,10 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            // Hard reasons only: only they wrote the marker above.
+            if reason.active_store_hard_purge_v1() {
+                self.notify_local_delete_materialized(&[*id]);
+            }
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,

@@ -406,11 +406,55 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
 /// is not a tool effect.
 pub(in crate::code_run) fn lineage_for_run(bridge_calls: &[CodeRunBridgeCall]) -> SourceLineage {
     let lineage = SourceLineage::of(ClaimSource::Generated);
-    if bridge_calls
-        .iter()
-        .any(|call| bridge_call_is_external_effect(call.effect))
-    {
+    if bridge_calls.iter().any(|call| {
+        bridge_call_is_external_effect(call.effect) || agent_verb_returned_external_reply(call)
+    }) {
         return lineage.with(ClaimSource::ToolOutput);
     }
     lineage
+}
+
+/// An SDK call's actual returned foreign bytes, not merely its verb name.
+/// A held call has no reply yet; failed/refused calls and other SDK verbs
+/// do not add tool-output lineage.
+fn agent_verb_returned_external_reply(call: &CodeRunBridgeCall) -> bool {
+    use crate::code_run::ConnectorCallReply;
+    use crate::code_run::payload::decode_self_dispatch_outcome;
+    use crate::code_run::types::SelfDispatchOutcome;
+    use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
+
+    let Some((verb, _)) = super::agent_verb::recorded_call(call) else {
+        return false;
+    };
+    let Some(verb @ (AgentVerb::ConnectorCall | AgentVerb::SelfUse)) = AgentVerb::from_name(verb)
+    else {
+        return false;
+    };
+    let Ok(SelfDispatchOutcome::AgentVerb(answer)) = decode_self_dispatch_outcome(&call.outcome)
+    else {
+        return false;
+    };
+    let reply = match verb {
+        AgentVerb::ConnectorCall => answer.output,
+        AgentVerb::SelfUse => {
+            let Ok(used) = serde_json::from_value::<super::SecretUseAnswer>(answer.output) else {
+                return false;
+            };
+            if used.receipt.operation != SECRET_USE_CONNECTOR_CALL {
+                return false;
+            }
+            let Some(reply) = used.result else {
+                return false;
+            };
+            reply
+        }
+        _ => return false,
+    };
+    matches!(
+        serde_json::from_value::<ConnectorCallReply>(reply),
+        Ok(ConnectorCallReply::Delivered {
+            result: Some(_),
+            ..
+        } | ConnectorCallReply::AwaitingInput { .. })
+    )
 }
