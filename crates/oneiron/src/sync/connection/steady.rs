@@ -267,9 +267,13 @@ impl SyncConnection {
                         &mut write, client, debounce_buffer, &mut document_buffer,
                         &mut publication_slot, &mut batch_turn,
                     ).await {
-                        Err(error) => {
+                        Err(LoopExit::Shutdown) => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        Err(exit) => {
                             flush_to_queue(&self.queue, debounce_buffer);
-                            return LoopExit::Disconnected(error);
+                            return exit;
                         }
                         Ok(Some((part, sent))) => {
                             client.artifact_publication_released(&mut publication_cursor, &part, sent);
