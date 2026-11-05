@@ -82,6 +82,7 @@ mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
 mod spend_lease;
+mod spend_provider_tokens;
 mod spend_record;
 mod task_type_tree;
 mod team_shape;

@@ -35,6 +35,8 @@ side_tables! {
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
         => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
+    /// Last recorded provider capture per spend scope and guard generation. Key: length-prefixed scope + NUL + hex32.
+    AGENT_DISPATCH_SPEND_PROVIDER_OBSERVATION: VaultMeta b"agent.dispatch.spend_provider_observation.v1\0" Named Engine;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored

@@ -72,9 +72,9 @@ pub use budget::{
 };
 pub use children::create_research_child;
 pub use continuation::{
-    ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
-    ResearchWork, advance_research_continuations, ensure_research_continuations,
-    research_work_pending,
+    ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchScopeProviderTokens,
+    ResearchSplit, ResearchTask, ResearchWork, advance_research_continuations,
+    ensure_research_continuations, research_provider_token_observations, research_work_pending,
 };
 pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,

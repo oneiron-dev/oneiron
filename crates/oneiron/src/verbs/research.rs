@@ -31,6 +31,9 @@ use crate::memory::{Memory, MemoryResult};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::task_verb::forbidden;
 
+mod provider_tokens;
+pub use provider_tokens::{ResearchProviderTokenSnapshotWire, ResearchScopeProviderTokensWire};
+
 /// `vault.research.bind`: binds a campaign to its existing root attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -225,6 +228,9 @@ pub struct ResearchBudgetView {
     pub rsi_work: Option<RsiBudgetRead>,
     /// The vault exposure line, absent until the owner configures it.
     pub rsi_exploration: Option<RsiExplorationRead>,
+    /// Present historical captures only. None is unavailable; no form of
+    /// this field proves whole-scope coverage or changes RSI settlement.
+    pub provider_token_observations: Option<Vec<ResearchScopeProviderTokensWire>>,
 }
 
 /// `vault.research.settle_work`: a reservation's actual spend.
@@ -631,11 +637,13 @@ pub fn research_budget(
         Err(RsiBudgetError::Unconfigured) => (None, None),
         Err(error) => return Err(rsi_refusal(error)),
     };
+    let provider_token_observations = provider_tokens::read(vault, root);
     Ok(ResearchBudgetView {
         budget: research::research_budget(vault, root)?,
         reservations,
         rsi_work,
         rsi_exploration,
+        provider_token_observations,
     })
 }
 

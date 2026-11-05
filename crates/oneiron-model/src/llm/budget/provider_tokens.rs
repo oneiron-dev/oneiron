@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
 use super::ledger::LeaseState;
+use super::state::BudgetState;
 use crate::llm::{BudgetDenied, BudgetLease, ProviderTokenMeasurement};
+use oneiron_contracts::entity_id::EntityId;
 
 /// A snapshot of this guard's started calls, not a final spend-scope total.
 /// A component is absent if any call is unsettled, did not report that
@@ -27,18 +29,23 @@ pub struct ProviderTokenObservation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderTokenSnapshot {
     pub generation: [u8; 16],
+    /// Capture order within this generation, not a call or charge count.
+    pub observation_id: [u8; 16],
     pub observation: ProviderTokenObservation,
 }
 
 impl BudgetGuard {
     /// Reads the current reports with their immutable guard generation.
-    /// This does not persist, finalize or prove coverage of a spend scope.
+    /// The capture id orders snapshots of this same generation, including
+    /// calls whose paid charge stays zero. It confers no authority and
+    /// proves neither persistence nor coverage of a whole spend scope.
     #[must_use]
     pub fn provider_token_snapshot(&self) -> ProviderTokenSnapshot {
-        let generation = self.lock_state().provider_token_generation;
+        let state = self.lock_state();
         ProviderTokenSnapshot {
-            generation,
-            observation: self.provider_token_observation(),
+            generation: state.provider_token_generation,
+            observation_id: *EntityId::now().as_bytes(),
+            observation: observation_in_state(&state),
         }
     }
 
@@ -70,30 +77,34 @@ impl BudgetGuard {
     #[must_use]
     pub fn provider_token_observation(&self) -> ProviderTokenObservation {
         let state = self.lock_state();
-        let mut result = ProviderTokenObservation {
-            input: Some(0),
-            output: Some(0),
-            ..ProviderTokenObservation::default()
-        };
-        for record in state.leases.values().filter(|record| record.dispatched) {
-            result.dispatched_calls += 1;
-            if record.state == LeaseState::Open {
-                result.unsettled_calls += 1;
-                result.input = None;
-                result.output = None;
-                continue;
-            }
-            result.input = result
-                .input
-                .and_then(|sum| sum.checked_add(record.provider_tokens?.input?));
-            result.output = result
-                .output
-                .and_then(|sum| sum.checked_add(record.provider_tokens?.output?));
-        }
-        if result.dispatched_calls == 0 {
+        observation_in_state(&state)
+    }
+}
+
+fn observation_in_state(state: &BudgetState) -> ProviderTokenObservation {
+    let mut result = ProviderTokenObservation {
+        input: Some(0),
+        output: Some(0),
+        ..ProviderTokenObservation::default()
+    };
+    for record in state.leases.values().filter(|record| record.dispatched) {
+        result.dispatched_calls += 1;
+        if record.state == LeaseState::Open {
+            result.unsettled_calls += 1;
             result.input = None;
             result.output = None;
+            continue;
         }
-        result
+        result.input = result
+            .input
+            .and_then(|sum| sum.checked_add(record.provider_tokens?.input?));
+        result.output = result
+            .output
+            .and_then(|sum| sum.checked_add(record.provider_tokens?.output?));
     }
+    if result.dispatched_calls == 0 {
+        result.input = None;
+        result.output = None;
+    }
+    result
 }
