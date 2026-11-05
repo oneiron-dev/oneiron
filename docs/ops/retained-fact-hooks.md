@@ -34,8 +34,10 @@ judgement, measured accounting and runtime identity. The parent resumes the
 existing record, commit and intent-drain tail. Its memo, receipt, lineage,
 erasure fence, intent and exact fact cursor still land through the original
 writer. A record/commit error retains this result and retries completion, not
-body execution. After a successful commit, a drain retry cannot recommit or
-recount that run. A panic from the owned runtime is an actual failed outcome
+body execution. Each retained intent drain, retries included, reads the current
+hook switch and live bindings and uses the native refusal for a disabled or
+revoked hook. The run record still keeps its original binding and grant. After
+a successful commit, a drain retry cannot recommit or recount that run. A panic from the owned runtime is an actual failed outcome
 with the context and pins reported so far, not a reason to re-enter the body.
 
 A completion wakes the background loop. Its existing change notices and tick

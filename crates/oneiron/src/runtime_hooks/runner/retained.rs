@@ -202,7 +202,7 @@ impl RetainedRuns {
                 }
             };
             if queued {
-                apply::drain_one(&self.vault, &pending.all, &run.key, &mut pass.report)?;
+                apply::drain_one_current(&self.vault, &run.key, &mut pass.report)?;
             }
             Ok(())
         })();
