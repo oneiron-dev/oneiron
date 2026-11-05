@@ -51,6 +51,30 @@ pub enum RemoteTaskObservation {
     Failed,
 }
 
+/// A remote task's post-commit state and newly fired budget thresholds.
+/// The trusted status caller delivers their steering through the same
+/// next-turn queue as a synchronous outbound result, not a second channel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTaskSettlement {
+    pub state: IntentState,
+    pub budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+}
+
+impl RemoteTaskSettlement {
+    /// Messages to forward to the trusted caller's existing next-turn queue.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = Vec::new();
+        crate::connector_key::append_effector_steering_messages(
+            &mut messages,
+            self.budget_events
+                .iter()
+                .flat_map(|events| &events.ladder_events),
+        );
+        messages
+    }
+}
+
 /// Why a provider refused a send it says to try again later (FIX 8818).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -344,18 +368,20 @@ pub(super) fn settle_reservation_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,
-) -> IntentLedgerResult<()> {
+) -> IntentLedgerResult<Vec<crate::connector_key::EffectorBudgetSettlementEvents>> {
     let next = match record.state {
         IntentState::Done => ReservationStatus::Settled,
         IntentState::Abandoned if !record.delivery_uncertain => ReservationStatus::Released,
-        IntentState::Abandoned | IntentState::Pending | IntentState::Deferred => return Ok(()),
+        IntentState::Abandoned | IntentState::Pending | IntentState::Deferred => {
+            return Ok(Vec::new());
+        }
     };
     let settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
     let Some(reservation) = settlement.reservation else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if reservation.status != ReservationStatus::Reserved {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if next == ReservationStatus::Released {
         crate::connector_key::release_effector_debits_in_txn(
@@ -370,6 +396,7 @@ pub(super) fn settle_reservation_in_txn(
         }
         _ => None,
     };
+    let mut budget_events = Vec::new();
     if next == ReservationStatus::Settled {
         let debits = reconciled
             .as_ref()
@@ -382,6 +409,13 @@ pub(super) fn settle_reservation_in_txn(
             debits,
             false,
         )?;
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        budget_events = crate::connector_key::fire_settled_effector_debits_in_txn(
+            &vault.store,
+            wtxn,
+            debits,
+            now,
+        )?;
     }
     update_settlement_in_txn(vault, wtxn, &record.id, |settlement| {
         if let Some(reservation) = settlement.reservation.as_mut() {
@@ -391,7 +425,8 @@ pub(super) fn settle_reservation_in_txn(
                 reservation.spend = Some(basis);
             }
         }
-    })
+    })?;
+    Ok(budget_events)
 }
 
 /// FIX 11662: `reservation`'s preauthorized spend reconciled to `actual`,

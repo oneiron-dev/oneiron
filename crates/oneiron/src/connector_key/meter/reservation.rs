@@ -212,6 +212,69 @@ pub(crate) fn restore_effector_debits_in_txn(
     Ok(BudgetBlock::Open)
 }
 
+/// Fires only previously unemitted thresholds of this send's current live
+/// rows. It runs after the exact entries settle, in that same Done writer;
+/// neither an obsolete charter nor an expired or removed debit contributes.
+pub(crate) fn fire_settled_effector_debits_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    debits: &[EffectorBudgetDebit],
+    now: u64,
+) -> Result<Vec<EffectorBudgetSettlementEvents>> {
+    let mut grouped = std::collections::BTreeMap::new();
+    for debit in debits {
+        grouped
+            .entry((debit.key_ref, debit.row))
+            .or_insert_with(Vec::new)
+            .push(debit);
+    }
+    let mut events: Vec<EffectorBudgetSettlementEvents> = Vec::new();
+    for ((key_ref, row), debits) in grouped {
+        let Some(record) = read_connector_key_in_txn(store, wtxn, &key_ref)? else {
+            continue;
+        };
+        let Some((_, budget)) = record_budget_rows(&record)
+            .into_iter()
+            .find(|(candidate, _)| *candidate == row)
+        else {
+            continue;
+        };
+        if budget.dimension == EffectorBudgetDimension::Spend {
+            continue;
+        }
+        let key = (key_ref, row.usage_key());
+        let Some(mut usage) = USAGE.get(store, wtxn, &key)? else {
+            continue;
+        };
+        usage.touch(&budget.window, budget.limit, now);
+        if !debits.iter().any(|debit| {
+            debit.approval.matches(&record, row)
+                && debit.amount > 0
+                && usage.entries.iter().any(|entry| {
+                    entry.id == debit.entry_id
+                        && entry.at == debit.at
+                        && entry.amount == debit.amount
+                        && !entry.reserved
+                })
+        }) {
+            continue;
+        }
+        let ladder_events = charge::fire_ladder_thresholds(row, budget, &mut usage);
+        USAGE.put(store, wtxn, &key, &usage)?;
+        if !ladder_events.is_empty() {
+            if let Some(last) = events.last_mut().filter(|event| event.key_ref == key_ref) {
+                last.ladder_events.extend(ladder_events);
+            } else {
+                events.push(EffectorBudgetSettlementEvents {
+                    key_ref,
+                    ladder_events,
+                });
+            }
+        }
+    }
+    Ok(events)
+}
+
 /// Changes only the exact live entries carried by one outbound reservation.
 /// A window expiry or charter reset leaves no entry to mark.
 pub(crate) fn set_effector_debits_reserved_in_txn(

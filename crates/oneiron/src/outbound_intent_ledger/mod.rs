@@ -18,7 +18,7 @@ pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
 pub use self::settlement::{
     BudgetReservation, ProviderRetryDirective, ProviderWait, ProviderWaitKind, RemoteTaskHandle,
-    RemoteTaskObservation, ReservationStatus,
+    RemoteTaskObservation, RemoteTaskSettlement, ReservationStatus,
 };
 pub use self::types::{
     BudgetChargeMarker, BudgetClass, FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION,

@@ -60,8 +60,8 @@ pub use self::meter::{
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
     EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetApproval, EffectorBudgetCharge,
     EffectorBudgetDebit, EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead,
-    EffectorBudgetRowId, EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
-    EffectorSpendReservationRow,
+    EffectorBudgetRowId, EffectorBudgetRowRead, EffectorBudgetRowSource,
+    EffectorBudgetSettlementEvents, EffectorPoolCharge, EffectorSpendReservationRow,
 };
 pub use self::qualification_kit::{ConnectorIssuerRerunOutcome, ConnectorIssuerRerunStage};
 pub use self::record::{
@@ -89,8 +89,9 @@ pub(crate) use self::credential_binding::{
 };
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
-    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, budget_block_pooled,
-    budget_exhausted_reason, charge_effector_budgets, charge_effector_budgets_pooled,
+    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_messages,
+    budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
+    charge_effector_budgets_pooled, fire_settled_effector_debits_in_txn,
     preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
     release_effector_debits_in_txn, reserve_connector_spend_in_txn, restore_effector_debits_in_txn,
     set_effector_debits_reserved_in_txn, shares_budget_pool,
