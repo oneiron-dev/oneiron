@@ -103,5 +103,10 @@ fn compact_in_txn(
     store.port_document_updates_delete(txn, slot)?;
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     head.pending = 0;
-    ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), &head)
+    ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), &head)?;
+    if storage::has_sequence_text(&head)? {
+        let sequence = crate::note::storage::load(vault, txn, *entity)?;
+        crate::note::storage::snapshot(vault, txn, *entity, &sequence, false)?;
+    }
+    Ok(())
 }

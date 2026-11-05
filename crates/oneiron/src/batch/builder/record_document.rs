@@ -8,18 +8,13 @@ use heed::RwTxn;
 use super::super::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_doc::{DocumentMerge, RecordDocumentCandidate, RecordDocumentPreparation};
 use crate::error::Result;
-use crate::ports::DocumentSlot;
 use crate::sync::SelectedRecordDocument;
 
-/// Every outcome keeps the actual queued operation, including text whose
-/// physical rows still need reconciliation. None of these is admission.
+/// Every outcome keeps the actual queued operation. Independent local text
+/// remains on its own physical route; none of these outcomes is admission.
 pub(super) enum RecordDocumentOp<'selected, 'carrier> {
     Ordinary(BatchOp),
     Prepared(PreparedRecordPut<'selected, 'carrier>),
-    UnheadedText {
-        operation: BatchOp,
-        slots: Vec<DocumentSlot>,
-    },
     Stands {
         operation: BatchOp,
         outcome: DocumentMerge,
@@ -55,9 +50,6 @@ impl<'selected, 'carrier> RecordDocumentOp<'selected, 'carrier> {
                     })
                 }
                 RecordDocumentPreparation::TransportEnded => Self::Ordinary(operation),
-                RecordDocumentPreparation::UnheadedText { slots } => {
-                    Self::UnheadedText { operation, slots }
-                }
                 RecordDocumentPreparation::Stands(outcome) => Self::Stands { operation, outcome },
             },
         )

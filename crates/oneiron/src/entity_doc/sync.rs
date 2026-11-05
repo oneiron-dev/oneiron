@@ -596,8 +596,8 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
     Ok(Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
+        storage_document: storage::free_document_storage(&vault.store, txn, &document)?,
         document,
-        storage_document: None,
         sequence_document: None,
         field,
         generation: 0,
