@@ -208,10 +208,6 @@ pub(crate) fn try_forward_exact_ingress_update(
         Ok(name) => name,
         Err(error) => return forward_error(error),
     };
-    match wire.read_ref(canonical, &ref_name) {
-        Ok(live) if live == old => {}
-        _ => return Ok(false),
-    }
     let ingress_id = lfs_repo_id(&row.source.object_store)?;
     let Some(publication) = vault.find_origin_publication(ingress_id, |record| {
         record.provenance_claim_id == provenance
