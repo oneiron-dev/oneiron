@@ -388,11 +388,11 @@ impl SyncClient {
     }
 
     /// Imports each staged world update whose edges now resolve until a pass
-    /// lets none in. Under `answers`, the frames a window frame's handler
-    /// returns, each deferred sealed update whose isolated check now passes is
-    /// installed first, and what answers one whose pads did not install is
-    /// added there (FIX 10474); without them, deferred updates wait for a
-    /// drain that can answer.
+    /// lets none in, each deferred sealed update whose isolated check now
+    /// passes installed first (FIX 10474). What answers one whose pads did
+    /// not install goes into `answers`, the frames its caller returns to the
+    /// home; a caller with none keeps that update deferred, its pads' repair
+    /// scheduled, for a drain that can answer.
     pub(in crate::sync::client) fn drain_staged_world_updates(
         &mut self,
         mut answers: Option<&mut Vec<Vec<u8>>>,
@@ -403,10 +403,8 @@ impl SyncClient {
                 break;
             }
             let evidence = self.staged_entity_evidence()?;
-            let mut progressed = match answers.as_deref_mut() {
-                Some(answers) => self.install_deferred_sealed_updates(&evidence, answers)?,
-                None => false,
-            };
+            let mut progressed =
+                self.install_deferred_sealed_updates(&evidence, answers.as_deref_mut())?;
             // An installed one is staged now, as its window imports it.
             let evidence = if progressed {
                 self.staged_entity_evidence()?

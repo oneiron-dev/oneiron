@@ -657,8 +657,10 @@ impl SyncClient {
     /// with `evidence` over its live window (FIX 10474): its pads go into
     /// custody and its payload, as the window imports it, joins the staged
     /// updates, to import as they do. One whose pads do not install imports
-    /// nothing and adds its answer to `answers`; one a demotion closed is
-    /// dropped. Returns whether any passed its check.
+    /// nothing: under `answers` it goes, its answer added there; with none,
+    /// it stays deferred, its pads' repair scheduled. One a demotion closed
+    /// is dropped. Returns whether any left the deferred list installed or
+    /// answered.
     ///
     /// # Errors
     ///
@@ -666,7 +668,7 @@ impl SyncClient {
     pub(super) fn install_deferred_sealed_updates(
         &mut self,
         evidence: &HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
-        answers: &mut Vec<Vec<u8>>,
+        mut answers: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<bool, TransportError> {
         let mut progressed = false;
         let mut index = 0;
@@ -707,7 +709,6 @@ impl SyncClient {
                 }
             }
             let deferred = self.deferred_sealed_updates.remove(index);
-            progressed = true;
             // Read over its window with the updates still waiting for it
             // (FIX 10480), itself no longer among them.
             let receipt = {
@@ -720,9 +721,21 @@ impl SyncClient {
                 )
             };
             if receipt.readiness == WindowPadReadiness::NotReady {
+                let Some(answers) = answers.as_deref_mut() else {
+                    match WINDOW_PAD_PART_REPAIR {
+                        WindowPadPartRepair::FreshCapsuleRebind => {
+                            self.schedule_world_pad_repair(&key);
+                        }
+                    }
+                    self.deferred_sealed_updates.insert(index, deferred);
+                    index += 1;
+                    continue;
+                };
                 answers.extend(self.not_ready_answer(&key, window_sub_tags::UPDATE, &receipt)?);
+                progressed = true;
                 continue;
             }
+            progressed = true;
             // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
             if let Some(payload) = deferred
                 .envelope

@@ -40,9 +40,9 @@ impl SyncClient {
             return self.import_federated_window_update(window_key, update, role);
         }
         // A tier its caller names proves no connection: the bytes take no
-        // own-device lane (FIX 11709). This door answers no frame, so a
-        // sealed update deferred on this connection waits for a window
-        // frame's drain (FIX 10474).
+        // own-device lane (FIX 11709). This door answers no frame: a deferred
+        // sealed update it lets in whose pads do not install stays deferred
+        // for a drain that can answer (FIX 10474).
         self.import_own_device_window_update(window_key, update, PeerMachine::Unknown, None)
     }
 
