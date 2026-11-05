@@ -22,14 +22,16 @@ const ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 /// The extension URI Office writes `asvg:svgBlip` under.
 const SVG_EXT: &str = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}";
 
+fn is_svg(part: &str) -> bool {
+    part.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
+}
+
 /// The raster part a picture of the deck shows for the SVG part `svg`: the
 /// `a:blip` embed of a blip whose `asvg:svgBlip` extension names `svg`.
 /// None for a part that is not an SVG, or one no picture shows so.
 fn fallback(package: &Package, svg: &str) -> Option<String> {
-    if !svg
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
-    {
+    if !is_svg(svg) {
         return None;
     }
     for name in package.names().filter(|name| name.ends_with(".xml")) {
@@ -187,6 +189,9 @@ pub(super) fn born_blip(
             None,
         ));
     }
+    if !is_svg(media) {
+        return Ok((format!(r#"<a:blip r:embed="{shown}"/>"#), None));
+    }
     // Optional materialization is isolated: a failed render or package edit
     // cannot leave a PNG, content type or relationship behind on the old path.
     let mut candidate = package.clone();
@@ -217,6 +222,9 @@ pub(super) fn show(
         return show_raster(package, slide, native, media, &raster)
             .map(|changed| Some((changed, None)));
     }
+    if !is_svg(media) {
+        return Ok(None);
+    }
     let mut candidate = package.clone();
     if let Some((raster, done)) = rendered(&mut candidate, media)
         && let Ok(true) = show_raster(&mut candidate, slide, native, media, &raster)
@@ -228,10 +236,7 @@ pub(super) fn show(
 }
 
 fn rendered(package: &mut Package, media: &str) -> Option<(String, Conversion)> {
-    if !media
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
-    {
+    if !is_svg(media) {
         return None;
     }
     let svg = package.part(media).ok()??;
