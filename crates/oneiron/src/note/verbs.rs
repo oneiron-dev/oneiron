@@ -384,78 +384,83 @@ impl Vault {
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn, lane| {
-                    // A sealed NOTE's edit opens a fork and leaves the seal intact.
-                    let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
-                    let existed = load_doc(self, txn, note)?.is_some();
-                    if existed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
-                        return Err(invalid("whole-text edit requires its read version").into());
-                    }
-                    let doc = super::documents::live_doc(self, txn, note)?;
-                    let semantic = doc.semantic_edit(edit)?;
-                    let isolated_rewrite = if semantic.is_none() {
-                        match edit {
-                            NoteProgramEdit::WholeText { text, .. }
-                            | NoteProgramEdit::Rewrite { text } => {
-                                Some(NoteProgramEdit::Rewrite { text: text.clone() })
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
-                    let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
-                    if let Some((base, edits)) = semantic.filter(|_| authorized && !sealed) {
-                        let operation = super::NoteOperation {
-                            request_id: self.store.clock.entity_id()?,
-                            change: super::NoteChange::Edit { base, edits },
-                        };
-                        let receipt = self
-                            .memory(actor.entity_ref(), actor.actor_class())
-                            .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
-                        return Ok(match receipt.outcome {
-                            super::NoteScalarEditOutcome::Applied(_) => {
-                                NoteProgramEditOutcome::Edited { head: doc.head }
-                            }
-                            super::NoteScalarEditOutcome::Proposed(receipt) => {
-                                NoteProgramEditOutcome::ReviewRequired { receipt }
-                            }
-                        });
-                    }
-                    let candidate = NoteDocument {
-                        note,
-                        head: note,
-                        doc: doc.doc.fork(),
-                    };
-                    // The fork's commits name the actor's stamp token (FIX 10930).
-                    let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
-                    let replacement = candidate.apply(
-                        &self.store.clock,
-                        isolated_rewrite.as_ref().unwrap_or(edit),
-                        stamp,
-                        self.store.clock.now_recorded_at(),
-                    )?;
-                    let rewrite = replacement.is_some();
-                    let mut fork = replacement.unwrap_or(candidate);
-                    fork.head = self.store.clock.entity_id()?;
-                    store_doc(self, txn, &fork)?;
-                    super::proposals::remember_fork(
-                        self,
-                        txn,
-                        &doc,
-                        &fork,
-                        actor.entity_ref(),
-                        rewrite,
-                    )?;
-                    Ok(if authorized {
-                        NoteProgramEditOutcome::RewriteFork { fork: fork.head }
-                    } else {
-                        NoteProgramEditOutcome::ProposedFork { fork: fork.head }
-                    })
+                    self.edit_note_in_txn(txn, note, edit, actor, lane)
                 })
             })?;
         #[cfg(feature = "sync")]
         self.notify_note_document(note);
         Ok(result)
+    }
+
+    /// The native edit inside an actor-content writer's `update_note` gate,
+    /// so supporting effects commit or roll back with the same NOTE edit.
+    pub(crate) fn edit_note_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        edit: &NoteProgramEdit,
+        actor: WriteActor,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> MemoryResult<NoteProgramEditOutcome> {
+        // A sealed NOTE's edit opens a fork and leaves the seal intact.
+        let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
+        let existed = load_doc(self, txn, note)?.is_some();
+        if existed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
+            return Err(invalid("whole-text edit requires its read version").into());
+        }
+        let doc = super::documents::live_doc(self, txn, note)?;
+        let semantic = doc.semantic_edit(edit)?;
+        let isolated_rewrite = if semantic.is_none() {
+            match edit {
+                NoteProgramEdit::WholeText { text, .. } | NoteProgramEdit::Rewrite { text } => {
+                    Some(NoteProgramEdit::Rewrite { text: text.clone() })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
+        if let Some((base, edits)) = semantic.filter(|_| authorized && !sealed) {
+            let operation = super::NoteOperation {
+                request_id: self.store.clock.entity_id()?,
+                change: super::NoteChange::Edit { base, edits },
+            };
+            let receipt = self
+                .memory(actor.entity_ref(), actor.actor_class())
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+            return Ok(match receipt.outcome {
+                super::NoteScalarEditOutcome::Applied(_) => {
+                    NoteProgramEditOutcome::Edited { head: doc.head }
+                }
+                super::NoteScalarEditOutcome::Proposed(receipt) => {
+                    NoteProgramEditOutcome::ReviewRequired { receipt }
+                }
+            });
+        }
+        let candidate = NoteDocument {
+            note,
+            head: note,
+            doc: doc.doc.fork(),
+        };
+        // The fork's commits name the actor's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
+        let replacement = candidate.apply(
+            &self.store.clock,
+            isolated_rewrite.as_ref().unwrap_or(edit),
+            stamp,
+            self.store.clock.now_recorded_at(),
+        )?;
+        let rewrite = replacement.is_some();
+        let mut fork = replacement.unwrap_or(candidate);
+        fork.head = self.store.clock.entity_id()?;
+        store_doc(self, txn, &fork)?;
+        super::proposals::remember_fork(self, txn, &doc, &fork, actor.entity_ref(), rewrite)?;
+        Ok(if authorized {
+            NoteProgramEditOutcome::RewriteFork { fork: fork.head }
+        } else {
+            NoteProgramEditOutcome::ProposedFork { fork: fork.head }
+        })
     }
 
     /// Copies a source row's text without modifying that row. The NOTE stays

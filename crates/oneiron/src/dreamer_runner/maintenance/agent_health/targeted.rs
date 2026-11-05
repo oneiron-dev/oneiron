@@ -23,6 +23,8 @@
 //! the TTL climb over every card. Its output is the nightly review's cards
 //! and DIAGNOSTICs, nothing else.
 
+mod pending;
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -355,14 +357,16 @@ impl Vault {
     /// Queues the agent-health review of the attempt this write settles
     /// (OF-568 L1), in a savepoint of that write: it never fails the write
     /// ([`soft`]). Only an agent dispatch is agent work: a maintenance job,
-    /// this review among them, is never reviewed, so a review never queues
-    /// another. Keyed by the attempt and the lease generation it settled
-    /// under.
+    /// this review among them, is never reviewed. A settling live review
+    /// drains an already retained wake for its target first (FIX 9224).
+    /// Keyed by the attempt and the lease generation it settled under.
     pub(crate) fn enqueue_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
     ) -> Result<()> {
+        self.redrive_feedback_sweep_in_txn(txn, record);
+        pending::drain(self, txn, record);
         if record.kind == MAINTENANCE_QUEUE_KIND || !agent_work(record) {
             return Ok(());
         }
@@ -398,9 +402,10 @@ impl Vault {
     /// review still waiting, not yet running, queues nothing either
     /// (FIX 9223): the waiter reads the newest state when it runs, so a
     /// fresh slot-0 ahead of it would run a review the waiter already makes
-    /// redundant. The waiter itself is never dropped. So at most two wait
-    /// per attempt and generation, a joined wake queues nothing, and many
-    /// live attempts are many parts, never one long pass.
+    /// redundant. The waiter itself is never dropped. While both slots run,
+    /// the latest actual wake is retained until a settling slot queues or
+    /// joins a waiting follow-up (FIX 9224). There is no third review slot.
+    /// Many live attempts are many parts, never one long pass.
     pub(crate) fn enqueue_live_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -422,47 +427,8 @@ impl Vault {
             }
         };
         for (attempt, generation) in live {
-            let slot = format!(
-                "{LIVE_KEY}:{}:{generation}",
-                bytes_to_hex_lower(attempt.as_bytes())
-            );
-            let input = HealthReviewInput::Live {
-                attempt,
-                wake: wake.id,
-                generation,
-            };
-            let queue = |savepoint: &mut heed::RwTxn<'_>, key: String| {
-                enqueue(
-                    self,
-                    savepoint,
-                    &input,
-                    Some(wake.id),
-                    key,
-                    wake.run_id.clone(),
-                    now,
-                )
-            };
             soft(self, txn, attempt, |savepoint| {
-                // FIX 9223: this generation's `:next` review still waiting
-                // covers this wake, so no fresh slot-0 is queued ahead of
-                // it. The peek reads only; the waiter is never dropped. A
-                // `:next` already running covers nothing: this wake can carry
-                // state it did not read, so the wake stays on the path below,
-                // which queues the follow-up behind it.
-                let next = format!("{slot}:next");
-                if AttemptQueue::new(self)
-                    .pending_dedupe_in_txn(savepoint, MAINTENANCE_QUEUE_KIND, &next)?
-                    .is_some_and(|pending| !pending.state.is_running())
-                {
-                    return Ok(());
-                }
-                if let EnqueueDreamerAttemptOutcome::Existing(status) =
-                    queue(savepoint, slot.clone())?
-                    && status.attempt.state.is_running()
-                {
-                    queue(savepoint, next)?;
-                }
-                Ok(())
+                pending::enqueue_or_retain(self, savepoint, attempt, generation, wake, now)
             });
         }
         Ok(())

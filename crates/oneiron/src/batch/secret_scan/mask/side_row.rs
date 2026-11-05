@@ -33,7 +33,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::{SecretScanMode, scan_write_tree, secret_scan_mode_in_txn};
+use super::super::{
+    REASON_DETECTED, SecretScanMode, scan_write_tree, secret_scan_error, secret_scan_mode_in_txn,
+};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
@@ -463,7 +465,7 @@ fn admitted(
         part.scan(&kept, record)?;
     }
     if !accepts(&planned[..]) {
-        return refusal.map_or(Ok(None), Err);
+        return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
     }
     drop(planned);
     let Some(custody) = dbs.side_custody() else {

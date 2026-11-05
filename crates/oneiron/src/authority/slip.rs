@@ -73,6 +73,7 @@ impl std::fmt::Debug for CapabilitySlip {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSlip {
     claims: SlipClaims,
+    explicit_revocation_ancestry: Vec<[u8; 32]>,
     pact: Option<(
         crate::EntityId,
         oneiron_authority::federation::FederationDirectionScope,
@@ -103,6 +104,12 @@ impl VerifiedSlip {
         self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
         self
     }
+    /// Meets an authenticated effective view with all six current membership
+    /// axes. The mint's signed claims and caveat provenance stay unchanged.
+    pub(in crate::authority) fn meet_scope(mut self, current: &Scope) -> Self {
+        self.claims.scope = self.claims.scope.meet(current);
+        self
+    }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
@@ -113,6 +120,9 @@ impl VerifiedSlip {
     #[must_use]
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
+    }
+    pub(super) fn explicit_revocation_ancestry(&self) -> &[[u8; 32]] {
+        &self.explicit_revocation_ancestry
     }
     /// Whether the slip is its mint, with no caveat narrowing it (a scope,
     /// a pact bound, a shorter lifetime, another key).
@@ -425,6 +435,9 @@ impl CapabilitySlip {
         effective.binding_key = binding_key;
         let verified = VerifiedSlip {
             claims: effective,
+            explicit_revocation_ancestry: fold
+                .slips
+                .explicit_revocation_ancestry(&self.claims.slip_id),
             pact,
             unattenuated: self.caveats.is_empty(),
             transferred: binding_key != self.claims.binding_key,

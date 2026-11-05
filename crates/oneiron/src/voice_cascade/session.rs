@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::conversation::OutputMark;
 use crate::error::{Error, Result};
 use crate::interlocutor::{InterlocutorResolutionInput, InterlocutorSet};
+use crate::memory::{Memory, MemoryResult, RecallScope};
 use crate::policy_model::PolicyClassifyRequest;
 use crate::speculative::SpeculativeSessionConfig;
 use crate::store::GateSystemNoticeRecord;
@@ -199,6 +200,19 @@ impl VoiceCascadeSession {
         self.retrieval.open_utterance(utterance_id, config)
     }
 
+    /// Opens speculative retrieval under a caller's actual credential-bound read.
+    pub fn open_scoped_utterance(
+        &mut self,
+        utterance_id: impl Into<String>,
+        config: SpeculativeSessionConfig,
+        memory: &Memory<'_>,
+        scope: &RecallScope,
+    ) -> MemoryResult<UtteranceHandle> {
+        self.require_open()?;
+        self.retrieval
+            .open_scoped_utterance(utterance_id, config, memory, scope)
+    }
+
     /// Whether this exact utterance is still live, including after a failed final.
     #[must_use]
     pub fn is_utterance_open(&self, handle: &UtteranceHandle) -> bool {
@@ -387,8 +401,13 @@ impl VoiceCascadeSession {
         let admission = guard
             .admit_for_request(request)
             .inspect_err(|denied| {
-                self.vault
-                    .budget_denied_hooks(denied, &guard, request.model.as_str(), None);
+                self.vault.budget_denied_hooks(
+                    denied,
+                    &guard,
+                    request.model.as_str(),
+                    None,
+                    crate::runtime_hooks::VerbCallScope::from_model_scope(&request.envelope.scope),
+                );
             })
             .map_err(|_| invalid("voice budget admission denied"))?;
         let lease = admission.lease;

@@ -55,6 +55,7 @@ pub mod registry {
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
     pub use oneiron_base::registry::*;
 
+    pub mod export;
     pub mod pack_byte_map;
 
     // Only the `#[cfg(test)]` type-registry suite names this door.
@@ -130,6 +131,7 @@ pub use oneiron_base::tokenizer;
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
 pub use oneiron_base::extraction_eval;
