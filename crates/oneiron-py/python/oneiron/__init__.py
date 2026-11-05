@@ -2968,6 +2968,9 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs":
             return Oneiron._VaultOffRecordNotesVerbs(self._client)
         @property
+        def artifacts(self) -> "Oneiron._VaultOffRecordArtifactsVerbs":
+            return Oneiron._VaultOffRecordArtifactsVerbs(self._client)
+        @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs":
             return Oneiron._VaultOffRecordClaimsVerbs(self._client)
         @property
@@ -2979,6 +2982,12 @@ class Oneiron:
         def create(self, spec):
             """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_notes_create(json.dumps(spec))))
+    class _VaultOffRecordArtifactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            """A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_artifacts_save(json.dumps(spec))))
     class _VaultOffRecordClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

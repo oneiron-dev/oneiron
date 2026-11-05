@@ -1632,6 +1632,10 @@ export class Oneiron {
         /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
         create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
       },
+      artifacts: {
+        /** A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver. */
+        save: (input: Facade.OffRecordArtifactSaveRequest): Facade.OffRecordArtifactSaved => this.#call(() => this.#client.vaultOffRecordArtifactsSave(input) as Facade.OffRecordArtifactSaved),
+      },
       claims: {
         /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
         upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),

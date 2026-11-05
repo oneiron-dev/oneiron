@@ -560,6 +560,42 @@ pub(crate) async fn vault_off_record_claims_upsert(
     .await
 }
 
+/// Preserve one selected artifact, not the room's whole talk. Binding a room
+/// as one member is not whole-room management; the native save rechecks the
+/// real write grant and current membership in its committing writer.
+pub(crate) async fn vault_off_record_artifacts_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest,
+) -> Listed<oneiron::task_verb::sdk::OffRecordArtifactSaved> {
+    const VERB: &str = "vault.off_record.artifacts.save";
+    as_caller_unlisted(server, auth, VERB, move |server, caller| {
+        let vault = server.vault();
+        let rooms = vault.off_record_session_vault();
+        let session = match caller {
+            Caller::Owner(owner) => rooms.bind_for(&input.session_ref, owner.revalidate(vault)?),
+            Caller::Principal { who, credential } => {
+                live(vault, credential, VERB)?;
+                if in_room(vault, &input.session_ref)? {
+                    rooms.bind_for(&input.session_ref, who.actor)
+                } else {
+                    rooms.bind_as_creator(&input.session_ref, *who)
+                }
+            }
+        }
+        .map_err(|error| session_refusal(error, &input.session_ref))?;
+        let outcome = match caller {
+            Caller::Owner(owner) => session.save_artifact_as(owner, &input.artifact_ref),
+            Caller::Principal { who, credential } => {
+                session.save_artifact_by(who.actor, credential, &input.artifact_ref)
+            }
+        }
+        .map_err(|error| session_refusal(error, &input.session_ref))?;
+        Ok(outcome.into())
+    })
+    .await
+}
+
 /// A session run's refusal as the row's.
 fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
     let (code, suggestion) = match error {

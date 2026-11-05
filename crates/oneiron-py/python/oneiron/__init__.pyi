@@ -1965,12 +1965,17 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
         @property
+        def artifacts(self) -> "Oneiron._VaultOffRecordArtifactsVerbs": ...
+        @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
         @property
         def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs": ...
     class _VaultOffRecordNotesVerbs:
         def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
             """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+    class _VaultOffRecordArtifactsVerbs:
+        def save(self, spec: Facade.OffRecordArtifactSaveRequest) -> Facade.OffRecordArtifactSaved:
+            """A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver."""
     class _VaultOffRecordClaimsVerbs:
         def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
             """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""

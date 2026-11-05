@@ -421,6 +421,7 @@ pub enum AgentVerb {
     VaultOffRecordDiscard,
     VaultOffRecordRecall,
     VaultOffRecordNotesCreate,
+    VaultOffRecordArtifactsSave,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
     SelfOffRecordResultsList,
@@ -1678,6 +1679,7 @@ impl AgentVerb {
         Self::VaultOffRecordDiscard,
         Self::VaultOffRecordRecall,
         Self::VaultOffRecordNotesCreate,
+        Self::VaultOffRecordArtifactsSave,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
         Self::SelfOffRecordResultsList,
@@ -2948,6 +2950,7 @@ impl AgentVerb {
             Self::VaultOffRecordDiscard => "vault.off_record.discard",
             Self::VaultOffRecordRecall => "vault.off_record.recall",
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
+            Self::VaultOffRecordArtifactsSave => "vault.off_record.artifacts.save",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
             Self::SelfOffRecordResultsList => "self.off_record.results.list",
@@ -4231,6 +4234,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
                 | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordArtifactsSave
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
                 | Self::SelfOffRecordResultsList
@@ -5517,6 +5521,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
                 | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordArtifactsSave
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
                 | Self::SelfOffRecordResultsList
@@ -6948,6 +6953,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
                 | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordArtifactsSave
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
                 | Self::SelfOffRecordResultsList
@@ -7960,6 +7966,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordWitness
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordArtifactsSave
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
                 | Self::SelfOffRecordWaitsAnswer
@@ -8917,6 +8924,7 @@ impl AgentVerb {
             Self::VaultOffRecordDiscard => &["spec"],
             Self::VaultOffRecordRecall => &["spec"],
             Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordArtifactsSave => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
             Self::SelfOffRecordResultsList => &["spec"],
@@ -10175,6 +10183,7 @@ impl AgentVerb {
             Self::VaultOffRecordDiscard => &["spec"],
             Self::VaultOffRecordRecall => &["spec"],
             Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordArtifactsSave => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
             Self::SelfOffRecordResultsList => &["spec"],
@@ -12251,6 +12260,9 @@ impl AgentVerb {
             }
             Self::VaultOffRecordNotesCreate => {
                 "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."
+            }
+            Self::VaultOffRecordArtifactsSave => {
+                "A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver."
             }
             Self::VaultOffRecordClaimsUpsert => {
                 "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
