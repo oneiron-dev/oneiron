@@ -8,8 +8,8 @@ use super::{GIT_WIRE_CHECKOUT_ROOT_NAME, GitOid, GitWire, GitWireProcessEnv, Git
 use crate::error::Error;
 use crate::store::code_snapshot::RepoRef;
 use crate::{
-    checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps},
     store::checkout_lease::CheckoutError,
+    store::checkout_lease::{CheckoutLeaseAct, CheckoutRepoOps},
     store::checkout_lease::{
         CheckoutResult, CheckoutTeardownInspection, GitOid as LeaseGitOid, PushedHeadReceipt,
         TeardownReceiptMatch,
