@@ -1,3 +1,6 @@
+//! Board presence scan: folding task intent and ack state across attempts.
+//! Entry [`superseded_attempt_ids`]; read by dispatch and the `context_board` fold.
+//! Owned by `task_verb`; board truth lives in `context_board`, this file only scans.
 use std::collections::HashSet;
 
 use crate::Vault;

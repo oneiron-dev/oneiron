@@ -1,3 +1,6 @@
+//! Consult outcomes: result inputs, receipts, fan-out specs, and expiry reports.
+//! Entry [`ConsultResultInput`]; written by `lifecycle_facade`, read by fan-out and dashboards.
+//! Owned by `task_verb`; terminal meaning comes from the `consult_ladder`, not this file.
 use std::collections::HashSet;
 
 use rmpv::Value;
