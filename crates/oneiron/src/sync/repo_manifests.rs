@@ -333,6 +333,11 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             Ok(RepoManifestMerge::Waiting) => {
                 tracing::debug!(window, key = %map_key, "repo manifest waits for its CODE row");
             }
+            Ok(RepoManifestMerge::Unproven) => tracing::debug!(
+                window,
+                key = %map_key,
+                "repo manifest waits for a proven refs writer; the one held here stands"
+            ),
             Ok(RepoManifestMerge::Conflict) => tracing::warn!(
                 window,
                 key = %map_key,

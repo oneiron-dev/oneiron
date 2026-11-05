@@ -112,6 +112,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 from: args.from,
                 through: args.through,
                 note: args.note,
+                kind: args.kind,
             })
         }
         RunVerb::SelfCompact => {

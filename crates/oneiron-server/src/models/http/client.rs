@@ -9,6 +9,10 @@ impl ProviderHttp {
         provider: &ProviderConfig,
         style: KeyStyle,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            provider.siwc.is_none(),
+            "SIWC credentials are served by the Responses backend only"
+        );
         Self::build(provider, style, false)
     }
 
@@ -18,7 +22,26 @@ impl ProviderHttp {
         provider: &ProviderConfig,
         style: KeyStyle,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            provider.siwc.is_none(),
+            "SIWC credentials are served by the Responses backend only"
+        );
         Self::build(provider, style, true)
+    }
+
+    /// The Responses consumer supplies its sensitive credential per send.
+    pub(in crate::models) fn siwc(provider: &ProviderConfig) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            provider.siwc.is_some()
+                && provider.kind == crate::config::models::ProviderKind::OpenaiCompat
+                && provider.base_url == oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL
+                && provider.key_env.is_none()
+                && provider.key_secret.is_none()
+                && provider.locality == oneiron::ModelLocality::ThirdParty
+                && provider.responses_socket.is_none(),
+            "SIWC credentials require the official Responses HTTP route and no other key source"
+        );
+        Self::build(provider, KeyStyle::Bearer, false)
     }
 
     pub(super) fn build(
@@ -440,6 +463,34 @@ impl ProviderHttp {
             body,
             held,
         })
+    }
+
+    /// A per-send SIWC bearer never enters a public request envelope. The
+    /// caller retains credential and cancellation checks through `release`.
+    pub(in crate::models) async fn post_sse_released<'a>(
+        &'a self,
+        path: &'a str,
+        authorization: reqwest::header::HeaderValue,
+        plain: Vec<u8>,
+        release: DispatchRelease<'a>,
+        lease: &'a BudgetLease,
+    ) -> Result<impl Stream<Item = Result<SseItem, HttpFailure>> + Send + 'static, HttpReleaseError>
+    {
+        let request = || {
+            self.client
+                .post(self.url(path))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(reqwest::header::AUTHORIZATION, authorization.clone())
+        };
+        let response = self
+            .send_body_released(path, request, plain, release, lease)
+            .await?;
+        // The old reader owns non-2xx status parsing and every SSE frame.
+        let sending: Sending = Box::pin(std::future::ready(Ok(response)));
+        Ok(futures_util::stream::unfold(
+            SseState::Start(sending),
+            next_sse,
+        ))
     }
 
     /// Starts a streamed exchange. A non-2xx answer arrives as one

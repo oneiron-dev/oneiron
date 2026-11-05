@@ -74,6 +74,8 @@ mod room;
 mod room_births;
 mod save_grant;
 mod saving;
+mod scratch;
+pub(in crate::off_record) use scratch::{PreparedScratchSave, SavedScratch};
 mod session;
 mod session_hooks;
 mod telemetry;
