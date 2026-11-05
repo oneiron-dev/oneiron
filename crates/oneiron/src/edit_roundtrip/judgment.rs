@@ -81,6 +81,55 @@ pub struct SheetAnswerBundle {
     pub base_live: Option<crate::office_body::LivePin>,
 }
 
+/// Paid sheet decisions before byte staging. The owning caller retains this
+/// work, with its read rows and ask journal, before using the original deadline.
+#[derive(Debug, Clone)]
+pub struct SheetAnswerWork {
+    answers: std::sync::Arc<RetainedSheetAnswers>,
+    pub base_version: u64,
+    pub base_content_hash: [u8; 32],
+    /// The original whole-ask clock, never renewed by staging.
+    pub deadline: Instant,
+}
+
+struct RetainedSheetAnswers {
+    bundle: SheetAnswerBundle,
+    // Declared after the bytes, so the actual answers are freed first.
+    _memory: Option<Box<dyn oneiron_docedit::resource::ResourceAllocation>>,
+}
+
+impl std::fmt::Debug for RetainedSheetAnswers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedSheetAnswers")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SheetAnswerWork {
+    pub(super) fn new(
+        bundle: SheetAnswerBundle,
+        memory: Option<Box<dyn oneiron_docedit::resource::ResourceAllocation>>,
+        base_version: u64,
+        base_content_hash: [u8; 32],
+        deadline: Instant,
+    ) -> Self {
+        Self {
+            answers: std::sync::Arc::new(RetainedSheetAnswers {
+                bundle,
+                _memory: memory,
+            }),
+            base_version,
+            base_content_hash,
+            deadline,
+        }
+    }
+
+    /// The actual paid decisions, shared with their allocation's lifetime.
+    pub fn bundle(&self) -> &SheetAnswerBundle {
+        &self.answers.bundle
+    }
+}
+
 impl SheetAnswerBundle {
     /// Fail closed before passing untrusted answer positions or values to the
     /// session; the same check runs at Keep against a public proposal.
@@ -166,6 +215,28 @@ impl Vault {
         bundle: SheetAnswerBundle,
         run_ref: &str,
     ) -> Result<EditOutcome> {
+        let head = self
+            .blob_artifact_head(artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        self.propose_sheet_answers_at(
+            artifact_id,
+            session,
+            bundle,
+            run_ref,
+            head.version,
+            head.content_hash,
+        )
+    }
+
+    fn propose_sheet_answers_at<S: EditSession>(
+        &self,
+        artifact_id: &EntityId,
+        session: &S,
+        bundle: SheetAnswerBundle,
+        run_ref: &str,
+        version: u64,
+        frontier: [u8; 32],
+    ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
@@ -184,17 +255,18 @@ impl Vault {
             )));
         }
         drop(rtxn);
-        let head = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
         let source = self
-            .read_blob_artifact_version(artifact_id, head.version)?
+            .read_blob_artifact_version(artifact_id, version)?
             .ok_or(Error::EntityNotFound)?;
+        if *blake3::hash(&source).as_bytes() != frontier {
+            return Err(Error::CorruptedIndex("answered workbook base hash"));
+        }
         // Verify the source independently of the edit session, including any
         // caller-supplied before values, before the agent edits a copy.
         verify_sheet_answer_bytes(&bundle, Some(&source), None)?;
-        let outcome = self.propose_blob_artifact_edit(
+        let outcome = self.propose_blob_artifact_edit_at(
             artifact_id,
+            version,
             session,
             &EditPlan::new(ops.clone()),
             run_ref,
@@ -219,8 +291,8 @@ impl Vault {
     }
 
     /// Ask one typed question of each row of a workbook head, one decide()
-    /// call per row under the run's deadline, and stage the answers as one
-    /// proposal on a copy, held for Keep. A row with no cell to read
+    /// call per row under the run's deadline. The caller retains paid answers
+    /// before staging them on a copy for Keep. A row with no cell to read
     /// abstains without a call; an answer cell holding a formula is refused.
     pub fn ask_blob_artifact_sheet_rows(
         &self,
@@ -249,6 +321,7 @@ impl Vault {
         });
         let mut run = ArtifactAskRun {
             proposal: None,
+            sheet_answers: None,
             abstained: Vec::new(),
             refused: Vec::new(),
             read_rows: Vec::new(),
@@ -257,7 +330,7 @@ impl Vault {
         if run.next_sheet_row.is_none() {
             return Ok(run);
         }
-        // Reuse the hard clock's answer share for staging; no new timeout.
+        // Traverse within the answer share; staging keeps the whole-ask deadline.
         let started = Instant::now();
         let clock = crate::retrieval_depth::RetrievalDeadline::hard(
             started,
@@ -468,10 +541,15 @@ impl Vault {
         drop(loaded);
         drop(live);
         drop(bytes);
-        // Keep completed decisions even if traversal used its share. Staging
-        // retains its existing resource checks, not an already-expired clock.
-        run.proposal =
-            self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier)?;
+        if bundle.answers.iter().any(|answer| answer.value.is_some()) {
+            run.sheet_answers = Some(SheetAnswerWork::new(
+                bundle,
+                Some(answer_memory),
+                version,
+                frontier,
+                request.ask.deadline,
+            ));
+        }
         Ok(run)
     }
 
@@ -486,18 +564,26 @@ impl Vault {
         run_ref: &str,
         version: u64,
         frontier: [u8; 32],
+        resources: oneiron_docedit::resource::Resources,
     ) -> Result<Option<EditProposal>> {
         if bundle.answers.iter().all(|answer| answer.value.is_none()) {
             return Ok(None);
         }
         let session = NativeCellSession {
             limits: self.docedit_package_limits()?,
+            resources,
         };
-        match self.propose_sheet_answers(artifact, &session, bundle, run_ref)? {
+        session
+            .resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
+        match self
+            .propose_sheet_answers_at(artifact, &session, bundle, run_ref, version, frontier)?
+        {
             EditOutcome::Proposed(proposal) => {
                 if proposal.base_version != Some(version) || proposal.base_content_hash != frontier
                 {
-                    return Err(invalid("the workbook moved while it was asked; ask again"));
+                    return Err(Error::CorruptedIndex("answered proposal base"));
                 }
                 Ok(Some(*proposal))
             }
@@ -521,21 +607,21 @@ impl EditProposal {
 /// recalculate in process. No host recalc stands behind it.
 struct NativeCellSession {
     limits: Limits,
+    resources: oneiron_docedit::resource::Resources,
 }
 
 impl EditSession for NativeCellSession {
+    fn recalc_resources(&self) -> Option<oneiron_docedit::resource::Resources> {
+        Some(self.resources.clone())
+    }
+
     fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
         let failed = || {
             Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "typed answers could not be written to the workbook copy",
             ))
         };
-        let book = read_xlsx_cells(
-            &doc.bytes,
-            self.limits,
-            &crate::office_body::document_resources(),
-        )
-        .map_err(|error| {
+        let book = read_xlsx_cells(&doc.bytes, self.limits, &self.resources).map_err(|error| {
             // A resource refusal is the engine's error (FIX 10587), never a failed write.
             if let Some(refusal) = error.resource() {
                 crate::office_body::document_refused(refusal)
@@ -582,22 +668,16 @@ impl EditSession for NativeCellSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let bytes = project_xlsx(
-            &doc.bytes,
-            &changes,
-            self.limits,
-            &crate::office_body::document_resources(),
-            None,
-        )
-        .map_err(|error| {
-            // A resource refusal is the engine's error (FIX 10587), never a failed write.
-            if let Some(refusal) = error.resource() {
-                crate::office_body::document_refused(refusal)
-            } else {
-                failed()
-            }
-        })?
-        .bytes;
+        let bytes = project_xlsx(&doc.bytes, &changes, self.limits, &self.resources, None)
+            .map_err(|error| {
+                // A resource refusal is the engine's error (FIX 10587), never a failed write.
+                if let Some(refusal) = error.resource() {
+                    crate::office_body::document_refused(refusal)
+                } else {
+                    failed()
+                }
+            })?
+            .bytes;
         Ok(AppliedEdit {
             bytes,
             applied_ops: plan.ops.clone(),
