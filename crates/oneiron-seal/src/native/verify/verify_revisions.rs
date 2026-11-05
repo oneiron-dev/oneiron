@@ -356,17 +356,13 @@ pub(super) fn classify(
     let Some(facts) = facts else {
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
-    let Ok(computed) = facts.ends(limits) else {
-        return Ok((vec![], Modifications::NotRun, vec![]));
-    };
+    let computed = facts.ends(limits)?;
     if computed != ends {
         return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
-    let Ok(dup) = facts.has_duplicates(limits) else {
-        return Ok((vec![], Modifications::NotRun, vec![]));
-    };
+    let dup = facts.has_duplicates(limits)?;
     if dup {
         pdf::admitted::push(limits, &mut anomalies, Anomaly::DuplicateObjectNumber)?;
     }
@@ -420,7 +416,7 @@ pub(super) fn classify(
                 pdf::admitted::push(limits, &mut anomalies, Anomaly::RetypedObject)?;
             }
             if first_signer.is_some() {
-                let allowed = facts.accounts_for(limits, index, &ids).unwrap_or(false)
+                let allowed = facts.accounts_for(limits, index, &ids)?
                     && match kind {
                         RevisionKind::Dss => dss_allowed(before, &doc, &ids, limits)?,
                         RevisionKind::DocumentTimestamp => {
