@@ -141,14 +141,12 @@ pub(super) fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> io::Result<
     sync_dir(dir)
 }
 
-/// Syncs the directory's entries. A directory opens as a file only on unix;
-/// elsewhere a rename is as durable as the system makes it.
+/// Syncs the directory's entries through the shared platform helper.
 pub(super) fn sync_dir(dir: &Path) -> io::Result<()> {
-    if cfg!(unix) {
-        File::open(dir)?.sync_all()
-    } else {
-        Ok(())
-    }
+    oneiron::store::sync_dir(dir).map_err(|error| match error {
+        oneiron::error::Error::Io(error) => error,
+        error => io::Error::other(error),
+    })
 }
 
 fn ensure_directory(dir: &Path) -> io::Result<()> {
