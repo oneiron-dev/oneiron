@@ -268,6 +268,13 @@ impl StepRunner {
         // counted left out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
+        if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
+            tracing::warn!(
+                attempt = ?step.attempt.id,
+                %error,
+                "workflow step context manifest could not be recorded"
+            );
+        }
         let mut messages = Vec::new();
         if let Some(instructions) = definition
             .instructions
