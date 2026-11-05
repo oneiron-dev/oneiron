@@ -4559,7 +4559,7 @@ export_facade! {
 "ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> ActAnswerLiveVoiceToolReply = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.voice.tool", input)?;
     let output = client.ai_voice_tool(&input)?;
-    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("ai.voice.tool", &other) }
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), other => crate::codec::lift_record("ai.voice.tool", &other) }
 };
 "ai.voice.end" => fn ai_voice_end(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.end", input)?;
