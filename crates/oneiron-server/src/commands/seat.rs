@@ -1,9 +1,10 @@
 //! `oneiron seat …`: the owner's official-seat sign-in surface (OF-375).
 //!
-//! These commands print what the PERSON runs to sign a seat in and where
-//! that seat may run. They never ask for, print, or store a vendor token:
-//! the verifier flag below is hashed into a PKCE challenge on the spot and
-//! the verifier itself is never written anywhere.
+//! The plan commands print what the PERSON runs to sign a seat in and where
+//! that seat may run. Their verifier flag is hashed into a PKCE challenge;
+//! the verifier itself is never written anywhere. The explicit SIWC login
+//! command saves verified credentials only in the person's protected local
+//! file. No command prints a vendor token.
 
 use std::io::{self, Read as _, Write as _};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +14,23 @@ use crate::runtime::seat_login::{
     RunnerSeatPolicySettings, SeatSettings, runner_policy_surface, runner_provider_catalog,
     seat_login_surface, seat_route_catalog, siwc_authorize_request,
 };
+
+pub async fn seat_siwc_login(args: crate::cli::SiwcLoginArgs) -> anyhow::Result<()> {
+    let enabled =
+        crate::runtime::seat_login::siwc::login(crate::runtime::seat_login::siwc::LoginOptions {
+            credential_file: args.credential_file,
+            host_id_file: args.host_id_file,
+            callback_uri: args.callback_uri,
+            agent_name: args.agent_name,
+        })
+        .await?;
+    let stdout = io::stdout();
+    writeln!(
+        stdout.lock(),
+        "Sign-in saved locally; ChatGPT plan use granted: {enabled}"
+    )?;
+    Ok(())
+}
 
 pub fn seat_routes() -> anyhow::Result<()> {
     print_json(&seat_route_catalog())
