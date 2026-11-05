@@ -82,16 +82,7 @@ pub(super) fn run(
         dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
         budget: DECIDE_BUDGET,
-        wording: server
-            .config
-            .models
-            .as_ref()
-            .map(|models| models.dreamer.wording.code_fix_class().to_owned())
-            .unwrap_or_else(|| {
-                crate::config::models::DreamerWording::default()
-                    .code_fix_class()
-                    .to_owned()
-            }),
+        wording: server.ai.dreamer_wording().code_fix_class().to_owned(),
     };
     let run_id = format!(
         "coach-code-fix:{}",
