@@ -368,7 +368,7 @@ pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
-pub mod revision_ref;
+pub use oneiron_store::revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
