@@ -187,8 +187,7 @@ impl Memory<'_> {
         // OF-023: a want derived from behaviour is minted beside the stated
         // one, never over it. The peer scan is independent of replacement:
         // seed/propose replace nothing but still collect stated peers.
-        let beside_stated =
-            crate::claim::is_observed_preference(Some(source), &input.predicate);
+        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate);
 
         // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
         // so the prior it names may already be closed by the time the write
