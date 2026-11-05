@@ -47,6 +47,11 @@ use crate::embedder::EmbedQueryRefusal;
 /// rather than recall without it.
 const LIGHT_RECALL_EMBEDS_MEDIA: bool = false;
 
+struct RecallMediaInput {
+    media: DecodedMediaQuery,
+    _memory: MemoryLease,
+}
+
 impl SyncServer {
     /// Runs `recall` for `memory` with the server's execution inputs. Its
     /// `ai.embed` calls bill `payer`, the funding of the run that recalls
@@ -95,7 +100,7 @@ impl SyncServer {
     /// pack decodes its own: the space, the tower its MIME picks and the
     /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]). The
     /// request's kind filter stays on its media-space seed.
-    fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<DecodedMediaQuery>> {
+    fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<RecallMediaInput>> {
         let Some(media) = input.media.as_ref() else {
             return Ok(None);
         };
@@ -107,10 +112,15 @@ impl SyncServer {
                 &["Recall media at medium effort or above."],
             ));
         }
-        crate::api::ContextPackMediaQuery::from(media.clone())
+        let mut memory = self.memory.empty_lease();
+        let media = crate::api::ContextPackMediaQuery::from(media.clone())
             .decode(self.config.limits.retrieval_query_bytes)
-            .map(Some)
-            .map_err(media_refusal)
+            .map_err(media_refusal)?;
+        memory.materialized(0, media.input_storage_bytes());
+        Ok(Some(RecallMediaInput {
+            media,
+            _memory: memory,
+        }))
     }
 
     /// [`Self::recall_embed`] plus the request's decoded `media`, embedded
@@ -122,7 +132,7 @@ impl SyncServer {
     fn recall_embed_media<'a>(
         &'a self,
         effort: Option<RecallEffort>,
-        media: Option<DecodedMediaQuery>,
+        media: Option<RecallMediaInput>,
         payer: Option<&'a PayerPerson>,
         query_memory: &'a mut MemoryLease,
     ) -> impl FnOnce(&str) -> MemoryResult<RecallQueryVectors> + 'a {
@@ -144,7 +154,7 @@ impl SyncServer {
     /// [`Self::recall_embed_runtime`], billed to `payer`.
     fn recall_media_vectors(
         &self,
-        media: DecodedMediaQuery,
+        media: RecallMediaInput,
         payer: Option<&PayerPerson>,
     ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>> {
         let Ok(runtime) = self.recall_embed_runtime() else {
@@ -157,7 +167,7 @@ impl SyncServer {
         let seeds = runtime
             .block_on(crate::api::embed_media_seeds_for(
                 self,
-                Some(media),
+                Some(media.media),
                 None,
                 payer,
             ))
