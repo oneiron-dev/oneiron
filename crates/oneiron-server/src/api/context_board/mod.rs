@@ -527,8 +527,8 @@ pub(crate) async fn context_board_hydrate(
     // and never activates; a native chat turn projects its answering
     // agent's row with native has_turn=true and activates it in the SAME
     // accepted answer-history commit.
-    let (tasks_budget_tok, tasks_keep, tasks_layout_candidate) = match req.tasks_budget_tok {
-        Some(explicit) => (Some(explicit), Vec::new(), None),
+    let mut tasks_layout = match req.tasks_budget_tok {
+        Some(explicit) => oneiron::context_board::TasksLayoutSelection::for_budget(explicit),
         None => {
             let cap_tok =
                 oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
@@ -551,9 +551,9 @@ pub(crate) async fn context_board_hydrate(
         &observed_reads,
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &hook_pins,
-        tasks_budget_tok,
-        &tasks_keep,
+        &mut tasks_layout,
     )?;
+    let tasks_layout_candidate = tasks_layout.candidate();
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
         &server,
@@ -600,8 +600,21 @@ pub(crate) async fn context_board_hydrate(
     );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.
-    let chat_sources =
+    let mut chat_sources =
         board::section_sources(&parts.sections, memories.as_ref(), hits, &observed_reads);
+    if let Some(source) = chat_sources
+        .iter_mut()
+        .find(|source| source.name == "TASKS")
+    {
+        source
+            .dependencies
+            .extend(parts.tasks_fold_sources.iter().map(|id| {
+                oneiron::llm::SegmentLocator::Memory {
+                    id: *id,
+                    revision: None,
+                }
+            }));
+    }
 
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
