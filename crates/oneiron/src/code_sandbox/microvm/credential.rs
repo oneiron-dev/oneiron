@@ -227,6 +227,7 @@ pub struct CredentialEgressProxy {
     allowlist: CredentialAllowlist,
     resolver: Arc<dyn CredentialResolver>,
     armed: bool,
+    credential_relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
 }
 
 impl CredentialEgressProxy {
@@ -236,6 +237,7 @@ impl CredentialEgressProxy {
             allowlist,
             resolver,
             armed: false,
+            credential_relay: None,
         }
     }
 
@@ -254,6 +256,12 @@ impl CredentialEgressProxy {
         self.armed = true;
     }
 
+    /// Attaches the SAME existing egress relay for credential receipts.
+    /// `None` keeps the proxy silent, as before.
+    pub fn set_credential_relay(&mut self, relay: Arc<dyn oneiron_container::EgressRelay>) {
+        self.credential_relay = Some(relay);
+    }
+
     /// Performs one allowlisted, read-only egress operation outside the guest.
     /// Material is scrubbed on success AND refusal. The guest gets no secret,
     /// request headers, host exception text, or reflected response body.
@@ -263,35 +271,98 @@ impl CredentialEgressProxy {
         call: &crate::code_sandbox::SandboxCredentialCall,
         transport: &dyn CredentialReadTransport,
     ) -> Result<CredentialInjection> {
-        let destination = egress_destination_from_args(call.args())?;
+        let destination = match egress_destination_from_args(call.args()) {
+            Ok(destination) => destination,
+            Err(error) => {
+                self.emit_credential(
+                    vm.id(),
+                    call.credential().as_str(),
+                    Some(call.operation().as_str()),
+                    Some(call.operation().effect().as_str()),
+                    None,
+                    None,
+                    oneiron_container::CredentialEgressStatus::InvalidDestination,
+                    None,
+                );
+                return Err(error);
+            }
+        };
         let credential = call.credential();
-        if !self.armed {
-            return Err(backend_error(
-                EGRESS_PROXY_NAME,
-                "credential proxy is not armed",
-            ));
+        let (outcome, status) = (|| {
+            if !self.armed {
+                return (
+                    Err(backend_error(
+                        EGRESS_PROXY_NAME,
+                        "credential proxy is not armed",
+                    )),
+                    oneiron_container::CredentialEgressStatus::Unarmed,
+                );
+            }
+            if !self.allowlist.permits(credential, &destination) {
+                return (
+                    Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
+                        credential: credential.as_str().to_owned(),
+                        scheme: destination.scheme().to_owned(),
+                        host: destination.host_suffix().to_owned(),
+                    })),
+                    oneiron_container::CredentialEgressStatus::AllowlistDenied,
+                );
+            }
+            let material = match self.resolver.resolve_for(credential, &destination) {
+                Ok(material) => SecretMaterial(material),
+                Err(error) => {
+                    return (
+                        Err(error),
+                        oneiron_container::CredentialEgressStatus::ResolverFailed,
+                    );
+                }
+            };
+            if material.0.is_empty() {
+                return (
+                    Err(backend_error(
+                        EGRESS_PROXY_NAME,
+                        "credential resolver returned empty material",
+                    )),
+                    oneiron_container::CredentialEgressStatus::EmptyMaterial,
+                );
+            }
+            let injected_bytes = material.0.len();
+            match transport.read(&destination, call.operation(), call.args(), &material.0) {
+                Ok(()) => (
+                    Ok(injected_bytes),
+                    oneiron_container::CredentialEgressStatus::Forwarded,
+                ),
+                Err(error) => (
+                    Err(error),
+                    oneiron_container::CredentialEgressStatus::TransportFailed,
+                ),
+            }
+        })();
+        let material_bytes = match &outcome {
+            Ok(bytes) if status == oneiron_container::CredentialEgressStatus::Forwarded => {
+                Some(*bytes)
+            }
+            _ => None,
+        };
+        self.emit_credential(
+            vm.id(),
+            credential.as_str(),
+            Some(call.operation().as_str()),
+            Some(call.operation().effect().as_str()),
+            Some(destination.scheme()),
+            Some(destination.host_suffix()),
+            status,
+            material_bytes,
+        );
+        match outcome {
+            Ok(injected_bytes) => Ok(CredentialInjection {
+                vm_id: vm.id().to_owned(),
+                credential: credential.clone(),
+                destination,
+                injected_bytes,
+            }),
+            Err(error) => Err(error),
         }
-        if !self.allowlist.permits(credential, &destination) {
-            return Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
-                credential: credential.as_str().to_owned(),
-                scheme: destination.scheme().to_owned(),
-                host: destination.host_suffix().to_owned(),
-            }));
-        }
-        let material = SecretMaterial(self.resolver.resolve_for(credential, &destination)?);
-        if material.0.is_empty() {
-            return Err(backend_error(
-                EGRESS_PROXY_NAME,
-                "credential resolver returned empty material",
-            ));
-        }
-        transport.read(&destination, call.operation(), call.args(), &material.0)?;
-        Ok(CredentialInjection {
-            vm_id: vm.id().to_owned(),
-            credential: credential.clone(),
-            destination,
-            injected_bytes: material.0.len(),
-        })
     }
 
     /// Resolves, measures and scrubs `credential` at the outbound boundary.
@@ -314,44 +385,133 @@ impl CredentialEgressProxy {
         credential: &SandboxCredentialHandle,
         destination: &CredentialDestination,
     ) -> Result<CredentialInjection> {
-        if !self.armed {
-            return Err(backend_error(
-                EGRESS_PROXY_NAME,
-                "credential proxy is not armed for this vm",
-            ));
+        let (outcome, status) = (|| {
+            if !self.armed {
+                return (
+                    Err(backend_error(
+                        EGRESS_PROXY_NAME,
+                        "credential proxy is not armed for this vm",
+                    )),
+                    oneiron_container::CredentialEgressStatus::Unarmed,
+                );
+            }
+            if !self.allowlist.permits(credential, destination) {
+                return (
+                    Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
+                        credential: credential.as_str().to_owned(),
+                        scheme: destination.scheme().to_owned(),
+                        host: destination.host_suffix().to_owned(),
+                    })),
+                    oneiron_container::CredentialEgressStatus::AllowlistDenied,
+                );
+            }
+            let mut material = match self.resolver.resolve_for(credential, destination) {
+                Ok(material) => material,
+                Err(error) => {
+                    return (
+                        Err(error),
+                        oneiron_container::CredentialEgressStatus::ResolverFailed,
+                    );
+                }
+            };
+            if material.is_empty() {
+                return (
+                    Err(backend_error(
+                        EGRESS_PROXY_NAME,
+                        "credential resolver returned empty material",
+                    )),
+                    oneiron_container::CredentialEgressStatus::EmptyMaterial,
+                );
+            }
+            let injected_bytes = material.len();
+            // Material is resolved, measured and scrubbed at this boundary. The
+            // outbound transport lands with SECRET-02; bytes never travel guest-ward.
+            for byte in &mut material {
+                // SAFETY: `byte` is a valid, uniquely borrowed element of `material`.
+                // Volatile writes prevent the scrub from being elided as a dead store.
+                unsafe { std::ptr::write_volatile(byte, 0) };
+            }
+            std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+            drop(material);
+            (
+                Ok(injected_bytes),
+                oneiron_container::CredentialEgressStatus::Resolved,
+            )
+        })();
+        let material_bytes = match &outcome {
+            Ok(bytes) if status == oneiron_container::CredentialEgressStatus::Resolved => {
+                Some(*bytes)
+            }
+            _ => None,
+        };
+        self.emit_credential(
+            vm.id(),
+            credential.as_str(),
+            None,
+            None,
+            Some(destination.scheme()),
+            Some(destination.host_suffix()),
+            status,
+            material_bytes,
+        );
+        match outcome {
+            Ok(injected_bytes) => Ok(CredentialInjection {
+                vm_id: vm.id().to_owned(),
+                credential: credential.clone(),
+                destination: destination.clone(),
+                injected_bytes,
+            }),
+            Err(error) => Err(error),
         }
-        if !self.allowlist.permits(credential, destination) {
-            return Err(Error::Code(CodeError::MicroVmCredentialDestinationDenied {
-                credential: credential.as_str().to_owned(),
-                scheme: destination.scheme().to_owned(),
-                host: destination.host_suffix().to_owned(),
-            }));
-        }
+    }
 
-        let mut material = self.resolver.resolve_for(credential, destination)?;
-        if material.is_empty() {
-            return Err(backend_error(
-                EGRESS_PROXY_NAME,
-                "credential resolver returned empty material",
-            ));
-        }
-        let injected_bytes = material.len();
-        // Material is resolved, measured and scrubbed at this boundary. The
-        // outbound transport lands with SECRET-02; bytes never travel guest-ward.
-        for byte in &mut material {
-            // SAFETY: `byte` is a valid, uniquely borrowed element of `material`.
-            // Volatile writes prevent the scrub from being elided as a dead store.
-            unsafe { std::ptr::write_volatile(byte, 0) };
-        }
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-        drop(material);
+    /// Records a credential read refused for lack of transport, as metadata
+    /// only. Never resolves or calls transport.
+    pub fn record_transport_unavailable(
+        &self,
+        vm: &MicroVmHandle,
+        call: &crate::code_sandbox::SandboxCredentialCall,
+    ) {
+        let destination = egress_destination_from_args(call.args()).ok();
+        self.emit_credential(
+            vm.id(),
+            call.credential().as_str(),
+            Some(call.operation().as_str()),
+            Some(call.operation().effect().as_str()),
+            destination.as_ref().map(|dest| dest.scheme()),
+            destination.as_ref().map(|dest| dest.host_suffix()),
+            oneiron_container::CredentialEgressStatus::TransportUnavailable,
+            None,
+        );
+    }
 
-        Ok(CredentialInjection {
-            vm_id: vm.id().to_owned(),
-            credential: credential.clone(),
-            destination: destination.clone(),
-            injected_bytes,
-        })
+    fn emit_credential(
+        &self,
+        vm_id: &str,
+        handle_ref: &str,
+        operation: Option<&str>,
+        effect: Option<&str>,
+        scheme: Option<&str>,
+        host: Option<&str>,
+        status: oneiron_container::CredentialEgressStatus,
+        material_bytes: Option<usize>,
+    ) {
+        let Some(relay) = self.credential_relay.as_ref() else {
+            return;
+        };
+        let record = oneiron_container::CredentialEgressRecord {
+            vm_id: vm_id.to_owned(),
+            handle_ref: handle_ref.to_owned(),
+            operation: operation.map(str::to_owned),
+            effect: effect.map(str::to_owned),
+            scheme: scheme.map(str::to_owned),
+            host: host.map(str::to_owned),
+            status,
+            material_bytes,
+        };
+        if relay.record_credential(&record).is_err() {
+            tracing::error!("credential egress receipt failed");
+        }
     }
 }
 

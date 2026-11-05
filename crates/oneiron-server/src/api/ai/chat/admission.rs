@@ -302,6 +302,18 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // sitting; its witness and stream still bind the key (FIX 5564).
     let signals = sitting::signals_sitting(&vault, &hooked());
 
+    // FIX 8132: the reply is bound, before generation, to the conversation
+    // its own turn is written into, so its newcomer wakes and every
+    // publication check read the conversation that receives its text: the
+    // destination the assistant's turn below writes to, the request's ref,
+    // resolved once above (`origin`), never the user's witnessed MESSAGE,
+    // which a pre-hook may have moved. A destination in no conversation
+    // answers standalone, as before; one whose placement was not read binds
+    // the destination itself, where its stream is written anyway. Only a
+    // ref that names nothing is refused, before any model is called: no
+    // conversation would hold its reply.
+    let destination = origin.ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
+
     // FIX 6924: the board hydrates here — after the funding, hook-stop,
     // keepalive and session-key refusals above — so those refusals advance
     // no MEMORIES cursor and consumes no observations, disclosures or hook
@@ -437,17 +449,6 @@ pub(in crate::api::ai::chat) async fn start_turn(
     .map_err(|stop| hook_stopped(&stop))?;
     // FIX 7004: the MESSAGE row the user's words were witnessed into.
     sources.add(written.as_deref());
-    // FIX 8132: the reply is bound, before generation, to the conversation
-    // its own turn is written into, so its newcomer wakes and every
-    // publication check read the conversation that receives its text: the
-    // destination the assistant's turn below writes to, the request's ref,
-    // resolved once above (`origin`), never the user's witnessed MESSAGE,
-    // which a pre-hook may have moved. A destination in no conversation
-    // answers standalone, as before; one whose placement was not read binds
-    // the destination itself, where its stream is written anyway. Only a
-    // ref that names nothing is refused, before any model is called: no
-    // conversation would hold its reply.
-    let destination = origin.ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
     let conversation = crate::server::blocking(|| vault.record_container(destination))
         .unwrap_or(Some(destination));
     // The caller's view of the receipt, which a hook may have redacted.

@@ -73,6 +73,8 @@ impl EmbeddedClient {
             shared.vault().hold_checkpoint_root_signer(Arc::new(issuer));
         }
         let actor = shared.vault().ensure_embedded_owner_actor()?;
+        shared.measure_open_limits();
+        let limit_questions = shared.limit_questions.clone();
         let client = Self {
             shared,
             actor,
@@ -81,6 +83,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open: None,
             read_proof: None,
+            limit_questions,
         };
         Ok((client, HostRootProfile::from_core(profile)))
     }

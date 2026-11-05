@@ -42,6 +42,7 @@ import type {
   HostRootProfile,
   MemoryPack,
   MemoryExport,
+  NativeLimitQuestion,
   OpenOptions,
   RecallOptions,
   WitnessReceipt,
@@ -392,6 +393,16 @@ export class Oneiron {
    */
   lastReceiptRef(): string | null {
     return this.#client.lastReceiptRef() ?? null
+  }
+
+  /**
+   * The engine `[limits]` rows this client's own vault crossed, latest per
+   * row: the row's key plus what it stood at and what the work measured,
+   * both exact (`bigint`, never `number`). `null` on a remote, attached, or
+   * rebound view; an empty list where no row crossed yet.
+   */
+  nativeLimitQuestions(): NativeLimitQuestion[] | null {
+    return this.#call(() => this.#client.nativeLimitQuestions()) ?? null
   }
 
   /**

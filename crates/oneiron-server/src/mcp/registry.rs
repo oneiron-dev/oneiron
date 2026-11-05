@@ -499,6 +499,18 @@ impl McpConnectorActorRegistry {
             .retain(|(owner, _), _| owner != connection);
     }
 
+    /// The STREAM connections [`prune_revoked_or_expired`](Self::prune_revoked_or_expired)
+    /// would drop at `now`: one per revoked-or-expired record, derived from
+    /// the fingerprint exactly as the prune's own teardown does. Callers
+    /// collect this BEFORE the prune, which drops the records it names.
+    pub fn stale_connection_ids(&self, now: u64) -> Vec<StreamConnectionId> {
+        self.records
+            .iter()
+            .filter(|(_, record)| record.is_stale(now))
+            .map(|(fingerprint, _)| fingerprint.stream_connection())
+            .collect()
+    }
+
     pub fn prune_revoked_or_expired(&mut self, now: u64) -> usize {
         let stale = self
             .records

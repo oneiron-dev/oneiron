@@ -20,7 +20,7 @@ pub(super) fn classify(
             Some(member.to_hex()),
             *expires_at,
         ),
-        AgentGrantChange::Revoke => (AuthorityAuditEventKind::Revoke, "revoke", None, None),
+        AgentGrantChange::Revoke { .. } => (AuthorityAuditEventKind::Revoke, "revoke", None, None),
     };
     (
         kind,

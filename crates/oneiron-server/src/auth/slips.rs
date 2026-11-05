@@ -394,13 +394,6 @@ impl CoreAuth {
                 .unwrap_or(false);
         }
         self.jti().is_none_or(|jti| {
-            if jti.len() == 64 {
-                return parse_slip_id(jti).is_ok_and(|id| {
-                    vault
-                        .capability_slip_id_is_live_in_txn(txn, &id)
-                        .unwrap_or(false)
-                });
-            }
             vault
                 .sync_state_get_in_write_txn(txn, &super::revoked_token_jti_key(jti))
                 .is_ok_and(|row| row.is_none())

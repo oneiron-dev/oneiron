@@ -200,9 +200,9 @@ impl SessionBinding<'_> {
                     replay_generation_matches(current.as_ref(), expected)?;
                     match write {
                         RoutedDbs::Base(vault) => {
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)?;
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
                         }
                         RoutedDbs::Session(_) => {
                             REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)

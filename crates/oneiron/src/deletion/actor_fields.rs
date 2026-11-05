@@ -96,7 +96,9 @@ pub(super) fn erase_actor_fields_in_txn(
             vault, wtxn, actor, act,
         )?;
     }
-    if hard && !names_no_actor(vault, wtxn, actor)? {
+    // The accepted hard erase must reach reply bodies before the actor scrub
+    // removes their authenticated author. Its marker may be written later.
+    if !names_no_actor(vault, wtxn, actor)? {
         crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(
             vault,
             wtxn,

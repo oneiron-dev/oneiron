@@ -64,6 +64,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            coach_heal_wake: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),

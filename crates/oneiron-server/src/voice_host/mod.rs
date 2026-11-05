@@ -263,13 +263,22 @@ impl VoiceHost {
         };
         let handle = match &self.speculative_auth {
             Some(auth)
-                if auth.managed_owner().is_none()
+                if (auth.managed_owner().is_none()
                     && !auth.is_host_holder()
                     && auth.verified_slip().is_some()
-                    && auth.actor_class() == Some("human") =>
+                    && auth.actor_class() == Some("human"))
+                    || (auth.is_owner_grade()
+                        && auth.verified_slip().is_none()
+                        && auth.invocation_slip().is_none()
+                        && auth.actor_class() == Some("human")
+                        && auth.managed_owner().is_some_and(|holder| {
+                            auth.principal_ref()
+                                .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                                == Some(holder)
+                        })) =>
             {
-                // The owner door proved this ordinary slip's same principal
-                // as Human. The payer is not a source of read identity.
+                // The owner door proved this ordinary slip or managed
+                // attestation's same Human principal, not the payer's class.
                 let actor = auth
                     .principal_ref()
                     .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
