@@ -185,7 +185,7 @@ pub(in crate::runtime_hooks) fn judge(
         }
     };
     let usage = HookBodyUsage {
-        fuel_used: Some(run.fuel_used),
+        fuel_used: run.fuel_used,
         host_calls: Some(run.host_calls),
     };
     match accept(binding, &run.outcome_json) {
