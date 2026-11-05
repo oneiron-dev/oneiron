@@ -62,7 +62,7 @@ mod host;
 mod render;
 pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
-use evidence::collect_evidence;
+use evidence::{collect_evidence, evidence_text};
 use render::render_evidence;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
