@@ -124508,6 +124508,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/journal.rs",
+     "purpose": "A receiving end's whole-set publication (FIX 7543)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -124524,7 +124534,7 @@
      "path": "src/managed/vm_outbox/local.rs",
      "purpose": "One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 24
      }
     },
     {
@@ -124565,7 +124575,7 @@
      "path": "src/managed/vm_outbox/store.rs",
      "purpose": "One end's durable carrier state: a record per member and its next transfer id, in a directory only that…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 24
      }
     },
     {
@@ -124575,7 +124585,7 @@
      "path": "src/managed/vm_outbox/transfer.rs",
      "purpose": "The carrier's session on one connection: the hello, then turns",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -129772,7 +129782,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 101,
+     "files": 102,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129956,7 +129966,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1564,
+   "source_files": 1565,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -138414,9 +138424,9 @@
      "path": "src/lib/vm_outbox.rs",
      "purpose": "A vault VM's outbox carrier (FIX 5235, FIX 5467): one persistent, bidirectional stream on vsock port…",
      "surface": {
-      "const": 5,
+      "const": 6,
       "enum": 8,
-      "fn": 13,
+      "fn": 15,
       "re-export": 2,
       "struct": 2
      }
