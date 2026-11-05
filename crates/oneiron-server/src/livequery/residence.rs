@@ -18,6 +18,8 @@ mod pad_objects;
 mod pad_refill;
 mod pages;
 mod search;
+mod work;
+pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
 use base64::Engine;
 use oneiron::EntityId;
@@ -439,7 +441,7 @@ pub(super) fn run(
                 bundle_commit::bundle_commit(server, auth, peer, request.params)
             }
             "residence.bundle.commit.status" => {
-                bundle_commit::bundle_commit_status(server, peer, request.params)
+                bundle_commit::bundle_commit_status(server, auth, peer, request.params)
             }
             "residence.bundle.list" => bundle_list(server, peer, request.params),
             "residence.bundle.get" => bundle_get(server, peer, request.params),

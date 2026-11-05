@@ -69,18 +69,19 @@ impl SyncServer {
         &self,
     ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
+        let embedder = self.embedder_slot();
         let mut report = crate::owner::embedder::EmbedderReport::served(
-            self.embedder.as_deref().map(EmbedderSlot::config),
+            embedder.as_deref().map(EmbedderSlot::config),
             &doctor,
-            self.embedder.as_deref().map(EmbedderSlot::dense_state),
+            embedder.as_deref().map(EmbedderSlot::dense_state),
         );
-        report.warning = self.embedder.as_deref().and_then(EmbedderSlot::ref_warning);
+        report.warning = embedder.as_deref().and_then(EmbedderSlot::ref_warning);
         Ok(report)
     }
 
     /// The active provider's identity, or `None` at rung 0.
     pub(crate) fn embedder_descriptor(&self) -> Option<EmbedderDescriptor> {
-        let slot = self.embedder.as_ref()?;
+        let slot = self.embedder_slot()?;
         Some(EmbedderDescriptor {
             provider: slot.provider().as_str(),
             model_id: slot.config().model_id.clone(),
@@ -94,7 +95,7 @@ impl SyncServer {
     /// provider runs a forward pass. Neither may happen on a runtime worker
     /// thread, so async callers take [`Self::embed_query_off_runtime`].
     pub(crate) fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedQueryRefusal> {
-        let Some(slot) = self.embedder.as_ref() else {
+        let Some(slot) = self.embedder_slot() else {
             return Err(EmbedQueryRefusal::NotConfigured);
         };
         slot.embed_query(text)
@@ -136,7 +137,7 @@ impl SyncServer {
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        let slot = self.embedder.as_ref()?;
+        let slot = self.embedder_slot()?;
         let idle = Duration::from_millis(slot.config().idle_interval_ms.max(1));
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
@@ -217,8 +218,7 @@ impl SyncServer {
         let built = tokio::task::spawn_blocking(move || {
             let _admission = admission;
             let slot = server
-                .embedder
-                .as_ref()
+                .embedder_slot()
                 .ok_or(oneiron::Error::InvariantViolation(
                     "embedding worker started without an embedder",
                 ))?;
@@ -360,7 +360,7 @@ impl SyncServer {
         let server = Arc::clone(self);
         let readmitted = tokio::task::spawn_blocking(move || {
             let _admission = admission;
-            let slot = server.embedder.as_ref()?;
+            let slot = server.embedder_slot()?;
             Some(slot.ensure_ready_for(server.vault()).map(drop))
         })
         .await;
@@ -371,7 +371,7 @@ impl SyncServer {
 
     fn log_pass(&self, report: &PendingEmbeddingReconcileReport) {
         let truncations = self
-            .embedder
+            .embedder_slot()
             .as_deref()
             .and_then(crate::embedder::EmbedderSlot::truncations)
             .unwrap_or(0);
@@ -441,8 +441,7 @@ impl SyncServer {
         published: impl FnMut(oneiron::memory::IndexedPublication),
     ) -> oneiron::Result<oneiron::memory::IndexedRefreshReport> {
         let slot = self
-            .embedder
-            .as_ref()
+            .embedder_slot()
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
             provider: slot.ensure_ready_for(self.vault())?,
