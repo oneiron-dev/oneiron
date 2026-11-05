@@ -1283,7 +1283,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -1406,6 +1406,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/skill_default.rs",
+     "purpose": "Default-hub workflow references, with the existing derived fallback",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1510,7 +1520,7 @@
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -3749,7 +3759,7 @@
      "path": "src/authority/current_scope.rs",
      "purpose": "The current scope a pact and a guest's credential stand in (Phase2 C)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -4976,14 +4986,15 @@
       "CapabilitySlip",
       "SignedCaveat",
       "SlipCaveat",
+      "TrustedContactCredential",
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 21,
-      "fn": 15,
-      "struct": 4
+      "crate-vis": 24,
+      "fn": 19,
+      "struct": 5
      }
     },
     {
@@ -5146,7 +5157,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 25,
-      "fn": 23,
+      "fn": 24,
       "re-export": 3
      }
     },
@@ -17634,7 +17645,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/result_read/query.rs",
@@ -18350,6 +18361,16 @@
      "purpose": "Small value decoders and hashing helpers for code-run records",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/task_settlement.rs",
+     "purpose": "Native task-decline outcomes captured by a code run",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -24668,10 +24689,20 @@
      "path": "src/counterparty_contact/trusted_contact.rs",
      "purpose": "Trusted contact (OF-527): a person names another PERSON to hear a crisis notice",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 11,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/trusted_contact_credential.rs",
+     "purpose": "FIX 4325: the native credential slice for a trusted contact without an app account: minting their…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -91608,7 +91639,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91839,9 +91870,9 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 179,
+     "files": 180,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
@@ -92021,7 +92052,7 @@
      "purpose": "—"
     },
     "counterparty_contact": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93150,7 +93181,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6518,
+   "source_files": 6521,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93312,7 +93343,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 93,
+      "const": 97,
       "re-export": 1,
       "type": 1
      }
@@ -93534,7 +93565,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -93827,6 +93858,19 @@
       "const": 5,
       "enum": 1,
       "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrustedContactSlipBinding"
+     ],
+     "path": "src/authority/trusted_contact_binding.rs",
+     "purpose": "FIX 4325: the trusted-contact binding a contact-bound slip carries, signed in its claims beside `grant_ref`…",
+     "surface": {
+      "fn": 1,
       "struct": 1
      }
     },
@@ -94152,7 +94196,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94217,7 +94261,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 58,
+   "source_files": 59,
    "test_files": 1
   },
   "oneiron-base": {
@@ -101841,7 +101885,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExportKey",
@@ -101858,7 +101902,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 7,
+      "re-export": 2,
       "struct": 7
      }
     },
@@ -101870,6 +101915,36 @@
      "purpose": "A chart at export, by series identity: a bound chart's changed data written over its retained chart part…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/evidence.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/payload.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/projector.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -103313,7 +103388,7 @@
      "purpose": "A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its…"
     },
     "live": {
-     "files": 63,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103411,9 +103486,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 7,
+   "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 170,
+   "source_files": 173,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -112201,7 +112276,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -112272,6 +112347,16 @@
      "purpose": "Chat generation and witness hook boundaries",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/model_call.rs",
+     "purpose": "Model-call evidence from the actual answering leg, independent of delivery",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -129358,7 +129443,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 666,
+     "files": 667,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129871,7 +129956,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1563,
+   "source_files": 1564,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
