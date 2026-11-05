@@ -240,6 +240,11 @@ pub(crate) struct EmbeddedCert {
 }
 
 impl EmbeddedCert {
+    /// The already-admitted certificate, borrowed without another decode.
+    pub(crate) fn certificate(&self) -> &x509_cert::Certificate {
+        &self.cert
+    }
+
     /// A test fixture's certificate, held on no ledger.
     #[cfg(test)]
     pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {

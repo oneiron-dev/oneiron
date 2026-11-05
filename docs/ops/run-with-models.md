@@ -227,6 +227,17 @@ made private at start. A value the supervisor also passes on argv
 `--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
 value.
 
+The supervisor can select a separate-user credential broker on managed argv
+with `--broker-socket <absolute-path> --broker-uid <uid>`, or a same-user child
+with `--broker-program <absolute-path>` and repeatable
+`--broker-extra-roots <absolute-pem-path>`. The socket and UID are a pair;
+child program and roots cannot be combined with that pair. These flags use the
+same checks as `[models.broker]`, and their binding stands after the owner's
+model settings settle. With none, the existing same-user default stays in place.
+These are engine flags; the supervisor must supply paths reachable by the child.
+They do not add a vault VM broker transport. Plain serve keeps its file-based
+`[models.broker]` configuration.
+
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
 names the field and never its value:
