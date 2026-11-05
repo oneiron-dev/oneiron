@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 142] = [
+    pub const ALL: [Self; 143] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -148,6 +148,7 @@ impl EngineLimit {
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
     ];
 
     /// The config key that sets the row.
@@ -295,6 +296,7 @@ impl EngineLimit {
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
         }
     }
 
@@ -523,6 +525,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
         }
     }
 }
