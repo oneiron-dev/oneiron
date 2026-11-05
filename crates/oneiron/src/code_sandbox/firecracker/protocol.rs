@@ -348,8 +348,13 @@ fn receive_proposals_cancellable(
                 // The host call is admitted only while the step runs, and a
                 // cancel that lands while it runs drops its answer.
                 cancel.check()?;
-                let accepted = transport
-                    .is_some_and(|transport| proxy.forward_read(vm, &call, transport).is_ok());
+                let accepted = match transport {
+                    Some(transport) => proxy.forward_read(vm, &call, transport).is_ok(),
+                    None => {
+                        proxy.record_transport_unavailable(vm, &call);
+                        false
+                    }
+                };
                 cancel.check()?;
                 write_frame(&mut stream, &HostFrame::Receipt { accepted }, deadline)?;
             }
