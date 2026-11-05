@@ -1,5 +1,5 @@
 //! Owner-proof model steps; HTTP, SDK and MCP reach the same typed door.
-//! A saved terminal answers before fresh provider admission (FIX 8180).
+//! Saved terminals and response checkpoints answer before fresh provider admission.
 use std::sync::Arc;
 
 use oneiron::llm::model_step::{
@@ -35,13 +35,18 @@ async fn submit(
     input: &mut ModelStepSubmit,
 ) -> MemoryResult<ModelStepReceipt> {
     let owner = owner_proof(auth, server, "ai.steps.submit")?;
-    // A saved terminal answers before any fresh provider admission (FIX
-    // 8180): completed work needs no model, route or meter. Anything else,
-    // and any failed lookup, takes the admission below exactly as before.
+    // Saved terminals and actual response checkpoints need no new model,
+    // route or meter (FIX 8180/8512). A miss or unavailable lookup keeps
+    // the admitted path below unchanged.
     let saved = {
         let (server, owner, probe) = (Arc::clone(server), owner.clone(), input.clone());
+        let runtime = tokio::runtime::Handle::current();
         super::clock_ingress::run_blocking(move || {
-            model_step::saved_terminal_as_owner(server.vault(), &owner, &probe)
+            runtime.block_on(model_step::resume_saved_as_owner(
+                server.vault(),
+                &owner,
+                &probe,
+            ))
         })
         .await
     };

@@ -115,6 +115,7 @@ mod lifted_view;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
+mod message_parts;
 mod message_result;
 mod note_tombstone;
 mod notes;
@@ -379,7 +380,8 @@ pub use witness::{
     StreamSyncVisibility,
 };
 pub use witness::{
-    MessageReplyAssertions, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
+    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

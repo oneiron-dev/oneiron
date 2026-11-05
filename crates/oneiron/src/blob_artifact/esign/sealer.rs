@@ -15,8 +15,22 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::render::{PdfPreparation, PreparedEsignPdf};
+
 /// A PAdES baseline profile. The serde names are the seal organ's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SealProfile {
     BaselineB,
@@ -67,11 +81,28 @@ pub struct EsignSealed {
     pub self_verify: EsignVerdict,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The native sealer's profile-degradation codes, carried without prose parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SealDegradeReason {
+    TimestampUnavailable,
+    ValidationMaterialUnavailable,
+    DocumentTimestampUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SealDegrade {
     pub requested: SealProfile,
     pub achieved: SealProfile,
-    pub reason: String,
+    pub reason: SealDegradeReason,
+}
+
+/// One verified item's requested profile, achieved profile and complete shortfall evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SealProfileEvidence {
+    pub requested: SealProfile,
+    pub achieved: SealProfile,
+    pub degraded: Vec<SealDegrade>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,4 +196,21 @@ pub trait EsignSealer: Send + Sync {
     /// See [`EsignSealerError`]; a PDF whose signature fails is a verdict,
     /// not an error.
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError>;
+
+    /// Prepares one immutable original PDF for the seal in an isolated
+    /// trusted process. `None` keeps the engine's trusted preparation for
+    /// a sealer whose code may not choose the document the key signs.
+    /// `chain`/`trail` are the engine audit replay's checked output, which
+    /// the caller ran: the isolated work takes them as given and never
+    /// replays the audit itself.
+    ///
+    /// # Errors
+    /// See [`EsignSealerError`].
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: &[String],
+    ) -> Result<Option<PreparedEsignPdf>, EsignSealerError>;
 }
