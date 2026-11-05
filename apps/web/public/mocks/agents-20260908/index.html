@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agents room · mocks 2026-09-08</title>
+<script>
+(function(){var h=document.documentElement,t=null;try{t=localStorage.getItem('oneiron-theme')}catch(e){}h.dataset.theme=t==='light'?'light':'dark';})();
+</script>
+<link rel="stylesheet" href="mock.css">
+<style>
+body.index { display: block; height: auto; overflow: auto; padding: 56px 0 80px; }
+.sheet { width: min(720px, calc(100vw - 48px)); margin: 0 auto; background: var(--bg-elevated); box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule); border-radius: 8px; padding: 28px 32px 30px; display: flex; flex-direction: column; gap: 18px; }
+.sheet h1 { font-family: var(--serif); font-size: 22px; font-weight: 550; color: var(--silver-1); letter-spacing: -0.01em; }
+.lead { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
+.pages { display: flex; flex-direction: column; }
+.page { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 16px; padding: 10px 8px; margin: 0 -8px; border-radius: 5px; transition: background 160ms ease; }
+.page:hover { background: var(--bg-well); }
+.page .k { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); padding-top: 3px; }
+.page .t { font-family: var(--serif); font-size: 15px; color: var(--silver-1); }
+.page .w { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+.keys { display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 11px; color: var(--silver-4); padding-top: 4px; }
+.keys b { font-weight: 400; color: var(--silver-2); }
+</style>
+</head>
+<body class="index">
+<div class="sheet">
+  <h1>The agents room, six ways</h1>
+  <p class="lead">The Hokuei day, told the same way on every page. Night is the default. Compare by feel; every page carries the same roster, composer and ground line as the app.</p>
+  <div class="pages">
+    <a class="page" href="m1-rail.html"><span class="k">m1</span><span><span class="t">The rail</span><br><span class="w">Eiri’s room with the work rail open: runs unfolded to their helpers, the side conversations, the fold. Head as one line, your turns indented. The canonical composition.</span></span></a>
+    <a class="page" href="m2-collapsed.html"><span class="k">m2</span><span><span class="t">The edge</span><br><span class="w">The same room with the rail folded to a hairline and its rotated count, no head at all, your turns in mono. Both alternatives in one image.</span></span></a>
+    <a class="page" href="m3-house.html"><span class="k">m3</span><span><span class="t">The house</span><br><span class="w">Everyone and you. A face and a name once per change of speaker, Antevon’s handoff lines, the rail grouped by agent.</span></span></a>
+    <a class="page" href="m4-run.html"><span class="k">m4</span><span><span class="t">A run opened</span><br><span class="w">The COO intro as its own thread: the way back, the title line, the helpers nested under Eiri’s words, the gate with the inbox’s verbs, the open bar in the rail.</span></span></a>
+    <a class="page" href="m5-panel.html"><span class="k">m5</span><span><span class="t">The panel</span><br><span class="w">The floating chat over the vault, 420 wide. The rail folds into run cards above the composer; the room act leads to the page.</span></span></a>
+    <a class="page" href="m6-free.html"><span class="k">m6</span><span><span class="t">Two inks</span><br><span class="w">A free composition with one risk: the voice is the ink, and the runs print where they were asked for. Three mono lines at the foot explain it.</span></span></a>
+  </div>
+  <div class="keys">
+    <span><b>t</b> · day and night</span>
+    <span><b>r</b> · the rail, open or at the edge (where a page has one)</span>
+    <span>the corner switches sit bottom left, in the ground line: voice · head · rail. picks are remembered per page.</span>
+  </div>
+</div>
+</body>
+</html>
