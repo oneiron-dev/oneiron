@@ -46,8 +46,10 @@ body-source history. Once the host has a response or tool result to save, its
 first publication reserves the existing content-free fence before staging any
 bytes. A failed first save therefore cannot restart paid work as Fresh; provider
 failures before any save keep the ordinary retry path. Their queue hold and content-free fence share the native
-base writer; readers wait for a prior writer's segment publication before
-treating a missing session row as unavailable. The fence carries the current
+base writer. The session segment publishes immediately after that base commit,
+before the write door's notifications or debt payments can reacquire a writer.
+Readers wait for a prior writer's segment publication before treating a missing
+session row as unavailable. The fence carries the current
 claim generation while session metadata keeps its last saved generation. A
 session close or lost ephemeral payload is unavailable, never a fresh call or
 a fallback to the earlier canonical transcript. A flip to on-record does not
