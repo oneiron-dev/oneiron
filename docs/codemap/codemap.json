@@ -17483,7 +17483,7 @@
      "purpose": "Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and…",
      "surface": {
       "const": 6,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 8,
       "fn": 19,
       "struct": 21,
@@ -29148,6 +29148,16 @@
       "fn": 1,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/outcomes/setting_fit.rs",
+     "purpose": "Integer health-threshold checks derived from an owner's frozen card label",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79921,6 +79931,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/frames/shallow_tail.rs",
+     "purpose": "Rebuild held retained operations without changing a shallow snapshot's root",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -89848,7 +89868,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "crate-vis": 3,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -89960,18 +89980,22 @@
      "path": "src/world_keys/bundle/publication.rs",
      "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SealedPublicationGrant"
+     ],
      "path": "src/world_keys/bundle/publication_grant.rs",
      "purpose": "Publication-scoped outer access for the install the owner asked to publish (FIX 4785)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 14,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -92033,7 +92057,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 198,
+     "files": 199,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92873,7 +92897,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 344,
+     "files": 345,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93085,7 +93109,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6512,
+   "source_files": 6514,
    "test_files": 895
   },
   "oneiron-android": {
