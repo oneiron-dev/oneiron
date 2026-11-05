@@ -79,7 +79,9 @@ impl ProjectedFrame {
             .iter()
             .flatten()
             .filter_map(|row| row.body.as_ref())
-            .fold(0u64, |bytes, body| bytes.saturating_add(body.capacity() as u64));
+            .fold(0u64, |bytes, body| {
+                bytes.saturating_add(body.capacity() as u64)
+            });
         frame.memory.materialized(0, backing.saturating_add(bodies));
         frame
     }
