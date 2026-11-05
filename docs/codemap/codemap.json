@@ -49897,7 +49897,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SessionWitnessContext",
@@ -49906,6 +49906,7 @@
      "path": "src/memory/witness/program/caller.rs",
      "purpose": "Caller-bound session speech",
      "surface": {
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -49921,6 +49922,7 @@
      "path": "src/memory/witness/program/caller/binding.rs",
      "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
      "surface": {
+      "crate-vis": 5,
       "fn": 3,
       "struct": 1
      }
@@ -50174,9 +50176,9 @@
      "path": "src/memory/witness/stream/mod.rs",
      "purpose": "Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -50238,11 +50240,29 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "SessionMessageStream",
+      "SessionStreamEnd",
+      "SessionStreamOutcome",
+      "SessionStreamPartial"
+     ],
+     "path": "src/memory/witness/stream/session.rs",
+     "purpose": "Native caller-session assistant RAM streaming: one fresh Companion reply",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 21,
       "fn": 2
      }
     },
@@ -51997,7 +52017,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OffRecordPromoteReceipt",
@@ -57713,6 +57733,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/dependency_registration.rs",
+     "purpose": "Ownership of one current dependency-index registration",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57991,7 +58021,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 9
      }
     },
@@ -69136,6 +69166,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OfferAnswerReply",
       "OfferAnswerRequest",
       "OfferListRequest",
       "OfferPassRef",
@@ -69148,8 +69179,8 @@
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 8,
-      "struct": 8
+      "fn": 9,
+      "struct": 9
      }
     },
     {
@@ -91745,7 +91776,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 356,
+     "files": 357,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91885,7 +91916,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92445,9 +92476,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 146,
+   "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6458,
+   "source_files": 6460,
    "test_files": 895
   },
   "oneiron-android": {
@@ -104831,7 +104862,7 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -104917,7 +104948,8 @@
      "path": "src/wire.rs",
      "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 1,
+      "fn": 3
      }
     }
    ],
@@ -129926,7 +129958,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -129962,7 +129994,7 @@
      "path": "src/session_overlay/overlay/held.rs",
      "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -134254,6 +134286,7 @@
       "Offer",
       "OfferAnswer",
       "OfferAnswerRecord",
+      "OfferAnswerReply",
       "OfferAnswerRequest",
       "OfferCandidate",
       "OfferCandidateQuery",
@@ -136232,7 +136265,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1110,
-      "struct": 3376
+      "struct": 3377
      }
     },
     {
