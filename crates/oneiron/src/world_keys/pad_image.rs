@@ -283,12 +283,12 @@ pub(crate) fn plan_archived_pads(
 ///
 /// Storage faults.
 pub(crate) fn drop_pad_rows_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     rows: &[(EntityId, WorldKeyId)],
 ) -> Result<()> {
     for (id, _) in rows {
-        crate::batch::deindex_entity(store, wtxn, id)?;
+        crate::batch::deindex_entity(write, wtxn, id)?;
     }
     Ok(())
 }

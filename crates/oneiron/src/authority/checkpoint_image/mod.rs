@@ -69,8 +69,8 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// that ends keeps no plaintext scope, and one keyed digest over two scopes suspends the pact (FIX
 /// 7907). 18: a replay delta keeps a map field's changed entries alone (FIX 11262). 19: anchors
 /// sign joins (FIX 8498). 20: the owner work fold keeps the owner's export supplement import marks
-/// (FIX 12062).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 20;
+/// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 21;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
