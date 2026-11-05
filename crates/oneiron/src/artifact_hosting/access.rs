@@ -79,6 +79,25 @@ impl Vault {
         token: Option<&str>,
         principal: Option<EntityId>,
     ) -> Result<Option<ArtifactServedFile>> {
+        self.resolve_authorized_artifact_file_with_reader(
+            artifact,
+            selector,
+            path,
+            token,
+            principal,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(super) fn resolve_authorized_artifact_file_with_reader(
+        &self,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        path: &str,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Option<ArtifactServedFile>> {
         validate_artifact_id(artifact)?;
         validate_artifact_path(path)?;
         let txn = self.store.env.read_txn()?;
@@ -121,7 +140,7 @@ impl Vault {
                 continue;
             }
             let read = AuthorizedArtifactRead { target, selector };
-            return self.read_authorized_artifact_in_txn(&txn, artifact, path, read);
+            return self.read_authorized_artifact_in_txn(&txn, artifact, path, read, reader);
         }
         Ok(None)
     }
@@ -254,6 +273,7 @@ impl Vault {
         artifact: &str,
         path: &str,
         read: AuthorizedArtifactRead,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<ArtifactServedFile>> {
         let target = read.target;
         // The export's taint is read again in this view before any byte is
@@ -302,11 +322,12 @@ impl Vault {
                 } else {
                     let asset =
                         crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
-                    let bytes = match self.sighted_body_file_in_txn(
+                    let bytes = match self.sighted_body_file_in_txn_with_reader(
                         txn,
                         &asset,
                         &entry.content_hash,
                         sight,
+                        reader,
                     )? {
                         Some(bytes) => bytes,
                         None => self.masked_whole_in_txn(
@@ -317,6 +338,7 @@ impl Vault {
                                 &entry.content_hash,
                             )?,
                             &entry.content_hash,
+                            reader,
                         )?,
                     };
                     (bytes, None, entry.content_hash)
@@ -336,8 +358,13 @@ impl Vault {
                 if path != "export" && path != "index.html" && path != serving.export_name {
                     return Ok(None);
                 }
-                let Some(bytes) =
-                    self.read_serving_blob_in_txn(txn, &artifact_id, &serving, sight)?
+                let Some(bytes) = self.read_serving_blob_in_txn_with_reader(
+                    txn,
+                    &artifact_id,
+                    &serving,
+                    sight,
+                    reader,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -371,16 +398,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         bytes: Vec<u8>,
         hash: &[u8; 32],
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Vec<u8>> {
         if blake3::hash(&bytes).as_bytes() != hash {
             return Err(Error::CorruptedIndex("artifact served content hash"));
         }
-        crate::store::file_key_masks::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
             &self.store,
             txn,
             bytes,
             Some(hash),
             crate::file_secret_marks::SecretSight::Masked,
+            reader,
         )
     }
 }

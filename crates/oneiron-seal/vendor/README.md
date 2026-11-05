@@ -115,3 +115,12 @@
     targets into the map instead of cloning them. Grammar, entry points, error
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
+  - Cooperative hosted container reads (FIX 7943/11549, partial): default no-op
+    `DecodeAdmission::checkpoint` reports native xref/object/stream positions;
+    controlled reads opt into sequential loading even when Rayon is compiled.
+    Pausing keeps the same native stack alive and returns `Ok` after resume;
+    it is not a terminal admission error or a serialized parser cursor.
+    The hosted inline and file-backed masks have an owned async continuation and one
+    worker; drop closes its handshake so the worker can unwind at a checkpoint.
+    Existing synchronous reads and memory-ledger admissions keep their defaults.
+    This adds no wall timeout and cannot preempt a single opaque codec unit.
