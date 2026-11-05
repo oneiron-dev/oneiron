@@ -14,7 +14,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
 use super::super::entity::{IngestCtx, Residence};
 use crate::entity_doc::{CarriedRecordDocument, RefinementOriginSource};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::sync::client::OwnDeviceImport;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes};
 use crate::sync::skill_docs::{SKILL_DOCS_MAP, affected_rows, selected_record_document};
@@ -57,6 +57,7 @@ struct ImportSpan {
     machine: EntityId,
     scope: Rc<()>,
     pairs: BTreeMap<EntityId, PairDigest>,
+    materializer_error: Option<Error>,
 }
 
 thread_local! {
@@ -74,6 +75,10 @@ impl Drop for Restore {
 
 /// Run beside, not instead of, the original MESSAGE import span. A nested
 /// import with no proof clears this span until that import returns too.
+/// The outer result reports only an actual materializer error in this span;
+/// the land closure's own value or result stays unchanged. An error does not
+/// undo Loro's import: its owner must discard the live window before ACK or
+/// persistence, as on its existing persist-failure path.
 /// This helper has no call sites until the cohesive pair door is complete.
 pub(in crate::sync) fn with_import<T>(
     vault: &Vault,
@@ -81,7 +86,7 @@ pub(in crate::sync) fn with_import<T>(
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     land: impl FnOnce() -> T,
-) -> T {
+) -> Result<T> {
     let span = import
         .filter(|_| key.world().is_none())
         .map(|import| ImportSpan {
@@ -90,10 +95,57 @@ pub(in crate::sync) fn with_import<T>(
             machine: import.machine(),
             scope: Rc::new(()),
             pairs: selected_pairs(doc, update),
+            materializer_error: None,
         });
     let _restore =
         Restore(RECORD_DOCUMENT_SPAN.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
-    land()
+    let landed = land();
+    let error = RECORD_DOCUMENT_SPAN.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .and_then(|span| span.materializer_error.take())
+    });
+    match error {
+        Some(error) => Err(error),
+        None => Ok(landed),
+    }
+}
+
+/// Retain the original failed entity transaction's error for this live import.
+/// Matching carrier data identifies the affected import; it grants no admission.
+/// The caller has already logged the error and keeps its original retry markers.
+pub(in crate::sync) fn record_document_materializer_failed(
+    vault: &Vault,
+    window: &str,
+    delta: &loro::event::MapDelta<'_>,
+    error: Error,
+) {
+    RECORD_DOCUMENT_SPAN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(span) = slot.as_mut() else {
+            return;
+        };
+        if span.vault != vault.store.env.path()
+            || span.window != window
+            || span.materializer_error.is_some()
+        {
+            return;
+        }
+        let affected = delta.updated.iter().any(|(key, value)| {
+            let Some(loro::ValueOrContainer::Value(LoroValue::Binary(raw))) = value else {
+                return false;
+            };
+            let Ok(entity) = EntityId::from_hex(key) else {
+                return false;
+            };
+            span.pairs
+                .get(&entity)
+                .is_some_and(|pair| pair.row == *blake3::hash(raw.as_ref()).as_bytes())
+        });
+        if affected {
+            span.materializer_error = Some(error);
+        }
+    });
 }
 
 /// Facts of the actual selected transport. Private construction binds the

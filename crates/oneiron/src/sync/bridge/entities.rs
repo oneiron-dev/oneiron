@@ -400,6 +400,7 @@ pub(super) fn materialize_entities_with_changes(
             marked,
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
+        crate::sync::ingest::record_document_materializer_failed(vault, window_key, delta, e);
     }
     (
         committed,

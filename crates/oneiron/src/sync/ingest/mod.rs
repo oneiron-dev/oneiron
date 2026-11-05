@@ -29,6 +29,7 @@ pub(in crate::sync) use self::entity::{
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
 pub(crate) use self::own_device::VerifiedOwnDeviceLane;
 pub(crate) use self::own_device::record_document::SelectedRecordDocument;
+pub(in crate::sync) use self::own_device::record_document::record_document_materializer_failed;
 pub(in crate::sync) use self::own_device::with_own_device_import;
 pub use self::own_device::with_own_device_push;
 pub(crate) use self::peer_import::forget_stale_peer_origins;
