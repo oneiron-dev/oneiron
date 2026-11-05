@@ -10,6 +10,9 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
+mod frontier;
+mod native;
+pub(crate) use native::{capture_native_note_in_txn, finish_native_note_publication_in_txn};
 mod history;
 use history::{
     RevisionDocument, common_binding, generic_binding, generic_revision_raw, revision_document,
