@@ -6,7 +6,9 @@
 //!
 //! - `record/<row>`: the policy id the row is bound to;
 //! - `policy/<policy>/<revision>`: one revision of a policy, the revision
-//!   spelled in sixteen hex digits.
+//!   spelled in sixteen hex digits;
+//! - `withheld/<row>`: the row left the window after it travelled, and the
+//!   machine that withheld it (none for a vault's founding install).
 
 use super::{SourceAudienceKind, SourceAudiencePolicy};
 use crate::EntityId;
@@ -16,6 +18,8 @@ use crate::error::{Error, Result};
 const RECORD: &str = "record/";
 /// One revision of a policy: `policy/<policy>/<revision>`.
 const POLICY: &str = "policy/";
+/// A row withheld after it travelled: `withheld/<row>`.
+const WITHHELD: &str = "withheld/";
 /// The hex digits a revision is spelled in.
 const REVISION_DIGITS: usize = 16;
 
@@ -28,6 +32,7 @@ fn refused(reason: &'static str) -> Error {
 pub(crate) enum CarrierKey {
     Record(EntityId),
     Policy(EntityId, u64),
+    Withheld(EntityId),
 }
 
 /// `hex` as an id, when it is the id's canonical spelling.
@@ -39,6 +44,9 @@ pub(crate) fn named(hex: &str) -> Option<EntityId> {
 pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
     if let Some(row) = map_key.strip_prefix(RECORD) {
         return named(row).map(CarrierKey::Record);
+    }
+    if let Some(row) = map_key.strip_prefix(WITHHELD) {
+        return named(row).map(CarrierKey::Withheld);
     }
     let (policy, revision) = map_key.strip_prefix(POLICY)?.split_once('/')?;
     if revision.len() != REVISION_DIGITS
@@ -55,6 +63,11 @@ pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
 /// The key of `row`'s binding.
 pub(crate) fn record_key(row: &EntityId) -> String {
     format!("{RECORD}{}", row.to_hex())
+}
+
+/// The key of `row`'s withholding marker.
+pub(crate) fn withheld_key(row: &EntityId) -> String {
+    format!("{WITHHELD}{}", row.to_hex())
 }
 
 /// The key of one revision of `policy`.
@@ -77,6 +90,11 @@ pub(crate) fn encode_policy(policy: &SourceAudiencePolicy) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(policy).map_err(|_| refused("a policy does not encode"))
 }
 
+/// A withholding marker's carried bytes: the machine that withheld the row.
+pub(crate) fn encode_withheld(by: Option<&EntityId>) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(&by).map_err(|_| refused("a withholding marker does not encode"))
+}
+
 /// One carried entry, decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Carrier {
@@ -87,6 +105,13 @@ pub(crate) enum Carrier {
     Policy {
         id: EntityId,
         policy: SourceAudiencePolicy,
+    },
+    /// The row left the window after it travelled: `by`, the machine that
+    /// withheld it, reads it by its own walk, and every other holder reads
+    /// it to no one until its carrier comes back.
+    Withheld {
+        row: EntityId,
+        by: Option<EntityId>,
     },
 }
 
@@ -116,6 +141,14 @@ pub(crate) fn carrier(map_key: &str, bytes: &[u8]) -> Result<Carrier> {
                 return Err(refused("a thread policy of itself"));
             }
             Ok(Carrier::Policy { id, policy })
+        }
+        CarrierKey::Withheld(row) => {
+            let by: Option<EntityId> = rmp_serde::from_slice(bytes)
+                .map_err(|_| refused("a withholding marker does not decode"))?;
+            if encode_withheld(by.as_ref())? != bytes {
+                return Err(refused("a withholding marker not in its canonical form"));
+            }
+            Ok(Carrier::Withheld { row, by })
         }
     }
 }
