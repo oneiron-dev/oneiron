@@ -16,7 +16,7 @@ use crate::skill_attribution::ContributionTarget;
 /// The step `target`'s check regenerates among `capsules`, one run's
 /// captured steps; else why there is none.
 pub(super) fn target_step(
-    capsules: Vec<StepReplayCapsule>,
+    capsules: &[StepReplayCapsule],
     target: ContributionTarget,
 ) -> std::result::Result<StepReplayCapsule, ContributionReplayUnavailable> {
     let none = match target {
@@ -27,12 +27,13 @@ pub(super) fn target_step(
         ContributionTarget::UsedEdge { .. } => ContributionReplayUnavailable::NoExposure,
     };
     capsules
-        .into_iter()
+        .iter()
         .filter(|capsule| match target {
             ContributionTarget::LoadedSkill(_) => capsule.step == FIRST_STEP,
             ContributionTarget::UsedEdge { .. } => !target_slots(capsule, target).is_empty(),
         })
         .max_by_key(|capsule| (capsule.lease_generation, Reverse(capsule.step)))
+        .cloned()
         .ok_or(none)
 }
 
