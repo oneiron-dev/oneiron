@@ -409,10 +409,12 @@ fn failure_count_in_txn(
     txn: &RoTxn<'_>,
     actual: &AttemptRecord,
 ) -> Result<Option<usize>> {
-    let Some(located) = locate_in_txn(vault, txn, actual)? else {
+    let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
+        // An ordinal does not open session content. Its current canonical
+        // fence and the actual queue's history survive session close.
         return Ok(fence::check(&vault.store, txn, actual)?.then_some(actual.history.len()));
     };
-    if !located.generation_matches(actual) {
+    if row.attempt != actual.id || row.generation != actual.attempt_count {
         return Err(invalid("workflow checkpoint failure history is stale"));
     }
     Ok(Some(actual.history.len()))

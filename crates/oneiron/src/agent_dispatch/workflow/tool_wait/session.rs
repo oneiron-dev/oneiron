@@ -4,8 +4,8 @@ use heed::RoTxn;
 
 use super::{
     CheckpointContent, CheckpointRow, TABLE, WorkflowToolProgress, WorkflowToolTranscript,
-    body_owner, check_progress_in_txn, fence, identity_in_txn, invalid, key, output,
-    release_in_txn, validate_transcript,
+    body_owner, check_progress_in_txn, fence, identity_in_txn, invalid, key,
+    lineage_identity_in_txn, output, release_in_txn, validate_transcript,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResumePoint, HoldAttemptForHook};
 use crate::off_record::{OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -22,10 +22,17 @@ fn sessions_in_txn<'vault>(
     txn: &RoTxn<'_>,
     actual: &AttemptRecord,
 ) -> Result<Vec<(OffRecordSession<'vault>, OffRecordMode)>> {
-    let (actor, room) = identity_in_txn(vault, txn, actual)?;
+    let (actor, room) = lineage_identity_in_txn(vault, txn, actual)?;
     let Some(room) = room else {
         return Ok(Vec::new());
     };
+    // A positive deletion is a lost payload, not a new roster/join error
+    // that would keep an eligible fenced leaf waiting forever.
+    if crate::ports::owner_gone_in_txn(&vault.store, txn, &actor.entity_ref())?
+        || crate::ports::owner_gone_in_txn(&vault.store, txn, &room)?
+    {
+        return Ok(Vec::new());
+    }
     let subject = crate::workspace_roster::join_subject_for_actor_in_txn(
         vault,
         txn,
@@ -121,13 +128,15 @@ impl LocatedCheckpoint<'_> {
                 "workflow session checkpoint changed during its read",
             ));
         }
-        session
+        let transcript = session
             .checkpoint_body_in_txn(&view, txn, content.body_owner, &output(content))?
             .map(|bytes| {
                 serde_json::from_slice(&bytes)
                     .map_err(|_| invalid("stored workflow transcript does not decode"))
             })
-            .transpose()
+            .transpose()?;
+        session.admit_participant()?;
+        Ok(transcript)
     }
 }
 
@@ -137,6 +146,7 @@ pub struct WorkflowToolCheckpointWriter<'vault> {
     vault: &'vault Vault,
     leased: AttemptRecord,
     session: Option<(OffRecordSession<'vault>, SessionWriteRoute)>,
+    first_publication: bool,
 }
 
 impl<'vault> crate::agent_dispatch::AgentDispatcher<'vault> {
@@ -148,6 +158,7 @@ impl<'vault> crate::agent_dispatch::AgentDispatcher<'vault> {
             vault: self.vault,
             leased: leased.clone(),
             session: None,
+            first_publication: false,
         };
         let txn = self.vault.store.env.read_txn()?;
         let actual = super::runtime::leased_row(self.vault, &txn, leased)?;
@@ -190,6 +201,33 @@ impl<'vault> WorkflowToolCheckpointWriter<'vault> {
         Ok(())
     }
 
+    fn reserve_first_publication(&mut self) -> Result<()> {
+        if !self
+            .session
+            .as_ref()
+            .is_some_and(|(_, route)| route.target() == RouteTarget::Overlay)
+        {
+            return Ok(());
+        }
+        let mut txn = self.vault.store.env.write_txn()?;
+        let actual = super::runtime::leased_row(self.vault, &txn, &self.leased)?;
+        if !fence::check(&self.vault.store, &txn, &actual)? {
+            if TABLE
+                .get(&self.vault.store, &txn, &key(actual.id)?)?
+                .is_some()
+            {
+                return Err(invalid("workflow checkpoint is missing its fence"));
+            }
+            // The host has a paid response/tool result to retain. If its
+            // first session publication fails, a lost payload is never Fresh.
+            // Provider failures before save() still use ordinary retries.
+            fence::put(&self.vault.store, &mut txn, &actual)?;
+            txn.commit()?;
+            self.first_publication = true;
+        }
+        Ok(())
+    }
+
     pub fn save(
         &mut self,
         transcript: &WorkflowToolTranscript,
@@ -199,14 +237,21 @@ impl<'vault> WorkflowToolCheckpointWriter<'vault> {
         if progress.wait.is_some() != park_at.is_some() {
             return Err(invalid("workflow checkpoint wait and park disagree"));
         }
+        self.reserve_first_publication()?;
         // Recheck at publication: a room may have gone off record while its
         // model/tool ran. No canonical sink exists before this route check.
-        let txn = self.vault.store.env.read_txn()?;
-        let actual = super::runtime::leased_row(self.vault, &txn, &self.leased)?;
+        let vault = self.vault;
+        let txn = vault.store.env.read_txn()?;
+        let actual = super::runtime::leased_row(vault, &txn, &self.leased)?;
         self.bind_live_in_txn(&txn, &actual)?;
         drop(txn);
+        self.reserve_first_publication()?;
         if let Some((session, route)) = &self.session {
-            self.write_session(session, route, transcript, progress, park_at)
+            let result = self.write_session(session, route, transcript, progress, park_at);
+            if result.is_ok() {
+                self.first_publication = false;
+            }
+            result
         } else {
             if progress.no_record_at_arrival {
                 return Err(invalid("workflow no-record session is unavailable"));
@@ -247,7 +292,8 @@ impl<'vault> WorkflowToolCheckpointWriter<'vault> {
             check_progress_in_txn(self.vault, txn, &actual, actor, &progress)?;
             let k = key(actual.id)?;
             let prior = TABLE.get(&read, txn, &k)?;
-            if fence::check(&self.vault.store, txn, &actual)? != prior.is_some() {
+            let fenced = fence::check(&self.vault.store, txn, &actual)?;
+            if fenced != prior.is_some() && !(self.first_publication && fenced && prior.is_none()) {
                 return Err(invalid("workflow checkpoint payload is unavailable"));
             }
             let owner = body_owner(actual.id)?;
@@ -326,6 +372,6 @@ impl<'vault> WorkflowToolCheckpointWriter<'vault> {
         if park_at.is_some() {
             self.vault.store.notify_attempt_observers();
         }
-        Ok(())
+        session.admit_participant()
     }
 }

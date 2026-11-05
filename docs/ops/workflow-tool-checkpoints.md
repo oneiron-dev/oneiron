@@ -24,6 +24,42 @@ filter. Session origin is a separate property of the native read lane.
 Do not change this status flag to classify checkpoint inputs or route their
 bodies.
 
+## Current readers and off-record bodies
+
+Before opening a retained transcript, the claimed workflow rechecks positively
+typed content sources on all of its current member/binder read lanes, including
+private-thread and own-entry selection. Metadata and untyped erase dependencies
+do not create a new read grant or refusal. An eligible leaf whose content is no
+longer readable uses the existing Cancel intervention; it never restarts the
+paid call as a fresh request.
+
+A room workflow derives the actual join subject from its queue lineage, binds
+a live native stretch and captures that instance's route before the model call.
+When several unrecorded stretches exist, the first in native registry-key order
+is selected once. Each publication rechecks the live route and participant. A
+room that goes off record during a call routes the new checkpoint into its live
+session before any canonical body sink is used.
+
+Session checkpoints use the native overlay, BODY rows, session spill directory,
+body keys and close cleanup. They publish no canonical owned-body descriptor or
+body-source history. Once the host has a response or tool result to save, its
+first publication reserves the existing content-free fence before staging any
+bytes. A failed first save therefore cannot restart paid work as Fresh; provider
+failures before any save keep the ordinary retry path. Their queue hold and content-free fence share the native
+base writer; readers wait for a prior writer's segment publication before
+treating a missing session row as unavailable. The fence carries the current
+claim generation while session metadata keeps its last saved generation. A
+session close or lost ephemeral payload is unavailable, never a fresh call or
+a fallback to the earlier canonical transcript. A flip to on-record does not
+promote previously off-record bytes. Anonymous sessions keep their native
+`OffRecordTalkOnly` refusal for retained-content operations.
+
+The terminal queue transition ends checkpoint access. Existing native session
+close owns its overlay rows and spill lifetime; terminal clearing does not write
+actor, room, source or body-digest session facts into canonical metadata. The
+ordinary final workflow-output publisher is separate from this checkpoint
+mechanism; this repair does not claim to route every workflow output off record.
+
 ## Historical body sources
 
 A successful checkpoint publication records the actual actor, every known

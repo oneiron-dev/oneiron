@@ -352,6 +352,18 @@ fn identity_in_txn(
     txn: &RoTxn<'_>,
     actual: &AttemptRecord,
 ) -> Result<(crate::WriteActor, Option<EntityId>)> {
+    let (actor, room) = lineage_identity_in_txn(vault, txn, actual)?;
+    if crate::ports::owner_gone_in_txn(&vault.store, txn, &actor.entity_ref())? {
+        return Err(invalid("workflow checkpoint actor is erased"));
+    }
+    Ok((actor, room))
+}
+
+fn lineage_identity_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    actual: &AttemptRecord,
+) -> Result<(crate::WriteActor, Option<EntityId>)> {
     let queue = AttemptQueue::new(vault);
     let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&actual.payload)?;
     let root = payload
@@ -370,9 +382,6 @@ fn identity_in_txn(
     }
     let input = super::super::decode_agent_dispatch_input(&payload.input)?;
     let actor = agent_dispatch_run_actor(&input, actual.id)?;
-    if crate::ports::owner_gone_in_txn(&vault.store, txn, &actor.entity_ref())? {
-        return Err(invalid("workflow checkpoint actor is erased"));
-    }
     Ok((actor, input.room.map(|room| room.room)))
 }
 
