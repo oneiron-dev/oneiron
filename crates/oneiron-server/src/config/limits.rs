@@ -94,6 +94,10 @@ pub struct LimitsConfig {
     /// is refused with the typed 413 naming this bound, and raises the
     /// OF-520 question once per caller, door and field.
     pub retrieval_query_bytes: usize,
+    /// Original text bytes one semantic search may carry before its row
+    /// raises the OF-520 question. The query still runs whole past this row;
+    /// only the embedder's own input window cuts it.
+    pub semantic_query_bytes: usize,
     /// Stored body bytes one multi-row read decodes. A row past it is served
     /// with a `bodyOmitted` marker in place of its body; a single-entity read
     /// returns its body whole, whatever its size.
@@ -182,6 +186,7 @@ impl Default for LimitsConfig {
             // Format bounds far above a question or a page of bodies: 128
             // times the facade's 8 KiB query and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
+            semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
@@ -251,6 +256,7 @@ impl LimitsConfig {
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
+            semantic_query_bytes,
             projection_body_bytes,
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
@@ -418,6 +424,7 @@ impl LimitsConfig {
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.semantic_query_bytes, semantic_query_bytes);
         set(&mut self.projection_body_bytes, projection_body_bytes);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
         set(
@@ -678,6 +685,7 @@ impl LimitsConfig {
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("semantic_query_bytes", self.semantic_query_bytes as u64),
             ("projection_body_bytes", self.projection_body_bytes as u64),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),

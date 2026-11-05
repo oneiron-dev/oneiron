@@ -69,9 +69,6 @@ impl ReceiptArchive {
         out.write_all(MAGIC).map_err(|_| invalid())?;
         rmp_serde::encode::write_named(out, self).map_err(|_| invalid())
     }
-    pub(super) fn id(&self) -> Result<EntityId> {
-        id_of_bytes(&self.bytes()?)
-    }
     pub(super) fn matches_body(&self, body: &[u8]) -> bool {
         is_inert_holder(body)
             && digest(body) == self.body_sha256
@@ -163,5 +160,5 @@ pub(crate) fn receipt_archive_matches_id(bytes: &[u8], id: &EntityId) -> bool {
     decode(bytes)
         .ok()
         .flatten()
-        .is_some_and(|source| source.id().is_ok_and(|actual| actual == *id))
+        .is_some_and(|_| id_of_bytes(bytes).is_ok_and(|actual| actual == *id))
 }

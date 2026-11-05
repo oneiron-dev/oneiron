@@ -27,8 +27,9 @@ use super::estimate::{
     fold_value,
 };
 use super::evidence::{Anchor, CELL, CellRow, EvidenceRow, Observation, evidence_in_txn};
+use super::frozen::{FrozenFold, accumulate};
 use super::judge::{JudgeConversion, conversions_in_txn};
-use super::prior::cell_prior_in_txn;
+use super::prior::stored_prior_for_cell_in_txn;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
@@ -58,12 +59,18 @@ pub(crate) struct StoredEstimateClaim {
     pub(crate) estimate: Estimate,
     pub(crate) untested: bool,
     pub(crate) donor_tally: Option<(f64, f64)>,
+    pub(crate) frozen: Option<FrozenFold>,
 }
 
 const VALUE_KIND: &str = "estimate";
 
 impl StoredEstimateClaim {
-    fn new(cell: &LearningCell, estimate: &Estimate, tally: &OwnTally) -> Self {
+    fn new(
+        cell: &LearningCell,
+        estimate: &Estimate,
+        tally: &OwnTally,
+        frozen: Option<FrozenFold>,
+    ) -> Self {
         let donor_tally = match tally {
             OwnTally::Beta { wins, losses } => Some((*wins, *losses)),
             OwnTally::Mean { .. } | OwnTally::Counts { .. } => None,
@@ -75,6 +82,7 @@ impl StoredEstimateClaim {
             estimate: estimate.clone(),
             untested: estimate.untested(),
             donor_tally,
+            frozen,
         }
     }
 
@@ -115,6 +123,9 @@ pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> 
     }
     stored.cell.validate()?;
     stored.estimate.validate()?;
+    if let Some(frozen) = &stored.frozen {
+        frozen.validate_for(stored.form)?;
+    }
     if stored.form != stored.estimate.form() || !stored.cell.predicate.admits_form(stored.form) {
         return Err(Error::InvalidClaimBody(
             "a learning claim's form is its estimate's and its member's",
@@ -145,9 +156,39 @@ pub(crate) fn fold_cell_in_txn(
     digest: &[u8; 32],
     now: u64,
 ) -> Result<(Estimate, OwnTally, Vec<String>)> {
-    let prior = cell_prior_in_txn(vault, txn, row, digest)?;
+    let (estimate, tally, cited, _) = fold_cell_with_snapshot_in_txn(vault, txn, row, digest, now)?;
+    Ok((estimate, tally, cited))
+}
+
+fn fold_cell_with_snapshot_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    digest: &[u8; 32],
+    now: u64,
+) -> Result<(Estimate, OwnTally, Vec<String>, Option<FrozenFold>)> {
+    let stored_prior =
+        stored_prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)?;
+    let conversions = conversions_in_txn(vault, txn)?;
+    let prior = stored_prior.project(&conversions);
+    let mut frozen = (row.form != EstimateForm::Counts).then(|| {
+        FrozenFold::new(
+            stored_prior,
+            row.form,
+            row.cell.predicate == LearningPredicate::Reliability || row.form != EstimateForm::Beta,
+        )
+    });
     let window = window_in_txn(vault, txn)?;
-    let folded = fold_evidence_in_txn(vault, txn, row, digest, window, now)?;
+    let folded = fold_evidence_in_txn(
+        vault,
+        txn,
+        row,
+        digest,
+        window,
+        now,
+        &conversions,
+        &mut frozen,
+    )?;
     let value: EstimateValue = fold_value(&prior, &folded.tally);
     Ok((
         Estimate {
@@ -161,6 +202,7 @@ pub(crate) fn fold_cell_in_txn(
         },
         folded.tally,
         folded.cited,
+        frozen,
     ))
 }
 
@@ -180,8 +222,9 @@ fn fold_evidence_in_txn(
     digest: &[u8; 32],
     window: Window,
     now: u64,
+    conversions: &BTreeMap<String, JudgeConversion>,
+    frozen: &mut Option<FrozenFold>,
 ) -> Result<FoldedEvidence> {
-    let conversions = conversions_in_txn(vault, txn)?;
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
     // Newest first, so the citations run newest to oldest.
     evidence.sort_by(|a, b| b.1.at.cmp(&a.1.at).then_with(|| a.0.cmp(&b.0)));
@@ -213,57 +256,32 @@ fn fold_evidence_in_txn(
         {
             w /= rate;
         }
+        if let Some(frozen) = frozen {
+            frozen.observe(&ev.observation, ev.judge.as_deref(), w);
+        }
         // Cyclic lineage folds as unknown.
         let Some((observation, converted)) = (if row.cell.predicate
             == LearningPredicate::Reliability
             || ev.observation.form() != EstimateForm::Beta
         {
-            convert(&ev.observation, ev.judge.as_deref(), &conversions)
+            convert(&ev.observation, ev.judge.as_deref(), conversions)
         } else {
             Some((ev.observation.clone(), false))
         }) else {
             continue;
         };
-        match (&mut tally, &observation) {
-            (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
-                if *ok {
-                    *wins += w;
-                } else {
-                    *losses += w;
-                }
+        // Count-only outcomes have citations but no numerical mass.
+        if matches!(&tally, OwnTally::Mean { .. })
+            && let Observation::CountOnly(name) = &observation
+        {
+            *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
+            if seen.insert(receipt.as_str()) {
+                cited.push(receipt.clone());
             }
-            // A converted binary score is fractional success mass, not a
-            // newly observed run. The original receipt still holds its bool.
-            (OwnTally::Beta { wins, losses }, Observation::Magnitude(score)) => {
-                let score = score.clamp(0.0, 1.0);
-                *wins += w * score;
-                *losses += w * (1.0 - score);
-            }
-            (
-                OwnTally::Mean {
-                    sum_w,
-                    sum_wx,
-                    sum_wxx,
-                },
-                Observation::Magnitude(x),
-            ) => {
-                *sum_w += w;
-                *sum_wx += w * x;
-                *sum_wxx += w * x * x;
-            }
-            (OwnTally::Counts { counts }, Observation::Category(name)) => {
-                *counts.entry(name.clone()).or_insert(0.0) += w;
-            }
-            // A count-only outcome joins the counts beside the mean, cited,
-            // and adds no mass, no run and no judge label.
-            (OwnTally::Mean { .. }, Observation::CountOnly(name)) => {
-                *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
-                if seen.insert(receipt.as_str()) {
-                    cited.push(receipt.clone());
-                }
-                continue;
-            }
-            _ => continue,
+            continue;
+        }
+        if !accumulate(&mut tally, &observation, w) {
+            continue;
         }
         runs += w;
         if converted {
@@ -320,7 +338,7 @@ fn measurement_version(evidence: &[(String, EvidenceRow)]) -> Option<String> {
 /// Follows a score through the whole accepted conversion chain; a cyclic
 /// lineage yields `None`. Converted binary scores become fractional Beta
 /// mass while retaining their original run weight.
-fn convert(
+pub(super) fn convert(
     observation: &Observation,
     judge: Option<&str>,
     conversions: &BTreeMap<String, JudgeConversion>,
@@ -360,7 +378,8 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
-    let (estimate, tally, cited) = fold_cell_in_txn(vault, wtxn, &row, digest, now)?;
+    let (estimate, tally, cited, frozen) =
+        fold_cell_with_snapshot_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
 
     if estimate.runs <= 0.0 {
@@ -369,7 +388,7 @@ pub(crate) fn project_cell_in_txn(
         return Ok(None);
     }
 
-    let stored = StoredEstimateClaim::new(&row.cell, &estimate, &tally);
+    let stored = StoredEstimateClaim::new(&row.cell, &estimate, &tally, frozen);
     let value = stored.to_value()?;
     let evidence = rmpv::Value::Array(
         cited

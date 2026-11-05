@@ -111,11 +111,12 @@ fn clear_prior_provenance_in_txn(
         match PRIOR.decode_value(&value) {
             Ok(mut prior) => {
                 if prior
+                    .prior
                     .from
                     .as_deref()
                     .is_some_and(|from| from.contains(named))
                 {
-                    prior.from = None;
+                    prior.prior.from = None;
                     PRIOR.put(&vault.store, wtxn, &digest, &prior)?;
                 }
             }

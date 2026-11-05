@@ -38,6 +38,42 @@ use super::http::{MAX_REPLY_BYTES, ProviderHttp};
 const SCHEMA_VERSION: u64 = 1;
 /// The backend a llama.cpp manifest names.
 const BACKEND: &str = "llama_cpp";
+
+/// The 4 header fields every llama.cpp launch manifest names. Body sections
+/// are NOT carried here.
+#[derive(Deserialize)]
+struct LlamaHeader {
+    schema_version: u64,
+    backend: String,
+    backend_epoch: CacheEpoch,
+    configured_wire_id: String,
+}
+
+/// The manifest's digest + shared header on its exact bytes: `Some(())` when
+/// the bytes' SHA-256 hex is `digest` and the manifest names schema 1, the
+/// llama.cpp backend, `epoch` and `wire`. Each caller keeps its own payload
+/// parser from the same bytes because qualification and serving accept
+/// different optional fields.
+pub(super) fn verify_llama_header(
+    bytes: &[u8],
+    digest: &str,
+    epoch: &CacheEpoch,
+    wire: &str,
+) -> Option<()> {
+    if format!("{:x}", Sha256::digest(bytes)) != digest {
+        return None;
+    }
+    let header: LlamaHeader = serde_json::from_slice(bytes).ok()?;
+    if header.schema_version != SCHEMA_VERSION
+        || header.backend != BACKEND
+        || header.backend_epoch != *epoch
+        || header.configured_wire_id != wire
+    {
+        return None;
+    }
+    Some(())
+}
+
 /// The request keys that set how one llama.cpp call runs (FIX 8329): its
 /// chat template's arguments, its reasoning settings, its sampler chain, the
 /// constraints on what it may sample and its seed, and its own prompt-cache
@@ -149,14 +185,10 @@ pub(super) struct TargetArchitecture {
     pub(super) head_count: Option<u32>,
 }
 
-/// The manifest's fields this reader checks, beside its digests. Its other
-/// sections are the record the digests were taken of.
+/// The serving manifest's payload: its identity and the sections those
+/// digests describe.
 #[derive(Deserialize)]
 struct ManifestWire {
-    schema_version: u64,
-    backend: String,
-    backend_epoch: CacheEpoch,
-    configured_wire_id: String,
     #[serde(default)]
     draft: Option<ManifestDraft>,
     identity: LlamaIdentityManifest,
@@ -361,17 +393,8 @@ async fn fetch(
 /// The manifest's digests, when its exact bytes hash to the alias's digest
 /// and it names the alias's epoch and the route's configured wire id.
 fn verify(bytes: &[u8], alias: &LlamaAlias, target: &str) -> Option<LlamaIdentityManifest> {
-    if format!("{:x}", Sha256::digest(bytes)) != alias.manifest.as_str() {
-        return None;
-    }
+    verify_llama_header(bytes, alias.manifest.as_str(), &alias.epoch, target)?;
     let manifest: ManifestWire = serde_json::from_slice(bytes).ok()?;
-    if manifest.schema_version != SCHEMA_VERSION
-        || manifest.backend != BACKEND
-        || manifest.backend_epoch != alias.epoch
-        || manifest.configured_wire_id != target
-    {
-        return None;
-    }
     let mut identity = manifest.identity;
     identity.draft_weights_digest = manifest
         .draft
