@@ -16756,6 +16756,7 @@ class LlmStreamEventReasoningDelta(TypedDict):
 class LlmStreamEventReasoningEnd(TypedDict):
     event: Literal["reasoning_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventToolCallStart(TypedDict):
     event: Literal["tool_call_start"]
     part_id: str
