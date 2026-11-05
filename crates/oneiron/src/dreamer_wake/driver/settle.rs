@@ -41,7 +41,7 @@ impl DreamerWakeDriver<'_> {
         match execution {
             DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes,
+                step_bindings,
             } => {
                 self.store.settle_budget_with_step_receipts(
                     SettleDreamerBudget {
@@ -50,7 +50,7 @@ impl DreamerWakeDriver<'_> {
                         actual_units: completed_units,
                         now: input.now,
                     },
-                    &step_hashes,
+                    &step_bindings,
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
@@ -88,7 +88,7 @@ impl DreamerWakeDriver<'_> {
             DreamerAttemptExecution::Deferred {
                 completed_units,
                 retry_at,
-                step_hashes,
+                step_bindings,
             } => {
                 self.store.defer_selection(
                     admitted,
@@ -99,7 +99,7 @@ impl DreamerWakeDriver<'_> {
                         now: input.now,
                     },
                     retry_at,
-                    &step_hashes,
+                    &step_bindings,
                 )?;
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
@@ -152,7 +152,7 @@ impl DreamerWakeDriver<'_> {
                 reason,
                 cause,
                 completed_units,
-                step_hashes,
+                step_bindings,
             } => {
                 // The in-flight call finished and was charged. Stop the run
                 // at this boundary without refunding its real spend or
@@ -164,7 +164,7 @@ impl DreamerWakeDriver<'_> {
                         actual_units: completed_units,
                         now: input.now,
                     },
-                    &step_hashes,
+                    &step_bindings,
                     ParkDreamerAttempt {
                         attempt_id,
                         reason: reason.clone(),

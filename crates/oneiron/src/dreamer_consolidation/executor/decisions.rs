@@ -291,8 +291,12 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
         // step that traps or fails leaves the prefix on the tally.
-        for (hash, usage) in &spent {
-            charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage)?;
+        for (_, usage, binding) in &spent {
+            if let Some(binding) = binding {
+                charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)?;
+            } else {
+                charges.record_usage(usage);
+            }
         }
         decided
     }

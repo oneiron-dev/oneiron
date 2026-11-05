@@ -156,7 +156,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // A queued summary for a conversation excluded after it was requested
@@ -224,7 +224,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         let Some(first) = evidence.covers.first().copied() else {
@@ -233,7 +233,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             if plan.session.is_some() {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             return Err(invalid_consolidation("summary scope has no text"));
@@ -289,7 +289,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             Ok(false) => {}
@@ -343,11 +343,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         .await
         {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
-                if let Err(error) =
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
-                {
+                if let Err(error) = charges.record_terminal(
+                    ctx.vault,
+                    binding.attempt_id,
+                    binding.step_hash,
+                    &response.usage,
+                ) {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -403,7 +409,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
                         .await;
                 }
-                ctx.note_spend_before_error(charges.units, &charges.step_hashes);
+                ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
                     cause: DreamerParkCause::of_step(&other),
@@ -447,7 +453,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             // A source demoted while the model wrote waits for its promotion,
@@ -455,7 +461,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
                 ctx.now_ms,
                 charges.units,
-                charges.step_hashes.clone(),
+                charges.step_bindings.clone(),
             )),
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
@@ -543,7 +549,7 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(SCOPE_DRIFT_RETRY_SECS),
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     }
 }
 

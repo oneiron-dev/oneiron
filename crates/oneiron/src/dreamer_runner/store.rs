@@ -7,6 +7,7 @@ use crate::attempt_queue::{
 };
 use crate::dreamer_wake::WakeTrigger;
 use crate::error::{Error, Result};
+use crate::model_step_context::StepEffectBinding;
 use crate::side_table::{self, Raw, SideTable};
 
 use super::codec::{
@@ -615,7 +616,7 @@ impl<'a> DreamerRunnerStore<'a> {
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
-        step_hashes: &[[u8; 32]],
+        step_bindings: &[StepEffectBinding],
     ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
@@ -623,7 +624,7 @@ impl<'a> DreamerRunnerStore<'a> {
         }
         self.vault.with_write_txn_grouped(|txn| {
             let unpinned =
-                super::deferral::unpinned_step_hashes_in_txn(self, txn, source.id, step_hashes)?;
+                super::deferral::unpinned_step_bindings_in_txn(self, txn, step_bindings)?;
             self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
             self.attempts.requeue_in_txn(
                 txn,

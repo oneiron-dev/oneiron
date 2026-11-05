@@ -336,12 +336,13 @@ impl ConsolidationExecutor<'_> {
             )
             .into());
         };
-        let (response, failure_policy) = match outcome {
+        let (response, failure_policy, binding) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
                 failure_policy,
+                binding,
                 ..
-            }) => (response, failure_policy),
+            }) => (response, failure_policy, binding),
             Ok(StepOutcome::Trapped { .. }) => return Ok(PortServed::End(PartitionRun::Trapped)),
             Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                 charges.record_usage(&usage);
@@ -362,7 +363,12 @@ impl ConsolidationExecutor<'_> {
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
             }
         };
-        charges.record_terminal(pass.ctx.vault, pass.attempt_id, step_hash, &response.usage)?;
+        charges.record_terminal(
+            pass.ctx.vault,
+            binding.attempt_id,
+            binding.step_hash,
+            &response.usage,
+        )?;
         // Live rules, as today's path reads each reply.
         let rules = failure_rules::load(pass.ctx.vault)?;
         let (candidates, persons) = if accepted(rules.as_ref(), failure_policy, &response) {

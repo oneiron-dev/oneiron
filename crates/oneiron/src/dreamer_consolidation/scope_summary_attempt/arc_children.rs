@@ -242,7 +242,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             Ok(false) => {}

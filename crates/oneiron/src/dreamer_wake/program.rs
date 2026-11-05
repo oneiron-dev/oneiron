@@ -53,7 +53,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::call_as_step;
 use crate::llm::seat::ModelSeat;
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::{Vault, WriteActor};
@@ -299,7 +299,7 @@ async fn run_program(
             repay(shared, &loan.lease, 0);
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // A cut run resumes from its pinned entry as this same try, unless an
@@ -341,7 +341,7 @@ struct Ran {
     outcome: EngineExecutorResult<PinnedProgramRun>,
     stop: Option<SeamStop>,
     pinned_finished: bool,
-    step_hashes: Vec<[u8; 32]>,
+    step_bindings: Vec<StepEffectBinding>,
 }
 
 /// Runs one entry of the program's code run on the host's runtime, through
@@ -398,7 +398,7 @@ async fn enter(
         reactor: &*reactor,
         occurrence: AtomicU64::new(0),
         stop: Mutex::new(None),
-        step_hashes: Mutex::new(Vec::new()),
+        step_bindings: Mutex::new(Vec::new()),
     };
     let js: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut executor = EngineNativeExecutor::new(vault, &seam, lease, js, &dispatcher);
@@ -414,7 +414,7 @@ async fn enter(
         outcome,
         stop: seam.stop(),
         pinned_finished,
-        step_hashes: seam.step_hashes(),
+        step_bindings: seam.step_bindings(),
     })
 }
 
@@ -470,16 +470,16 @@ fn settle(
                 reason: format!("the turn program did not enter: {error}"),
                 cause: DreamerParkCause::Checkpoint,
                 completed_units: used,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
     };
-    let step_hashes = ran.step_hashes.clone();
+    let step_bindings = ran.step_bindings.clone();
     let stopped = |reason: String| DreamerAttemptExecution::ParkWithSpend {
         reason,
         cause: DreamerParkCause::Checkpoint,
         completed_units: used,
-        step_hashes: step_hashes.clone(),
+        step_bindings: step_bindings.clone(),
     };
     let held = |kind: ProgramHold| -> Result<DreamerAttemptExecution> {
         vault.hold_turn_program(attempt.id, kind, ctx.now_ms / 1_000)?;
@@ -487,7 +487,7 @@ fn settle(
             reason: kind.reason().to_owned(),
             cause: DreamerParkCause::Other,
             completed_units: used,
-            step_hashes: step_hashes.clone(),
+            step_bindings: step_bindings.clone(),
         })
     };
     let outcome = match ran.outcome {
@@ -537,7 +537,7 @@ fn settle(
             )?;
             Ok(DreamerAttemptExecution::Completed {
                 completed_units: used,
-                step_hashes: step_hashes.clone(),
+                step_bindings: step_bindings.clone(),
             })
         }
         EngineExecutorStatus::Complete => held(ProgramHold::Unfinished),
@@ -576,7 +576,7 @@ struct ProgramModelSeam<'s> {
     reactor: &'s dyn TurnProgramReactor,
     occurrence: AtomicU64,
     stop: Mutex<Option<SeamStop>>,
-    step_hashes: Mutex<Vec<[u8; 32]>>,
+    step_bindings: Mutex<Vec<StepEffectBinding>>,
 }
 
 impl ProgramModelSeam<'_> {
@@ -584,8 +584,8 @@ impl ProgramModelSeam<'_> {
         *self.stop.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn step_hashes(&self) -> Vec<[u8; 32]> {
-        self.step_hashes
+    fn step_bindings(&self) -> Vec<StepEffectBinding> {
+        self.step_bindings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -599,22 +599,23 @@ impl ProgramModelSeam<'_> {
         }
     }
 
-    /// Keeps `step_hash` for the settlement when it finished fresh this run:
+    /// Keeps `binding` for the settlement when it finished fresh this run:
     /// once, and never when a checkpoint already charged it, as
     /// `StepChargeTally::record_terminal` keeps its steps. A charge that
     /// cannot be read keeps today's empty pin.
-    fn note_fresh(&self, step_hash: [u8; 32]) {
+    fn note_fresh(&self, binding: StepEffectBinding) {
         let mut held = self
-            .step_hashes
+            .step_bindings
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if held.contains(&step_hash) {
+        if held.contains(&binding) {
             return;
         }
-        match DreamerRunnerStore::new(self.vault).checkpoint_step_charged(self.attempt, &step_hash)
+        match DreamerRunnerStore::new(self.vault)
+            .checkpoint_step_charged(binding.attempt_id, &binding.step_hash)
         {
             Ok(true) => {}
-            Ok(false) => held.push(step_hash),
+            Ok(false) => held.push(binding),
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -680,10 +681,13 @@ impl ProgramModelSeam<'_> {
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         match outcome {
             Some(Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             })) => {
                 if !memoized {
-                    self.note_fresh(request_hash);
+                    self.note_fresh(binding);
                 }
                 if let Some(digest) = response_digest(&response)
                     && let Err(error) = self.vault.record_turn_program_model_step(
