@@ -63,7 +63,7 @@ export_facade! {
 "feedback.preview" => fn feedback_preview(&self, input: FeedbackPreviewRequest) -> FeedbackSubjectPreview = |client| {
     let input: oneiron::task_verb::sdk::FeedbackPreviewRequest = crate::codec::lower_record("feedback.preview", input)?;
     let output = client.feedback_preview(&input)?;
-    crate::codec::lift_record("feedback.preview", &output)
+    Lift::lift(output)
 };
 "feedback.send" => fn feedback_send(&self, input: FeedbackSendSubjectRequest) -> FeedbackSubjectSent = |client| {
     let input: oneiron::task_verb::sdk::FeedbackSendSubjectRequest = crate::codec::lower_record("feedback.send", input)?;
@@ -228,7 +228,7 @@ export_facade! {
 "vault.shape.plan.card" => fn vault_shape_plan_card(&self, input: ShapePlanRequest) -> ShapePlanCardView = |client| {
     let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan.card", input)?;
     let output = client.vault_shape_plan_card(&input)?;
-    crate::codec::lift_record("vault.shape.plan.card", &output)
+    Lift::lift(output)
 };
 "vault.shape.items.receipt" => fn vault_shape_items_receipt(&self, input: ShapeItemReceiptRequest) -> Option<ShapeItemReceipt> = |client| {
     let input: oneiron::memory::ShapeItemReceiptRequest = crate::codec::lower_record("vault.shape.items.receipt", input)?;
@@ -2109,7 +2109,7 @@ export_facade! {
 "self.off_record.results.read" => fn self_off_record_results_read(&self, input: OffRecordResultReadRequest) -> OffRecordResultRead = |client| {
     let input: oneiron::task_verb::sdk::OffRecordResultReadRequest = crate::codec::lower_record("self.off_record.results.read", input)?;
     let output = client.self_off_record_results_read(&input)?;
-    crate::codec::lift_record("self.off_record.results.read", &output)
+    Lift::lift(output)
 };
 "self.off_record.waits.get" => fn self_off_record_waits_get(&self, input: OffRecordWaitRequest) -> OffRecordWaitView = |client| {
     let input: oneiron::task_verb::sdk::OffRecordWaitRequest = crate::codec::lower_record("self.off_record.waits.get", input)?;

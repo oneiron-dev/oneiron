@@ -43,6 +43,7 @@ mod checkpoints;
 mod claims;
 mod core_write;
 mod diagnostics;
+mod feedback;
 mod identity_act_now;
 mod key_value;
 mod lens_actions;
@@ -50,6 +51,8 @@ mod lens_frames;
 mod policy_settings;
 mod proposal_results;
 mod proposals;
+mod results;
+mod shape_plans;
 mod skill_callables;
 mod wire_json;
 
