@@ -126,6 +126,8 @@ pub(crate) use self::types::{
 // Private re-exports preserving the module's original flat namespace for
 // sibling files and the white-box test module (`tests.rs` uses `super::*`).
 use self::authority_log::*;
+#[cfg(feature = "sync")]
+pub(crate) use self::builder::NativeSkillFinalInput;
 use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;
@@ -133,8 +135,6 @@ use self::edge_apply::*;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
-#[cfg(feature = "sync")]
-pub(crate) use self::put_apply::NativeSkillPostGate;
 use self::put_apply::*;
 use self::short_id::*;
 use self::thread_claim_index::*;

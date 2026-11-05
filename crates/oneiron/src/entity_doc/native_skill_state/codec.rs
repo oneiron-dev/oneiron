@@ -113,23 +113,23 @@ fn malformed() -> Error {
 }
 
 impl SkillStateFact {
-    /// Only the private native publisher calls this, with an actual post-gate
-    /// input and the document it just loaded from the same Store transaction.
+    /// The dormant publisher accepts only the actual final builder input and
+    /// its document from the same Store transaction, never provisional P4 data.
     #[cfg(feature = "sync")]
-    pub(super) fn from_post_gate(
-        admitted: &crate::batch::NativeSkillPostGate<'_>,
+    pub(super) fn from_final_input(
+        input: &crate::batch::NativeSkillFinalInput<'_>,
         txn: &mut heed::RwTxn<'_>,
         document: EntityId,
         source: &super::super::EntityDoc,
         previous: Option<&Self>,
     ) -> Result<(Self, Option<ActorStamp>)> {
-        admitted.recheck_in_txn(txn)?;
-        let entity = admitted.entity();
+        input.recheck_in_txn(txn)?;
+        let entity = input.entity();
         let birth = source.birth();
         if birth.entity != entity.to_hex() {
             return Err(malformed());
         }
-        let prior = State::of(admitted.snapshot().prior());
+        let prior = State::of(input.snapshot().prior());
         if let Some(previous) = previous
             && (!previous.target_birth_is(entity, birth.at) || previous.operation.state != prior)
         {
@@ -147,10 +147,10 @@ impl SkillStateFact {
         // Mint only from the actual applying writer, in its transaction.
         // Return this same stamp for the document commit; a later cache lookup
         // need not return the same token when the writer carries a frontier.
-        let writer = admitted
+        let writer = input
             .actor()
             .map(|actor| {
-                crate::provenance::actor_stamp_in_txn(admitted.vault(), txn, actor)
+                crate::provenance::actor_stamp_in_txn(input.vault(), txn, actor)
                     .map(|stamp| (stamp, actor.authority_frontier()))
             })
             .transpose()?;
@@ -160,15 +160,15 @@ impl SkillStateFact {
                 entity: *entity.as_bytes(),
                 document: *document.as_bytes(),
                 birth_at: birth.at,
-                source_core: admitted.snapshot().source_fingerprint(),
+                source_core: input.snapshot().source_fingerprint(),
                 source_frontier: source.frontier(),
                 event: *EntityId::now().as_bytes(),
-                recorded_at: admitted.recorded_at(),
+                recorded_at: input.recorded_at(),
                 ordinal,
                 previous: previous.map(Self::token).transpose()?,
                 prior,
-                state: State::of(admitted.record()),
-                door: match admitted.superseding_revision() {
+                state: State::of(input.record()),
+                door: match input.superseding_revision() {
                     None => Door::Update,
                     Some(successor) => Door::Supersede {
                         successor: *successor.entity().as_bytes(),
@@ -190,14 +190,14 @@ impl SkillStateFact {
         // A legal local typed operation cannot acquire a new enrollment or
         // keystore requirement. An unavailable signer leaves no transferable
         // attestation; corruption and other errors are still errors.
-        let signer =
-            match crate::store::install_identity::machine_signer_in_txn(admitted.vault(), txn) {
-                Ok(signer) => Some(signer),
-                Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => None,
-                Err(error) => return Err(error),
-            };
+        let signer = match crate::store::install_identity::machine_signer_in_txn(input.vault(), txn)
+        {
+            Ok(signer) => Some(signer),
+            Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => None,
+            Err(error) => return Err(error),
+        };
         if let Some((machine, key)) = signer {
-            let store = &admitted.vault().store;
+            let store = &input.vault().store;
             let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
                 store,
                 store.privacy_posture,

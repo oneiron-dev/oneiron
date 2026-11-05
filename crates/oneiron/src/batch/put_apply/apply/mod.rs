@@ -42,8 +42,6 @@ mod projections;
 mod rewrite;
 
 #[cfg(feature = "sync")]
-pub(crate) use native_skill::NativeSkillPostGate;
-#[cfg(feature = "sync")]
 pub(in crate::batch) use native_skill::PendingNativeSkillPut;
 
 // One door stages every effect of a put inside its write transaction.

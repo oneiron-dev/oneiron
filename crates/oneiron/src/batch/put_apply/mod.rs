@@ -32,8 +32,6 @@ use super::{
 };
 
 #[cfg(feature = "sync")]
-pub(crate) use self::apply::NativeSkillPostGate;
-#[cfg(feature = "sync")]
 pub(super) use self::apply::PendingNativeSkillPut;
 pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
