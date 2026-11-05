@@ -100,7 +100,7 @@ const GUEST_CLAIM_WITHHELD_REASON: &str = "a guest's MACHINE-signed claim or mac
 pub(crate) fn guest_claim_withheld(body: &ClaimBody) -> Option<Error> {
     (crate::authority::evidence_without_machine_signature(body) != body.evidence
         || crate::claim::history_store::machine_history_kind(&body.predicate).is_some())
-    .then_some(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+    .then_some(Error::Claim(ClaimError::GuestClaimWithheld {
         reason: GUEST_CLAIM_WITHHELD_REASON,
     }))
 }
