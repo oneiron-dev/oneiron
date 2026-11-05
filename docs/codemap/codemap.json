@@ -23222,14 +23222,14 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_pack/builder/assembly.rs",
      "purpose": "Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal",
      "surface": {
-      "crate-vis": 4,
-      "fn": 8
+      "crate-vis": 3,
+      "fn": 7
      }
     },
     {
@@ -23310,6 +23310,17 @@
      "purpose": "Critical-first row selection under a pack's existing budgets, and the critical accounting a pack reports…",
      "surface": {
       "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/unfinalized.rs",
+     "purpose": "Deferred-pack assembly: `run_unfinalized` and its telemetry door",
+     "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -33513,7 +33524,7 @@
       "PendingEmbeddingReconciler"
      ],
      "path": "src/embed.rs",
-     "purpose": "—",
+     "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial",
      "surface": {
       "crate-vis": 13,
       "fn": 9,
@@ -48282,6 +48293,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/admission.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RecallEffort"
      ],
@@ -48365,7 +48386,7 @@
       "const": 2,
       "crate-vis": 7,
       "enum": 1,
-      "fn": 11,
+      "fn": 6,
       "re-export": 5,
       "struct": 8
      }
@@ -80928,7 +80949,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/consult_fanout_facade.rs",
-     "purpose": "—",
+     "purpose": "Consult fan-out door: settling due consults and fanning out to assignees",
      "surface": {
       "fn": 1
      }
@@ -80981,7 +81002,7 @@
       "LadderTransitionReceipt"
      ],
      "path": "src/task_verb/consult_ladder_facade.rs",
-     "purpose": "—",
+     "purpose": "Cross-actor consult ladder projection over stored ladder state",
      "surface": {
       "crate-vis": 2,
       "enum": 1,
@@ -81017,7 +81038,7 @@
       "ConsultRecovery"
      ],
      "path": "src/task_verb/consult_payload.rs",
-     "purpose": "—",
+     "purpose": "Typed consult request and recovery payloads for the consult ladder",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
@@ -81040,7 +81061,7 @@
       "TaskResultReceipt"
      ],
      "path": "src/task_verb/consult_result.rs",
-     "purpose": "—",
+     "purpose": "Consult outcomes: result inputs, receipts, fan-out specs, and expiry reports",
      "surface": {
       "crate-vis": 11,
       "enum": 1,
@@ -81052,7 +81073,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/create_facade.rs",
-     "purpose": "—",
+     "purpose": "TASK creation door with admission, hooks, and rate limiting",
      "surface": {
       "crate-vis": 9,
       "fn": 2
@@ -81085,7 +81106,7 @@
       "TaskCreateSpec"
      ],
      "path": "src/task_verb/create_spec.rs",
-     "purpose": "—",
+     "purpose": "One TASK intent plus its node-local realizing-attempt input",
      "surface": {
       "fn": 9,
       "re-export": 1,
@@ -81097,7 +81118,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/create_validation.rs",
-     "purpose": "—",
+     "purpose": "TASK admission checks: labels, assignees, terminal state, and bindings",
      "surface": {
       "crate-vis": 20,
       "fn": 1
@@ -81132,7 +81153,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/entity_delta_facade.rs",
-     "purpose": "—",
+     "purpose": "Entity-delta graduation door: novelty-guarded artifact routing",
      "surface": {
       "crate-vis": 6,
       "fn": 1
@@ -81264,7 +81285,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/follow_up.rs",
-     "purpose": "—",
+     "purpose": "TASK follow-up dedupe keys and consult-expiry recovery decoding",
      "surface": {
       "crate-vis": 7,
       "fn": 2
@@ -81501,7 +81522,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/lifecycle_facade.rs",
-     "purpose": "—",
+     "purpose": "TASK lifecycle door: progress, results, cancellation, and settlement",
      "surface": {
       "crate-vis": 6,
       "fn": 7
@@ -81627,7 +81648,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/presence_scan.rs",
-     "purpose": "—",
+     "purpose": "Board presence scan: folding task intent and ack state across attempts",
      "surface": {
       "crate-vis": 18
      }
@@ -81719,7 +81740,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/rate_limit.rs",
-     "purpose": "—",
+     "purpose": "TASK creation rate limits against the actor's policy ceiling",
      "surface": {
       "crate-vis": 9,
       "fn": 1
@@ -81846,7 +81867,7 @@
       "TaskUpdateReceipt"
      ],
      "path": "src/task_verb/route_receipts.rs",
-     "purpose": "—",
+     "purpose": "TASK execution lanes and the receipts each transition answers with",
      "surface": {
       "const": 2,
       "crate-vis": 2,
@@ -82041,7 +82062,7 @@
       "TaskTerminalRecord"
      ],
      "path": "src/task_verb/terminal_state.rs",
-     "purpose": "—",
+     "purpose": "Engine-settled TASK terminal states and the durable terminal record",
      "surface": {
       "crate-vis": 5,
       "enum": 2,
@@ -82252,7 +82273,7 @@
       "TaskTtl"
      ],
      "path": "src/task_verb/verb_kind.rs",
-     "purpose": "—",
+     "purpose": "TASK vocabulary: kind, assignee, and absolute expiry shared by every verb",
      "surface": {
       "fn": 2,
       "re-export": 2,
@@ -82970,7 +82991,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/thread_passport/codec.rs",
-     "purpose": "—",
+     "purpose": "Value-codec shim: the vocabulary and codecs live at `crate::write_envelope::thread_claim`",
      "surface": {
       "crate-vis": 1
      }
@@ -82998,7 +83019,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/thread_passport/storage.rs",
-     "purpose": "—",
+     "purpose": "Thread-passport claim storage: channel-identity checks and alias writes",
      "surface": {
       "crate-vis": 5
      }
@@ -83024,7 +83045,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/thread_passport/vault_doors.rs",
-     "purpose": "—",
+     "purpose": "Typed [`Vault`] doors for thread passports: record, read, join, and mask",
      "surface": {
       "crate-vis": 1,
       "fn": 6
@@ -91300,9 +91321,9 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
     },
@@ -91479,7 +91500,7 @@
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
-     "purpose": "—"
+     "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
      "files": 49,
@@ -91776,7 +91797,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 357,
+     "files": 358,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92476,9 +92497,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 147,
+   "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6460,
+   "source_files": 6462,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109076,7 +109097,7 @@
       "PreparedCosine"
      ],
      "path": "src/distance/prepared.rs",
-     "purpose": "—",
+     "purpose": "Prepared cosine query with a cached norm for HNSW candidate scoring",
      "surface": {
       "crate-vis": 1,
       "fn": 2,
@@ -129954,7 +129975,7 @@
       "PublishedEntry"
      ],
      "path": "src/session_overlay/journal.rs",
-     "purpose": "—",
+     "purpose": "Typed session-overlay journal: entries, promotion plans, and replay",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
@@ -129969,7 +129990,7 @@
       "OverlayKeyspace"
      ],
      "path": "src/session_overlay/keyspace.rs",
-     "purpose": "—",
+     "purpose": "Overlay keyspace manifest: the 28 named databases and their mutations",
      "surface": {
       "crate-vis": 12,
       "enum": 1,
@@ -130087,7 +130108,7 @@
       "SessionWriteRoute"
      ],
      "path": "src/session_overlay/route.rs",
-     "purpose": "—",
+     "purpose": "Session write routing: which store a session write lands in per mode",
      "surface": {
       "enum": 1,
       "fn": 6,
@@ -130099,7 +130120,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/short_id.rs",
-     "purpose": "—",
+     "purpose": "Session-scoped short-id allocation over the overlay keyspace",
      "surface": {
       "crate-vis": 5,
       "fn": 1
@@ -130116,7 +130137,7 @@
       "StagedRows"
      ],
      "path": "src/session_overlay/snapshot.rs",
-     "purpose": "—",
+     "purpose": "Overlay snapshots: staged-row views merged over durable state for one read",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
