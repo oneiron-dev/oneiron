@@ -122,7 +122,13 @@ pub fn run() {
             start_recording,
             stop_recording,
             root_rekey::root_rekey_prepare,
-            root_rekey::root_rekey_confirm
+            root_rekey::root_rekey_confirm,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::private_copy_view,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::private_copy_view_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::private_copy::set_private_copy_view_settings
         ])
         .run(tauri::generate_context!())
         .expect("the recorder could not start");
