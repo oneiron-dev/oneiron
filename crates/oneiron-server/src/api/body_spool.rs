@@ -1,8 +1,9 @@
 //! An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5). A body is
 //! read only after its route's door admitted the caller, onto an anonymous
 //! file the vault stages, whatever its length: its size never refuses it.
-//! Only a disk that refuses a write for want of room stops it, and the answer
-//! says capacity (`disk_capacity`). The sealed custody change also judges its
+//! A disk write that runs out of room says capacity (`disk_capacity`). Its
+//! fixed raw-spool buffer uses the process's memory line, whose capacity
+//! failure is reported separately. The sealed custody change also judges its
 //! spool against the server's disk floor as it goes (`transfers.disk`, kept
 //! at `limits.disk_reserve_bytes`, FIX 5674) and keeps the transfers' idle
 //! bound on its body. Widen answers opt into the same transfer policy.
@@ -19,7 +20,7 @@ mod owner_json;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -28,7 +29,7 @@ use tokio::sync::mpsc;
 
 use crate::api::transfer::{self, BodyReader};
 use crate::error::{ApiError, ApiErrorDetails};
-use crate::machine::{DiskClaim, DiskFloor};
+use crate::machine::{DiskClaim, DiskFloor, MachineMemory, MemoryRefusal};
 use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
@@ -108,15 +109,20 @@ pub(super) enum Unspooled {
     /// The body failed, stalled past the idle limit or was cancelled, or its
     /// spool could not be written.
     Failed,
+    /// The process memory line could not admit the raw spool's I/O buffer.
+    MemoryRefused(MemoryRefusal),
 }
 
 impl Unspooled {
-    /// The answer an owner route gives: capacity, or a body that did not
-    /// arrive.
+    /// The answer an owner route gives: disk or memory capacity, or a body
+    /// that did not arrive.
     pub(super) fn refusal(self) -> ApiError {
         match self {
             Self::NoRoom => no_room(NO_ROOM, NO_ROOM_REMEDY),
-            Self::Failed => not_whole(),
+            Self::Failed | Self::MemoryRefused(MemoryRefusal::WaitedOut { .. }) => not_whole(),
+            Self::MemoryRefused(MemoryRefusal::Floor { .. }) => ApiError::internal_server_error(
+                "this machine cannot allocate the request body's spool buffer",
+            ),
         }
     }
 }
@@ -181,7 +187,13 @@ pub(super) async fn spool_then<R: Send + 'static>(
     let _stop = memory::StopOnDrop(Arc::clone(&stopped));
     let mut worker = transfer::spawn_worker(move || -> Result<R, Unspooled> {
         let account = floor.as_ref().zip(room.as_deref());
-        let file = spool_to_end(&vault, BodyReader::new(receiver), account, declared)?;
+        let file = spool_to_end(
+            &vault,
+            BodyReader::new(receiver),
+            account,
+            declared,
+            &stopped,
+        )?;
         Ok(then(BodySpool {
             file,
             room,
@@ -217,9 +229,14 @@ fn spool_to_end(
     mut body: BodyReader,
     floor: Option<(&DiskFloor, &DiskClaim)>,
     declared: Option<u64>,
+    stopped: &AtomicBool,
 ) -> Result<File, Unspooled> {
     let mut file = vault.archive_spool_file().map_err(create_failed)?;
+    let mut memory = MachineMemory::process()
+        .lease_untimed(SPOOL_PIECE as u64, &|| stopped.load(Ordering::Relaxed))
+        .map_err(Unspooled::MemoryRefused)?;
     let mut piece = vec![0; SPOOL_PIECE];
+    memory.materialized(SPOOL_PIECE as u64, piece.capacity() as u64);
     let mut read = 0u64;
     let mut looked_at: Option<u64> = None;
     loop {

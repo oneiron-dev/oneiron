@@ -40,7 +40,20 @@ length therefore cannot exceed the raw body's length. That same room is retained
 through both files' final native read; it is not replaced with a second cumulative
 claim. Files are anonymous and are removed when their handles close.
 
-## Decoder I/O memory
+## Spool and decoder I/O memory
+
+The raw-body spool uses the same shared process memory line before allocating its
+existing 64 KiB read piece. This wait runs on its dedicated transfer worker after
+the anonymous spool file is created, outside every vault transaction. The actual
+buffer capacity is recorded on the lease. The piece drops before its lease on
+success, error and unwind; both are released before the decoder starts, so they
+do not overlap the decoder's later reservation.
+
+The raw-spool wait has no new deadline and observes the same cancellation flag
+as the decoder wait. A physical memory floor uses the existing internal-server-
+error shape with a raw-spool allocation message, not `disk_capacity`. A cancelled
+wait keeps the body-not-whole response. Custody's disk-specific message and all
+existing disk and idle rules stay unchanged.
 
 Before the large accept or reject decoder constructs its text writer or JSON
 reader, its dedicated transfer worker admits both existing 64 KiB I/O buffers
@@ -84,7 +97,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, raw-spool/feed-buffer admission and stored proposal allocations remain
-separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, queued feed/frame-buffer admission and stored proposal allocations
+remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
