@@ -170,6 +170,35 @@ impl From<Vec<(Value, Value)>> for Value {
 }
 
 impl Value {
+    /// The capacities of the heap allocations this value owns, excluding
+    /// the value itself and the temporary traversal stack.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> u64 {
+        let mut bytes = 0u64;
+        let mut stack = vec![self];
+        while let Some(value) = stack.pop() {
+            let capacity = match value {
+                Self::String(text) => text.capacity() as u64,
+                Self::Binary(data) | Self::Ext(_, data) => data.capacity() as u64,
+                Self::Array(items) => {
+                    stack.extend(items);
+                    (items.capacity() as u64).saturating_mul(std::mem::size_of::<Self>() as u64)
+                }
+                Self::Map(entries) => {
+                    for (key, item) in entries {
+                        stack.push(key);
+                        stack.push(item);
+                    }
+                    (entries.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<(Self, Self)>() as u64)
+                }
+                _ => 0,
+            };
+            bytes = bytes.saturating_add(capacity);
+        }
+        bytes
+    }
+
     #[must_use]
     pub fn is_nil(&self) -> bool {
         matches!(self, Self::Nil)

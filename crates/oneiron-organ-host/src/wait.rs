@@ -4,7 +4,7 @@
 //! redrive runs every held call that a node can now take, and its export
 //! files land as proposals waiting for Keep, as if it had run at once.
 
-use oneiron::edit_settle::{OrganWait, OrganWaitView, PendingProposalView};
+use oneiron::edit_settle::{OrganWait, OrganWaitRef, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
@@ -184,22 +184,48 @@ impl<'a> HeldCallRef<'a> {
 }
 
 impl HeldCall {
+    fn allocated_bytes(&self) -> u64 {
+        let mut bytes = self.organ.capacity() as u64
+            + self.verb.capacity() as u64
+            + self.grant.capacity() as u64;
+        bytes = bytes.saturating_add(self.args.allocated_bytes());
+        if let Some(body) = &self.body {
+            bytes = bytes
+                .saturating_add(body.kind.capacity() as u64)
+                .saturating_add(body.value.allocated_bytes());
+        }
+        bytes = bytes
+            .saturating_add(
+                (self.inputs.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<HeldInput>() as u64),
+            )
+            .saturating_add(
+                (self.lent.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<(String, ByteBuf)>() as u64),
+            );
+        for input in &self.inputs {
+            bytes = bytes.saturating_add(input.artifact.capacity() as u64);
+        }
+        for (media_type, body) in &self.lent {
+            bytes = bytes
+                .saturating_add(media_type.capacity() as u64)
+                .saturating_add(body.capacity() as u64);
+        }
+        bytes
+    }
+
     fn into_call(self) -> Result<(OrganCall, Vec<LentInput>), String> {
-        let inputs = self
-            .inputs
-            .iter()
-            .map(|held| {
-                EntityId::from_hex(&held.artifact)
-                    .map(|artifact| SightedInput {
-                        input: OrganInput {
-                            artifact,
-                            version: held.version,
-                        },
-                        sight: redrive_sight(held.owner),
-                    })
-                    .map_err(|_| "a held call names no artifact".to_owned())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut inputs = Vec::with_capacity(self.inputs.len());
+        for held in &self.inputs {
+            inputs.push(SightedInput {
+                input: OrganInput {
+                    artifact: EntityId::from_hex(&held.artifact)
+                        .map_err(|_| "a held call names no artifact".to_owned())?,
+                    version: held.version,
+                },
+                sight: redrive_sight(held.owner),
+            });
+        }
         let call = OrganCall {
             organ: self.organ,
             verb: self.verb,
@@ -211,16 +237,21 @@ impl HeldCall {
             deadline: std::time::Duration::from_millis(self.deadline_ms),
             grant: self.grant,
         };
-        let lent = self
-            .lent
-            .into_iter()
-            .map(|(media_type, bytes)| LentInput {
+        let mut lent = Vec::with_capacity(self.lent.len());
+        for (media_type, bytes) in self.lent {
+            lent.push(LentInput {
                 media_type,
                 bytes: bytes.into_vec(),
-            })
-            .collect();
+            });
+        }
         Ok((call, lent))
     }
+}
+
+struct DecodedWaitCall {
+    call: OrganCall,
+    lent: Vec<LentInput>,
+    _room: Option<Box<dyn crate::resource_memory::FloorLease>>,
 }
 
 impl OrganRouter {
@@ -313,10 +344,62 @@ impl OrganRouter {
         Ok(redriven)
     }
 
+    fn decode_wait_call(
+        &self,
+        vault: &Vault,
+        wait: &OrganWaitRef,
+    ) -> Result<Option<DecodedWaitCall>, HostError> {
+        let invalid =
+            |err| HostError::ReplyInvalid(format!("the held call does not decode: {err}"));
+        let Some(decoded) =
+            vault.lend_organ_wait_call(wait, oneiron_organ_protocol::codec::decode_cost)?
+        else {
+            return Ok(None);
+        };
+        let decoded = decoded.map_err(invalid)?;
+        let mut room = self.hold_wait_encoding(decoded)?;
+        let Some(held) =
+            vault.lend_organ_wait_call(wait, oneiron_organ_protocol::from_slice::<HeldCall>)?
+        else {
+            return Ok(None);
+        };
+        let held = held.map_err(invalid)?;
+        let before = held.allocated_bytes();
+        if let Some(room) = &mut room {
+            room.materialized(decoded, before);
+        }
+        let extra = (held.inputs.len() as u64)
+            .saturating_mul(std::mem::size_of::<SightedInput>() as u64)
+            .saturating_add(
+                (held.lent.len() as u64).saturating_mul(std::mem::size_of::<LentInput>() as u64),
+            );
+        if let Some(room) = &mut room {
+            room.grow_untimed(extra, &shutdown::stopping)
+                .map_err(wait_floor_error)?;
+        }
+        let (call, lent) = held.into_call().map_err(|err| {
+            HostError::ReplyInvalid(format!("the held call does not decode: {err}"))
+        })?;
+        if let Some(room) = &mut room {
+            room.materialized(extra, 0);
+            let after = call_allocated_bytes(&call, &lent);
+            if after >= before {
+                room.materialized(0, after - before);
+            } else {
+                room.shrink(before - after);
+            }
+        }
+        Ok(Some(DecodedWaitCall {
+            call,
+            lent,
+            _room: room,
+        }))
+    }
+
     fn redrive_one(
         &self,
         vault: &Vault,
-        wait: OrganWait,
+        wait: OrganWaitRef,
         asks: &AskHandlers<'_>,
     ) -> Result<Redrive, HostError> {
         if !vault.organ_wait_is_current(&wait)? {
@@ -330,14 +413,17 @@ impl OrganRouter {
             vault.fail_organ_wait(&artifact, &wait.run_ref, &detail, now)?;
             Ok(Redrive::Failed(detail))
         };
-        let held = match oneiron_organ_protocol::from_slice::<HeldCall>(&wait.call)
-            .map_err(|err| err.to_string())
-            .and_then(HeldCall::into_call)
-        {
-            Ok(held) => held,
-            Err(detail) => return failed(format!("the held call does not decode: {detail}")),
+        let held = match self.decode_wait_call(vault, &wait) {
+            Ok(Some(held)) => held,
+            Err(HostError::Interrupted) => return Ok(Redrive::Interrupted),
+            Err(err) => return failed(err.to_string()),
+            Ok(None) => return Ok(Redrive::Failed("the held call is no longer current".into())),
         };
-        let (call, lent) = held;
+        // Admission may have waited while a delete or release committed.
+        if !vault.organ_wait_is_current(&wait)? {
+            return Ok(Redrive::Failed("the held call is no longer current".into()));
+        }
+        let DecodedWaitCall { call, lent, _room } = held;
         match self.call_with(vault, call, lent, asks) {
             Ok(Routed::Done { outcome, .. }) => match propose_organ_outputs(
                 vault,
@@ -361,5 +447,42 @@ impl OrganRouter {
             Err(HostError::Interrupted) => Ok(Redrive::Interrupted),
             Err(err) => failed(err.to_string()),
         }
+    }
+}
+
+fn call_allocated_bytes(call: &OrganCall, lent: &Vec<LentInput>) -> u64 {
+    let mut bytes =
+        call.organ.capacity() as u64 + call.verb.capacity() as u64 + call.grant.capacity() as u64;
+    bytes = bytes.saturating_add(call.args.allocated_bytes());
+    if let Some(body) = &call.body {
+        bytes = bytes
+            .saturating_add(body.kind.capacity() as u64)
+            .saturating_add(body.value.allocated_bytes());
+    }
+    bytes = bytes
+        .saturating_add(
+            (call.inputs.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<SightedInput>() as u64),
+        )
+        .saturating_add(
+            (lent.capacity() as u64).saturating_mul(std::mem::size_of::<LentInput>() as u64),
+        );
+    for input in lent {
+        bytes = bytes
+            .saturating_add(input.media_type.capacity() as u64)
+            .saturating_add(input.bytes.capacity() as u64);
+    }
+    bytes
+}
+
+fn wait_floor_error(refused: crate::resource_memory::FloorRefusal) -> HostError {
+    match refused {
+        crate::resource_memory::FloorRefusal::Floor { needed, available } => {
+            HostError::Io(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                format!("held-call decoding needs {needed} bytes, {available} available"),
+            ))
+        }
+        crate::resource_memory::FloorRefusal::Deadline => HostError::Interrupted,
     }
 }

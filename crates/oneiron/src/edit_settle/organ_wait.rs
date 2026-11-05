@@ -19,15 +19,17 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::provenance::made_by::MadeByTrigger;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::write_envelope::WriteActor;
 
 /// Key: id16 + hash32 (blake3 of the run ref), as the proposal landing.
 const WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_ORGAN_WAIT);
 
-/// The most bytes one held call may keep, its lent inputs included.
-pub const ORGAN_WAIT_CALL_MAX_BYTES: usize = 64 << 20;
+/// The exact opaque call bytes, committed and released with their metadata.
+const CALLS: SideTable<(EntityId, [u8; 32]), Vec<u8>, Raw> =
+    SideTable::new(&side_table::EDIT_SETTLE_ORGAN_WAIT_BODY);
+
 /// The most bytes of a reason or a failure a row keeps.
 const TEXT_MAX_BYTES: usize = 2048;
 
@@ -37,7 +39,8 @@ struct WaitRow {
     run_ref: String,
     organ: String,
     verb: String,
-    call: Vec<u8>,
+    call_len: u64,
+    call_digest: [u8; 32],
     trigger: Option<MadeByTrigger>,
     submitter: Option<EntityId>,
     held_by: EntityId,
@@ -67,6 +70,21 @@ pub struct OrganWait {
     /// call, whose envelope waits as the host built it.
     pub submitter: Option<EntityId>,
     /// Who asked: the actor its proposals are made by.
+    pub held_by: WriteActor,
+    pub held_at: u64,
+}
+
+/// An immutable reference to one retained call, without loading its payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrganWaitRef {
+    pub artifact_id: EntityId,
+    pub run_ref: String,
+    pub organ: String,
+    pub verb: String,
+    pub call_len: u64,
+    pub call_digest: [u8; 32],
+    pub trigger: Option<MadeByTrigger>,
+    pub submitter: Option<EntityId>,
     pub held_by: WriteActor,
     pub held_at: u64,
 }
@@ -107,15 +125,16 @@ impl WaitRow {
         }
     }
 
-    fn wait(&self, artifact_id: EntityId) -> Result<OrganWait> {
+    fn wait_ref(&self, artifact_id: EntityId) -> Result<OrganWaitRef> {
         let class = EdgeActorClass::try_from_u8(self.held_by_class)
             .ok_or(Error::CorruptedIndex("organ wait actor class"))?;
-        Ok(OrganWait {
+        Ok(OrganWaitRef {
             artifact_id,
             run_ref: self.run_ref.clone(),
             organ: self.organ.clone(),
             verb: self.verb.clone(),
-            call: self.call.clone(),
+            call_len: self.call_len,
+            call_digest: self.call_digest,
             trigger: self.trigger.clone(),
             submitter: self.submitter,
             held_by: WriteActor::new(self.held_by, class),
@@ -158,11 +177,6 @@ impl Vault {
     /// held is refused.
     pub fn hold_organ_wait(&self, wait: &OrganWait, reason: &str) -> Result<OrganWaitView> {
         validate_pending_ref(&wait.run_ref)?;
-        if wait.call.len() > ORGAN_WAIT_CALL_MAX_BYTES {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "an organ call held for a node is over 64 MiB",
-            )));
-        }
         if wait.organ.trim().is_empty() || wait.verb.trim().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "a held organ call names its organ and verb",
@@ -174,7 +188,8 @@ impl Vault {
             run_ref: wait.run_ref.clone(),
             organ: bounded(&wait.organ),
             verb: bounded(&wait.verb),
-            call: wait.call.clone(),
+            call_len: wait.call.len() as u64,
+            call_digest: *blake3::hash(&wait.call).as_bytes(),
             trigger: wait.trigger.clone(),
             submitter: wait.submitter,
             held_by: wait.held_by.entity_ref(),
@@ -202,6 +217,7 @@ impl Vault {
             if super::artifact_retention_deleted_in_txn(&self.store, wtxn, &wait.artifact_id)? {
                 return Err(Error::EntityNotFound);
             }
+            CALLS.put_bytes(&self.store, wtxn, &key, &wait.call)?;
             WAITS.put(&self.store, wtxn, &key, &row)
         })?;
         Ok(row.view(wait.artifact_id))
@@ -216,14 +232,14 @@ impl Vault {
             .collect()
     }
 
-    /// Every call still waiting for a node, with its bytes, for a redrive.
+    /// Every call still waiting for a node, without its payload, for a redrive.
     /// Failed calls are not among them.
-    pub fn waiting_organ_calls(&self) -> Result<Vec<(OrganWait, OrganWaitView)>> {
+    pub fn waiting_organ_calls(&self) -> Result<Vec<(OrganWaitRef, OrganWaitView)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut out = Vec::new();
         for ((artifact, _), row) in WAITS.scan(&self.store, &rtxn)? {
             if row.failed.is_none() {
-                out.push((row.wait(artifact)?, row.view(artifact)));
+                out.push((row.wait_ref(artifact)?, row.view(artifact)));
             }
         }
         Ok(out)
@@ -263,17 +279,26 @@ impl Vault {
     /// Whether this exact held call still waits beside a live artifact.
     /// Checks the retained call and the artifact's durable delete markers
     /// in one snapshot; it does not claim or lock a running call.
-    pub fn organ_wait_is_current(&self, wait: &OrganWait) -> Result<bool> {
+    pub fn organ_wait_is_current(&self, wait: &OrganWaitRef) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
+        self.organ_wait_is_current_in_txn(&txn, wait)
+    }
+
+    fn organ_wait_is_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        wait: &OrganWaitRef,
+    ) -> Result<bool> {
         let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
-        let Some(row) = WAITS.get(&self.store, &txn, &key)? else {
+        let Some(row) = WAITS.get(&self.store, txn, &key)? else {
             return Ok(false);
         };
         if row.failed.is_some()
             || row.run_ref != wait.run_ref
             || row.organ != wait.organ
             || row.verb != wait.verb
-            || row.call != wait.call
+            || row.call_len != wait.call_len
+            || row.call_digest != wait.call_digest
             || row.trigger != wait.trigger
             || row.submitter != wait.submitter
             || row.held_by != wait.held_by.entity_ref()
@@ -283,23 +308,50 @@ impl Vault {
             return Ok(false);
         }
         if self
-            .get_blob_artifact_in_txn(&txn, &wait.artifact_id)?
+            .get_blob_artifact_in_txn(txn, &wait.artifact_id)?
             .is_none()
         {
             return Ok(false);
         }
         Ok(!super::artifact_retention_deleted_in_txn(
             &self.store,
-            &txn,
+            txn,
             &wait.artifact_id,
         )?)
+    }
+
+    /// Lends the exact current payload to a reader that admits its own decoding
+    /// before allocating. The transaction ends before the reader's result returns.
+    pub fn lend_organ_wait_call<T>(
+        &self,
+        wait: &OrganWaitRef,
+        read: impl FnOnce(&[u8]) -> T,
+    ) -> Result<Option<T>> {
+        let txn = self.store.env.read_txn()?;
+        if !self.organ_wait_is_current_in_txn(&txn, wait)? {
+            return Ok(None);
+        }
+        let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
+        let bytes = CALLS
+            .get_borrowed(&self.store, &txn, &key)?
+            .ok_or(Error::CorruptedIndex("organ wait call missing"))?;
+        if bytes.len() as u64 != wait.call_len
+            || blake3::hash(&bytes).as_bytes() != &wait.call_digest
+        {
+            return Err(Error::CorruptedIndex("organ wait call digest"));
+        }
+        Ok(Some(read(&bytes)))
     }
 
     /// Drops a held call: it ran and landed, or a person let it go.
     /// `true` when one was held under the ref.
     pub fn release_organ_wait(&self, artifact_id: &EntityId, run_ref: &str) -> Result<bool> {
         let key = settlement_key_parts(artifact_id, run_ref);
-        self.with_write_txn_grouped(|wtxn| WAITS.delete(&self.store, wtxn, &key))
+        self.with_write_txn_grouped(|wtxn| {
+            let held = WAITS.delete(&self.store, wtxn, &key)?;
+            CALLS.delete(&self.store, wtxn, &key)?;
+            Ok(held)
+        })
     }
 
     fn update_organ_wait(
@@ -329,6 +381,7 @@ pub(super) fn purge_artifact_in_txn(
 ) -> Result<()> {
     for key in WAITS.scan_keys(store, txn, artifact_id.as_bytes())? {
         WAITS.delete(store, txn, &key)?;
+        CALLS.delete(store, txn, &key)?;
     }
     Ok(())
 }
