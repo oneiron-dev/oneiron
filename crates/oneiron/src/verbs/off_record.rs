@@ -140,6 +140,44 @@ pub struct OffRecordClaimRequest {
     pub claim: crate::memory::ScopedClaimInput,
 }
 
+/// Explicitly preserve one selected room NOTE/CLAIM and its complete document.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordArtifactSaveRequest {
+    pub session_ref: String,
+    /// The room alias or entity id of the selected scratch artifact.
+    pub artifact_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OffRecordArtifactSaved {
+    /// The actual saved closure, including staged subjects needed by the artifact.
+    pub replayed: Vec<String>,
+    pub short_ids: Vec<super::off_record_rooms::OffRecordRoomShortIdPair>,
+}
+
+impl From<crate::off_record::PromoteOutcome> for OffRecordArtifactSaved {
+    fn from(outcome: crate::off_record::PromoteOutcome) -> Self {
+        Self {
+            replayed: outcome
+                .replayed
+                .iter()
+                .map(crate::EntityId::to_hex)
+                .collect(),
+            short_ids: outcome
+                .short_id_mapping
+                .into_iter()
+                .map(
+                    |(room, vault)| super::off_record_rooms::OffRecordRoomShortIdPair {
+                        room,
+                        vault,
+                    },
+                )
+                .collect(),
+        }
+    }
+}
+
 /// `self.off_record.execute`'s input: one entry of the durable code-mode run
 /// `run_ref` names in the session. The same `run_ref` in the same live
 /// session enters the same run again.
