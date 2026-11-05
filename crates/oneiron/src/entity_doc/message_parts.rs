@@ -100,9 +100,12 @@ pub(crate) fn append_message_parts_in_txn(
         .filter(|value| value.is_str())
         .ok_or(Error::CorruptedIndex("message document pointer"))?;
     let rewritten = pointer_with_parts(&auth, reference)?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &rewritten)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &rewritten,
+    )?;
     Ok(())
 }
 
@@ -145,9 +148,12 @@ fn append_atomic_parts_in_txn(
         .filter(|value| value.is_str())
         .ok_or(Error::CorruptedIndex("message document pointer"))?;
     let rewritten = pointer_with_parts(auth, reference)?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &rewritten)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &rewritten,
+    )?;
     Ok(())
 }
 

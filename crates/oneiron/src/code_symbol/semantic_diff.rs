@@ -34,11 +34,21 @@ pub struct CodeSemanticChange {
 /// A rename is a removal and an addition, never an inferred provenance transfer.
 pub fn semantic_code_diff(path: &str, old: &str, new: &str) -> Result<Vec<CodeSemanticChange>> {
     validate_manifest_path(path)?;
-    let before = units(path, old)?;
-    let after = units(path, new)?;
+    Ok(changed_units(path, &units(path, old)?, &units(path, new)?))
+}
+
+/// [`semantic_code_diff`] with each side one whole-file unit, whatever the
+/// language (FIX 8967): for a projection of a file (a sealed placeholder or
+/// a masked copy), which is no source a syntax parser may judge.
+pub fn whole_file_code_diff(path: &str, old: &str, new: &str) -> Result<Vec<CodeSemanticChange>> {
+    validate_manifest_path(path)?;
+    Ok(changed_units(path, &file_units(old)?, &file_units(new)?))
+}
+
+/// The units whose content differs between two sides, by identity.
+fn changed_units(path: &str, before: &Units, after: &Units) -> Vec<CodeSemanticChange> {
     let keys: BTreeSet<_> = before.keys().chain(after.keys()).collect();
-    Ok(keys
-        .into_iter()
+    keys.into_iter()
         .filter_map(|key| {
             let left = before.get(key);
             let right = after.get(key);
@@ -52,7 +62,7 @@ pub fn semantic_code_diff(path: &str, old: &str, new: &str) -> Result<Vec<CodeSe
                 after: right.map(|v| v.1.clone()),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Render only the supplied semantic changes. No independent text differ runs.
@@ -88,21 +98,27 @@ fn hex(hash: &[u8; 32]) -> String {
 
 type Units = BTreeMap<String, ([u8; 32], CodeContentVersion)>;
 
-fn units(path: &str, source: &str) -> Result<Units> {
+/// `source` as one unit, `file`: a non-Rust source's, or any projection's.
+fn file_units(source: &str) -> Result<Units> {
     let mut units = Units::new();
-    if !path.ends_with(".rs") {
-        if !source.is_empty() {
-            insert(
-                &mut units,
-                "file".into(),
-                source,
-                source,
-                (1, source.lines().count().max(1) as u32),
-                vec![(0, source.len())],
-            )?;
-        }
-        return Ok(units);
+    if !source.is_empty() {
+        insert(
+            &mut units,
+            "file".into(),
+            source,
+            source,
+            (1, source.lines().count().max(1) as u32),
+            vec![(0, source.len())],
+        )?;
     }
+    Ok(units)
+}
+
+fn units(path: &str, source: &str) -> Result<Units> {
+    if !path.ends_with(".rs") {
+        return file_units(source);
+    }
+    let mut units = Units::new();
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
