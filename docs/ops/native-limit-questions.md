@@ -18,7 +18,27 @@ cross napi-rs as BigInt, never through `f64`. A bound view
 shares the vault and its sink but exposes no whole-vault crossing metadata. An
 origin host receives an empty list where no row crossed yet.
 
-This covers raw host vaults opened outside the SDK registry only. The facade
-`OneironClient` path, other native bindings, the Q/machine-derived memory floor,
-and runtime behavior remain unproved here. This is not a whole-request coverage
-claim, a no-hang result, or a speed improvement.
+## SDK client wrappers (source only)
+
+The shared `OneironClient` exposes the same host collector through
+`native_limit_questions()`, and the SDK language bindings forward to it with
+no filtering, cap, or second collector:
+
+- N-API `NativeClient.nativeLimitQuestions()` → `Oneiron.nativeLimitQuestions()`:
+  `NativeLimitQuestion[] | null`, both counts exact `bigint`.
+- Python `Oneiron.native_limit_questions()`:
+  `list[NativeLimitQuestion] | None`, both counts exact `int`.
+- UniFFI `Oneiron.native_limit_questions()`:
+  `Option<Vec<NativeLimitQuestion>>`, both counts exact `u64`.
+
+`Some` with an empty list means the origin host kept no crossing yet; `None`
+means a remote, attached, or rebound (actor, delegated-reader, room, or
+off-record) view. Reading returns the current latest crossing per row without
+clearing it. The originating host only ever serves its own vault's crossings,
+and the single-writer PID gate error propagates rather than returning `None`.
+
+The raw-host path above covers vaults opened outside the SDK registry; the
+SDK section covers only the client wrappers it names. Other native bindings
+remain outside this record. The Q, machine-derived memory floor, allocation,
+and runtime behavior remain unproved here. This is not a whole-request coverage claim, a no-hang result, or a speed
+improvement.

@@ -31,5 +31,6 @@ released. A crossing still serves its work; it does not add a refusal or cap.
 
 Attached vaults keep the host's existing question sink untouched and return `None`.
 Remote clients and actor, delegated-reader, room or off-record views also return
-`None`. This is a Rust host metadata method, not a facade verb or a language-binding
-export. It retains no actor identity, query, body, credential or event history.
+`None`. This is host metadata, not a facade verb or a remote request; the N-API,
+Python, and UniFFI SDK wrappers expose the same getter with the same `None` vs
+`Some` contract. It retains no actor identity, query, body, credential or event history.
