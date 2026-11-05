@@ -49,6 +49,25 @@ pub(crate) fn repo_asset_body_in_txn(
     entity_type: u8,
     body: &[u8],
 ) -> Result<Option<Vec<u8>>> {
+    repo_asset_body_in_txn_with_reader(
+        vault,
+        txn,
+        id,
+        entity_type,
+        body,
+        &crate::batch::secret_scan::ContainerReader::default(),
+    )
+}
+
+/// The same hydrated repo ASSET projection using one read's container schedule.
+pub(crate) fn repo_asset_body_in_txn_with_reader(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<Option<Vec<u8>>> {
     if entity_type != ENTITY_TYPE_ASSET {
         return Ok(None);
     }
@@ -60,8 +79,14 @@ pub(crate) fn repo_asset_body_in_txn(
     if marks.is_empty() {
         return Ok(None);
     }
-    project_repo_bytes_in_txn(vault, txn, &marks, body.to_vec())
-        .map(|projected| Some(projected.into_bytes()))
+    crate::origin::secret_projection::project_repo_bytes_in_txn_with_reader(
+        vault,
+        txn,
+        &marks,
+        body.to_vec(),
+        reader,
+    )
+    .map(|projected| Some(projected.into_bytes()))
 }
 
 /// [`repo_asset_body_in_txn`] in its own snapshot, for a reader that holds

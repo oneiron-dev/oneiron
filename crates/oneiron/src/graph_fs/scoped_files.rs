@@ -1,9 +1,10 @@
 //! The same credential-gated file projection for point reads and indexed
 //! hydration. A non-owner never receives a lifted value through raw bytes.
 use super::model::GraphFsResolver;
+use crate::batch::secret_scan::ContainerReader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::repo_secret_reads::repo_asset_body_in_txn;
+use crate::memory::repo_secret_reads::repo_asset_body_in_txn_with_reader;
 use crate::ports::ScopedReadResult;
 use crate::ports::{PointRead, ReadRow};
 use oneiron_contracts::gate::RetrievalFilter;
@@ -13,6 +14,15 @@ impl GraphFsResolver<'_, '_> {
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
+        self.file_rows_with_reader(reads, requested, &ContainerReader::default())
+    }
+
+    pub(super) fn file_rows_with_reader(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        reader: &ContainerReader,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
         self.scoped_read
             .read_projected(reads, requested, |txn, rows| {
@@ -25,12 +35,13 @@ impl GraphFsResolver<'_, '_> {
                         // exact return.
                         if self.repo_masked()
                             && let Some(body) = row.body.as_mut()
-                            && let Some(projected) = repo_asset_body_in_txn(
+                            && let Some(projected) = repo_asset_body_in_txn_with_reader(
                                 self.scoped_read.vault(),
                                 txn,
                                 &row.id,
                                 row.entity_type,
                                 body,
+                                reader,
                             )?
                         {
                             *body = projected;
@@ -42,12 +53,13 @@ impl GraphFsResolver<'_, '_> {
                             return Ok(Some(row));
                         };
                         if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-                            *body = crate::store::file_key_masks::sighted_bytes_in_txn(
+                            *body = crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
                                 &self.scoped_read.vault().store,
                                 txn,
                                 body.clone(),
                                 None,
                                 crate::file_secret_marks::SecretSight::Masked,
+                                reader,
                             )?;
                         } else {
                             let mut cursor = std::io::Cursor::new(body.as_slice());
@@ -92,6 +104,16 @@ impl GraphFsResolver<'_, '_> {
 
     pub(super) fn file_row(&self, id: EntityId) -> Result<ScopedReadResult<Option<ReadRow>>> {
         Ok(self.file_rows(&[PointRead::id(id)], None)?.single())
+    }
+
+    pub(super) fn file_row_with_reader(
+        &self,
+        id: EntityId,
+        reader: &ContainerReader,
+    ) -> Result<ScopedReadResult<Option<ReadRow>>> {
+        Ok(self
+            .file_rows_with_reader(&[PointRead::id(id)], None, reader)?
+            .single())
     }
 }
 
