@@ -89,7 +89,20 @@ charged through replay metadata patches, record construction and borrowed
 writes, until that original payload drops. Public replay types, their deep
 clone and serialization behavior stay unchanged. The provisional writer's
 detached record clone owns different backing and is not covered by this lease;
-neither are retained config JSON, serialized row bytes or later decoded rows.
+neither are serialized row bytes or later decoded rows.
+
+The original captured replay config records its actual owned string capacities,
+array slot capacities and recursively owned children, including object-key
+strings. These are the retained `Value` buffers, not the distinct transient
+serialization inputs. Object-map buckets and number internals remain unpriced.
+The private per-attempt accounting owner measures the final config after all
+capture joins. Each of the two later policy metadata assignments keeps its
+existing evaluation and error behavior, then measures the updated config after
+the replaced value drops. It records the new extent before releasing the old
+tracked extent, so repeated patches neither release live backing early nor
+accumulate stale charges. Reference-string charges stay separate within the
+same lease. No config walk or new memory line is added to an unbound capture.
+The detached record clone's config remains separate and uncharged by this owner.
 
 The canonical provisional writer separately records those same two reference
 capacities on its deep-cloned record, using the same optional supplied line.

@@ -12,6 +12,38 @@ use super::super::builder::PipelineBuilder;
 use super::super::types::ResolvedWorldAuthority;
 use super::replay_identity::RetrievalReplayIdentity;
 
+pub(in crate::pipeline) struct ReplayInputsMemory {
+    lease: crate::host_memory::MemoryLease,
+    config_bytes: u64,
+}
+
+impl ReplayInputsMemory {
+    pub(in crate::pipeline) fn track_config(&mut self, config: &serde_json::Value) {
+        let bytes = replay_config_bytes(config);
+        self.lease.materialized(0, bytes);
+        self.lease.shrink(self.config_bytes);
+        self.config_bytes = bytes;
+    }
+}
+
+// Object map storage and number internals are not measured here.
+fn replay_config_bytes(value: &serde_json::Value) -> u64 {
+    match value {
+        serde_json::Value::String(value) => value.capacity() as u64,
+        serde_json::Value::Array(values) => values.iter().fold(
+            (values.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+            |bytes, value| bytes.saturating_add(replay_config_bytes(value)),
+        ),
+        serde_json::Value::Object(values) => values.iter().fold(0_u64, |bytes, (key, value)| {
+            bytes
+                .saturating_add(key.capacity() as u64)
+                .saturating_add(replay_config_bytes(value))
+        }),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the replay snapshot binds resolved inputs from one read transaction without rescanning mutable state"
@@ -30,7 +62,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     occurred_range: Option<(u64, u64)>,
     temporal_now: u64,
     rerank_query: Option<&str>,
-    replay_inputs_memory: &mut Option<crate::host_memory::MemoryLease>,
+    replay_inputs_memory: &mut Option<ReplayInputsMemory>,
 ) -> RetrievalReplayInputs {
     // Seed identities and channel payloads belong in the authorized query
     // packet, not in the local telemetry ledger.
@@ -129,10 +161,13 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     *replay_inputs_memory = builder
         .media_search
         .memory()
-        .map(crate::host_memory::MachineMemory::empty_lease);
+        .map(|memory| ReplayInputsMemory {
+            lease: memory.empty_lease(),
+            config_bytes: 0,
+        });
     let mut account_ref = |value: Option<String>| {
         if let (Some(memory), Some(value)) = (replay_inputs_memory.as_mut(), value.as_ref()) {
-            memory.materialized(0, value.capacity() as u64);
+            memory.lease.materialized(0, value.capacity() as u64);
         }
         value
     };
@@ -380,5 +415,8 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         "space": space,
         "kinds": kinds.unwrap_or_default(),
     });
+    if let Some(memory) = replay_inputs_memory.as_mut() {
+        memory.track_config(&inputs.config);
+    }
     inputs
 }
