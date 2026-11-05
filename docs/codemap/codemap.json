@@ -129273,6 +129273,7 @@
      "path": "src/model_decision/types.rs",
      "purpose": "Typed decision questions, answer contracts, and measurement values",
      "surface": {
+      "const": 1,
       "enum": 8,
       "fn": 17,
       "struct": 13
