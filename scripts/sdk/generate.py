@@ -2170,6 +2170,7 @@ UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::memory::KeyValueItem': 'KeyValueItem',
     'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
     'crate::skill::helper::CallableCardView': 'CallableCardView',
+    'crate::task_verb::sdk::AiOptions': 'AiOptions',
     'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',

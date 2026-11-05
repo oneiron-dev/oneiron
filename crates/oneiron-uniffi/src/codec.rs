@@ -36,6 +36,7 @@ use crate::dto::{
 };
 use crate::error::OneironError;
 
+mod ai_options;
 mod claims;
 mod key_value;
 mod proposal_results;
