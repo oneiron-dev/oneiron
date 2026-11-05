@@ -51,7 +51,10 @@ pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
 };
-pub(crate) use self::trap::wake_trap_in_txn;
+pub(crate) use self::trap::{
+    TrapBrokenPark, TrapConsumePrecheck, retire_peer_wait_binding_for_trap_in_txn,
+    trap_consume_precheck_in_txn, wake_trap_in_txn,
+};
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
@@ -79,9 +82,7 @@ pub(crate) use self::step_claim::{
     index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 // KS-2B1: row-held step responses under body custody.
-pub(crate) use self::response_bodies::{
-    retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
-};
+pub(crate) use self::response_bodies::{retire_step_claim_in_rows, retire_step_claim_in_txn};
 // FIX 6225: a claim's teardown, a restore and an activation take its pins.
 pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -136,4 +137,3 @@ pub(crate) use types::StepEffectBinding;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::submission_custody::model_step_submission_accepts_masked;

@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, DelegatedSource, ReaderJob,
-    ReaderJobs, ScopedChildPorts, TaskWaitPolicy, TaskWaitSet, TaskWaitSetResult, reader_task_id,
-    reader_wait_id, reduce_task_wait_set,
+    ReaderJobs, ScopedChildPorts, TaskWaitPolicy, TaskWaitSet, TaskWaitSetResult, reader_wait_id,
+    reduce_task_wait_set,
 };
 use crate::engine_executor::EngineExecutorConfig;
 use crate::llm::{BudgetGuard, LlmBackend, ModelId, ModelLocality};
@@ -47,6 +47,8 @@ pub struct HostInput {
 /// holds answers the occurrence it holds. The record is `actor`'s run's
 /// (FIX 9019): its owner row is stamped with its put, so an erase of that
 /// actor, and its outputs' retention, reach a run that only holds outputs.
+/// Each input's source rows are frozen with its first stored occurrence;
+/// a reused path lends that occurrence's sources, never a new label for it.
 ///
 /// # Errors
 ///
@@ -71,7 +73,7 @@ pub fn commit_host_inputs(
         {
             Some(output) => output.clone(),
             None => {
-                let output = publish(vault, parent_run, input.path, &input.body)?;
+                let output = publish(vault, parent_run, input.path, &input.body, input.rows)?;
                 record.outputs.push(output.clone());
                 published = true;
                 output
@@ -84,7 +86,7 @@ pub fn commit_host_inputs(
                 path: output.path,
                 handle: output.handle,
                 range: (0, output.raw_len),
-                rows: input.rows,
+                rows: output.input_rows,
             },
         );
     }
@@ -113,7 +115,7 @@ pub fn stage_host_output(
     if let Some(output) = record.outputs.iter().find(|output| output.path == path) {
         return Ok(output.clone());
     }
-    let output = publish(vault, parent_run, path, body)?;
+    let output = publish(vault, parent_run, path, body, None)?;
     record.outputs.push(output.clone());
     vault.put_code_run_replay_record(&record)?;
     Ok(output)
@@ -153,13 +155,17 @@ pub fn host_run_recorded(vault: &Vault, run: EntityId) -> Result<bool> {
 }
 
 /// The task the scoped child `parent_run` queues under `intent_key` is: a
-/// host registers its profile by it before the child is queued.
+/// host registers its profile by it before the child is queued. Scoped
+/// children and ordinary readers use separate task namespaces.
 ///
 /// # Errors
 ///
 /// An id that derives to a reserved one.
 pub fn scoped_child_task(parent_run: EntityId, intent_key: &str) -> Result<EntityId> {
-    reader_task_id(parent_run, intent_key)
+    EntityId::derive(
+        b"oneiron:code-scoped-child-task:v1",
+        &[parent_run.as_bytes().as_slice(), intent_key.as_bytes()],
+    )
 }
 
 /// The one-child wait (`n_of` = 1) over scoped child `task` of `parent_run`,
@@ -217,11 +223,18 @@ pub fn read_scoped_finding(vault: &Vault, job: &ReaderJob) -> Result<Option<Vec<
     read_whole(vault, &output)
 }
 
-/// Publishes `body` as `owner`'s complete output at `path`.
-fn publish(vault: &Vault, owner: EntityId, path: String, body: &[u8]) -> Result<CodeRunRawOutput> {
+/// Publishes `body` as `owner`'s complete output at `path`, with its known
+/// input rows; `None` keeps an unknown source set unknown.
+fn publish(
+    vault: &Vault,
+    owner: EntityId,
+    path: String,
+    body: &[u8],
+    input_rows: Option<Vec<EntityId>>,
+) -> Result<CodeRunRawOutput> {
     let mut sink = vault.code_run_output_sink()?;
     sink.write(body)?;
-    vault.publish_code_run_output(path, sink, true, Some(owner))
+    vault.publish_code_run_output_sourced(path, sink, true, Some(owner), input_rows)
 }
 
 /// `output`'s whole body.

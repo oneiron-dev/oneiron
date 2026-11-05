@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::write_envelope::task_body::TaskRole;
 
-use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
+use super::consts::TASK_VERB_BODY_SCHEMA_VERSIONS;
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
 use super::refusal::TaskRefusalRecord;
@@ -26,6 +26,7 @@ use super::terminal_state::{
 };
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use crate::error::RecordError;
+pub(super) use crate::store::linear_task_revision::task_body_has_typed_subkind;
 
 pub(super) fn task_verb_body(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskVerbBody>> {
     let rtxn = vault.store.env.read_txn()?;
@@ -825,28 +826,29 @@ pub(crate) fn task_binding(body: &[u8]) -> Option<TaskBinding> {
     })
 }
 
-pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
-    let mut cursor = body;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
-    if !cursor.is_empty() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    let Some(entries) = value.as_map() else {
-        return Ok(false);
+/// Inverse of [`super::wire_encode::encode_task_realization_input`]: the one
+/// decoder of a queued TASK realization's input, shared by the runner and
+/// admission (FIX 11687). The wrapper is current-only: `spec` and
+/// `requester` are both required keys, `requester` nil for unmarked work,
+/// else the native JSON string both carriers share. A raw spec, or any
+/// wrapper missing a key, is a corrupt input.
+pub(crate) fn decode_task_realization_input(
+    value: &Value,
+) -> Result<(Value, Option<crate::agent_dispatch::QueuedRequester>)> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("tasks.realize.input"));
+    let entries = value.as_map().ok_or_else(invalid)?;
+    let spec = task_body_field(entries, "spec")
+        .map_err(|_| invalid())?
+        .clone();
+    let stored = task_body_field(entries, "requester").map_err(|_| invalid())?;
+    let requester = if matches!(stored, Value::Nil) {
+        None
+    } else {
+        let raw = stored.as_str().ok_or_else(invalid)?;
+        Some(
+            serde_json::from_str::<crate::agent_dispatch::QueuedRequester>(raw)
+                .map_err(|_| invalid())?,
+        )
     };
-    Ok(entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("subkind"))
-        .count()
-        == 1
-        && entries
-            .iter()
-            .filter(|(key, value)| {
-                key.as_str() == Some("subkind") && value.as_str() == Some(TASK_VERB_BODY_SUBKIND)
-            })
-            .count()
-            == 1)
+    Ok((spec, requester))
 }

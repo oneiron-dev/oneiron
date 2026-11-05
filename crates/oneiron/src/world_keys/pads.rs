@@ -267,8 +267,20 @@ fn reject_held_world_in_txn(
     store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
+fn claim_body_world(raw: &[u8]) -> Result<Option<EntityId>> {
+    if let Some(Ok(world)) = pad_body_world(raw) {
+        return Ok(Some(world));
+    }
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world)
+}
+
 /// The claims `world`'s key seals. Of the rows a key seals, only a claim
-/// names a world: by its body (`sync::types::entity_world`), or, for a shell
+/// names a world: by its body ([`claim_body_world`]), or, for a shell
 /// or a body that names none readably, by the deletion address this vault
 /// kept for it (FIX 3062).
 fn sealed_claims_in_txn(
@@ -284,7 +296,7 @@ fn sealed_claims_in_txn(
         let Some(raw) = store.port_entity_raw(txn, &id)? else {
             continue;
         };
-        let of = match crate::sync::types::entity_world(&raw) {
+        let of = match claim_body_world(&raw) {
             Ok(Some(of)) => Some(of),
             Ok(None) | Err(_) => retained_world_in_txn(store, txn, &id)?,
         };
@@ -305,7 +317,7 @@ fn retained_world_in_txn(
     Ok(store
         .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .and_then(|raw| String::from_utf8(raw).ok())
-        .and_then(crate::window_key::WindowKey::try_new)
+        .and_then(oneiron_store::window_key::WindowKey::try_new)
         .and_then(|key| key.world()))
 }
 
@@ -395,6 +407,40 @@ pub(crate) fn held_pad_world_in_txn(
     }
     for id in sealed_claims_in_txn(store, txn, world)? {
         if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The real-legal-hold-only version of the pad keep query, for truthful
+/// reason reports. Cooperative restrictions are not legal-hold facts.
+pub(crate) fn legal_hold_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> Result<bool> {
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    // A body that does not decode names no world: it reads unheld, warned
+    // with no byte of it, so the walk drops it.
+    let world = match pad_body_world(raw) {
+        None => return Ok(false),
+        Some(Ok(world)) => world,
+        Some(Err(_)) => {
+            tracing::warn!("a world key pad row that does not decode reads as unheld");
+            return Ok(false);
+        }
+    };
+    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
+        return Ok(false);
+    }
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, world.as_bytes())? {
+        return Ok(true);
+    }
+    for id in sealed_claims_in_txn(store, txn, world)? {
+        if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
             return Ok(true);
         }
     }

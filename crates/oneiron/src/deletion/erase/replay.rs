@@ -140,7 +140,11 @@ impl Vault {
 
         if !decoded.is_hard() {
             let had_refinement =
-                crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
             let had_merge_receipt =
                 crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
                     &self.store,
@@ -277,7 +281,10 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, None)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                None,
+            )?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -313,6 +320,7 @@ impl Vault {
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
+        crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = captured.refs() {
@@ -417,12 +425,12 @@ impl Vault {
                 "cleanup archives cannot be replayed as deletion intent",
             ));
         }
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, txn, id)?;
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, txn, id)?;

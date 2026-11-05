@@ -33,17 +33,23 @@ pub mod body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
 mod create;
+pub mod deck_context;
 pub mod deck_creation;
 mod deck_doors;
+pub mod deck_inspection;
 pub(crate) mod erase;
 mod family;
 mod holders;
 mod lifecycle;
 mod made_by;
+pub mod native_output;
+pub mod office_address;
 mod provenance;
 mod references;
 mod review_request;
+pub mod slide_review;
 mod store_keys;
+pub mod unit_refusal;
 mod verbs;
 mod version_codec;
 mod version_rows;
@@ -70,8 +76,8 @@ pub use self::family::{
     ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,
 };
 pub(crate) use self::holders::{
-    artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
-    held_content_hashes_in_txn,
+    LocalHashVersion, artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
+    held_content_hashes_in_txn, local_hash_versions_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.

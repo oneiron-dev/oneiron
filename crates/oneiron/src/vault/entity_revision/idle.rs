@@ -104,7 +104,7 @@ impl Vault {
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                    let text = crate::claim::claim_value_index_text(&claim.value);
+                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
                     if text.is_empty() {
                         Vec::new()
                     } else {
@@ -315,7 +315,7 @@ impl Vault {
             )?;
             crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
-            if self.config.tagging.is_some() {
+            if self.tagging_marker_config().is_some() {
                 self.store.notify_attempt_observers();
             }
             published(IndexedPublication {

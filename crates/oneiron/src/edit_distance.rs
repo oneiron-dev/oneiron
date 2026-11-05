@@ -66,6 +66,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_PEER_BINDING,
@@ -87,10 +88,10 @@ pub(crate) fn edit_distance_proposal_artifact_accepts_masked(bytes: &[u8]) -> bo
 }
 
 /// Schema version of the persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;
+pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 4;
 
 /// Pinned MessagePack key set for a persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
+pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 10] = [
     "v",
     "artifact",
     "proposed_ref",
@@ -99,6 +100,8 @@ pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
     "source_turn",
     "spans",
     "lifted",
+    "made_by_inputs",
+    "birth_attempt",
 ];
 
 /// Pinned MessagePack key set for one attributed op span inside a record.
@@ -114,6 +117,8 @@ const KEY_DOCUMENT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
 const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
 const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
 const KEY_LIFTED: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
+const KEY_MADE_BY_INPUTS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[8];
+const KEY_BIRTH_ATTEMPT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[9];
 
 const SPAN_KEY_PEER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[0];
 const SPAN_KEY_COUNTER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[1];
@@ -276,6 +281,13 @@ pub struct FinalizedProposalText {
     /// fence probe keys off this, so an absent value there means "not
     /// turn-sourced", never "unknown".
     pub source_turn_ref: Option<EntityId>,
+    /// The run-write attempt present when this artifact opened, never the
+    /// later finalize or settle attempt. `None` when birth had no run token.
+    pub birth_attempt: Option<AttemptId>,
+    /// Every MadeBy input row id the window's commits named (FIX 11350), in
+    /// first-seen order, deduped by id. Ids only: the eligibility check is row
+    /// readability, and Prompt vs Input is irrelevant to it.
+    pub made_by_inputs: Vec<EntityId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -607,6 +619,22 @@ fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
             Value::from(KEY_LIFTED),
             text_ref::encode_lifted(stored.lifted.as_ref()),
         ),
+        (
+            Value::from(KEY_MADE_BY_INPUTS),
+            Value::Array(
+                record
+                    .made_by_inputs
+                    .iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_BIRTH_ATTEMPT),
+            record
+                .birth_attempt
+                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).map_err(|_| {
@@ -673,6 +701,12 @@ fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
         final_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_FINAL_REF)?),
         ops_by_actor: spans,
         source_turn_ref: field_opt_entity_id(&entries, KEY_SOURCE_TURN)?,
+        birth_attempt: match field(&entries, KEY_BIRTH_ATTEMPT).ok_or_else(corrupt)? {
+            Value::Nil => None,
+            Value::Binary(bytes) => Some(AttemptId::from_bytes(bytes).map_err(|_| corrupt())?),
+            _ => return Err(corrupt()),
+        },
+        made_by_inputs: field_entity_id_list(&entries, KEY_MADE_BY_INPUTS)?,
     };
     let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
     Ok(StoredProposal {
@@ -773,6 +807,22 @@ fn field_opt_entity_id(entries: &[(Value, Value)], key: &str) -> Result<Option<E
         None | Some(Value::Nil) => Ok(None),
         Some(_) => field_entity_id(entries, key).map(Some),
     }
+}
+
+fn field_entity_id_list(entries: &[(Value, Value)], key: &str) -> Result<Vec<EntityId>> {
+    let Some(Value::Array(items)) = field(entries, key) else {
+        return Err(corrupt());
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            Value::Binary(bytes) => {
+                let bytes: [u8; ENTITY_ID_LEN] = bytes.clone().try_into().map_err(|_| corrupt())?;
+                EntityId::from_bytes(bytes).map_err(|_| corrupt())
+            }
+            _ => Err(corrupt()),
+        })
+        .collect()
 }
 
 fn corrupt() -> Error {

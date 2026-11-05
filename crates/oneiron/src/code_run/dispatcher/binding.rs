@@ -170,7 +170,7 @@ impl<'a> HostSelfDispatcher<'a> {
     pub(crate) fn run_write_token(&self) -> Option<crate::skill_attribution::RunWriteToken> {
         self.agent_lease
             .as_ref()
-            .map(crate::skill_attribution::RunWriteToken::from_lease)
+            .map(crate::skill_attribution::run_write_token_from_lease)
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -222,6 +222,20 @@ impl<'a> HostSelfDispatcher<'a> {
             self.external_effect_seen.set(true);
         }
         self.observe_parked_hooks(bridge_calls);
+    }
+
+    /// Restores lineage only from a canonical wait's committed reply
+    /// consumption. A room's replay does not consume canonical consent rows.
+    pub(crate) fn observe_consumed_code_replies(
+        &self,
+        record: &crate::code_run::CodeRunReplayRecord,
+    ) -> Result<()> {
+        if let ExecutorStorage::Canonical(vault) = &self.storage
+            && super::super::consent_wait::consumed_external_code_reply(vault, record)?
+        {
+            self.external_effect_seen.set(true);
+        }
+        Ok(())
     }
 
     /// The HOST calls this with each turn's answer before its program runs:

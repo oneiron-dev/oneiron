@@ -100,6 +100,18 @@ pub(crate) fn stale_in_txn(
 fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
+/// The room's explicit withdrawal mark in this exact overlay snapshot.
+pub(crate) fn marked_stale_in_overlay(
+    snapshot: &crate::session_overlay::OverlaySnapshot,
+    id: &EntityId,
+) -> bool {
+    snapshot
+        .staged_value(
+            crate::session_overlay::OverlayKeyspace::VaultMeta,
+            &stale_key(id),
+        )
+        .is_some()
+}
 /// Whether a source `dependent` is recorded as derived from no longer stands
 /// in this snapshot. It needs no mark from the deletion, so a failed or
 /// rolled-back mark still withdraws (I2). Only `dependent`'s own reverse rows
@@ -339,8 +351,11 @@ fn mark_room_stale_in_txn(
     // the reconciled count instead of the stale advisory one.
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
-        view.hnsw_meta
-            .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+        view.hnsw_meta.put(
+            txn,
+            crate::store::vector_index::keys::COUNT_KEY,
+            &count.to_le_bytes(),
+        )?;
         // A room can outlive base's entry point: base deleted its sole node
         // while the overlay still holds neighbor rows. Seed the missing
         // entry point from the composed graph so the strict delete finds
@@ -611,7 +626,7 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     if had_vector {
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &[])?;
     // Withdrawn words are never embedded: a queued or leased fill finds no
     // current marker, so it neither sends them out nor writes a vector back.
     store.clear_pending_embedding(txn, id)?;

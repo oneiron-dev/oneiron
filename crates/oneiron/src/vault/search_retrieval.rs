@@ -3,6 +3,7 @@
 use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
@@ -177,6 +178,9 @@ impl Vault {
     ) -> Result<TimedSearch> {
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
+        // The count this search serves, asked before the read opens. Best
+        // effort: the search serves its rows either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
         let txn = self.store.env.read_txn()?;
         let scores =
             crate::ports::RetrievalIndex::port_retrieval_text_search(self, &txn, query, limit)?;
@@ -237,6 +241,10 @@ impl Vault {
         self.ensure_text_index_trusted()?;
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
+        // The count this search serves, asked after the trust check and
+        // before the read opens. Best effort: the search serves its rows
+        // either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
         let scores = {
             let rtxn = self.store.env.read_txn()?;
             admit(&rtxn)?;
@@ -250,6 +258,9 @@ impl Vault {
                     filter_all: false,
                     matches_scope: &mut |_| Ok(true),
                     private_note_ids: None,
+                    // FIX 9096 PART: no caller-side recency signal here; the
+                    // direct-with-profile path still blends no recency.
+                    recency: None,
                 },
             )?
         };
@@ -484,7 +495,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
         Ok(policy.actor_ceiling(actor_class, Some(actor_ref))
-            == crate::gate::PolicyApprovalCeiling::Proposed)
+            == crate::store::policy_record::PolicyApprovalCeiling::Proposed)
     }
 
     /// Returns pending Gate consent proposals grouped by Dreamer run id.

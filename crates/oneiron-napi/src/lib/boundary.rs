@@ -13,8 +13,6 @@ pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 // ONE-479 still finds the established seam; only the source of the numbers
 // moved, so the N-API boundary and the remote boundary cannot drift into two
 // sets of limits that agree only by coincidence.
-pub(super) const MAX_NAPI_SEARCH_LIMIT: u32 = oneiron_remote::MAX_SEARCH_LIMIT as u32;
-
 pub(super) const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
 
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
@@ -24,8 +22,6 @@ pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTI
 pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
 
 pub(super) const MAX_NAPI_CODEBASE_FILES: usize = oneiron_remote::MAX_CODEBASE_FILES;
-
-pub(super) const MAX_NAPI_DIMENSIONS: usize = oneiron_remote::MAX_DIMENSIONS;
 
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
@@ -72,11 +68,7 @@ pub(super) fn parse_created_at(created_at: u64) -> BoundaryResult<i64> {
 
 /// Validate a user-provided search limit before passing it to core search.
 pub(super) fn parse_search_limit(limit: u32) -> BoundaryResult<usize> {
-    if limit > MAX_NAPI_SEARCH_LIMIT {
-        return Err(format!(
-            "limit must be <= {MAX_NAPI_SEARCH_LIMIT}, got {limit}"
-        ));
-    }
+    // The whole u32 range narrows exactly; the door serves the count whole.
     Ok(limit as usize)
 }
 
@@ -227,16 +219,6 @@ pub(super) fn parse_fixed_hash<const N: usize>(
 /// Validate a JS file size before narrowing to u64.
 pub(super) fn parse_file_size(size: i64) -> BoundaryResult<u64> {
     u64::try_from(size).map_err(|_| format!("size_bytes must be >= 0, got {size}"))
-}
-
-/// Validate configured vector dimensions before opening a vault.
-pub(super) fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
-    if dimensions > MAX_NAPI_DIMENSIONS {
-        return Err(format!(
-            "dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}"
-        ));
-    }
-    Ok(())
 }
 
 /// Validate vector length before allocating the narrowed f32 copy.

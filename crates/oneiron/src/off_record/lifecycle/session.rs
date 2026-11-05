@@ -975,6 +975,13 @@ impl OffRecordSession<'_> {
         self.vault.pin_result_body(digest)
     }
 
+    /// Notes a detached line-index rebuild for the body `digest` in this
+    /// session's vault (FIX 1186b): the session arm's forward, beside
+    /// [`Self::pin_result_body`].
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        self.vault.note_body_line_index_rebuild(digest, len)
+    }
+
     /// Notes the scan-bound search credit issued for the window (`digest`,
     /// `base`, `len`): the exact emitted (`offset`, `line`, `credit`), kept
     /// in memory on this session's vault only (FIX 1189 discount, #4311 P1-B).
@@ -1075,8 +1082,13 @@ impl OffRecordSession<'_> {
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OffRecord)?;
+        let mut state = session_entry_state(&self.entry)?;
+        super::vault_api::set_entry_mode(
+            &self.entry,
+            &mut state,
+            &self.session_ref,
+            OffRecordMode::OffRecord,
+        )?;
         Ok(())
     }
 

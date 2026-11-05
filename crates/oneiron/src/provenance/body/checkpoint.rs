@@ -79,3 +79,65 @@ pub(crate) fn restore_in_txn(
 ) -> Result<Restored> {
     rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
 }
+
+/// Restores the getter's rows, then applies only this restore's admitted
+/// body retirements to the actual joined rows in the same writer.
+pub(crate) fn restore_pruned_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: OpenedOwnerRows,
+    retired_digests: &std::collections::BTreeSet<[u8; 32]>,
+) -> Result<Restored> {
+    if retired_digests.is_empty() {
+        return restore_in_txn(dbs, txn, opened);
+    }
+    let written = std::cell::RefCell::new(Vec::new());
+    let mut restored = rows::restore_parts(
+        dbs,
+        txn,
+        &opened,
+        |at, value| {
+            check(at, value)?;
+            written.borrow_mut().push(at.clone());
+            Ok(())
+        },
+        rows::no_join,
+    )?;
+    // The check runs on final joined locators, not actor-part placeholders.
+    let mut before = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for at in written.into_inner() {
+        if !seen.insert(at.clone()) {
+            continue;
+        }
+        let value = dbs
+            .vault_meta()
+            .get(txn, &at.key)?
+            .ok_or(crate::Error::CorruptedIndex(
+                "restored body descriptor row missing",
+            ))?;
+        before.push((at, value.to_vec()));
+    }
+    let mut after: Vec<_> = before
+        .iter()
+        .map(|(at, value)| (at.key.clone(), value.clone()))
+        .collect();
+    for digest in retired_digests {
+        crate::store::owned_body::prune_digest_in_rows(&mut after, digest)?;
+    }
+    let after: std::collections::BTreeMap<_, _> = after.into_iter().collect();
+    for (at, value) in before {
+        match after.get(&at.key) {
+            Some(updated) if updated != &value => {
+                dbs.vault_meta().put(txn, &at.key, updated)?;
+            }
+            None => {
+                dbs.vault_meta().delete(txn, &at.key)?;
+                restored.written -= 1;
+                restored.dropped.push(at);
+            }
+            _ => {}
+        }
+    }
+    Ok(restored)
+}

@@ -165,6 +165,20 @@ connection floor and each address's unauthenticated share. Managed serve
 socket the supervisor names with `--artifact-http-socket` (an absolute path);
 without one, its `/a/` answers on the API socket alone.
 
+Managed serve's native preview listener is the unix socket the supervisor
+names with `--preview-socket` (an absolute path), only for an explicitly
+configured preview domain and installed engines at or after this flag's build
+floor (`oneiron-vault-contract`'s `CONTRACT_VERSION` docs). It serves only an
+already-held private preview on the exact origin the supervisor bound to that
+lease, never the vault API. The same owner, invitation, sharing tokens and
+revocations protect both origins; a public DNS name does not publish the app.
+Without the flag there is no registration caller or preview data socket, and
+the standalone loopback preview is unchanged. Losing a held registration stops
+hosted ingress and its streams, not the still-live loopback lease or its tokens.
+The trusted session runtime must install the actual process connector; HTTP
+input cannot install one. This ingress is native-only: the vault-VM typed
+ledger bridge does not carry preview registration.
+
 `artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
 comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
 `ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
@@ -298,11 +312,12 @@ seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision c
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (each stream decodes whole; the largest also meets seal_stream_decode_bytes)
 seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
 seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
-seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
+seal_fetch_asks = 32              # fetch asks (timestamps, CRLs, OCSP) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
 seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
+seal_ocsp_bytes = 1048576         # bytes of one OCSP reply a seal fetches; past it the reply is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
 seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (each stream decodes whole)
@@ -354,6 +369,8 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
+embedding_dimensions = 1048576 # embedding vector dimensions one vault opened with, measured where its host serves it; past it the vault serves as opened and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without

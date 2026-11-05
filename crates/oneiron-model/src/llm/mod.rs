@@ -51,10 +51,12 @@ pub use failure_policy::{
 };
 pub mod image;
 mod label_read;
+mod logprobs;
 pub mod media;
 pub use label_read::{
     LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
+pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;
 mod protocol;
 mod reply_assertions;
@@ -111,7 +113,7 @@ pub use self::catalog::{
 };
 pub use self::error::{
     BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError,
-    RetryableLlmError, SpentKind, UnsupportedCapability,
+    RetryableLlmError, SpentKind, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 // Public so `oneiron`'s auto-checker names a dynamic model the same way the safeguard
 // binding does, across the crate line.
