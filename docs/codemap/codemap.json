@@ -4688,7 +4688,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 47,
       "mod": 2,
       "re-export": 70
      }
@@ -34673,7 +34673,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/message_parts.rs",
@@ -63518,7 +63518,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 2
      }
     },
@@ -63606,7 +63606,7 @@
      "path": "src/secret_custody/control/input/witness.rs",
      "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -63650,7 +63650,7 @@
      "path": "src/secret_custody/control/revoked.rs",
      "purpose": "The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -63670,7 +63670,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 4
      }
     },
@@ -63863,7 +63863,7 @@
      "path": "src/secret_custody/leaf_delivery/doors.rs",
      "purpose": "The `Vault` doors of live leaf delivery (FIX 7402): the asker's pending asks, the holder's answer, the…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -64151,7 +64151,7 @@
      "path": "src/secret_custody/storage_seal.rs",
      "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 4, with required…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -64189,7 +64189,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -64673,7 +64673,7 @@
      "path": "src/secret_rotation/revoke.rs",
      "purpose": "Revocation: terminal value death everywhere the vault reaches",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
