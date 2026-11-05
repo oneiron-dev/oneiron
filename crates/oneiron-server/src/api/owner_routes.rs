@@ -212,6 +212,7 @@ fn owner_tables() -> OwnerTable {
         removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
+        super::phone_line::owner_table(),
         carrier_table(),
     ]
     .into_iter()
