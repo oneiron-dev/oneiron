@@ -192,15 +192,6 @@ impl Vault {
         admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId, &EntityId) -> crate::Result<bool>,
     ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
         let conversation = entity_id(&input.conversation, "conversation")?;
-        match self.get_entity_type(&conversation)? {
-            Some(ENTITY_TYPE_CONVERSATION) => {}
-            Some(_) => {
-                return Err(MemoryError::bad_request(
-                    "conversation id does not reference a conversation entity",
-                ));
-            }
-            None => return Err(MemoryError::not_found("conversation not found")),
-        }
         // A thread binding is its room door's to stamp (FIX 2951), and an
         // audience edit its thread's audience door's (FIX 5545).
         if [
@@ -217,6 +208,7 @@ impl Vault {
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
         let outside = std::cell::Cell::new(false);
+        let mut parent_error = None;
         let committed = stage_core_put(
             self.batch(),
             &id,
@@ -228,14 +220,28 @@ impl Vault {
         )?
         .edge_checked(&id, &conversation, 1.0)
         .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation, &id)? {
-                return Ok(());
+            if !admits(txn, &conversation, &id)? {
+                outside.set(true);
+                return Err(crate::Error::EntityNotFound);
             }
-            outside.set(true);
-            Err(crate::Error::EntityNotFound)
+            parent_error = match self.get_entity_type_in_txn(txn, &conversation)? {
+                Some(ENTITY_TYPE_CONVERSATION) => None,
+                Some(_) => Some(MemoryError::bad_request(
+                    "conversation id does not reference a conversation entity",
+                )),
+                None => Some(MemoryError::not_found("conversation not found")),
+            };
+            if parent_error.is_some() {
+                Err(crate::Error::EntityNotFound)
+            } else {
+                Ok(())
+            }
         });
         if outside.get() {
             return Ok(None);
+        }
+        if let Some(error) = parent_error {
+            return Err(error);
         }
         committed?;
         Ok(Some(CoreEntityWriteReceipt::new(

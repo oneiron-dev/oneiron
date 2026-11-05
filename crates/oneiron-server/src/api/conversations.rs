@@ -468,12 +468,6 @@ pub(crate) async fn create_core_conversation_turn(
 ) -> Result<Json<CoreEntityWriteResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
-    require_entity_type(
-        &server,
-        &conversation,
-        ENTITY_TYPE_CONVERSATION,
-        "conversation",
-    )?;
     let req = json_payload(payload)?;
     // The route's own refusals first; the row mints what the body omits.
     if let Some(id) = &req.id {
