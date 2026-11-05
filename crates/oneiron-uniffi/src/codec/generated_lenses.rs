@@ -1,13 +1,13 @@
 //! Owned opaque component properties in generated lens trees and flat cards.
 
-use oneiron::claim::{ScopedReadResult, WeaveDigestView, WeaveItemView};
+use oneiron::claim::{ScopedReadResult, WeaveDigestView};
 use oneiron::lens::{
     GeneratedLens, GeneratedUiRender, LensAtom, LensFrameCard, LensListPage, LensNode,
     LensRenderId, LensVersionStamp,
 };
 use serde_json::Value;
 
-use super::{Lift, OneironError, WireJson, claims, lift_record};
+use super::{Lift, OneironError, WireJson, lift_record, weave_reports};
 
 pub(super) struct LensParts {
     stamp: LensVersionStamp,
@@ -101,38 +101,13 @@ impl Lift<ScopedReadResult<LensFrameCard>> for crate::ScopedReadResultLensFrameC
 
 impl Lift<WeaveDigestView> for crate::WeaveDigestView {
     fn lift(mut value: WeaveDigestView) -> Result<Self, OneironError> {
-        let json = value
-            .sections
-            .iter_mut()
-            .flat_map(|section| &mut section.items)
-            .filter_map(|item| {
-                if let WeaveItemView::Claim { claim } = item {
-                    Some(claims::lift_json(
-                        std::mem::take(&mut claim.value),
-                        claim.scope.take(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+        let json = weave_reports::take_claims(&mut value.sections);
         let lens = value.lens.take().map(FrameParts::take);
 
         // Every claim and both card representations are drained before any error returns.
-        let json = json.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let json = json?;
         let mut output: Self = lift_record("vault.weave.digest", &value)?;
-        let mut json = json.into_iter();
-        for item in output
-            .sections
-            .iter_mut()
-            .flat_map(|section| &mut section.items)
-        {
-            if let crate::WeaveItemView::Claim { claim } = item {
-                let (value, scope) = json.next().expect("each native claim keeps its mirror");
-                claim.value = value;
-                claim.scope = scope;
-            }
-        }
+        weave_reports::restore_claims(&mut output.sections, json);
         output.lens = lens
             .map(|lens| lens.lift("vault.weave.digest.lens"))
             .transpose()?;

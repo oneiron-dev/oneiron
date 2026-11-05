@@ -979,7 +979,7 @@ export_facade! {
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;
-    crate::codec::lift_record("vault.weave.report", &output)
+    Lift::lift(output)
 };
 "vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> Option<WeaveDigestView> = |client| {
     let input: oneiron::claim::WeaveDigestRequest = crate::codec::lower_record("vault.weave.digest", input)?;
