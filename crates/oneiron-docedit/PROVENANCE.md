@@ -191,3 +191,24 @@ from 4 to 5 because `set_story_cell` extends the typed `docx.project` arguments;
 it serves only the current version, with no old reader or migration. Nested
 transaction and Loro versions stay unchanged. No new error, default, cap or
 Word-runtime comparison is claimed.
+
+The story cell-paragraph extension (2026-11-05, FIX 594) adds required ordered
+`DocxCell.paragraphs` from the canonical cell blocks: ids, guards, accepted inline
+text and exact target locks. It does not split the joined redline read or reuse
+lossy render segments. `edit_story_cell` and `SetStoryCell` accept an optional
+exact paragraph id inside the selected cell; absent retains FIRST-paragraph
+intent, including every body cell call. Scope and transaction-base table guards
+are unchanged. The common cell core narrows Direct settlement to the edited
+paragraph, so sibling history stays pending, and distinguishes a joined redline
+identity from a genuine edit of the accepted text. It does not change the shared
+materializer. The private cell projection helpers move whole into
+`docx_body/projection/story_cells.rs` before the parent crosses 800 lines.
+
+The same still-pending schema-2 Loro body now imports story tables as independent
+plain cell paragraphs, with scoped set/splice operations, typed reads, masked
+public views, table-level fork review and exact-selector native export. No rich
+cell marks, nested-table structure or story live-unit pinning is claimed. Native
+contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
+is not an old-format reader, default or migration. A later change after they
+land requires fresh current versions. No numeric ceiling, default, dependency,
+error kind, test or runtime/Word proof is added by this extension.

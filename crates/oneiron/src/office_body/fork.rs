@@ -224,6 +224,29 @@ fn side(base: &DocxBody, side: &DocxBody) -> Vec<BlockChange> {
             }
         }
     }
+    // Tables retain the existing body-table review granularity. Their exports
+    // still address each changed paragraph exactly, within its native cell.
+    for story in &side.stories {
+        let before = base.stories.iter().find(|other| other.scope == story.scope);
+        for table in &story.tables {
+            let old = before.and_then(|story| story.tables.iter().find(|old| old.id == table.id));
+            match old {
+                None => changes.push(story_change(&story.scope, &table.id, ChangeKind::Added)),
+                Some(old) if old.cells != table.cells => {
+                    changes.push(story_change(&story.scope, &table.id, ChangeKind::Cells));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    for story in &base.stories {
+        let after = side.stories.iter().find(|other| other.scope == story.scope);
+        for table in &story.tables {
+            if after.is_none_or(|story| !story.tables.iter().any(|now| now.id == table.id)) {
+                changes.push(story_change(&story.scope, &table.id, ChangeKind::Deleted));
+            }
+        }
+    }
     changes
 }
 

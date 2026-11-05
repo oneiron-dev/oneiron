@@ -43,8 +43,9 @@ pub enum StoryCellAddress {
     Comment { id: String },
 }
 
-/// `EditStoryCell`: resolve the actual story table and rewrite the cell's
-/// FIRST paragraph through the shared in-place core. See the module doc for
+/// `EditStoryCell`: resolve the actual story table and rewrite its selected
+/// cell paragraph through the shared in-place core. An absent selector edits
+/// the FIRST paragraph. See the module doc for
 /// the addressing and landing law.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply(
@@ -53,6 +54,7 @@ pub(crate) fn apply(
     block_id: &NodeId,
     row_index: usize,
     col_index: usize,
+    paragraph: Option<&NodeId>,
     text: &str,
     semantic_hash: Option<&str>,
     revision: &RevisionInfo,
@@ -107,6 +109,7 @@ pub(crate) fn apply(
                 block_id,
                 row_index,
                 col_index,
+                paragraph,
                 text,
                 revision,
                 rev_counter,
@@ -127,6 +130,7 @@ pub(crate) fn apply(
                 block_id,
                 row_index,
                 col_index,
+                paragraph,
                 text,
                 revision,
                 rev_counter,
@@ -151,6 +155,7 @@ pub(crate) fn apply(
                 block_id,
                 row_index,
                 col_index,
+                paragraph,
                 text,
                 revision,
                 rev_counter,

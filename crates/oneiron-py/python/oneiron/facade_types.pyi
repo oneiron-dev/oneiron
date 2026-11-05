@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4492 declarations.
+Census: 1232 facade rows, 4495 declarations.
 Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -19275,9 +19275,21 @@ class DocxStoryParagraphView(TypedDict):
     locked: bool
     text: str
     runs: list[DocxRun]
+class DocxStoryCellParagraphView(TypedDict):
+    id: str
+    locked: bool
+    text: str
+class DocxStoryCellView(TypedDict):
+    row: int
+    col: int
+    paragraphs: list[DocxStoryCellParagraphView]
+class DocxStoryTableView(TypedDict):
+    id: str
+    cells: list[DocxStoryCellView]
 class DocxStoryView(TypedDict):
     scope: DocxStoryScope
     paragraphs: list[DocxStoryParagraphView]
+    tables: list[DocxStoryTableView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
     stories: list[DocxStoryView]
@@ -19692,6 +19704,24 @@ class DocxBodyOpMark(TypedDict):
     len: int
     mark: DocxMark
     on: bool
+class DocxBodyOpSetStoryCellParagraph(TypedDict):
+    op: Literal["set_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    text: str
+class DocxBodyOpSpliceStoryCellParagraph(TypedDict):
+    op: Literal["splice_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    at: int
+    delete: int
+    insert: str
 class DocxBodyOpSetStoryText(TypedDict):
     op: Literal["set_story_text"]
     scope: DocxStoryScope
@@ -19712,7 +19742,7 @@ class DocxBodyOpMarkStory(TypedDict):
     len: int
     mark: DocxMark
     on: bool
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark | DocxBodyOpSetStoryText | DocxBodyOpSpliceStory | DocxBodyOpMarkStory
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark | DocxBodyOpSetStoryCellParagraph | DocxBodyOpSpliceStoryCellParagraph | DocxBodyOpSetStoryText | DocxBodyOpSpliceStory | DocxBodyOpMarkStory
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str

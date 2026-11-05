@@ -61,7 +61,10 @@ pub use consent::{
 };
 pub(crate) use consent::{DiscardAdmission, LiveEditAdmission, MergeAdmission};
 use consent::{admit_live_edit_in_txn, live_edit_admission_in_txn};
-pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp, DocxStoryBody, StoryParagraph};
+pub use docx::{
+    BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp, DocxStoryBody, StoryCell, StoryCellParagraph,
+    StoryParagraph, StoryTable,
+};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub(crate) use holder_ask::{
     LiveEditAskOutcome, guard_live_edit_word, is_live_edit_ask, may_cut_live_edit,
@@ -81,8 +84,9 @@ pub use pptx::{
 };
 pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
 pub use verbs::{
-    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
-    OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
+    DocxBlockView, DocxBodyView, DocxCellView, DocxStoryCellParagraphView, DocxStoryCellView,
+    DocxStoryParagraphView, DocxStoryTableView, DocxStoryView, OfficeBodyArtifactRequest,
+    OfficeBodyCommitGap, OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
     OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
     OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
     OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyPreviewRequest, OfficeBodyProposalRequest,
