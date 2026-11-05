@@ -291,6 +291,10 @@ pub struct FoldMark {
     /// A mark by kind; `None` folds whole steps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<FoldKind>,
+    /// The step the agent marked it at: how old its span was then, which
+    /// the Coach reads to suggest a fold default per agent type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marked_at: Option<u64>,
 }
 
 /// `self.compact`'s ask, until a pass takes it.
@@ -341,6 +345,9 @@ pub struct FoldRecord {
     /// Each step a fold by kind folded, with what its stub keeps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<FoldedOutput>,
+    /// The step its mark was made at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marked_at: Option<u64>,
 }
 
 /// The most ids a stub lists itself; `describe({fold})` lists them all.
@@ -595,6 +602,7 @@ impl FoldLedger {
                     note: note.clone(),
                     failed: None,
                     kind: *kind,
+                    marked_at: Some(step),
                 });
                 Ok(json!(FoldMarked {
                     fold: fold_handle(self.last),

@@ -80,6 +80,7 @@ impl ForceCancelGrounds {
             Self::Owner => "owner",
             Self::LeaseExpiry => "lease_expiry",
             Self::Criticality => "criticality",
+            Self::ErasedPayload => "erased_payload",
         }
     }
 }
@@ -93,7 +94,8 @@ impl ForceCancelGrounds {
 /// names. The hard rung is therefore reachable only from a path that has
 /// ALREADY verified the owner against durable ownership provenance
 /// (`Self::owner`, used by the verified `Memory::cancel_force` door) or from a
-/// runtime ground the runtime itself establishes (lease expiry, criticality).
+/// runtime ground the runtime itself establishes (lease expiry, criticality,
+/// or a sealed erase/restore continuation).
 ///
 /// Public callers keep the whole soft rung — request, reject, land — and the
 /// typed proposal path when they cannot establish authority.
@@ -132,7 +134,7 @@ impl ForceCancelAuthority {
     /// Runtime grounds: a criticality stop.
     ///
     /// Kept beside its sibling ground even though this build has no criticality
-    /// stop wired yet: the ONE-1896 hard rung rests on THREE verified grounds,
+    /// stop wired yet: the ONE-1896 hard rung retains this verified ground,
     /// and deleting the constructor would leave the only way to reach
     /// [`ForceCancelGrounds::Criticality`] as a caller-chosen actor string —
     /// exactly the forgery this type exists to prevent. Exercised by the
@@ -143,6 +145,73 @@ impl ForceCancelAuthority {
             grounds: ForceCancelGrounds::Criticality,
             actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
         }
+    }
+
+    /// Scrubs and cancels the accepted hard writer's exact owned BYOA
+    /// rows. The authority is minted and consumed before this borrow ends.
+    pub(crate) fn erase_actor_payloads_in_txn(
+        erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+        let (vault, wtxn, actor) = erase.parts();
+        let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
+            &crate::secret_custody::CustodyWrite::of(vault),
+            wtxn,
+            &std::collections::BTreeSet::from([actor]),
+        )?;
+        let mut cancelled = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
+        let (vault, wtxn, _) = erase.parts();
+        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(cancelled)
+    }
+
+    /// Scrubs and cancels the authenticated image writer's owned BYOA
+    /// rows. The original borrowed continuation supplies the erase targets;
+    /// no cancellation authority leaves this operation.
+    pub(crate) fn erase_restored_payloads_in_txn(
+        restore: &mut crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+        let erased = crate::deletion::restore_erased_payload_targets_in_txn(restore)?;
+        let (vault, wtxn, _) = restore.parts();
+        let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
+            &crate::secret_custody::CustodyWrite::of(vault),
+            wtxn,
+            &erased,
+        )?;
+        let mut cancelled = crate::deletion::erase_restored_byoa_exhausts_in_txn(restore, &owned)?;
+        let (vault, wtxn, _) = restore.parts();
+        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(cancelled)
+    }
+
+    fn cancel_erased_payloads_in_txn(
+        vault: &crate::Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        owned: &crate::attempt_queue::ErasedByoaPayloads,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+        // Every stale payload, archive mark and run reference has been
+        // rewritten before artifact teardown and native cancellation.
+        let queue = crate::attempt_queue::AttemptQueue::new(vault);
+        let now = vault.store.clock.now_recorded_at();
+        let mut cancelled = Vec::new();
+        for id in owned.sources().keys().copied() {
+            let authority = Self {
+                grounds: ForceCancelGrounds::ErasedPayload,
+                actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
+            };
+            if let super::verbs::ForceCancelOutcome::Cancelled(record) = queue.force_cancel_in_txn(
+                wtxn,
+                super::verbs::ForceAttemptCancel {
+                    id,
+                    authority,
+                    reason: Some(crate::dispatch_byoa::ERASED_TASK_FAILURE_REASON.to_owned()),
+                    now,
+                },
+            )? {
+                cancelled.push((record.id, record.attempt_count));
+            }
+        }
+        Ok(cancelled)
     }
 
     /// The grounds this authority rests on.

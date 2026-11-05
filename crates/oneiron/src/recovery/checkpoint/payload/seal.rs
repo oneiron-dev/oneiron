@@ -61,6 +61,9 @@ pub(in crate::recovery::checkpoint) enum BundleRole {
     Carrier(Carrier),
     /// One actor's parts, across every owner.
     Actors,
+    /// An owner's copies of sync window values, which a restore joins
+    /// through their windows' carriers in the image (FIX 10277).
+    Window,
 }
 
 impl BundleRole {
@@ -69,6 +72,7 @@ impl BundleRole {
             Self::Content(getter) => [1, getter.tag()],
             Self::Carrier(carrier) => [2, carrier.tag()],
             Self::Actors => [3, 0],
+            Self::Window => [4, 0],
         }
     }
 }
@@ -246,7 +250,7 @@ fn locators_of(role: BundleRole, plain: &[u8], owner: &OwnerRef) -> Result<[u8; 
                 parts.iter().map(|part| &part.content_locator).collect();
             Ok(commitment(&locators))
         }
-        BundleRole::Content(_) | BundleRole::Carrier(_) => {
+        BundleRole::Content(_) | BundleRole::Carrier(_) | BundleRole::Window => {
             let content = OpenedOwnerRows::open(plain, Vec::new(), BTreeSet::new())?;
             if content.subtype != owner.subtype || content.owner32 != owner.owner32 {
                 return Err(corrupt());

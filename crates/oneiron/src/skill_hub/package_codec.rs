@@ -262,11 +262,12 @@ impl Vault {
 
 /// Payload erasure shared by physical purge and shell-preserving SoftErase.
 pub(crate) fn remove_hub_package_in_txn(
-    store: &crate::store::Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    super::source_custody::remove_source_custody_in_txn(store, txn, id)
+    let store = write.store;
+    super::source_custody::remove_source_custody_in_txn(write, txn, id)
 }
 
 pub(super) fn remove_package_sidecar_in_txn(
