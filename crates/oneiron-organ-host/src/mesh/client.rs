@@ -299,34 +299,60 @@ impl AttemptReceipts<'_> {
     /// The serving host records what the organ was lent, in call order.
     /// Keep those facts, adding this node's own signing fact when present.
     fn reconcile(&mut self, mut peer: Vec<crate::receipt::AskReceipt>) {
+        let local_unique: Vec<_> = self
+            .lines
+            .iter()
+            .map(|local| {
+                self.lines
+                    .iter()
+                    .filter(|other| same_ask(local, other))
+                    .count()
+                    == 1
+            })
+            .collect();
         let mut used = vec![false; peer.len()];
         let mut unmatched = Vec::new();
-        for local in self.lines.drain(..) {
-            let matched = peer.iter_mut().zip(&mut used).find(|(line, used)| {
-                !**used
-                    && line.id == local.id
-                    && line.verb == local.verb
-                    && line.value_digest == local.value_digest
+        for (local, unique) in self.lines.drain(..).zip(local_unique) {
+            // A signing fact already recorded by the serving host proves
+            // this occurrence, even when an earlier refusal has the same id.
+            let proven = local.signed.as_ref().and_then(|signed| {
+                peer.iter().enumerate().position(|(index, line)| {
+                    !used[index] && same_ask(&local, line) && line.signed.as_ref() == Some(signed)
+                })
             });
-            if let Some((line, used)) = matched {
-                *used = true;
+            let matched = proven.or_else(|| {
+                if !unique || peer.iter().filter(|line| same_ask(&local, line)).count() != 1 {
+                    return None;
+                }
+                peer.iter().enumerate().position(|(index, line)| {
+                    !used[index]
+                        && same_ask(&local, line)
+                        && (local.signed.is_none() || line.signed.is_none())
+                })
+            });
+            if let Some(index) = matched {
+                used[index] = true;
                 if local.signed.is_some() {
-                    line.signed = local.signed;
+                    peer[index].signed = local.signed;
                 }
             } else {
-                // Match only original peer lines, once each, even when an
-                // organ repeats an ask identity. Keep every local callback.
+                // Duplicate identities without a signing proof do not name
+                // an occurrence. Keep the local evidence separate instead.
                 unmatched.push(local);
             }
         }
         if !unmatched.is_empty() {
             peer.extend(unmatched);
-            // AskLine allocates ids in call order; only this attempt's one
-            // serving call is here, never ids from another call or retry.
+            // Only this attempt's one serving call is here. Stable sorting
+            // retains peer and local occurrence order for repeated ids.
             peer.sort_by_key(|line| line.id);
         }
         self.lines = peer;
     }
+}
+
+fn same_ask(left: &crate::receipt::AskReceipt, right: &crate::receipt::AskReceipt) -> bool {
+    left.id == right.id && left.verb == right.verb && left.value_digest == right.value_digest
 }
 
 impl Drop for AttemptReceipts<'_> {
