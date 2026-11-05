@@ -93,6 +93,14 @@ impl RootUpdateAssembly {
 }
 
 impl super::base::SyncClient {
+    pub(crate) fn root_update_pending(&self) -> bool {
+        self.root_parts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pending
+            .is_some()
+    }
+
     pub(crate) fn reset_root_parts(&self) {
         self.root_parts
             .lock()

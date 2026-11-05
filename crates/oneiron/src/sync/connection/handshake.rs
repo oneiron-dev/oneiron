@@ -421,7 +421,9 @@ impl SyncConnection {
         let mut init_messages_received = 0;
         let max_init_messages = 100;
 
-        'initial_sync: while init_messages_received < max_init_messages {
+        'initial_sync: while init_messages_received < max_init_messages
+            || client.root_update_pending()
+        {
             let msg = tokio::time::timeout(Duration::from_secs(30), read.next())
                 .await
                 .map_err(|_| "Initial sync timeout".to_string())?;
@@ -442,7 +444,11 @@ impl SyncConnection {
                             .await
                             .map_err(|e| format!("Send response failed: {e}"))?;
                     }
-                    init_messages_received += 1;
+                    if data.first() != Some(&transport::TAG_ROOT_PART)
+                        || !client.root_update_pending()
+                    {
+                        init_messages_received += 1;
+                    }
 
                     // Drain the rest of the server's initial burst until the
                     // stream is quiet for 200ms, then consider initial sync
@@ -454,7 +460,9 @@ impl SyncConnection {
                     // of messages (the last one is consumed here and the
                     // outer read then waits on a quiet stream).
                     loop {
-                        if init_messages_received >= max_init_messages {
+                        if init_messages_received >= max_init_messages
+                            && !client.root_update_pending()
+                        {
                             break 'initial_sync;
                         }
                         let quiet_check =
@@ -475,7 +483,11 @@ impl SyncConnection {
                                         .await
                                         .map_err(|e| format!("Send response failed: {e}"))?;
                                 }
-                                init_messages_received += 1;
+                                if data.first() != Some(&transport::TAG_ROOT_PART)
+                                    || !client.root_update_pending()
+                                {
+                                    init_messages_received += 1;
+                                }
                             }
                             Ok(Some(Ok(Message::Close(frame)))) => {
                                 // Read the close code — a 4xxx code here is how a
@@ -500,7 +512,9 @@ impl SyncConnection {
                             Ok(None) => {
                                 return Err("WS stream ended during initial sync".to_string());
                             }
-                            // Timeout means initial sync is done
+                            // A root image must finish before the write-only queue replay.
+                            // A quiet gap returns to the original initial read timeout.
+                            Err(_) if client.root_update_pending() => continue 'initial_sync,
                             Err(_) => break 'initial_sync,
                         };
                     }
