@@ -97,7 +97,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/stewardship/draft.rs` | src | s | 6 crate-vis | — | Follow-up drafting with destination-bound sources |
 | `src/ai_host/stewardship/draft/fold.rs` | src | s | 1 crate-vis | — | Provider-failure-driven evidence splitting and pairwise draft synthesis |
 | `src/ai_host/stewardship/pace.rs` | src | s | 9 crate-vis | — | When a reach-out whose draft failed is drafted again (FIX 9465) |
-| `src/ai_host/stewardship/sources.rs` | src | s | 6 crate-vis | — | What each model a follow-up draft goes to may read of its sources (FIX 8714) |
+| `src/ai_host/stewardship/sources.rs` | src | s | 8 crate-vis | — | What each model a follow-up draft goes to may read of its sources (FIX 8714) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
 | `src/ai_host/test_support.rs` | src | s | 11 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
 | `src/ai_host/tests.rs` | test | m | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
