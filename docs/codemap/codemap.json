@@ -14909,7 +14909,7 @@
      "path": "src/claim/scoped_read/named_reads.rs",
      "purpose": "Named point reads (FIX 5226): a read whose caller named each target says when a legal non-use order keeps a…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "type": 1
      }
@@ -17079,8 +17079,8 @@
      "path": "src/code_run/live_run.rs",
      "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
      "surface": {
-      "const": 1,
-      "fn": 9,
+      "const": 2,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -47990,7 +47990,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 4
      }
     },
@@ -81369,6 +81369,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/revoke_lands/pins.rs",
+     "purpose": "The restrictive targets whose native door parses more than serde",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -91808,7 +91818,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91992,7 +92002,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6419,
+   "source_files": 6420,
    "test_files": 895
   },
   "oneiron-android": {
