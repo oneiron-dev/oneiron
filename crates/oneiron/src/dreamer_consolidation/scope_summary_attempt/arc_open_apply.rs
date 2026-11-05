@@ -1,9 +1,11 @@
 //! Applies advisory openings only when the next original call still fits whole.
 
 use super::arc_children::ArcRun;
-use super::arc_chunks::opened_member;
+use super::arc_chunks::{observation_parts, opened_member};
+use super::arc_reduce::part_observation_indices;
 use super::arc_review::{
-    CallBuilder, CallFields, CallShape, KIND_COMPOSE, KIND_REVIEW, call_input,
+    CallBuilder, CallFields, CallShape, KIND_COMPOSE, KIND_REVIEW, Observation, call_input,
+    show_observation,
 };
 use super::arc_turns::{Opened, open_turns};
 use super::window::framed_tokens;
@@ -15,13 +17,13 @@ pub(super) fn open_advised(
     run: &mut ArcRun<'_>,
     ctx: &WakeAttemptContext<'_>,
     row: &mut ArcChildRow,
-    shape: &CallShape,
-    fields: &CallFields,
+    input: (&CallShape, &CallFields, &[Vec<u32>]),
     ask: &[EntityId],
 ) -> bool {
     if ask.is_empty() {
         return false;
     }
+    let (shape, fields, parts) = input;
     let review_at = match row.mode {
         ChildMode::Single => None,
         ChildMode::Review if shape.kind == KIND_REVIEW => Some(row.reviewed.len()),
@@ -82,6 +84,7 @@ pub(super) fn open_advised(
         }));
     }
     if row.mode == ChildMode::Review && shape.kind == KIND_COMPOSE {
+        row.compose_parts = Some(parts.to_vec());
         row.compose_opened
             .entry(row.composed.len() as u32)
             .or_default()
@@ -90,4 +93,28 @@ pub(super) fn open_advised(
         row.opened.extend(indices);
     }
     true
+}
+
+/// Reuses the original observation partition after optional member growth.
+pub(super) fn compose_parts(
+    run: &ArcRun<'_>,
+    row: &ArcChildRow,
+    group: &[ArcRange],
+    observed: &[Observation],
+    room: u64,
+) -> crate::Result<Option<Vec<Vec<u32>>>> {
+    if let Some(parts) = &row.compose_parts {
+        return Ok(Some(parts.clone()));
+    }
+    let selected = part_observation_indices(observed, &run.members, group, &row.opened);
+    let rendered = selected
+        .iter()
+        .map(|index| show_observation(run.view, &observed[*index as usize]))
+        .collect::<crate::Result<Vec<_>>>()?;
+    Ok(observation_parts(&rendered, room)?.map(|parts| {
+        parts
+            .into_iter()
+            .map(|part| part.into_iter().map(|index| selected[index]).collect())
+            .collect()
+    }))
 }
