@@ -1,12 +1,12 @@
-//! One retrieval request's shape (F21(a)): its query against
-//! `[limits].retrieval_query_bytes`, and the OF-520 question a crossing
-//! raises.
+//! One retrieval request's shape (F21(a)): its query against its byte row,
+//! and the OF-520 question a crossing raises. Semantic search asks at
+//! `[limits].semantic_query_bytes`; other doors use `retrieval_query_bytes`.
 //!
-//! The row is a format bound on one request, not a rate (rule 5). A query
-//! past it is refused with the typed 413 naming the field and the bound, and
-//! the first crossing per caller, door, field and bound leaves one question
-//! for the host. Questions live in memory for the server's lifetime; each
-//! keeps its latest crossing's size and never the query.
+//! The row measures one request, not a rate (rule 5). Checking doors refuse
+//! past it with a typed 413; asking doors serve the query whole. The first
+//! crossing per caller, door, field and bound leaves one question for the
+//! host. Questions live in memory for the server's lifetime; each keeps its
+//! latest crossing's size and never the query.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
@@ -47,8 +47,8 @@ impl QueryDoor {
 }
 
 /// OF-520 question one caller's query raised at one door: it carried more
-/// bytes than `[limits].retrieval_query_bytes`, and the door refused it, or
-/// served it whole where the door asks instead (FIX 6923).
+/// bytes than the door's query row, and the door refused it, or served it
+/// whole where the door asks instead (FIX 6923, FIX 54).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetrievalQueryCheck {
     /// The caller: its principal ref, else its principal.
@@ -143,7 +143,9 @@ impl SyncServer {
 
     /// [`Self::check_retrieval_query`] for a door that reads past the row
     /// (Rule 5, FIX 6923): the crossing raises the same question, and the
-    /// query runs whole. Only the embedder's own input window cuts it.
+    /// query runs whole. Semantic search uses `semantic_query_bytes`; other
+    /// doors keep `retrieval_query_bytes`. Only the embedder's own input
+    /// window cuts the query.
     pub(crate) fn ask_retrieval_query(
         &self,
         caller: &str,
@@ -151,7 +153,10 @@ impl SyncServer {
         field: &'static str,
         query: &str,
     ) {
-        let bound = self.config.limits.retrieval_query_bytes;
+        let bound = match door {
+            QueryDoor::SearchSemantic => self.config.limits.semantic_query_bytes,
+            _ => self.config.limits.retrieval_query_bytes,
+        };
         let bytes = query.len();
         if bytes <= bound {
             return;

@@ -49,7 +49,7 @@ use super::planner::{
     SpawnPlanReceipt, plan_ranked, planned_rung, ranked_quotes,
 };
 use super::task_type_tree::{load_team_type_tree, load_team_type_tree_in_txn, place_in_tree};
-use super::team_shape::{CoordinationPattern, team_shape_skill};
+use super::team_shape::{CoordinationPattern, team_shape_default};
 use super::types::{AgentDispatchInput, AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
 use super::{AgentDispatcher, SpawnSpend, agent_dispatch_actor, decode_agent_dispatch_input};
@@ -67,14 +67,15 @@ pub struct PlannerSkills {
 }
 
 impl PlannerSkills {
-    /// The installed team-shape skill and no rung skills.
+    /// The team-shape workflow default (current head, else the pure
+    /// fallback namespace) and no rung skills.
     ///
     /// # Errors
     ///
-    /// Only an id derivation failure.
-    pub fn seeded() -> Result<Self> {
+    /// Storage errors, or an id derivation failure.
+    pub fn seeded(vault: &crate::Vault) -> Result<Self> {
         Ok(Self {
-            team_shape: team_shape_skill()?,
+            team_shape: team_shape_default(vault)?,
             cheap_classifier: None,
             small_thinking: None,
             strong: None,

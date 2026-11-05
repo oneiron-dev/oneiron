@@ -33,7 +33,6 @@ use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
-use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideKey, SideTable};
 
 pub(super) use self::page::program_steps_page_in_txn;
@@ -581,15 +580,7 @@ pub(crate) fn settle_program_outbound_in_txn(
 /// original digest. An archive is reversible and withholds nothing. A marker
 /// that cannot be read counts as gone.
 pub(super) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let gone = (|| -> Result<bool> {
-        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
-    })();
+    let gone = crate::ports::owner_gone_in_txn(&vault.store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),

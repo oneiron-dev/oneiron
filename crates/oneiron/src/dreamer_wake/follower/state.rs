@@ -5,6 +5,8 @@
 //! pins) and its model results (a suffix's readings with the cache evidence
 //! of its call, or a keyframe's folded text).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -511,6 +513,31 @@ pub(super) fn forget_results_in_txn(
         }
     }
     Ok(())
+}
+
+/// Every TURN the results name — a keyframe's folded turns and every
+/// reading's TURN — for the exclusion hook, which must find folded words
+/// whose frames are already gone.
+pub(super) fn result_turns_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut turns = BTreeSet::new();
+    let rows = RESULTS
+        .iter_raw_from(store, txn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (_, value) in rows {
+        match RESULTS.decode_value(&value) {
+            Ok(FollowerResult::Keyframe { turns: folded, .. }) => {
+                turns.extend(folded);
+            }
+            Ok(FollowerResult::Readings { readings, .. }) => {
+                turns.extend(readings.iter().map(|reading| reading.turn));
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(turns)
 }
 
 /// The units and step hashes `attempt`'s results charge that no settlement

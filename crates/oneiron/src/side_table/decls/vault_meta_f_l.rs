@@ -215,7 +215,7 @@ side_tables! {
     SELF_HEAL_HEALER_RELEASE: VaultMeta b"healer:release:" Named;
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
-    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named Authored;
+    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named Authored [accepts: crate::self_heal::self_heal_healer_run_accepts_masked];
     /// The history import ledger: one row per imported source message (the conversation it landed
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
@@ -504,6 +504,7 @@ side_tables! {
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
+        [accepts: crate::llm::registry::llm_registry_row_accepts_masked]
         => crate::llm::registry::erase_registry_source_in_txn;
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).

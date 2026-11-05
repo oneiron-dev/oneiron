@@ -399,7 +399,8 @@ pub(crate) enum StandingCreditObservation {
 /// moved by erasure, or the intact sealed projection when none landed.
 /// An erased attribution without an addressable latest adjustment is unknown,
 /// never a reason to restore an older sealed mass. A failed credit is never
-/// adjusted, so its direct subjects stand whole at the failure.
+/// adjusted, so its direct subjects stand whole at the failure unless every
+/// judgment that seated a subject was explicitly displaced.
 ///
 /// # Errors
 ///
@@ -414,6 +415,12 @@ pub(crate) fn standing_credit_observation_in_txn(
         return Ok(StandingCreditObservation::Unknown);
     };
     Ok(match masses.get(subject) {
+        Some(_)
+            if !credit.succeeded
+                && failed_credit_subject_displaced_in_txn(vault, txn, credit, subject)? =>
+        {
+            StandingCreditObservation::Uncredited
+        }
         Some(mass) => StandingCreditObservation::Credited(credit.succeeded, *mass),
         None => StandingCreditObservation::Uncredited,
     })
@@ -462,6 +469,48 @@ fn retained_masses_in_txn(
         None => (&credit.direct_subjects, &credit.shares),
     };
     Ok(Some(masses(direct, shares)))
+}
+
+/// An explicit displacement removes a failed credit's seated loss only
+/// when its actual routing has no live seating judgment left.
+fn failed_credit_subject_displaced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    subject: &EntityId,
+) -> Result<bool> {
+    let sequences: BTreeSet<_> = super::codec::evidence_after_in_txn(vault, txn, 0)?
+        .into_iter()
+        .filter(|(_, row)| row.receipt_ref == credit.attempt_receipt)
+        .map(|(sequence, _)| sequence)
+        .collect();
+    let judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
+        .into_iter()
+        .map(|judgment| (judgment.sequence, judgment))
+        .collect();
+    let mut seated = false;
+    for sequence in sequences {
+        let Some(judgment) = judgments.get(&sequence) else {
+            return Ok(false);
+        };
+        if !matches!(
+            judgment.verdict,
+            super::AttributionVerdict::SkillDefect | super::AttributionVerdict::ExecutionLapse
+        ) {
+            continue;
+        }
+        let Some(seated_subject) = judgment.subject else {
+            return Ok(false);
+        };
+        if seated_subject != *subject {
+            continue;
+        }
+        if !super::judgment_displaced_in_txn(vault, txn, sequence)? {
+            return Ok(false);
+        }
+        seated = true;
+    }
+    Ok(seated)
 }
 
 /// The observation a credit write for `subject` lands under `credit`'s
