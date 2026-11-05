@@ -62,7 +62,12 @@ pub(super) fn open_content(
     };
     let kek = Kek::from_bytes_ref(key);
     Envelope::parse(sealed)
-        .map_err(|error| open_refused(&error, "erasable key content"))?
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            error => open_refused(&error, "erasable key content"),
+        })?
         .open_with_aad(OpenKey::SymmetricKek(&kek), &policy, aad)
         .map_err(|error| open_refused(&error, "erasable key content"))
 }
@@ -134,7 +139,12 @@ pub(super) fn open_transit(
         key_ref.as_bytes(),
     );
     Envelope::parse(sealed.as_bytes())
-        .map_err(|error| open_refused(&error, "the key in transit"))?
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            error => open_refused(&error, "the key in transit"),
+        })?
         .open_with_aad(OpenKey::Hybrid(session), &policy, &aad)
         .map_err(|error| open_refused(&error, "the key in transit"))
 }

@@ -189,7 +189,12 @@ fn open_frame(
         argon2_max: Argon2Cost::RFC9106_SECOND,
     };
     let plaintext = Envelope::parse(frame)
-        .map_err(|_| corrupt())?
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                io::Error::from(io::ErrorKind::OutOfMemory).into()
+            }
+            _ => corrupt(),
+        })?
         .open(OpenKey::SymmetricKek(key.kek(domain)), &policy)
         .map_err(|_| corrupt())?;
     if plaintext.len() as u64 != len {
