@@ -7,8 +7,8 @@ pub const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 /// Production reads/writes of the critical-confirm expiry cursor go through
 /// this module's own typed door; the raw key stays only for `store::tests`'
 /// corrupt/legacy-row fixtures.
-#[cfg(test)]
-pub(crate) const CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY: &[u8] =
+#[cfg(any(test, feature = "test-support"))]
+pub const CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY: &[u8] =
     b"gate_pending:critical_confirm_expiry_cursor:v1";
 
 pub const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v2:";
@@ -17,15 +17,13 @@ pub const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_
 
 /// Production reads/writes of the hash index go through this module's own
 /// typed door; the raw prefix stays only for `store::tests`' fixtures.
-#[cfg(test)]
-pub(crate) const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] =
-    b"gate_pending:hash_index:v1:";
+#[cfg(any(test, feature = "test-support"))]
+pub const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
 
 /// Production reads/writes of the index-state row go through this module's
 /// own typed door; the raw prefix stays only for `store::tests`' fixtures.
-#[cfg(test)]
-pub(crate) const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] =
-    b"gate_pending:index_state:v1:";
+#[cfg(any(test, feature = "test-support"))]
+pub const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_state:v1:";
 
 pub fn pending_gate_consent_claim_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
     let bytes = key
@@ -114,12 +112,8 @@ pub fn index_key_with_id(prefix: &[u8], id: &[u8; 16]) -> Vec<u8> {
 /// Only `store::tests` names this directly now, to unpack a raw index key it
 /// wrote itself; production readers reach the id through this module's typed
 /// index doors instead.
-#[cfg(test)]
-pub(crate) fn index_suffix_id(
-    key: &[u8],
-    prefix: &[u8],
-    index_name: &'static str,
-) -> Result<[u8; 16]> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn index_suffix_id(key: &[u8], prefix: &[u8], index_name: &'static str) -> Result<[u8; 16]> {
     key.strip_prefix(prefix)
         .ok_or(Error::CorruptedIndex(index_name))?
         .try_into()

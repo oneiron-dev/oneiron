@@ -46,8 +46,8 @@ pub const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v2:";
 
 /// The full raw key of one ledger row, for tests that plant rows directly;
 /// production reads and writes go through the typed ledger table.
-#[cfg(test)]
-pub(crate) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
     let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
     key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
     key.extend_from_slice(&decision_id.as_bytes());
