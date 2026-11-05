@@ -117,6 +117,13 @@ record, entity-kind spelling, float conversion and count widths remain intact.
 Required null stays present, and JSON held inside strings remains opaque. The
 same native selection, action dispatch, input and client call are unchanged.
 
+The handwritten `lens_frame_event` binding consumes optional local refinement
+and required tool outcome JSON before converting finite state or receipt
+metadata. Optional refinement null still reads as absent; required tool null
+stays present. Local state and tool read receipts keep the existing record
+codec, including state tags, field renames and receipt widths. The finite
+callback arm and the same native client call remain unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

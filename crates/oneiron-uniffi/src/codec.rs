@@ -43,6 +43,7 @@ mod core_write;
 mod diagnostics;
 mod key_value;
 mod lens_actions;
+mod lens_frames;
 mod policy_settings;
 mod proposal_results;
 mod proposals;
