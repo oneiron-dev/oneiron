@@ -165,3 +165,84 @@ impl Vault {
         }))
     }
 }
+
+/// Historical attribution, not a credential or authority to approve an effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CodeConsentHolderAttribution {
+    pub(crate) actor: EntityId,
+    pub(crate) principal_ref: String,
+    pub(crate) authentication: crate::store::GateDecisionId,
+    pub(crate) grant_ref: String,
+    pub(crate) policy: ResolvedCodeConsentSettlement,
+    pub(crate) policy_frontier: [u8; 32],
+}
+
+impl CodeConsentHolderPolicy {
+    pub(crate) fn attribution(&self) -> CodeConsentHolderAttribution {
+        CodeConsentHolderAttribution {
+            actor: self.actor,
+            principal_ref: self.principal_ref.clone(),
+            authentication: self.authentication,
+            grant_ref: self.grant_ref.clone(),
+            policy: self.policy.clone(),
+            policy_frontier: self.policy_frontier,
+        }
+    }
+}
+
+impl Vault {
+    /// Records the authenticated holder without an Owner stamp. The caller
+    /// has already claimed the exact wait's act in this writer, or is recording
+    /// that act's later settlement. Attribution alone authorizes neither.
+    pub(crate) fn append_code_consent_holder_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attribution: &CodeConsentHolderAttribution,
+        receipt: &super::ConsentReceipt,
+    ) -> Result<()> {
+        let reason = match receipt {
+            super::ConsentReceipt::Approved {
+                grant: super::ConsentGrant::ApproveOnce(_),
+                ..
+            } => "gate.consent.code_holder.approved",
+            // Self-heal's Owner-denial detector does not check actor class.
+            // A holder's word must not enter its Owner-only denial stream.
+            super::ConsentReceipt::Denied { .. } => "gate.consent.code_holder.denied",
+            super::ConsentReceipt::CodeWaitSettled { .. } => receipt.reason_code(),
+            _ => {
+                return Err(Error::InvalidConfig(
+                    "not a held code-consent holder receipt".to_owned(),
+                ));
+            }
+        };
+        let mut reason_codes = vec![reason.to_owned()];
+        for source in &attribution.policy.sources {
+            reason_codes.push(format!(
+                "policy_manifest:{}:{}@{}",
+                source.manifest_ref,
+                crate::gate::code_consent_settlement::KEY,
+                source.version,
+            ));
+        }
+        let record = crate::store::GateDecisionRecord {
+            version: crate::store::GATE_DECISION_LEDGER_VERSION,
+            decision_id: receipt.decision_id(),
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: receipt.gate_outcome().to_owned(),
+            reason_codes,
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "human".to_owned(),
+            actor_ref: Some(attribution.actor.to_hex()),
+            content_kind: super::grant::CONSENT_CONTENT_KIND.to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: Some(attribution.grant_ref.clone()),
+            diff_handle: receipt.diff_handle(),
+            read_frontier_hash: attribution.policy_frontier,
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &record)
+    }
+}
