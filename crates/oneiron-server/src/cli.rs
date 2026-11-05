@@ -65,9 +65,9 @@ pub use owner_args::{
     SubscriptionRevokeArgs, SubscriptionsCommand,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
-    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
-    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
+    RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
+    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 pub use secret_control_args::{
