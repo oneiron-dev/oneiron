@@ -813,6 +813,14 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// A bound execution's result body, including its delivered PERSON values.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_output_sink_for(exec_run),
+            Self::Session(binding) => binding.output_sink_for(exec_run),
+        }
+    }
+
     /// [`Self::code_run_output_sink`] for a step's program, which a resumed
     /// step runs again as stored: never swept.
     pub(crate) fn code_run_script_sink(&self) -> Result<BodySink> {
