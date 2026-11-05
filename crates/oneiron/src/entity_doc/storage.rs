@@ -292,22 +292,22 @@ pub(super) fn persist_purged_document(
     )
 }
 
-/// Publish the original SWITCH's owned stored-source merge after its existing
-/// stale-base guard and pointer move, with no receiver alias for a native fact.
-pub(super) fn persist_switched_document(
+/// Publish an original authorized fork settlement's owned stored-source merge.
+/// MERGE keeps its original update base; SWITCH keeps its original pointer move.
+pub(super) fn persist_settled_document(
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     h: &mut Head,
-    switched: &super::forks::SwitchedDocument<'_>,
+    settled: &super::forks::SettledDocument<'_>,
 ) -> Result<()> {
-    let native_tokens = switched.require_document(txn, entity, h)?;
+    let native_tokens = settled.require_document(txn, entity, h)?;
     persist_scanned_inner(
-        switched.vault(),
+        settled.vault(),
         txn,
         entity,
         h,
-        switched.document(),
-        None,
+        settled.document(),
+        settled.before(),
         native_tokens,
         door_scan,
     )
