@@ -21,6 +21,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 pub use crate::store::attempt_record::RequeuedFailure;
+pub(in crate::attempt_queue) use crate::store::attempt_record_codec::validate_requeued_history;
 
 /// Input of [`AttemptQueue::requeue`]: the lease it answers, the failure and
 /// the instant the row becomes claimable again.
@@ -95,15 +96,4 @@ impl AttemptQueue<'_> {
         )?;
         Ok(row)
     }
-}
-
-/// Refuses a stored history entry no requeue could have written.
-pub(in crate::attempt_queue) fn validate_requeued_history(
-    history: &[RequeuedFailure],
-) -> Result<()> {
-    for failure in history {
-        validate_lease_owner(&failure.lease_owner)?;
-        validate_failure_reason(&failure.reason)?;
-    }
-    Ok(())
 }

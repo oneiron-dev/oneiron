@@ -80,9 +80,10 @@ pub(crate) fn offer_secret_remediation_in_txn(
         return Ok(false);
     }
     let facts = RepoMarkFacts::read_in_txn(vault, wtxn, RepoSecretMarkLookup::ReadableClaims)?;
+    let marked = facts.raw_hashes();
     let paths: Vec<String> = hashes
         .into_iter()
-        .filter(|(_, hash)| !facts.for_hash(hash).is_empty())
+        .filter(|(_, hash)| marked.contains(hash))
         .map(|(path, _)| path.to_owned())
         .collect();
     if paths.is_empty() {

@@ -125,7 +125,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("staged vector key"))?;
             ids.insert(id);
             let Some(raw) = value else { continue };
-            let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+            let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
             if live_in(store, txn, &id)? && admits(txn, &id)? {
                 scored.push(ScoredEntity {
                     id,
@@ -155,7 +155,7 @@ impl Vault {
         let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
             return Ok(None);
         };
-        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+        let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
         if vector.len() != self.config.dimensions {
             return Err(Error::CorruptedIndex("vector value"));
         }
@@ -478,7 +478,7 @@ impl super::RetrievalIndexMaintenance for Vault {
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
-            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+            crate::store::vector_index::rebuild::validate_rebuild_vector(self, &id, &value)?;
         }
         Ok(())
     }

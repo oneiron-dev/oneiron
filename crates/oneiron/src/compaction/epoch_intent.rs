@@ -10,9 +10,12 @@ use crate::batch::{BatchBuilder, BatchOp};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::note::{COMPACTION_INTENT_NOTE_KIND, NoteBody, NoteKind, encode_note_body};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::ManifestDbs;
+use crate::store::note_body::NoteBody;
+use crate::store::note_body::NoteKind;
+use crate::store::note_body::encode_note_body;
+use crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND;
 use crate::store::row_birth::RowBirth;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -72,7 +75,7 @@ pub(super) fn intent_note_body(
         kind: NoteKind::parse(COMPACTION_INTENT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the compaction intent NOTE kind is shipped",
         ))?,
-        author_ref: crate::note::NoteActor::Actor(author),
+        author_ref: crate::store::note_body::NoteActor::Actor(author),
         markdown,
         source_revision_ref: *summary.as_bytes(),
     })
