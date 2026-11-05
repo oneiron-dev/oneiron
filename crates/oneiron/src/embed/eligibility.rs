@@ -54,10 +54,12 @@ pub(super) fn embeddable_payload_in(
             .collect();
         return Ok(Some((PendingEmbeddingPayload::TurnText(text), rows)));
     }
-    Ok(
+    let payload = if entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        super::repo_projection::asset_payload_in(vault, store, txn, body)?
+    } else {
         super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)?
-            .map(|payload| (payload, vec![*id])),
-    )
+    };
+    Ok(payload.map(|payload| (payload, vec![*id])))
 }
 
 /// A TURN's canonical text: its visible MESSAGE children's text in message
