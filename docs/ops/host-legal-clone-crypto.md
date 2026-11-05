@@ -9,22 +9,43 @@ host install id. `legal_clone::KEY_LABEL` is the pinned label for
 
 ## Cipher contract
 
-`oneiron_crypto::legal_clone` supplies `CaptureBinding`, `ContentBinding`, the
-closed five `SourceComponent` tags, and separate `seal_`/`open_` functions for
-content, descriptors and the final summary. Every envelope uses the same host
+`oneiron_crypto::legal_clone` supplies `CaptureBinding`, `ContentBinding`,
+`ContentSource`, the closed seven `SourceComponent` tags, and separate
+`seal_`/`open_` functions for content, descriptors and the final summary. Every envelope uses the same host
 order public/private key pair, `Purpose::LegalClone` (30), XChaCha20-Poly1305,
 X25519 + ML-KEM-1024, the existing epoch 1 and only `HybridCapsule` wraps.
 There is no device, client, recovery or offline legal-recipient wrap.
 
-A capture binds its order, actual physical source-vault id, generation and
-immutable capture id. Content also binds the member ordinal, source component,
-decision id, native source-key digest, raw stored revision, whole-component
-plaintext fingerprint and chunk index/count. The source owner computes the
-source-key digest from its native family label and length-framed actual raw key.
-The first family is the gate ledger and its named sidecars: whole-family
-capture is claim-free, while explicit native decision-key selection can also
-open claim-bound rows under their actual native custody. Neither path exports
-or retains an ordinary claim key.
+A capture binds its order, actual physical source-vault id, generation,
+immutable capture id and the whole actual accepted `CaptureRequest::digest()`.
+This required request digest is part of the shared capture scope for all three
+AEAD roles and their header-scope/key-id hashes. A clear accepted response or
+ACK alone is not this cryptographic binding.
+
+Content also binds the member ordinal, source component, typed source identity,
+native source-key digest, raw stored revision, whole-component plaintext
+fingerprint and chunk index/count. The source owner computes the source-key
+digest from its native family label and length-framed actual raw key.
+`ContentSource::GateDecision` uses family byte 1 and its decision id;
+`ContentSource::LiveSession` uses family byte 2, the exact registry session-ref
+digest and its once-minted instance id. `live_session_ref_digest` uses BLAKE3
+with derive-key context `oneiron/host-legal-clone/live-session-ref/v1`, followed
+by the UTF-8 byte length as u64 big-endian and those exact bytes. It does not
+trim, case-fold or normalize the reference. The encrypted descriptor keeps the
+actual reference and instance; their digest is not capture authority.
+
+The gate-ledger family and its named sidecars keep component tags 1 through 5:
+whole-family capture is claim-free, while explicit native decision-key selection
+can also open claim-bound rows under their actual native custody. Neither path
+exports or retains an ordinary claim key. Live-session body and metadata use
+tags 6 and 7. The metadata member encrypts the actual raw file row separately
+from the body; descriptor metadata alone is not that member. Published live
+bodies are only the consumer's stated capture extent, not proof that an active
+writer or a partial file has no written bytes.
+
+This is one unpublished format. All gate, live-session and host-reader binding
+constructors must change in the same consumer feature pack. There is no default
+request digest or old decision-only binding reader.
 
 The full canonical binding is extra associated data, not serialized plaintext.
 The envelope header contains only binding/scope digests and fixed role labels,
