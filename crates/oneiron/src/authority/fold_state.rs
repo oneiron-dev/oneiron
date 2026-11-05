@@ -183,6 +183,13 @@ pub struct AuthorityFold {
         skip_serializing_if = "super::origin_cut::FoldedOriginCuts::is_empty"
     )]
     pub(crate) origin_cuts: super::origin_cut::FoldedOriginCuts,
+    /// Each predecessor device key's successor the owner named, keyed by its
+    /// succession target (FIX 11135).
+    #[serde(
+        default,
+        skip_serializing_if = "super::device_succession::FoldedDeviceSuccessions::is_empty"
+    )]
+    pub(crate) device_successions: super::device_succession::FoldedDeviceSuccessions,
     /// Each person's conversation training opt-out choices, keyed by the
     /// PERSON (FIX 4489, FIX 5502).
     pub(crate) conversation_training: super::conversation_training::FoldedConversationTraining,
@@ -307,6 +314,7 @@ impl AuthorityFold {
             || !self.checkpoint_policy.live.is_empty()
             || !self.home_pick.live.is_empty()
             || self.origin_cuts.rests_on_counting()
+            || self.device_successions.rests_on_counting()
             || self.conversation_training.rests_on_counting()
             || self.conversation_training_vault.rests_on_counting()
             || self.policy_settings.rests_on_counting()
@@ -416,6 +424,13 @@ pub(super) struct FoldState {
         skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
     )]
     pub(super) origin_cut: super::origin_cut::OriginCutChoiceState,
+    /// Each predecessor device key's successions, merged the same way (FIX
+    /// 11135).
+    #[serde(
+        default,
+        skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
+    )]
+    pub(super) device_succession: super::device_succession::DeviceSuccessionChoiceState,
     /// Each person's conversation training opt-out choices, merged the same
     /// way (FIX 4489, FIX 5502).
     pub(super) conversation_training: super::conversation_training::ConversationTrainingChoiceState,
@@ -697,6 +712,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     );
     super::owner_choice::merge_owner_choices(&mut merged.home_pick, &right.home_pick);
     super::owner_choice::merge_owner_choices(&mut merged.origin_cut, &right.origin_cut);
+    super::owner_choice::merge_owner_choices(
+        &mut merged.device_succession,
+        &right.device_succession,
+    );
     super::owner_choice::merge_owner_choices(
         &mut merged.conversation_training,
         &right.conversation_training,
