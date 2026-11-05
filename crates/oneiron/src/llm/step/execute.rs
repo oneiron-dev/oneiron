@@ -176,8 +176,14 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
 /// becomes a synthetic provider failure.
 pub(super) enum StepRecovery {
     Erased,
-    Memo(LlmResponse),
-    Payload(Vec<u8>),
+    Memo {
+        binding: StepEffectBinding,
+        response: LlmResponse,
+    },
+    Payload {
+        binding: StepEffectBinding,
+        payload: Vec<u8>,
+    },
 }
 
 /// Read the existing memo/checkpoint recovery path in one snapshot. This
@@ -189,6 +195,10 @@ pub(super) fn recovery_in_txn(
     step_hash: &[u8; 32],
     request: &LlmRequest,
 ) -> DurableStepResult<Option<StepRecovery>> {
+    let binding = StepEffectBinding {
+        attempt_id,
+        step_hash: *step_hash,
+    };
     let state = step_state_read_in_txn(vault, txn, attempt_id, step_hash)?;
     if state.as_ref().is_some_and(|row| row.erased) {
         return Ok(Some(StepRecovery::Erased));
@@ -202,7 +212,7 @@ pub(super) fn recovery_in_txn(
         let decoded = decode_step_claim_value(&body.value)?;
         if step_claim_matches_request(&decoded, request)? {
             let response = load_step_response_in_txn(vault, txn, &decoded)?;
-            return Ok(Some(StepRecovery::Memo(response)));
+            return Ok(Some(StepRecovery::Memo { binding, response }));
         }
     }
     Ok(state.and_then(|row| {
@@ -210,7 +220,8 @@ pub(super) fn recovery_in_txn(
             row.progression,
             StepProgression::ResponseReceived | StepProgression::Logged
         ) {
-            row.response_payload.map(StepRecovery::Payload)
+            row.response_payload
+                .map(|payload| StepRecovery::Payload { binding, payload })
         } else {
             None
         }
@@ -221,25 +232,24 @@ pub(super) fn recovery_in_txn(
 /// exact payload and memoized result are shared with ordinary execution.
 pub(super) fn recover_step(
     ctx: &DurableStepContext<'_>,
-    step_hash: &[u8; 32],
     request: &LlmRequest,
     recovery: StepRecovery,
     guard: Option<&BudgetGuard>,
 ) -> DurableStepResult<StepOutcome> {
-    let (response, failure_policy) = match recovery {
+    let (binding, response, failure_policy) = match recovery {
         StepRecovery::Erased => return Err(erased_step()),
-        StepRecovery::Memo(response) => {
+        StepRecovery::Memo { binding, response } => {
             let policy = failure_policy(ctx.vault, &response)?;
-            (response, policy)
+            (binding, response, policy)
         }
-        StepRecovery::Payload(payload) => {
+        StepRecovery::Payload { binding, payload } => {
             let response: LlmResponse = serde_json::from_slice(&payload)?;
             // Resolve the same policy before any terminal write, as on
             // the original stored-payload recovery path.
             let policy = failure_policy(ctx.vault, &response)?;
             if log_terminal_step(
                 ctx,
-                step_hash,
+                binding,
                 request,
                 &response,
                 &payload,
@@ -249,11 +259,12 @@ pub(super) fn recover_step(
             {
                 return Err(erased_step());
             }
-            step_state_delete(ctx.vault, ctx.attempt_id, step_hash)?;
-            (response, policy)
+            step_state_delete(ctx.vault, binding.attempt_id, &binding.step_hash)?;
+            (binding, response, policy)
         }
     };
     Ok(StepOutcome::Finished {
+        binding,
         response,
         memoized: true,
         legibility: guard.and_then(|guard| step_legibility(ctx, guard)),
@@ -277,7 +288,7 @@ async fn durable_step(
         recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, &request)?
     };
     if let Some(recovery) = recovery {
-        return recover_step(ctx, &step_hash, &request, recovery, Some(guard));
+        return recover_step(ctx, &request, recovery, Some(guard));
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps
@@ -531,7 +542,10 @@ async fn durable_step(
     let failure_policy = failure_policy(ctx.vault, &response)?;
     let Some(claim_id) = log_terminal_step(
         ctx,
-        &step_hash,
+        StepEffectBinding {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+        },
         &request,
         &response,
         &payload,
@@ -556,6 +570,10 @@ async fn durable_step(
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
     Ok(StepOutcome::Finished {
+        binding: StepEffectBinding {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+        },
         response,
         memoized: false,
         legibility: step_legibility(ctx, guard),
