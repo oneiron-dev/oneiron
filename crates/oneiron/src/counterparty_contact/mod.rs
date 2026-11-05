@@ -12,6 +12,7 @@ mod codec;
 mod doors;
 mod identity_index;
 mod lifecycle;
+mod read_memory;
 mod storage;
 mod trusted_contact;
 mod trusted_contact_credential;

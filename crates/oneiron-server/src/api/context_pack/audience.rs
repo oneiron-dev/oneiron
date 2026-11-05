@@ -53,7 +53,7 @@ pub(crate) fn resolve_core_audience<'a>(
 ) -> Result<CoreAudience<'a>, ApiError> {
     let (room_members, room) = resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
-        super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
+        super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref(), None)?;
     let read = narrow_to_core_audience(
         vault,
         auth,

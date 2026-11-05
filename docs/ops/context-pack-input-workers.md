@@ -32,6 +32,15 @@ owns its third-party vector backing, every party string and the voice-session
 string before its lease drops. This records actual capacities after allocation;
 it neither pre-admits JSON decoding nor charges copies made by later resolution.
 
+For the worker's principal-contact and explicit `ContactRef` lookups, each final
+retained canonical claim body owns a separate lease for its relationship-set
+vector capacity. The ordinary claim read still selects history projections and
+reports errors before accounting starts. The contact fold moves only the value
+out of each body; its relationship set drops before that body's lease. Leases do
+not accumulate across contacts or across bodies already consumed by the fold.
+This is post-allocation accounting, not admission. Channel-pair and voice-roster
+lookups, ignored heads and intermediate history allocations are not covered.
+
 This change does not complete contact-read or pinned-reference memory admission.
 Canonical CLAIM decoding, history/projection scratch, other retained collections,
 other request storage, auth clones and response-byte custody still need their own

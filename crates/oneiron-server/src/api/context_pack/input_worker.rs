@@ -47,6 +47,7 @@ struct ContextInputWork {
     read: OwnedScopedRead,
     req: RetainedContextRequest,
     auth: CoreAuth,
+    memory: crate::machine::MachineMemory,
     turn: Permit,
 }
 
@@ -79,6 +80,7 @@ impl ContextInputWork {
                 read,
                 self.req.request.interlocutors.as_ref(),
                 room.as_ref(),
+                Some(&self.memory),
             )?;
             Ok::<_, ApiError>(Some((
                 optional_memory,
@@ -133,6 +135,7 @@ pub(super) async fn resolve_context_inputs(
         read,
         req,
         auth: auth.clone(),
+        memory: server.memory.clone(),
         turn,
     };
     let (answer, returned) = oneshot::channel();
