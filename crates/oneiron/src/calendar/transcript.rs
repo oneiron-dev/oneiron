@@ -549,6 +549,7 @@ fn put_calendar_test_policy(
                 entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: crate::temporal::TimeRange { start: at, end: at },
                 learned_at: at,
+                row_version: None,
                 data: body,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
