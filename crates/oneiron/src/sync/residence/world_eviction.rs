@@ -13,11 +13,15 @@
 //! case (Engine call CLIP-SYNC eviction scope, CALLS.md).
 //!
 //! No write is lost to it. A window goes only once nothing in it is this
-//! install's alone: no queued send for it waits, and the home's version
-//! vector for it, as this device last exchanged it (`sv:hw:`, kept across
-//! restarts and taken from the home's vector frames even after the world
-//! left), covers every operation its persisted copy holds, as a demotion
-//! asks. A window the home never held, or holds less of, stays, named on the
+//! install's alone: no queued send for it waits, no local write still owes
+//! it a row (a pending-mirror marker), and the home's version vector for it,
+//! as this device last exchanged it (`sv:hw:`, kept across restarts and
+//! taken from the home's vector frames even after the world left), covers
+//! every operation its persisted copy holds, as a demotion asks. A window
+//! with a member its document does not carry, or one with local work
+//! pending, is left whole on either path, named on the report, so a later
+//! pass or the owner's discard finds it again; nothing of it goes while the
+//! rest of its rows would (FIX 14534). A window the home never held, or holds less of, stays, named on the
 //! pass's report, until the owner discards this install's copy himself
 //! ([`discard_world_copy_as`]). A window open with no handle but the
 //! manager's is unloaded first; one a handle holds waits for the next pass. The thin read caches of the world's items
@@ -45,7 +49,7 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
-use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
+use crate::store::local_replica::{KeepControls, KeepReason, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
 
 /// Whether `fold` keeps `world` on one machine other than `me`, by the owner's
@@ -120,8 +124,12 @@ pub struct WorldEviction {
     pub windows_unconfirmed: usize,
     /// Entity rows removed with their projections.
     pub removed: usize,
-    /// Members a keep rule held (controls, pending, uncarried rows).
+    /// Members a keep rule held (controls, holds, deletion state).
     pub kept: usize,
+    /// Windows left whole because a member only this install may hold stays
+    /// in them: one its document does not carry, or one with local work
+    /// pending. They wait for a rule that may drop such a member.
+    pub windows_with_local_members: usize,
     /// Thin read caches of the worlds' items removed.
     pub cached_items_removed: usize,
     /// Thin read caches a legal hold keeps.
@@ -165,9 +173,12 @@ pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
 }
 
 /// Discards this install's copy of `world` on the owner's word (FIX 14534):
-/// every window of it goes as the pass's would, its queued sends and any
-/// write only this install held with it, once the owner keeps the world on
-/// one other machine. The owner's act: nothing here waits for the home.
+/// every window of it goes as the pass's would, its queued sends and the
+/// rows its local writes still owed it with it, once the owner keeps the
+/// world on one other machine. The owner's act: nothing here waits for the
+/// home. A window with a member its document does not carry, or one with
+/// local work pending, stays whole, named on the report
+/// ([`WorldEviction::windows_with_local_members`]).
 ///
 /// # Errors
 /// An owner proof that no longer stands; [`Error::InvalidConfig`] while this
@@ -226,18 +237,21 @@ fn evict(
         match vault.while_window_closed(&window, || evict_window(vault, &window, confirmation)) {
             None => report.windows_busy += 1,
             Some(step) => {
-                let (removed, kept, complete) = step?;
-                report.removed += removed;
-                report.kept += kept;
-                if complete {
-                    report.windows_evicted += 1;
-                } else {
-                    report.windows_busy += 1;
+                let step = step?;
+                report.removed += step.removed;
+                report.kept += step.kept;
+                match step.progress {
+                    Progress::Complete => report.windows_evicted += 1,
+                    Progress::Busy => report.windows_busy += 1,
+                    Progress::LocalMembers => report.windows_with_local_members += 1,
                 }
             }
         }
     }
-    if report.windows_busy == 0 && report.windows_unconfirmed == 0 {
+    if report.windows_busy == 0
+        && report.windows_unconfirmed == 0
+        && report.windows_with_local_members == 0
+    {
         vault.with_write_txn_grouped(|wtxn| {
             for world in worlds {
                 crate::world_keys::purge_world_mirrors_in_txn(&vault.store, wtxn, *world)?;
@@ -363,23 +377,47 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
 /// marker. A queued send for it defers the step, unless the owner discards
 /// the copy, whose sends go with its last step. Returns the rows removed,
 /// the members kept and whether the window's rows are gone.
+/// How far one window's eviction got.
+enum Progress {
+    /// Its copy is gone.
+    Complete,
+    /// A handle, a queued send or a pending mirror holds it: the next pass.
+    Busy,
+    /// A member only this install may hold stays, so the window is whole.
+    LocalMembers,
+}
+
+/// What one window's eviction did.
+struct WindowStep {
+    removed: usize,
+    kept: usize,
+    progress: Progress,
+}
+
 fn evict_window(
     vault: &Vault,
     window: &WindowKey,
     confirmation: Confirmation,
-) -> Result<(usize, usize, bool)> {
+) -> Result<WindowStep> {
     let discard = matches!(confirmation, Confirmation::Owner);
     let keep = KeepControls {
         defer_on_queued_writes: !discard,
+        defer_on_local_members: true,
         ..KeepControls::default()
     };
     let mut removed = 0;
     loop {
         let step = vault.with_write_txn_grouped(|txn| {
+            // A local write the mirror has not taken yet is in no persisted
+            // copy the home holds: the pass waits for it (FIX 14534).
+            if !discard && crate::sync::manager::window_owes_mirror_in_txn(vault, txn, window)? {
+                return Ok(None);
+            }
             let step = remove_local_replica_window_in_txn(&vault.store, txn, window, keep.clone())?;
             if step.complete {
                 if discard {
                     crate::sync::queue::scrub_window_updates_in_txn(vault, txn, window.as_str())?;
+                    crate::sync::manager::discard_window_mirrors_in_txn(vault, txn, window)?;
                 }
                 vault
                     .store
@@ -390,11 +428,33 @@ fn evict_window(
                     .sync_state
                     .delete(txn, &home_window_vv_key(window.as_str()))?;
             }
-            Ok(step)
+            Ok(Some(step))
         })?;
+        let Some(step) = step else {
+            return Ok(WindowStep {
+                removed,
+                kept: 0,
+                progress: Progress::Busy,
+            });
+        };
         removed += step.removed.len();
+        let local = step
+            .kept
+            .iter()
+            .any(|(_, reason)| matches!(reason, KeepReason::NotCarried | KeepReason::Pending));
+        let progress = if step.complete {
+            Progress::Complete
+        } else if local {
+            Progress::LocalMembers
+        } else {
+            Progress::Busy
+        };
         if step.complete || step.removed.is_empty() {
-            return Ok((removed, step.kept.len(), step.complete));
+            return Ok(WindowStep {
+                removed,
+                kept: step.kept.len(),
+                progress,
+            });
         }
     }
 }
