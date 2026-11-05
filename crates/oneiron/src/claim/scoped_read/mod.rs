@@ -38,13 +38,15 @@ mod retrieval_visibility;
 mod served_forms;
 mod versions;
 mod weave_digest;
-pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
     StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
     WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveAdminKey, WeaveDigestCadence,
     WeaveDigestFeedback, WeaveDigestReader, WeaveDigestSchedule, WeaveDigestSettingAnswer,
     WeaveDigestSettingChange, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo,
     WeaveDigestSettings, WeaveDigestSettingsDrafter, WeaveScheduleHold,
+};
+pub(crate) use weave_digest::{
+    invalidate_weave_digest_source_in_txn, scrub_saved_weave_loop_reasons_in_txn,
 };
 mod weave_correction;
 mod weave_lens;

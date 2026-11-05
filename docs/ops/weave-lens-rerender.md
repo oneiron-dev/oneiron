@@ -30,3 +30,18 @@ restore classification; its stored JSON bytes are unchanged.
 
 These source paths do not establish a runtime timing bound or a whole-engine
 erasure proof. The normal current-policy saved-read checks remain in force.
+
+A claim-bound Gate decision's canonical redaction also clears copied reason codes
+from saved loop rows whose original publication did not name the claim. Those
+periods are discovered by the saved-period prefix, not the source index that the
+reader's refused claim never entered. The private required `claim_was_named` flag
+survives later ref erasure, so rows that originally named their claim keep the
+existing named-ref history behavior. It is not a read grant or a public field.
+
+This callback runs only after the native ledger writes its redacted decision,
+in the same transaction. A stale mark alone does not trigger it. Held decisions
+wait for the existing native owed-scrub settlement; claim-free bundles are not
+part of this singular-claim copy scrub. Only reason-code bytes change in the
+saved row; its decision identity, saved outcome, refs and other history remain.
+Changed periods use the same fresh revision and rerender intent described above.
+No source index repair is needed because this scrub changes no indexed ref.
