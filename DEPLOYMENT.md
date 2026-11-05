@@ -200,6 +200,17 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
+and `app` with an `artifact_id` from stored published pointers whose labels
+fit the existing per-app host codec. Preview pointers are excluded. These are
+publication facts, not public DNS, artifact availability or a change to any
+serve tier or credential check. The supervisor joins its own public slug and
+domains; this report does not enable `artifact_domains` or hosted ingress.
+Origins share the existing bounded pages and digest with wake entries, and an
+origin-only change advances the report. Engine, supervisor and vault-VM
+readers must all include the FIX 11004 build floor documented under
+`CONTRACT_VERSION`; the new fields are required, with no old reader.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each
