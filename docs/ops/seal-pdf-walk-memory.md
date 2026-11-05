@@ -38,3 +38,16 @@ levels and walked set return their net bytes on the success path;
 `revision_ends` yields its ends held, and returns their net bytes on
 its ordinary no-proof exits. Refusal exits are unchanged: the operation
 ends and every reservation returns with it.
+
+Issuer checks use the same operation ledger. The certificate's TBS DER is
+reserved before encoding, and all four production callers preserve a typed
+memory refusal instead of treating it as a non-issuer. The original issuer-name,
+algorithm, signature and first-match order are unchanged.
+
+OCSP CertID matching reserves the subject encoding before `to_der`. It computes
+the existing SHA-1 or SHA-256 digest on the stack, then reserves its actual length
+before making the comparison vector. The returned vector drops before its hold.
+Responder-signature verification also reserves its response TBS encoding first.
+These scratch reservations are separate from the existing retained CRL/DSS and
+outer response-list admissions; the same bytes are not charged as both owners.
+Unrecognized algorithms keep their previous non-match outcome.
