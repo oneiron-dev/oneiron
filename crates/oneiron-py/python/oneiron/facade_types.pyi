@@ -3541,6 +3541,8 @@ class RetrievalRunRecord(TypedDict):
     replay_inputs: NotRequired[RetrievalReplayInputs | None]
     turn: NotRequired[RetrievalTurn | None]
     query_expander_id: NotRequired[str | None]
+    policy_manifest_ref: NotRequired[str | None]
+    policy_manifest_body_hash: NotRequired[str | None]
     signals: list[RetrievalSignal]
     result_ids: list[list[int]]
     score_breakdown: list[RetrievalScoreBreakdown]
