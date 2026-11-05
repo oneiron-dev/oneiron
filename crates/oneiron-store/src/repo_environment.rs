@@ -14,7 +14,7 @@
 
 use std::ops::Range;
 
-use crate::secret_manifest::oneiron_store::secret_manifest::is_secret_env_name;
+use crate::secret_manifest::is_secret_env_name;
 use oneiron_contracts::entity_id::EntityId;
 
 /// The reason a dotenv value's mark carries.
