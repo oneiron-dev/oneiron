@@ -62,11 +62,17 @@ pub(in crate::pipeline) fn capture_replay_identity_in_txn(
         .vault_meta()
         .get(rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
         .map(|bytes| bytes.as_ref().to_vec());
+    if let (Some(memory), Some(hash)) = (media_memory.as_mut(), analyzer_manifest_hash.as_ref()) {
+        memory.materialized(0, hash.capacity() as u64);
+    }
     let bm25_field_schema_hash = builder
         .read
         .vault_meta()
         .get(rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
         .map(|bytes| bytes.as_ref().to_vec());
+    if let (Some(memory), Some(hash)) = (media_memory.as_mut(), bm25_field_schema_hash.as_ref()) {
+        memory.materialized(0, hash.capacity() as u64);
+    }
     Ok(RetrievalReplayIdentity {
         media_spaces,
         analyzer_manifest_hash,
