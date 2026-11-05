@@ -11,6 +11,7 @@ mod erase_ask;
 mod execute;
 mod export_records;
 mod membership;
+mod owner_add;
 mod removal;
 mod removal_archive;
 mod removal_import;
@@ -21,6 +22,7 @@ pub use erase_ask::{
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+pub use owner_add::AddOwnerPlan;
 pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;
@@ -66,6 +68,7 @@ fn removal_export_key(member: &str, receipt_id: &str) -> String {
 pub enum SharedActKind {
     DeleteVault,
     Erase,
+    AddOwner,
     TransferOwnership,
     RemoveOwner,
 }
@@ -74,6 +77,7 @@ impl SharedActKind {
         match self {
             Self::DeleteVault => "delete_vault",
             Self::Erase => "erase",
+            Self::AddOwner => "add_owner",
             Self::TransferOwnership => "transfer_ownership",
             Self::RemoveOwner => "remove_owner",
         }
@@ -82,6 +86,7 @@ impl SharedActKind {
         match act {
             "delete_vault" => Some(Self::DeleteVault),
             "erase" => Some(Self::Erase),
+            "add_owner" => Some(Self::AddOwner),
             "transfer_ownership" => Some(Self::TransferOwnership),
             "remove_owner" => Some(Self::RemoveOwner),
             _ => None,
@@ -126,6 +131,9 @@ pub struct RemoveOwnerPlan {
 pub enum SharedVaultChange {
     VaultDeleted {
         backup_retain_until: u64,
+    },
+    OwnerAdded {
+        owner: String,
     },
     OwnershipTransferred {
         from: String,
