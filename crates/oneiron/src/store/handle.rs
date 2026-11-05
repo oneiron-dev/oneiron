@@ -358,6 +358,9 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// Committed consent answers wake this vault's connector-call settler.
+    /// Content-free and in memory only; the durable answer is re-read.
+    pub(crate) consent_answers: tokio::sync::Notify,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a

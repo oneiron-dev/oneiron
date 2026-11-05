@@ -122,6 +122,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
+            consent_answered,
             (
                 task_ids,
                 rows,
@@ -195,6 +196,7 @@ impl Vault {
                         result,
                         approved,
                         postcommit.proactivity_changed,
+                        postcommit.consent_answered,
                         (
                             postcommit.task_ids,
                             postcommit.rows,
@@ -217,6 +219,9 @@ impl Vault {
         // A fence this write's erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
+        if consent_answered {
+            self.notify_consent_answer();
+        }
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }

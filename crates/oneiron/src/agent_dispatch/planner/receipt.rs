@@ -31,6 +31,13 @@ pub struct SpawnPlanReceipt {
     /// linked to their intent by their dedupe keys instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asker_ref: Option<EntityId>,
+    /// The actual default-hub alias and pin the initial task-type-tree root
+    /// selection consulted in the plan's snapshot: `Some` even when no
+    /// installed holder matched that alias, `None` when no lookup occurred
+    /// (no live hub, or a pure/unsourced plan). Audit metadata only, never
+    /// a complete entity-source set, a read grant, or a freshness proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_tree_root_lookup: Option<crate::skill_hub::HubRef>,
 }
 
 impl SpawnPlanReceipt {
