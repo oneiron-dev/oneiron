@@ -1,30 +1,40 @@
 # Seal backend identity cache memory
 
-The process organ asks for the signing identity once per call. Its backend cache
-owns a separate signing-certificate vector, certificate-chain vector and the
-chain's certificate vectors. It now reserves their actual retained capacities
-from the call's configured `SealMemoryProvider` before publishing the cache entry.
-The decoded identity moves into that entry; no extra copy fills the cache.
+The process organ creates a fresh private backend for each call. Native assembly
+asks for the signing identity once, before its capacity attempts, and owns that
+identity across signing and validation-material gathering. The backend now keeps
+only the `Copy` signature algorithm. The decoded identity moves directly to
+assembly; no second retained DER identity or returned deep clone is created.
+Signing attempts reuse the cached algorithm without copying certificate vectors.
 
-The reservation belongs to the cached identity, not the native operation's
-ledger. The cache can survive an operation, so an operation finishing cannot
-release its reservation early. The entry drops its identity before its lease.
-Cache hits reuse that entry and do not reserve its bytes again. In the process
-organ, the host conservatively keeps memory reservations until the call ends.
+The two production factory consumers are sealing and verification. Sealing asks
+for the identity once per call; verification never asks for it. The backend does
+not escape that call. A cold signing-algorithm lookup still asks for the identity
+before signing, with its mutex guard dropped before that fallback. Public
+`SealBackend` and `SigningIdentity` types are unchanged.
 
-A refused reservation is `BackendError::Memory`, available with the native
-feature. The native backend-error mapper keeps the original typed refusal at
-`BackendSign`: memory-floor, resource-deadline, cancellation, service failure or
-missing service. It does not turn a memory failure into an invalid identity, a
-backend rejection or a profile downgrade. Existing backend failures keep their
-previous mapping.
+## Previous full-identity cache
 
-The identity answer and its decoding already exist when this reservation is
-taken. This change does not establish pre-admission of reply/codec allocations,
-the returned identity clone, allocator overhead or all backend memory. The native
-assembly's returned identity is a separate allocation owner. Its accounting must
-not be mistaken for this retained cache lease.
+The previous design retained a separate signing-certificate vector,
+certificate-chain vector and the chain's certificate vectors. It reserved their
+actual retained capacities from the configured `SealMemoryProvider` before
+publishing the cache entry. The decoded identity moved into that entry, and the
+entry dropped its identity before its service lease. Cache hits reused that
+entry; the process host conservatively kept its reservation until call end.
+That separate owner no longer exists, so it needs no lease or duplicate charge.
+Assembly's returned-identity hold remains on the native operation ledger.
 
-Identity bytes, algorithm, identity-ask count, cache-hit behavior, signing
-requests, certificate validation and the moving call clock are unchanged. No
-size bound, timeout, configuration option, protocol change or migration is added.
+The native `BackendError::Memory` variant and mapper remain available. They keep
+the original typed refusal at `BackendSign`: memory-floor, resource-deadline,
+cancellation, service failure or missing service. They do not turn a memory
+failure into an invalid identity, a backend rejection or a profile downgrade.
+Other backend failures keep their previous mapping.
+
+The identity answer and its decoding still exist before assembly takes the
+returned identity. Reply/codec allocation, chain conversion, allocator overhead
+and all backend memory are not covered by this narrow removal of an unnecessary
+DER owner and copy. It is not a whole-heap or pre-admitted-reply claim.
+
+Identity bytes, algorithm, production identity-ask count, signing requests,
+certificate validation and the moving call clock are unchanged. No size bound,
+timeout, configuration option, protocol change or migration is added.
