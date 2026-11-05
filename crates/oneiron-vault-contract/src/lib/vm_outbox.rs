@@ -524,3 +524,64 @@ pub fn vm_outbox_set_unfinished(root: &std::path::Path) -> std::io::Result<bool>
         Err(error) => Err(error),
     }
 }
+
+/// Reads `members` of the kind root `root` whole, all as they stood at one
+/// point between the carrier's sets (FIX 7543); a member not there reads as
+/// `None`. Returns `None` while a set is unfinished there
+/// ([`VM_OUTBOX_SET_MARK`]) or when one changed any of them while they were
+/// read: the reader waits for a later look, never refuses, and never sees a
+/// set midway. Each member is opened before the mark is first checked and
+/// read through that same open file; afterwards the mark is checked again
+/// and each name must still be the file that was read. A set the carrier
+/// began after the first check renames a new file over a member it changes,
+/// and one it left unfinished keeps the mark, so either shows here.
+#[cfg(unix)]
+pub fn vm_outbox_read_set(
+    root: &std::path::Path,
+    members: &[&str],
+) -> std::io::Result<Option<Vec<Option<Vec<u8>>>>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let identity = |metadata: &std::fs::Metadata| (metadata.dev(), metadata.ino());
+    let mut opened = Vec::with_capacity(members.len());
+    for member in members {
+        opened.push(match std::fs::File::open(root.join(member)) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        });
+    }
+    if vm_outbox_set_unfinished(root)? {
+        return Ok(None);
+    }
+    let mut read = Vec::with_capacity(members.len());
+    for file in &opened {
+        read.push(match file {
+            Some(file) => {
+                let mut reader: &std::fs::File = file;
+                let mut bytes = Vec::new();
+                reader.read_to_end(&mut bytes)?;
+                Some(bytes)
+            }
+            None => None,
+        });
+    }
+    if vm_outbox_set_unfinished(root)? {
+        return Ok(None);
+    }
+    for (member, file) in members.iter().zip(&opened) {
+        let now = match std::fs::metadata(root.join(member)) {
+            Ok(metadata) => Some(identity(&metadata)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let then = match file {
+            Some(file) => Some(identity(&file.metadata()?)),
+            None => None,
+        };
+        if now != then {
+            return Ok(None);
+        }
+    }
+    Ok(Some(read))
+}

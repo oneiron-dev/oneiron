@@ -390,10 +390,11 @@ impl Staged {
         Ok(FileStamp::of(&self.file.metadata()?))
     }
 
-    /// Syncs the bytes written so far, so a set's journal may name this
-    /// temporary (FIX 7543).
+    /// Syncs the bytes written so far and the directory entry naming them,
+    /// so a set's journal may name this temporary (FIX 7543).
     pub(super) fn sync(&self) -> std::io::Result<()> {
-        self.file.sync_all()
+        self.file.sync_all()?;
+        self.dir.sync_all()
     }
 
     /// Hands the temporary to the set's journal, which names it: dropping

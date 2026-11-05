@@ -114,14 +114,19 @@ credential.
   set's transfers `durable`. When a step fails, or the end stops midway,
   the set is unfinished: its transfers are deferred, the journal, the
   mark and the staged temporaries stay, and the kind waits. The kind's next
-  turn, or the end's next start, finishes the set from its journal before
-  anything else of the kind runs. Nothing is rolled back or dropped; a put
-  whose staged bytes are gone is logged as `vm_outbox_set_put_lost` and
-  taken again when the other end sends its set again. A reader of more
-  than one member of a set waits while the mark stands and never refuses
-  for it (`oneiron_vault_contract::vm_outbox::vm_outbox_set_unfinished`).
-  In the guest, the engine's escrow recipient look, the cold restore's
-  recipient check and the publisher training outbox's tick wait this way.
+  turn, or the end's next start, puts the mark back and finishes the set
+  from its journal before anything else of the kind runs. Nothing is rolled
+  back or dropped. A put whose staged bytes are gone is logged as
+  `vm_outbox_set_put_lost` and waits in the journal, the mark standing,
+  until the other end sends it again; the kind takes sets meanwhile. A
+  reader of more than one member of a set waits while the mark stands and
+  never refuses for it: `vm_outbox_read_set` in
+  `oneiron_vault_contract::vm_outbox` reads several members as they stood
+  at one point between sets, or answers `None` for a later look, and
+  `vm_outbox_set_unfinished` tells whether the mark stands. In the guest,
+  the engine's escrow recipient look and the cold restore's recipient check
+  read both recipients through `vm_outbox_read_set`, and the publisher
+  training outbox's tick waits on the mark under the outbox's lock.
   On the host, the node's shippers of a kind whose sets have more than one
   member (backups with their checkpoint facts, custody batches, e-sign
   deliveries, training offers) should wait on the mark in the same way.

@@ -5,23 +5,31 @@
 //! the set's first change, this end journals the set durably in its carrier
 //! store ([`SetJournal`]): each change in the set's order, and the record
 //! each member gets once its change is made. The staged bodies the journal
-//! names are synced first. A set with more than one change on disk also
-//! marks its kind's root ([`VM_OUTBOX_SET_MARK`]) before the first change,
-//! and a reader of more than one member waits while the mark stands. Then
-//! each change is made, each record written, the mark removed and the
-//! journal deleted, in that order. Only then is the set durable, and only
-//! then are its transfers answered so.
+//! names, and their directory entries, are synced first. A set with more
+//! than one change on disk also marks its kind's root
+//! ([`VM_OUTBOX_SET_MARK`]) before the first change, and a reader of more
+//! than one member waits while the mark stands. Then each change is made,
+//! each record written, the mark removed and the journal deleted, in that
+//! order. Only then is the set durable, and only then are its transfers
+//! answered so.
 //!
 //! When a step does not go through, the set is unfinished: each of its
 //! transfers is deferred on what failed, the journal, the mark and the
 //! staged temporaries the journal names stay, and the kind waits on its
 //! carrier records, so none of its sets is sent, scanned or taken. The
 //! kind's next turn finishes the set from its journal before anything else
-//! of the kind runs: a staged temporary still there is published, one
-//! published before is found in place, a removal is made again, and every
-//! record is written. A set a crash left unfinished is finished the same way
-//! once the end starts again. When the other end sends the set again, each
-//! of its transfers is a replay of one now taken and is answered durable.
+//! of the kind runs: the mark is put back first, a staged temporary still
+//! there is published, one published before is found in place, a removal
+//! is made again, and every record is written. A set a crash left
+//! unfinished is finished the same way once the end starts again. When the
+//! other end sends the set again, each of its transfers is a replay of one
+//! now taken and is answered durable.
+//!
+//! A put whose staged bytes are gone, and whose member does not hold them,
+//! cannot be made here: it waits in the journal for the other end, which
+//! never had it answered durable and sends it again. The kind takes sets
+//! again meanwhile, but the set is not whole, so its mark stands and the
+//! journal stays until the other end's sending publishes each such put.
 
 use super::local::{self, Staged};
 use super::store::{Cached, Diverged, MemberRecord, Received, Version};
@@ -44,9 +52,21 @@ const SET_SAID: &str = ".set";
 pub(super) struct SetJournal {
     kind: VmOutboxKind,
     set_id: String,
-    /// Whether the set marks its kind's root while it stands.
+    /// Whether the kind's root holds the set mark while this stands.
     marked: bool,
+    /// The changes still to make, in the set's order.
     entries: Vec<Entry>,
+    /// Puts whose staged bytes were gone, each waiting for the other end to
+    /// send it again: the set is whole once each member's record reaches
+    /// its put's revision.
+    awaiting: Vec<Entry>,
+}
+
+impl SetJournal {
+    /// Whether nothing is left to make here, only puts to wait for.
+    fn only_awaits(&self) -> bool {
+        self.entries.is_empty() && !self.awaiting.is_empty()
+    }
 }
 
 /// One change of a journaled set and the member's record once it is made.
@@ -117,8 +137,10 @@ impl Stop {
 impl Carrier {
     /// Publishes `changes`, one taken set's changes in its order, whole
     /// under `kind`'s `root`, as the module says, and returns one answer
-    /// per change. The caller holds the gate and, for training, the
-    /// outbox's lock.
+    /// per change. A set of the kind still waiting for puts the other end
+    /// sends again rides along in the journal, its mark standing, until
+    /// they are published. The caller holds the gate and, for training,
+    /// the outbox's lock.
     pub(super) fn publish_set(
         &mut self,
         kind: VmOutboxKind,
@@ -160,22 +182,28 @@ impl Carrier {
             staged.push(file);
             descriptors.push(descriptor);
         }
-        let marked = entries
-            .iter()
-            .filter(|entry| entry.change.on_disk())
-            .count()
-            > 1;
+        let carried = self.unfinished.remove(&kind);
+        let carried_marked = carried.as_ref().is_some_and(|journal| journal.marked);
+        let marked = carried_marked
+            || entries
+                .iter()
+                .filter(|entry| entry.change.on_disk())
+                .count()
+                > 1;
         let mut journal = SetJournal {
             kind,
             set_id,
             marked,
             entries,
+            awaiting: carried.map(|journal| journal.awaiting).unwrap_or_default(),
         };
         if let Err(stop) = self.begin_set(root, &journal, &staged) {
             // Nothing changed: the mark and the journal go again, and the
-            // set is deferred. One of them that does not go stays with the
-            // set's temporaries, and the kind finishes the set.
-            let undone = (!journal.marked || local::unmark_set(root).is_ok())
+            // set is deferred. One of them that does not go, or a set still
+            // waiting for puts whose journal this one replaced, stays with
+            // the set's temporaries, and the kind finishes the set.
+            let undone = journal.awaiting.is_empty()
+                && (!journal.marked || local::unmark_set(root).is_ok())
                 && self.store.remove_set_journal(kind).is_ok();
             if undone {
                 drop(staged);
@@ -194,18 +222,20 @@ impl Carrier {
             .for_each(|file| file.keep_for_journal());
         let done = self
             .make_changes(root, &mut journal, staged)
-            .and_then(|()| self.finish_set(root, &journal));
+            .and_then(|()| self.finish_set(root, &mut journal));
         match done {
             Ok(()) => {
                 self.settled(kind, SET_SAID);
-                descriptors
+                let answers: Vec<VmOutboxOutcome> = descriptors
                     .iter()
                     .zip(&journal.entries)
                     .map(|(descriptor, entry)| {
                         self.received_written(kind, &entry.member);
                         self.taken_answer(descriptor, &entry.record)
                     })
-                    .collect()
+                    .collect();
+                self.keep_awaiting(journal);
+                answers
             }
             Err(stop) => self.set_unfinished(journal, &stop, descriptors.len()),
         }
@@ -213,12 +243,18 @@ impl Carrier {
 
     /// Finishes `kind`'s unfinished set, if it has one, from its journal,
     /// under the gate as a local commit and, for training, the outbox's
-    /// lock: `true` once none is left. One that does not finish stays, and
-    /// the kind waits one more step; a draining end finishes none.
+    /// lock: `true` once nothing of it is left to make here. One that does
+    /// not finish stays, and the kind waits one more step; a draining end
+    /// finishes none. A set left waiting only for puts the other end sends
+    /// again does not hold the kind back.
     pub(super) fn finish_unfinished_set(&mut self, kind: VmOutboxKind) -> bool {
         let Some(mut journal) = self.unfinished.remove(&kind) else {
             return true;
         };
+        if journal.only_awaits() {
+            self.unfinished.insert(kind, journal);
+            return true;
+        }
         let gate = Arc::clone(&self.gate);
         let held = gate.hold();
         if *held == Mode::Draining {
@@ -250,9 +286,16 @@ impl Carrier {
         };
         let done = match lock {
             Ok(lock) => {
-                let done = self
-                    .redo_changes(&root, &mut journal)
-                    .and_then(|()| self.finish_set(&root, &journal));
+                // A stop between the journal and its mark left no mark: it
+                // goes up again before any change is made again.
+                let marked = if journal.marked {
+                    local::mark_set(&root, self.owner, &journal.set_id).map_err(Stop::Root)
+                } else {
+                    Ok(())
+                };
+                let done = marked
+                    .and_then(|()| self.redo_changes(&root, &mut journal))
+                    .and_then(|()| self.finish_set(&root, &mut journal));
                 drop(lock);
                 done
             }
@@ -269,8 +312,10 @@ impl Carrier {
                     side = ?self.side,
                     %kind,
                     set = %journal.set_id,
-                    "an outbox carrier set left unfinished is now published whole"
+                    awaiting = journal.awaiting.len(),
+                    "an outbox carrier set left unfinished is now made here; any put it awaits comes when the other end sends it again"
                 );
+                self.keep_awaiting(journal);
                 true
             }
             Err(stop) => {
@@ -281,11 +326,13 @@ impl Carrier {
     }
 
     /// Takes in each set a stop left unfinished, from the journals in this
-    /// end's store, when the end starts: each kind with one waits on it,
-    /// and its first turn finishes it. A journal that does not read is said
-    /// and left on disk, and its kind's set mark goes, so no reader waits
-    /// on a set this end cannot finish; the other end's transfers of it,
-    /// never answered durable, come again as a set of their own.
+    /// end's store, when the end starts: each kind with changes to make
+    /// waits on it, and its first turn finishes it; one only waiting for
+    /// puts the other end sends again keeps its mark and takes sets. A
+    /// journal that does not read is said and left on disk, and its kind's
+    /// set mark goes, so no reader waits on a set this end cannot finish;
+    /// the other end's transfers of it, never answered durable, come again
+    /// as a set of their own.
     pub(super) fn load_unfinished_sets(&mut self) {
         for (kind, read) in self.store.read_set_journals() {
             let journal = read.and_then(|bytes| {
@@ -293,20 +340,22 @@ impl Carrier {
             });
             match journal {
                 Ok(journal) if journal.kind == kind => {
-                    let outcome = VmOutboxOutcome::deferred(
-                        VmOutboxDeferral::Io,
-                        &format!("this end's unfinished {kind} set"),
-                        "a set this end took is not published whole yet; the work is kept",
-                    );
-                    self.record_wait.insert(
-                        kind,
-                        RecordWait {
-                            outcome,
-                            at: Instant::now(),
-                            step: RESCAN_EVERY,
-                            retry: Default::default(),
-                        },
-                    );
+                    if !journal.only_awaits() {
+                        let outcome = VmOutboxOutcome::deferred(
+                            VmOutboxDeferral::Io,
+                            &format!("this end's unfinished {kind} set"),
+                            "a set this end took is not published whole yet; the work is kept",
+                        );
+                        self.record_wait.insert(
+                            kind,
+                            RecordWait {
+                                outcome,
+                                at: Instant::now(),
+                                step: RESCAN_EVERY,
+                                retry: Default::default(),
+                            },
+                        );
+                    }
                     self.unfinished.insert(kind, journal);
                 }
                 read => {
@@ -361,8 +410,8 @@ impl Carrier {
         record
     }
 
-    /// Syncs each staged body, journals the set and marks the root when the
-    /// set marks it: nothing is changed yet.
+    /// Syncs each staged body and its directory entry, journals the set
+    /// and marks the root when the set marks it: nothing is changed yet.
     fn begin_set(
         &self,
         root: &File,
@@ -412,9 +461,9 @@ impl Carrier {
 
     /// Makes each journaled change again, in order, from what is on disk.
     /// A put whose staged bytes are gone, and whose member does not hold
-    /// them, cannot be made: it is said and its record is not written, so
-    /// the other end's transfer of it is taken as new when its set comes
-    /// again.
+    /// them, cannot be made here: it is said and moves to the puts the set
+    /// awaits, its record not written, so the other end's transfer of it is
+    /// taken as new when it comes again.
     fn redo_changes(&self, root: &File, journal: &mut SetJournal) -> Result<(), Stop> {
         let kind = journal.kind;
         let mut lost = Vec::new();
@@ -458,26 +507,63 @@ impl Carrier {
                 %kind,
                 member = %entry.member,
                 set = %journal.set_id,
-                "a put of an unfinished outbox carrier set has no staged bytes left; it is taken again when its set comes again"
+                "a put of an unfinished outbox carrier set has no staged bytes left; its set waits, mark standing, until the other end sends it again"
             );
+            journal.awaiting.push(entry);
         }
         Ok(())
     }
 
-    /// Writes each record of a set whose changes are made, removes its
-    /// mark, then deletes its journal.
-    fn finish_set(&mut self, root: &File, journal: &SetJournal) -> Result<(), Stop> {
+    /// Writes each record of a set whose changes are made, then, once the
+    /// set awaits no put, removes its mark and deletes its journal. While it
+    /// awaits one, the mark stands and the journal is written again with
+    /// only the puts it awaits. A put awaited is published once its
+    /// member's record reaches the put's revision.
+    fn finish_set(&mut self, root: &File, journal: &mut SetJournal) -> Result<(), Stop> {
+        let kind = journal.kind;
         for entry in &journal.entries {
             self.store
-                .put(journal.kind, &entry.member, entry.record.clone())
+                .put(kind, &entry.member, entry.record.clone())
                 .map_err(Stop::Records)?;
+        }
+        journal
+            .awaiting
+            .retain(|entry| self.store.get(kind, &entry.member).revision < entry.record.revision);
+        if !journal.awaiting.is_empty() {
+            let waiting = SetJournal {
+                kind,
+                set_id: journal.set_id.clone(),
+                marked: journal.marked,
+                entries: Vec::new(),
+                awaiting: journal.awaiting.clone(),
+            };
+            let bytes = serde_json::to_vec(&waiting)
+                .map_err(|error| Stop::Records(std::io::Error::other(error)))?;
+            return self
+                .store
+                .write_set_journal(kind, &bytes)
+                .map_err(Stop::Records);
         }
         if journal.marked {
             local::unmark_set(root).map_err(Stop::Root)?;
         }
-        self.store
-            .remove_set_journal(journal.kind)
-            .map_err(Stop::Records)
+        self.store.remove_set_journal(kind).map_err(Stop::Records)
+    }
+
+    /// Keeps a set whose changes are all made here, but which still awaits
+    /// puts the other end sends again, as the kind's journal: its kind takes
+    /// sets again, and the next set of it carries these on.
+    fn keep_awaiting(&mut self, journal: SetJournal) {
+        if journal.awaiting.is_empty() {
+            return;
+        }
+        self.unfinished.insert(
+            journal.kind,
+            SetJournal {
+                entries: Vec::new(),
+                ..journal
+            },
+        );
     }
 
     /// Keeps `journal`'s set unfinished after `stop`: said once, the kind
