@@ -1,11 +1,13 @@
 //! The FIX6 verbatim-span guard: an invented example shares no run of words
 //! with the real chat it was drawn from. Text is NFKC-folded and lowercased
 //! and split at every character that is not a letter or digit, so case,
-//! punctuation and spacing cannot hide a copied run. A CJK, kana or hangul
+//! punctuation and spacing cannot hide a copied run. Thai, Lao, Khmer and
+//! Myanmar use the engine's ICU word boundaries. A CJK, kana or hangul
 //! character is a word of its own and weighs half a word.
 
 use std::collections::{BTreeSet, HashSet};
 
+use oneiron_retrieval::analyzer::{ScriptClass, ScriptRunSplitter, TokenKind, icu};
 use unicode_normalization::UnicodeNormalization;
 
 /// A run of this many words shared with any source turn withholds the
@@ -76,16 +78,35 @@ fn windows(words: &[Word], span: usize) -> impl Iterator<Item = &[Word]> {
 }
 
 fn words(text: &str) -> Vec<Word> {
+    let folded: String = text.nfkc().flat_map(char::to_lowercase).collect();
     let mut out = Vec::new();
     let mut word = String::new();
-    for ch in text.nfkc().flat_map(char::to_lowercase) {
-        if is_cjk(ch) {
+    for run in ScriptRunSplitter::new().runs(&folded) {
+        let text = run.as_slice(&folded);
+        if matches!(
+            run.script,
+            ScriptClass::Thai | ScriptClass::Lao | ScriptClass::Khmer | ScriptClass::Myanmar
+        ) {
             flush(&mut word, &mut out);
-            out.push((ch.to_string(), CHAR));
-        } else if ch.is_alphanumeric() {
-            word.push(ch);
-        } else {
-            flush(&mut word, &mut out);
+            let mut tokens = Vec::new();
+            icu::analyze(text, 0, 0, &mut tokens);
+            out.extend(
+                tokens
+                    .into_iter()
+                    .filter(|token| token.kind == TokenKind::Word)
+                    .map(|token| (token.term.into_string(), WORD)),
+            );
+            continue;
+        }
+        for ch in text.chars() {
+            if is_cjk(ch) {
+                flush(&mut word, &mut out);
+                out.push((ch.to_string(), CHAR));
+            } else if ch.is_alphanumeric() {
+                word.push(ch);
+            } else {
+                flush(&mut word, &mut out);
+            }
         }
     }
     flush(&mut word, &mut out);
