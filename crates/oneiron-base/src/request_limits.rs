@@ -31,9 +31,6 @@ pub const MAX_BATCH_ENTITIES: usize = 10_000;
 /// Maximum files in one legacy codebase-snapshot call: 100,000.
 pub const MAX_CODEBASE_FILES: usize = 100_000;
 
-/// Maximum embedding vector dimensions: 16,384.
-pub const MAX_DIMENSIONS: usize = 16_384;
-
 /// Maximum RAW blob content, in bytes: 32 MiB.
 ///
 /// The base64 length of an encoded blob is bounded against
@@ -161,9 +158,9 @@ pub fn check_batch_len(label: &str, len: usize) -> Result<(), MemoryError> {
 
 /// Rejects an unusable embedding dimension count.
 pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
-    if dimensions == 0 || dimensions > MAX_DIMENSIONS {
+    if dimensions == 0 {
         return Err(MemoryError::bad_request_with(
-            format!("dimensions must be between 1 and {MAX_DIMENSIONS}"),
+            "dimensions must be at least 1",
             &["Open the vault with the dimension count its embedding model produces."],
         ));
     }
