@@ -25,7 +25,7 @@ use crate::{EntityId, Error, Result};
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_sieve_rungs(
-        &mut self,
+        &self,
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
