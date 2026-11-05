@@ -85,6 +85,13 @@ impl NativeSourceReview {
     pub(super) fn origins(&self) -> &BTreeMap<NativeSkillCarrier, NativeSkillOrigin> {
         &self.origins
     }
+
+    /// A later operation in the same writer may have changed signed-head
+    /// availability or the removal race without touching document storage.
+    pub(super) fn recheck_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+        let carriers = self.origins.keys().cloned().collect();
+        Ok(origins_in_txn(vault, txn, &carriers)? == self.origins)
+    }
 }
 
 /// Reads all three real snapshots. No received bytes become a local fact,
@@ -127,17 +134,7 @@ pub(super) fn review_in_txn(
         review.document(NativeDocumentSource::Local, &head.document, local)?;
     }
     review.document(NativeDocumentSource::Joined, &joined_head.document, joined)?;
-    let origins = if review.carriers.is_empty() {
-        BTreeMap::new()
-    } else {
-        let store = &vault.store;
-        let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
-            store,
-            store.privacy_posture,
-            txn,
-        )?;
-        crate::authority::native_skill_origins_in_txn(store, txn, &review.carriers, &fold)?
-    };
+    let origins = origins_in_txn(vault, txn, &review.carriers)?;
     for carrier in &review.carriers {
         let standing = origins
             .get(carrier)
@@ -160,6 +157,23 @@ pub(super) fn review_in_txn(
         requirements: review.requirements,
         origins,
     })
+}
+
+fn origins_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    carriers: &BTreeSet<NativeSkillCarrier>,
+) -> Result<BTreeMap<NativeSkillCarrier, NativeSkillOrigin>> {
+    if carriers.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let store = &vault.store;
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    crate::authority::native_skill_origins_in_txn(store, txn, carriers, &fold)
 }
 
 struct Review<'source> {
