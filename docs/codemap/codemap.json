@@ -137653,6 +137653,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/lib/http_headers.rs",
+     "purpose": "Shared names for caller credential headers on vault HTTP doors",
+     "surface": {
+      "const": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "LedgerAck",
       "LedgerUpdate",
@@ -137764,7 +137774,7 @@
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 21,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -138232,7 +138242,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -138241,7 +138251,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 52,
+   "source_files": 53,
    "test_files": 1
   },
   "oneiron-web-fetch": {
