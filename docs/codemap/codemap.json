@@ -17925,7 +17925,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 3
      }
     },
@@ -18037,7 +18037,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 40
      }
     },
     {
@@ -18047,7 +18047,7 @@
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -24444,7 +24444,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -24455,7 +24455,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 6
      }
     },
@@ -34549,7 +34549,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks/record_hooks.rs",
@@ -52048,7 +52048,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "fn": 12,
       "struct": 2
      }
@@ -63481,6 +63481,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CloudRegistrationEraseRevoke",
+      "CloudRegistrationEraseRevoker"
+     ],
+     "path": "src/secret_custody/cloud_registration/erase_revoke.rs",
+     "purpose": "Volatile revoke work from an accepted local hard erase",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/secret_custody/cloud_registration/lifecycle.rs",
      "purpose": "An erase's reach into the cloud registration (L04 08:3x, FIX 9056): the `CLOUD_REGISTRATION` table's actor…",
@@ -63503,9 +63518,10 @@
      "path": "src/secret_custody/cloud_registration/mod.rs",
      "purpose": "The engine's own custody for its cloud registration (G7, FIX 5347; L04 FIX 9056): the token set the native…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 3,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -63926,7 +63942,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 16
      }
     },
@@ -63999,7 +64015,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 24,
+      "crate-vis": 26,
       "re-export": 3
      }
     },
@@ -64118,7 +64134,7 @@
      "path": "src/secret_custody/reveal/replay.rs",
      "purpose": "A granted `reveal.wait` made again by the step that collected it: resumed after a park (FIX 2360), or…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -64461,7 +64477,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9
      }
     },
@@ -70720,7 +70736,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -73256,7 +73272,7 @@
      "path": "src/store/known_history.rs",
      "purpose": "The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -73277,7 +73293,17 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 22
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index/entries.rs",
+     "purpose": "The shared value-print matcher builder",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -73298,6 +73324,16 @@
      "purpose": "The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index/run.rs",
+     "purpose": "Run-local PERSON prints alongside the custody matcher (FIX 4974)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -92266,7 +92302,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92420,7 +92456,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 492,
+     "files": 494,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92660,7 +92696,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6477,
+   "source_files": 6480,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96178,6 +96214,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/body.rs",
+     "purpose": "Fallible output buffers for request bodies",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CallHeader",
       "Outcome",
@@ -96320,7 +96367,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -96458,6 +96505,13 @@
     }
    ],
    "modules": {
+    "body": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Fallible output buffers for request bodies"
+    },
     "call": {
      "files": 2,
      "impl_vault": false,
@@ -96580,7 +96634,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 5
   },
   "oneiron-browser": {
@@ -118893,6 +118947,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cloud_registration/erase_revoke.rs",
+     "purpose": "The pinned registration client's one revoke-only erase consumer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cloud_registration/erase_watch.rs",
      "purpose": "Pending device-flow cleanup after the owner's hard erase (FIX 10947 S1)",
      "surface": {
@@ -126903,6 +126967,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/cloud_registration_revokes.rs",
+     "purpose": "One owned per-vault consumer for committed local erase revokes",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/connector_events.rs",
      "purpose": "The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's…",
      "surface": {
@@ -128739,7 +128813,7 @@
      "purpose": "—"
     },
     "cloud_registration": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -129110,7 +129184,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 78,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129189,7 +129263,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1554,
+   "source_files": 1556,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

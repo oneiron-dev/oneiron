@@ -848,6 +848,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cloud_registration/binding.rs` | src | m | 4 crate-vis | — | Login, status and logout: the device flow that ends in the owner's explicit link, the read of where it… |
 | `src/cloud_registration/device.rs` | src | s | 14 crate-vis | — | The device grant's pending flows (LC cloud #97 §2, §3; L14 lead call 08:3x): each bound to the owner whose… |
 | `src/cloud_registration/discovery.rs` | src | s | 2 crate-vis | — | Discovery as a locator alone (LC cloud #97 §1; L14 agreement 08:3x): `I/auth.md`'s `agent_auth` names where… |
+| `src/cloud_registration/erase_revoke.rs` | src | s | 2 crate-vis | — | The pinned registration client's one revoke-only erase consumer |
 | `src/cloud_registration/erase_watch.rs` | src | s | 2 crate-vis | — | Pending device-flow cleanup after the owner's hard erase (FIX 10947 S1) |
 | `src/cloud_registration/http.rs` | src | s | 7 crate-vis | — | The client's one HTTP path (L14 lead call 08:3x): the admission host's blocking client, with its bounds as… |
 | `src/cloud_registration/jwt.rs` | src | s | 3 crate-vis | — | The access token, checked against the pins alone (LC cloud #97 §6, §7): header exactly RS256 `at+jwt` with a… |
@@ -1578,6 +1579,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/browser_seats.rs` | src | s | 3 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
 | `src/server/browser_seats/handles.rs` | src | s | 3 crate-vis | — | A run browser's live-handle registry, charged to the host's retained-memory line… |
 | `src/server/claim_vad_payment.rs` | src | s | 1 crate-vis | — | The host's claim VAD payment worker (FIX 11702, Engine 10-31 04:1x) |
+| `src/server/cloud_registration_revokes.rs` | src | s | 1 crate-vis | — | One owned per-vault consumer for committed local erase revokes |
 | `src/server/connector_events.rs` | src | s | 2 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
 | `src/server/connector_replies.rs` | src | s | 1 crate-vis | — | The served connector reply worker (FIX 2405): the one consumer of the `connector.reply` jobs a Dreamer pass… |
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
