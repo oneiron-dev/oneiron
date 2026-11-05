@@ -103849,7 +103849,7 @@
      "path": "src/lib/backend.rs",
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 8,
       "struct": 2
      }
