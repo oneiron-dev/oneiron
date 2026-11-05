@@ -64,7 +64,7 @@ PROVISION_REVISION = 1
 # adds the notice's action and the host's answer to a removal of its
 # kept-aside copy (FIX 11985), and each end refuses the other's revision 3,
 # so a host pairs only with an image whose manifest names 4.
-OUTBOX_WIRE_REVISION = 4
+OUTBOX_WIRE_REVISION = 5
 # The restore channel's wire revision (oneiron_vault_contract::vm_restore):
 # every cold boot of this image dials it first, so a host pairs only with an
 # image whose manifest names it.
