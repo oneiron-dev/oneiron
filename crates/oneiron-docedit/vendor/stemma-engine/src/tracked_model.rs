@@ -9975,6 +9975,7 @@ fn overlay_text_range_status(
     for segment in std::mem::take(&mut paragraph.segments) {
         for inline in segment.inlines {
             let InlineNode::Text(text) = inline else {
+                // Match the placeholder widths used by extract_inlines_text.
                 let width = usize::from(matches!(
                     inline,
                     InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)

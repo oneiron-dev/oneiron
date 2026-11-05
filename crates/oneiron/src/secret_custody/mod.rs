@@ -75,6 +75,8 @@ mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
 mod handle_labels;
+mod handle_purpose;
+pub use self::handle_purpose::{SecretHandlePurposeSet, SecretPurposeQuestion};
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -82,6 +84,7 @@ mod masked_files;
 mod owner_door;
 mod pending_restore;
 mod reveal;
+pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
 mod sighted_file;
 mod storage_seal;
@@ -96,12 +99,12 @@ mod floor_keys {
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub use self::cloud_registration::{
-    CloudRegistrationBinding, CloudRegistrationErased, CloudRegistrationFence,
-    CloudRegistrationLink, CloudRegistrationLinked, CloudRegistrationPhase,
-    CloudRegistrationTokenUse,
+    CloudRegistrationBinding, CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker,
+    CloudRegistrationErased, CloudRegistrationFence, CloudRegistrationLink,
+    CloudRegistrationLinked, CloudRegistrationPhase, CloudRegistrationTokenUse,
 };
 pub(crate) use self::cloud_registration::{
-    cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
+    EraseRevokes, cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
     is_cloud_registration_slot,
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
@@ -129,6 +132,7 @@ pub(crate) use self::doors::{
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored form, its value sealed under its custody key.
+pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub use self::found_keys::{
     FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
