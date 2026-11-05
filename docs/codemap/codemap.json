@@ -117826,7 +117826,7 @@
      "purpose": "—",
      "surface": {
       "enum": 11,
-      "fn": 3,
+      "fn": 4,
       "re-export": 19,
       "struct": 20
      }
@@ -121942,6 +121942,46 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/entry.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/mod.rs",
+     "purpose": "Private real-CLI entry before Tokio is constructed",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/sys.rs",
+     "purpose": "Descriptor and kernel-event operations before the child has a runtime",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/wire.rs",
+     "purpose": "The original launch bytes on the private bootstrap socket",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -124598,13 +124638,33 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host/process.rs",
      "purpose": "One running worker process in its supervisor's custody: started in a process group of its own, reaped by one…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/process/guarded.rs",
+     "purpose": "The registered Mac CLI keeps W direct and delegates only parent-death watching to G",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/process/guarded/controller.rs",
+     "purpose": "One native thread owns each private G child, independently of Tokio teardown",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -128134,6 +128194,13 @@
      "layout": "file+dir",
      "purpose": "What the binaries write to their log sinks, and the panic hook"
     },
+    "mac_worker_bootstrap": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Private real-CLI entry before Tokio is constructed"
+    },
     "machine": {
      "files": 2,
      "impl_vault": false,
@@ -128170,7 +128237,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 110,
+     "files": 112,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128326,7 +128393,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1537,
+   "source_files": 1543,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

@@ -243,6 +243,7 @@ impl ProcessLauncher {
             stats,
             llama_metrics,
         )
+        .await
     }
 
     /// The worker's route at `path` on its loopback address.
@@ -609,7 +610,7 @@ async fn prepare_identity(
 /// its native socket, `stats` a media worker's stats route and
 /// `llama_metrics` a llama worker's `/metrics` route, where its activity is
 /// read.
-fn spawn(
+async fn spawn(
     program: &Path,
     args: &[String],
     dir: &Path,
@@ -619,6 +620,27 @@ fn spawn(
     stats: Option<StatsRoute>,
     llama_metrics: Option<super::llama_metrics::MetricsRoute>,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
+    #[cfg(target_os = "macos")]
+    if let Some(cli) = crate::mac_worker_bootstrap::cli() {
+        return super::process::guarded::spawn(
+            cli,
+            program,
+            args,
+            dir,
+            env,
+            health,
+            native,
+            stats,
+            llama_metrics,
+        )
+        .await
+        .map_err(|error| {
+            transient(
+                WorkerFailure::LoadFailed,
+                format!("starting {}: {error}", program.display()),
+            )
+        });
+    }
     #[cfg(unix)]
     {
         let mut command: tokio::process::Command = oneiron_spawn::command(program).into();
