@@ -3432,7 +3432,9 @@ Each vault retrains its own small draft model at night on its own
 conversations, rooms with other people included. The drafter never leaves the
 vault. Retraining is on by default and the owner can switch it off. Today the
 engine holds the records, the doors, the erase path, the corpus export, the
-nightly job and the serving binding. It does not train yet.
+nightly job, the trainer and its job interface, and the serving binding. A
+trained version waits for its qualification: no evaluator exists yet, so no
+trained version serves.
 
 What exists now:
 
@@ -3445,8 +3447,10 @@ What exists now:
   the head it replaced. A target with no binding serves stock. `DrafterEvent`
   is the content-free history: retrain, qualify, activate, rollback, revert,
   erase and policy events. `DrafterPolicy` holds the switch, the excluded
-  worlds and the recipe as data. The engine supplies no learning rate, epoch
-  count or other training number.
+  worlds and the recipe as data: its trainer family (`id`), its revision, its
+  settings, the GPU seconds a night may take (`gpu_seconds`) and the GPU memory
+  it declares (`device_memory_mib`). The engine supplies no learning rate,
+  epoch count or other training number, and ships no recipe.
 - **Doors.** The owner calls `vault.drafters.list`, `vault.drafters.status`,
   `vault.drafters.policy.set` (at the revision the owner read) and
   `vault.drafters.revert` (a version and the binding generation the owner
@@ -3512,22 +3516,93 @@ What exists now:
   under the vault root. `Vault::drafter_training_corpus` opens the training
   side for the trainer host. `Vault::drafter_held_out_corpus` opens the
   held-out side for the evaluator. `Vault::sweep_drafter_corpora` removes
-  every directory that no prepared version names.
+  every directory that no prepared, training or returned version names.
 - **Nightly job.** `coach.drafter_retrain` is on the Coach's nightly host
   roster, with one pending job per vault. Each night pins the policy revision
   and the cutoff and records one retrain event. With the policy off, the
-  night is `skipped` (`policy_off`). With the policy on, a recipe set and a
-  target that the host names, the night exports the corpus. In one write it
-  then checks the policy again, marks the target's earlier `prepared`
+  night is `skipped` (`policy_off`). With the policy on, a recipe that a
+  drafter trainer connector of this host lists, a target that the host names
+  and no version of that target training, the night exports the corpus. In one
+  write it then checks the policy again, marks the target's earlier `prepared`
   version `rejected` (its corpus keys retire), and writes a new version in
   state `prepared` with the corpus manifest (counts, digests, split pin,
-  left-out counts by reason) and the dependency set. The night is then
-  `held` (`no_trainer_recipe`), because no trainer recipe is wired on any
-  host. With no recipe, no target, a policy that changed during the export,
-  or a corpus with an empty side, the night writes no version and is `held`
-  (`no_trainer_recipe`). A night never reports a successful empty retrain,
-  and every target keeps serving stock. The same attempt again returns the
-  outcome it recorded.
+  left-out counts by reason) and the dependency set. The host then trains it
+  (below) and parks the night, so the night's root stays open while the GPU
+  works. Once the job ends, the night records `trained` (naming the version)
+  or `failed` (with the job's reason: `refused`, `trainer_failed`,
+  `receipt_unverified`, `seal_failed`, `over_budget`, `lost`, `cancelled` or
+  `erased`). A night that trains nothing is `held` with its reason:
+  `no_trainer_recipe` (no recipe, or no connector here lists its family),
+  `no_drafter_target`, `training_in_progress`, `policy_moved`,
+  `empty_corpus`, `corpus_missing` or `no_admission`. A night never reports a
+  successful empty retrain. The same attempt again returns the outcome it
+  recorded.
+- **Trainer connectors.** `[models.training.drafters.<name>]` names a
+  drafter trainer on this host. There is none by default.
+
+  ```toml
+  [models.training.drafters.house-gpu]
+  python = "/opt/oneiron/drafter-venv/bin/python"     # the pinned interpreter
+  worker = "/opt/oneiron/checkout/scripts/drafter/worker.py"
+  jobs_root = "/var/lib/oneiron/drafter-jobs"         # private job directories
+  revision = "<commit of that checkout>"              # immutable, never a branch
+  unit_cost = 1                                       # per GPU wall second, in cost_unit
+  cost_unit = "gpu_wall_second"
+  service_unit = "gpu_wall_second"                    # the only unit the worker reports
+  recipes = ["drafter.dflash.exl3.v1"]                # the families its worker trains
+  stock_drafter = "/var/lib/oneiron-house/models/<trainable stock drafter, HF layout>"
+  tap_model = "/var/lib/oneiron-house/models/<target checkpoint, HF layout>"
+  served_target = "/var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw"
+  converter = "/opt/exllamav3/convert.py"             # the serving-format converter
+  ```
+
+  Every path is absolute. The connector is keyless, local to this host and
+  paid by no one per call (route `drafter-trainer-worker` at `host`). Its name
+  must differ from every `[models.training.connectors]` name. The worker
+  needs: a CUDA GPU on this host, the interpreter of
+  `scripts/drafter/requirements.txt` with exllamav3 in it (the converter runs
+  with it), the trainable stock drafter (its HF `config.json` and
+  safetensors), a target checkpoint for the taps, and the served target's
+  directory, whose tokenizer digest must be the drafter target's tokenizer
+  pin. `scripts/drafter/README.md` is the job and receipt contract.
+- **Recipe.** The recipe is the owner's data, set with
+  `vault.drafters.policy.set`. The one trainer family is
+  `drafter.dflash.exl3.v1`: the DFlash drafter for an EXL3 target, from its
+  parent (stock, or the last kept version), with the target's embedding table
+  and lm_head frozen and anchors only inside generated spans. Every setting
+  is required (`seed`, `learning_rate`, `epochs`, `anchors_per_step`,
+  `anchors_per_window`, `slot_weight_decay`, `warmup_fraction`, `adam_betas`,
+  `weight_decay`, `grad_clip`, `context_window`, `tap_max_gpu_mib`,
+  `export_args`); none has a default.
+- **Training.** The host builds the run admission from the recipe's quote
+  (`gpu_seconds` at the connector's unit cost) and admits that many units; a
+  refusal holds the night (`no_admission`). It moves the version to
+  `training` before anything is sent, then runs the job on its own thread:
+  the job queues on the device work line of the target's managed EXL3 worker
+  as background work of `device_memory_mib`, so serving calls go first and an
+  idle worker may be unloaded to make room. It stages
+  `jobs_root/<version hex>-<spec hex>/` (mode 0700) with the training side of
+  the corpus (never a held-out example), a continued version's trainable
+  files and `request.json`, and runs
+  `<python> -I <worker> --request <job>/request.json --output <job>/output`
+  with no shell, in a process group of its own. The host stops the group on
+  an erase, on the off switch, on a new recipe, and once it has run
+  `gpu_seconds`. On a receipt that verifies (its echoes, the request it
+  echoes, every load-set file rehashed) it seals each file under the
+  version's own key and publishes the load set: the version is `returned`.
+  An erase during training refuses the publication and retires its key.
+  Otherwise the version is `rejected` with the job's reason and every key it
+  holds retires. The units used are settled once, and the job directory, the
+  only place the training side is plaintext, is removed.
+- **Recovery.** Each Coach round first reads every version a restart left
+  `training`. Its receipt completes it; a worker still holding its lock runs
+  on (and is stopped when its version may no longer train); a job with
+  neither is `lost`. No job is sent twice. A night parked on a job that
+  ended is resumed, so its next run records how it ended. Job directories
+  whose version no longer trains are removed.
+- **What the trainer never does.** It never reads held-out data, picks no
+  held-out sample, sets no active pointer, leaves this host, downloads a
+  model or runs remote code.
 - **Sealed files.** A version's sealed files sit under the vault's
   `drafter-artifacts/<artifact id>/`, one per load-set file, each a run of
   frames (`u32` length, then one sealed chunk of 64 KiB, the last chunk
@@ -3588,7 +3663,7 @@ What exists now:
   `skipped:policy_off`) and ride a digest that is due anyway. The owner's own
   policy changes are not reported back.
 
-What does not exist yet: the trainer script and its recipe for the house
-serving family, the held-out evaluator with its token-identity check,
-automatic activation and rollback, a binding for managed workers that one
-hosted process serves to several vaults, and the corpus sweep at housekeeping.
+What does not exist yet: the held-out evaluator with its token-identity
+check, automatic activation and rollback (FIX 14975), a binding for managed
+workers that one hosted process serves to several vaults (FIX 15258), a
+recipe qualified on the house target, and the corpus sweep at housekeeping.
