@@ -325,6 +325,34 @@ pub(crate) fn remembered_body_instance_rows_in_txn<D: ManifestDbs + SideTableDbs
     Ok(journaled)
 }
 
+/// Journals the restored vault key's actual instance even when its history
+/// row arrived in the image. Returns `false` without changing rows for an
+/// off-record key or a destination whose custody cannot journal yet.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn journal_restored_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    row: &BodyKeyRow,
+) -> Result<bool> {
+    let custody = dbs.key_custody();
+    if !row.is_vault() || custody.archived_at_open() || custody.local().is_none() {
+        return Ok(false);
+    }
+    let mut journaled = remembered_body_instance_rows_in_txn(dbs, wtxn, digest, &[row.instance])?;
+    if journaled.is_empty() {
+        journaled.push((
+            BODY_INSTANCES.key_bytes(&(*digest, row.instance)),
+            Vec::new(),
+        ));
+    }
+    custody.journal_body_history(journaled)?;
+    Ok(true)
+}
+
 /// Every instance [`remember_body_instances_in_txn`] holds for the body
 /// `digest`, in id order.
 ///

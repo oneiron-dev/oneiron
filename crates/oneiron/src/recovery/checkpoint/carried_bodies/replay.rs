@@ -321,8 +321,8 @@ pub(super) fn land(
         }
     }
     crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)?;
-    // Their body rows are gone; remove only their unheld inline key rows
-    // after the restored rows and payload land in the same writer.
+    // Their body rows are gone. After reopening, the destination can
+    // journal their actual instances before removing unheld inline keys.
     unlanded.extend(rested.difference(&landed).copied());
     Ok(())
 }

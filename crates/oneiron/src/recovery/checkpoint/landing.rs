@@ -203,11 +203,6 @@ impl Vault {
             if let Some(opened) = opened {
                 super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?;
             }
-            crate::code_run::retire_unlanded_inline_body_keys_in_txn(
-                &vault.store,
-                txn,
-                &unlanded_bodies,
-            )?;
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
@@ -305,6 +300,19 @@ impl Vault {
                 .map_err(Rejected::receipt)?;
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
+        }
+        // The reopened destination now has its actual custody binding.
+        // Journal each released instance there before dropping its mapping.
+        if !unlanded_bodies.is_empty()
+            && matches!(custody, Custody::Keep | Custody::Landed | Custody::Fork(_))
+        {
+            vault.with_write_txn_grouped(|txn| {
+                crate::code_run::retire_unlanded_inline_body_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &unlanded_bodies,
+                )
+            })?;
         }
         // Each pad a row names by reference rests again with the pad its
         // custody holds, or is withheld by its world's setting; any other is
