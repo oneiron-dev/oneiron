@@ -413,6 +413,40 @@ pub(crate) fn held_pad_world_in_txn(
     Ok(false)
 }
 
+/// The real-legal-hold-only version of the pad keep query, for truthful
+/// reason reports. Cooperative restrictions are not legal-hold facts.
+pub(crate) fn legal_hold_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> Result<bool> {
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    // A body that does not decode names no world: it reads unheld, warned
+    // with no byte of it, so the walk drops it.
+    let world = match pad_body_world(raw) {
+        None => return Ok(false),
+        Some(Ok(world)) => world,
+        Some(Err(_)) => {
+            tracing::warn!("a world key pad row that does not decode reads as unheld");
+            return Ok(false);
+        }
+    };
+    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
+        return Ok(false);
+    }
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, world.as_bytes())? {
+        return Ok(true);
+    }
+    for id in sealed_claims_in_txn(store, txn, world)? {
+        if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Refuses destroying the pad row `raw` read from a carrier, a window value
 /// or a cached body that no canonical row may back, while a legal hold
 /// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
