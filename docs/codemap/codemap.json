@@ -74645,6 +74645,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/checkpoint_payload/classify.rs",
+     "purpose": "The families' answers to one window capture (KS7-3b): which holders each value and withheld key the vendored…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/checkpoint_payload/documents.rs",
      "purpose": "The native entity-document carriers grouped with their document (FIX 10932): a pending text edit (`qd:e:`)…",
      "surface": {
@@ -74652,7 +74662,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/checkpoint_payload/frame.rs",
@@ -74662,13 +74672,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/joined_turns.rs",
+     "purpose": "A room turn row in parts, carried joined in a checkpoint (FIX 12153, FIX 12412)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/checkpoint_payload/mod.rs",
      "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 47
      }
     },
     {
@@ -77349,7 +77369,7 @@
      "path": "src/sync/room_parts.rs",
      "purpose": "FIX 11790: a room row too large for one window value",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -77369,7 +77389,7 @@
      "path": "src/sync/room_turns/checkpoint.rs",
      "purpose": "A room turn row in a checkpoint (KS7-3a, KS7-3b), read with the turn codec: the row rides with its TURN…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -90599,7 +90619,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 350,
+     "files": 352,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90811,7 +90831,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6375,
+   "source_files": 6377,
    "test_files": 895
   },
   "oneiron-android": {
