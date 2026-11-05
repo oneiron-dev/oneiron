@@ -249,7 +249,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "type_filter": builder.type_filter,
             "criticality": builder.criticality,
             "project_id": builder.project_id_filter,
-            "repo_ref": builder.repo_ref_filter.as_ref().map(crate::codebase::RepoRef::canonical),
+            "repo_ref": builder.repo_ref_filter.as_ref().map(|repo| account_string(repo.canonical())),
             "facet_filter": builder.facet_filter.map(|f| account_string(format!("{f:?}"))),
             "relationship_filter": builder.relationship_filter.map(|f| account_string(format!("{f:?}"))),
             "made_by": account_string(format!("{:?}", builder.made_by)),
