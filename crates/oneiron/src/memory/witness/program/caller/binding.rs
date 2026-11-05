@@ -126,6 +126,39 @@ impl SessionWitnessBinding {
         self.context(vault)?.project_stream_text(text, false)
     }
 
+    /// Resolves a reply's thread through this captured session's content view.
+    /// Join consent and payer authority remain the base funding door's work.
+    pub fn reply_place(
+        &self,
+        vault: &crate::Vault,
+        room: EntityId,
+        turn: Option<EntityId>,
+    ) -> MemoryResult<crate::workspace_roster::RoomWork> {
+        let context = self.context(vault)?;
+        let view = (context.route.target() == RouteTarget::Overlay)
+            .then(|| context.session.read_view())
+            .transpose()?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        context.admit_in_txn(&txn)?;
+        let read = match &view {
+            Some(view) => view.read(),
+            None => vault.store.read(),
+        };
+        let mut place = crate::workspace_roster::RoomWork { room, branch: None };
+        if let Some(turn) = turn
+            && let crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_TURN,
+                body,
+            } = crate::vault::live_entity_row_in_txn(&read, &txn, &turn)?
+            && let Some(binding) = crate::workspace_roster::thread_binding(&body)?
+            && binding.room == room
+        {
+            place.branch = Some(binding.root);
+        }
+        context.route.revalidate()?;
+        Ok(place)
+    }
+
     /// Admits session-only replay rows in the caller's current composed view.
     /// Base rows remain for the transport's original source and release checks.
     pub fn base_replay_rows(

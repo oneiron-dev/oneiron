@@ -206,9 +206,14 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // first, then the room's, as a queued Continue or Retry is (FIX 3572).
     let branch = match origin {
         Some(room) => {
-            crate::server::blocking(|| reply_place(&vault, room, reply_to))
-                .map_err(|error| engine(&error))?
-                .branch
+            crate::server::blocking(|| match &session_binding {
+                Some(binding) => binding.reply_place(&vault, room, reply_to),
+                None => {
+                    reply_place(&vault, room, reply_to).map_err(oneiron::memory::MemoryError::from)
+                }
+            })
+            .map_err(|error| engine(&error))?
+            .branch
         }
         None => None,
     };
