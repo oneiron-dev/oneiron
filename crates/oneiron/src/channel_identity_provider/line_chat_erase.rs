@@ -119,7 +119,7 @@ fn hard_delete_row_in_txn(
     if crate::store::legal_hold::held_in_txn(store, &*wtxn, id.as_bytes())? {
         tracing::warn!(
             row = %id.to_hex(),
-            "a legal hold keeps a LINE chat observation row its identity's delete would take"
+            "a hold or selected storage-only restriction keeps a LINE chat observation row its identity's delete would take"
         );
         return Ok(());
     }
