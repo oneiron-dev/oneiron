@@ -2281,10 +2281,21 @@ def uniffi_export(row, types, census):
             if owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                nested_voice = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    nested_voice = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
+                    )
                 # Other variants keep the existing whole-record conversion.
                 result = (
                     f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
                     f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'{nested_voice}'
                     f'other => crate::codec::lift_record({name}, &other) }}'
                 )
             else:
