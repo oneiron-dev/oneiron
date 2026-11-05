@@ -105,11 +105,19 @@ the first reader spawn freezes it alongside the parent's model list. A host with
 no project uses the vault rows, not a guessed root project. Later entries and
 retries keep the stored project and existing seat receipt.
 
-A generic reader has no placed task type or agent definition in this path. It
-does not borrow its parent's type, agent model measurements or direct-call choice
-mode. Its context reads only the owner scopes it actually has. Reader task-type
-placement remains separate work. Scoped-agent jobs keep their existing profile
-and selection path.
+A canonical read or summary child places its own ask against the live task-type
+tree for that frozen project, in the same transaction that queues its job. It
+uses the existing rule rung, including its unsure-to-root result, without a model
+call. The job keeps that actual type stamp through retries and recovery. The
+fresh seat can use its type's owner model rows as well as its project, goal and
+vault rows; an existing seat still resumes its stored receipt.
+
+A generic reader has no agent definition and does not borrow its parent's type,
+model measurements or direct-call choice mode. A session child has no routed
+tree supplier in this path, so it keeps the project, goal and vault lookup. If a
+canonical tree cannot be read, the child also keeps that lookup rather than
+refusing its spawn or inventing a placement. Scoped-agent jobs keep their
+existing profile and selection path.
 
 Owner pins and seeds use the existing eligible model set and seat birth. The
 inherited list, backend, route, clock, lease and spend checks stay in place.
