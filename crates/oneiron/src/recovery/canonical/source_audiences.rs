@@ -17,25 +17,17 @@
 //! holds otherwise refuses the restore. A closure the artifact does not
 //! carry stays unresolved: its rows read to no one, never to all.
 
-#[cfg(feature = "sync")]
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::LoroDoc;
-#[cfg(feature = "sync")]
-use loro::{LoroValue, ValueOrContainer};
+use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "sync")]
-use super::{ByteBudget, id};
-use super::{CanonicalSnapshot, insert};
-#[cfg(feature = "sync")]
+use super::{ByteBudget, CanonicalSnapshot, id, insert};
 use crate::EntityId;
 use crate::error::Result;
-#[cfg(feature = "sync")]
 use crate::source_audience::carried::{
     Carrier, encode_binding, encode_policy, policy_key, record_key,
 };
-#[cfg(feature = "sync")]
 use crate::source_audience::{self, SourceAudienceKind, SourceAudiencePolicy};
 
 /// The window root map of source audiences, as sync files it.
@@ -52,7 +44,6 @@ pub struct CanonicalSourceAudience {
 
 /// Files `value` under `key` in `rows`; a different value under the same key
 /// refuses.
-#[cfg(feature = "sync")]
 fn keep(rows: &mut BTreeMap<String, Vec<u8>>, key: String, value: Vec<u8>) -> Result<()> {
     match rows.get(&key) {
         Some(held) if *held != value => Err(super::invalid(
@@ -70,8 +61,8 @@ fn keep(rows: &mut BTreeMap<String, Vec<u8>>, key: String, value: Vec<u8>) -> Re
 /// entity set and the revisions of every policy those bindings reach: the
 /// window's carriers first, then this vault's current binding and published
 /// closure of each row. Each is measured, never refused, as a birth is: an
-/// overrun is logged.
-#[cfg(feature = "sync")]
+/// overrun is logged. It needs no sync feature: the carriers are domain
+/// values, and a featureless capture keeps them too.
 pub(super) fn capture(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -245,6 +236,13 @@ impl CanonicalSnapshot {
             }
         }
         for (id, current) in held {
+            // A held head that still names an erased actor restores as its
+            // redacted successor, as a carried one does.
+            let current = if source_audience::names_erased_actor_in(vault, txn, &current)? {
+                source_audience::redacted_successor_in(vault, txn, &current)?
+            } else {
+                current
+            };
             rows.insert(policy_key(&id, current.revision), encode_policy(&current)?);
         }
         for (id, revisions) in foreign {

@@ -145,6 +145,9 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
         map_delete(&entities, &copy.to_hex())?;
         crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
+    }
+    // A copy's binding goes whether or not its row was carried.
+    if let Some(copy) = copy {
         crate::sync::source_audiences::remove_record(doc, &copy)?;
     }
 

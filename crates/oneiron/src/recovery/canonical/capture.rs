@@ -421,12 +421,13 @@ pub(crate) fn capture_canonical_window_within(
     }
     // FIX 4550: the peer origins of the final rows, with their final bytes.
     peer_origins::capture(doc, &mut snapshot, budget)?;
+    // Engine A: the final rows' source audiences, with or without sync.
+    source_audiences::capture(vault, &txn, doc, &mut snapshot, budget)?;
     // FIX 3069, 8820, 5489: the final rows' births, the window's cutoffs,
     // and the body references that bind the final rows.
     #[cfg(feature = "sync")]
     {
         row_births::capture(vault, &txn, doc, &mut snapshot, budget)?;
-        source_audiences::capture(vault, &txn, doc, &mut snapshot, budget)?;
         withdrawn_cutoffs::capture(vault, &txn, doc, &mut snapshot, budget)?;
         asset_body_refs::capture(doc, &mut snapshot, budget)?;
     }

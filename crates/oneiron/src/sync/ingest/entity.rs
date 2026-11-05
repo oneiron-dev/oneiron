@@ -232,8 +232,13 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         && let Some(doc) = ctx.carrier_doc()
         && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
         && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
-        && crate::sync::source_audiences::apply_record_in_txn(ctx.vault, &mut savepoint, doc, &id)?
-            == crate::source_audience::ReplicaMerge::Conflict
+        && crate::sync::source_audiences::apply_record_in_txn(
+            ctx.vault,
+            &mut savepoint,
+            doc,
+            ctx.window_key,
+            &id,
+        )? == crate::source_audience::ReplicaMerge::Conflict
     {
         step = refuse(Some(id), crate::sync::source_audiences::conflict_error());
     }
