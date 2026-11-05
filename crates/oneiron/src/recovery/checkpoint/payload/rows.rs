@@ -228,6 +228,8 @@ families! {
     // classes it yet.
     Class::Unclassified => CODE_RUN_TYPE_DIAGNOSTICS;
     Class::Other(Client::Dispatch(OtherClient::Body)) => CODE_RUN_RAW_OUTPUT;
+    // Canonical owner witnesses survive an undecodable captured request.
+    Class::Owner(Getter::BlockedSourceOwner) => COACH_BLOCKED_SOURCE_OWNER;
     // A blocked report's captured requests (FIX 6708) and a wait's
     // deliveries (FIX 6588); the wait index stays unclassified, as only its
     // settled rows hold a reply, which [`class_for_row`] places row by row

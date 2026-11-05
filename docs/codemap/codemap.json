@@ -64729,8 +64729,18 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/checkpoint.rs",
+     "purpose": "Canonical step-capture owner witnesses, carried under each key owner's compartment",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -64740,7 +64750,17 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/ownership.rs",
+     "purpose": "One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the capture for, keyed…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -64750,7 +64770,7 @@
      "path": "src/self_heal/blocked_reports/source/response.rs",
      "purpose": "A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -70465,7 +70485,7 @@
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -70505,7 +70525,17 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response/owners.rs",
+     "purpose": "Late owner obligations of an already bound captured request",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -92164,7 +92194,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92276,7 +92306,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 491,
+     "files": 492,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92516,7 +92546,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6463,
+   "source_files": 6466,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96043,7 +96073,7 @@
      "purpose": "One call's header and its reply's header, and the checks both sides run",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -96100,7 +96130,7 @@
      "purpose": "The daemon's side of the socket",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -96154,14 +96184,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/frame.rs",
      "purpose": "The wire between the daemon and the broker, one connection per call",
      "surface": {
       "const": 4,
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -96190,6 +96220,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/responses.rs",
+     "purpose": "OpenAI Responses over one broker-upgraded WebSocket per call",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -96208,7 +96248,7 @@
      "path": "src/send.rs",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "struct": 1
      }
     },
@@ -96363,7 +96403,7 @@
     "frame": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The wire between the daemon and the broker, one connection per call"
     },
@@ -96373,6 +96413,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Who this process is, and closing its memory to processes of its own uid"
+    },
+    "responses": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "OpenAI Responses over one broker-upgraded WebSocket per call"
     },
     "route_keys": {
      "files": 1,
@@ -96419,7 +96466,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 5
   },
   "oneiron-browser": {
@@ -105811,7 +105858,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BrokerIsolation",
@@ -105857,7 +105904,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 1
      }
     },
@@ -123001,7 +123048,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 15,
       "re-export": 2,
       "struct": 3,
@@ -123528,7 +123575,7 @@
      "path": "src/managed/vm_outbox/local.rs",
      "purpose": "One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -123590,6 +123637,16 @@
      "purpose": "A taken set's check against this end's own versions before it is published, and the copy this end keeps, or…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/transfer/receive.rs",
+     "purpose": "Descriptor-only admission and body receipt for one complete carrier set",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -124044,7 +124101,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 19,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -124078,6 +124135,16 @@
      "purpose": "A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_responses.rs",
+     "purpose": "OpenAI Responses through the credential broker, one upgraded socket per call",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -128734,7 +128801,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 99,
+     "files": 100,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -128762,7 +128829,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 113,
+     "files": 114,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128918,7 +128985,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1552,
+   "source_files": 1554,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
