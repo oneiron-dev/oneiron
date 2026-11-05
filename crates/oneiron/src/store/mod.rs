@@ -436,10 +436,11 @@ pub(crate) use body_envelope::{
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
+    ResponseOwners, ResponseRead, ResponseScan, bind_missing_response_owners_in_txn,
+    bind_response_in_txn, bind_retained_response_owner_in_txn, carrier_row,
     erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn, stamp_opaque_erased,
+    response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{

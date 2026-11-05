@@ -226,6 +226,11 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
 
+/// A registered MCP lifecycle call, classified from the verified held body.
+/// This carries only a wake hint, never caller authority or body bytes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct McpLifecycleObservation;
+
 /// The person a supervisor-signed `ManagedPersonAction` names for one
 /// request at a member door (FIX 1302), verified at ingress; never the
 /// owner and never the host root.

@@ -285,7 +285,10 @@ impl Vault {
         identity: EntityId,
         companions: &[EntityId],
     ) -> Result<Option<DigestRoute>> {
-        let Some(party_key) = crate::comm::person_party_key_in_txn(&self.store, txn, reader)?
+        let Some(party_key) =
+            self.store
+                .record_hooks
+                .person_party_key_in_txn(&self.store, txn, reader)?
         else {
             return Ok(None);
         };

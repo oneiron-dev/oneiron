@@ -200,6 +200,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.broker_extra_roots.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "host-memory-bytes",
+        |args| args.host_memory_bytes.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-cpu-millis",
+        |args| args.host_cpu_millis.is_some(),
+        ArgvUse::Read,
+    ),
     // The embedder's layered flags: managed mode reads its settings file.
     (
         "embedder-*",

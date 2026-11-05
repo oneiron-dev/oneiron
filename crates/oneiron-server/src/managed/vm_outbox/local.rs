@@ -346,6 +346,19 @@ impl Staged {
         })
     }
 
+    /// Reserves this put's bytes in its actual staging file before the
+    /// peer streams them. Unsupported allocation keeps the original write
+    /// path; a go is never a promise that later writes or publication succeed.
+    pub(super) fn reserve(&self, length: u64) -> std::io::Result<()> {
+        if length == 0 {
+            return Ok(());
+        }
+        match rustix::fs::fallocate(&self.file, rustix::fs::FallocateFlags::empty(), 0, length) {
+            Ok(()) | Err(Errno::OPNOTSUPP | Errno::NOSYS) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub(super) fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         self.file.write_all(bytes)?;
         self.hasher.update(bytes);

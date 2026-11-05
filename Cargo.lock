@@ -8089,6 +8089,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "flate2",
+ "futures-util",
  "libc",
  "memchr",
  "oneiron-spawn",
@@ -8101,6 +8102,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.26.2",
  "zeroize",
 ]
 
@@ -8660,6 +8662,8 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
+ "encoding_rs",
+ "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
@@ -8669,6 +8673,7 @@ dependencies = [
  "p256",
  "pkix-chain",
  "proptest",
+ "qrcode",
  "rcgen",
  "reqwest 0.12.28",
  "rmp-serde",

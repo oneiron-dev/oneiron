@@ -58,6 +58,24 @@ pub enum InputInvalidCode {
     EmbeddedFilePresent,
     MissingPage,
     ObjectLimitExceeded,
+    /// Generic PDF structure failure in the ported prepare/inspect pipeline (FIX 7980/8157).
+    MalformedPdf,
+    /// Rejected PDF construct (OCProperties/XFA/NeedAppearances/non-Flate/predictor).
+    UnsupportedPdf,
+    /// A page box, rotation, user-unit or field geometry failed its bound.
+    InvalidGeometry,
+    /// The engine-lent audit-chain replay material failed its check.
+    InvalidEvidence,
+    /// An esign field row failed its shape or item check.
+    InvalidField,
+    /// A signature raster failed its decoder bound.
+    InvalidSignatureImage,
+    /// Unsupported text encoding or extraction path.
+    UnsupportedText,
+    /// A field value overflowed its burn-in bound.
+    FieldOverflow,
+    /// The canonical URL failed its check.
+    InvalidCanonicalUrl,
 }
 
 #[derive(Debug, thiserror::Error)]

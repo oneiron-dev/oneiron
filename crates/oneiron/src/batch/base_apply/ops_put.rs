@@ -64,6 +64,7 @@ pub(super) fn apply_put_arm(
         entity_type,
         replicated,
         (state.birth_mask, sources),
+        &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()

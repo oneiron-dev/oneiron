@@ -11,7 +11,7 @@ use super::archive_index::{
 use super::document_import::parse_id;
 use super::{
     ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportEpochFloor,
-    ExportPack, ExportRun,
+    ExportPack, ExportRowBirth, ExportRun,
 };
 use crate::Vault;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
@@ -60,6 +60,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 self.validate_entity(vault, section, loc, &row)?;
             }
         }
+        self.validate_row_births()?;
         // FIX 2768: each side row reads back through its own table and names
         // only records and carriers this document holds.
         super::archive_side_tables::validate_side_rows(self)?;
@@ -166,6 +167,27 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             &archive_index::typed_key(row.entity_type, &id),
             &[],
         )
+    }
+
+    /// FIX 1178: each birth row names a row this document holds, once, and
+    /// its envelope meets the birth shape rules; where it is goes into the
+    /// index for the stamp beside its landed row.
+    fn validate_row_births(&mut self) -> Result<()> {
+        let mut rows = self.spool.rows(ArchiveRecordKind::RowBirth);
+        while let Some((loc, row)) = rows.next_parsed::<ExportRowBirth>(&self.spool)? {
+            let id = parse_id(&row.id)?;
+            row.birth.check_shape()?;
+            if !self.index.contains(Tag::Entity, id.as_bytes())? {
+                return Err(invalid("row birth names no archived row"));
+            }
+            if !self
+                .index
+                .insert(Tag::RowBirth, id.as_bytes(), &loc.encode())?
+            {
+                return Err(invalid("duplicate row birth"));
+            }
+        }
+        Ok(())
     }
 
     fn validate_edges(&mut self) -> Result<()> {
