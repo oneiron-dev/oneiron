@@ -7,11 +7,11 @@ use std::cell::Cell;
 use base64::Engine as _;
 
 use super::{
-    AssetConsumer, AssetForms, AudioRef, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, EdgeDirection,
-    EdgeKind, EdgeStoreRead, EntityId, EvidenceVersion, HydratedAsset, ImageBytes, ImageHandle,
-    ImagePick, ImageRef, ImageViewRequest, MemoryError, MemoryResult, PixelPull, PixelRegion,
-    PointRead, PulledImage, ResolvedMedia, ScopedRead, ScopedReadResult, ServedForm, audio_of,
-    image_of, no_form, region_pixels, text_of,
+    AssetConsumer, AssetForms, AssetImage, AudioRef, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
+    EdgeDirection, EdgeKind, EdgeStoreRead, EntityId, EvidenceVersion, HydratedAsset, ImageBytes,
+    ImageHandle, ImagePick, ImageRef, ImageViewRequest, MemoryError, MemoryResult, PixelPull,
+    PixelRegion, PointRead, PulledImage, ResolvedMedia, ScopedRead, ScopedReadResult, ServedForm,
+    audio_of, image_of, no_form, region_pixels, text_of,
 };
 
 /// The pixels behind `request`'s handle, read through `lane`: the whole
@@ -32,7 +32,7 @@ pub fn pull_image(
         asset_forms_in_lane(lane, handle.asset, true, &mut |_| false)?;
     let Some(image) = value
         .and_then(|forms| forms.image)
-        .filter(|image| handle.names(image))
+        .filter(|image| handle.names(&image.content))
     else {
         return Err(no_form(&request.handle).with_read_receipt(receipt));
     };
@@ -42,7 +42,8 @@ pub fn pull_image(
         (false, Some(_), None) => PixelPull::Crop,
         (false, _, Some(_)) => PixelPull::Zoom,
     };
-    let (pixels, width, height) = region_pixels(&image, request.region, request.edge)?;
+    let evidence = image.evidence(handle.asset);
+    let (pixels, width, height) = region_pixels(&image.pixels, request.region, request.edge)?;
     lane.commit_served_forms(&[ServedForm::pulled(handle.asset, pull)])?;
     Ok(ScopedReadResult {
         value: PulledImage {
@@ -53,6 +54,7 @@ pub fn pull_image(
             width,
             height,
             image: Some(pixels),
+            evidence: Some(evidence),
         },
         receipt,
     })
@@ -74,18 +76,15 @@ pub fn resolve_image_ref(
         asset_forms_in_lane(lane, parsed.asset, true, &mut |_| false)?;
     let Some(image) = value
         .and_then(|forms| forms.image)
-        .filter(|image| parsed.names(image))
+        .filter(|image| parsed.names(&image.content))
     else {
         return Err(no_form(handle).with_read_receipt(receipt));
     };
-    let evidence = EvidenceVersion {
-        id: parsed.asset,
-        body_hash: *blake3::hash(&image.bytes).as_bytes(),
-    };
-    let reference = ImageRef::of(evidence, &image, frame).map_err(|_| {
+    let evidence = image.evidence(parsed.asset);
+    let reference = ImageRef::of(evidence, &image.pixels, frame).map_err(|_| {
         MemoryError::bad_request("an image a decision reads is PNG or JPEG, its frame inside it")
     })?;
-    let (pixels, ..) = region_pixels(&image, frame, None)?;
+    let (pixels, ..) = region_pixels(&image.pixels, frame, None)?;
     lane.commit_served_forms(&[ServedForm::pulled(parsed.asset, PixelPull::AskImage)])?;
     Ok(ScopedReadResult {
         value: ResolvedMedia::Image {
@@ -170,16 +169,20 @@ pub fn hydrated_asset(
 }
 
 /// The image `asset` holds, read through `lane` with no text decoded and no
-/// pull recorded: `None` when the lane withholds the asset, it is no ASSET,
-/// or it holds no image. A caller that hands the pixels to a model records
-/// the pull itself, as [`pull_image`] does.
+/// pull recorded, beside its canonical blob evidence: `None` when the lane
+/// withholds the asset, it is no ASSET, or it holds no image. A caller that
+/// hands the pixels to a model records the pull itself, as [`pull_image`] does.
 pub(crate) fn asset_image_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
-) -> MemoryResult<Option<ImageBytes>> {
+) -> MemoryResult<Option<(ImageBytes, EvidenceVersion)>> {
     Ok(asset_forms_in_lane(lane, asset, true, &mut |_| false)?
         .value
-        .and_then(|forms| forms.image))
+        .and_then(|forms| forms.image)
+        .map(|image| {
+            let evidence = image.evidence(asset);
+            (image.pixels, evidence)
+        }))
 }
 
 /// The audio clip `asset` holds, as its media type and encoded bytes, read
@@ -234,7 +237,7 @@ pub(crate) fn asset_forms_in_lane(
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
-        value: (row, media, derived),
+        value: (row, media, image, derived),
         mut receipt,
     } = lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let row = rows
@@ -248,6 +251,28 @@ pub(crate) fn asset_forms_in_lane(
             Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, body)?,
             None => None,
         };
+        let image = match (row.as_deref(), media.as_ref().and_then(image_of)) {
+            (Some(body), Some(pixels)) => {
+                let blob = super::blob::AssetBlobRef::of_body(body).ok_or_else(|| {
+                    MemoryError::from(crate::error::Error::CorruptedIndex("asset blob"))
+                })?;
+                let mark = if lane.actor_key().secret_sight()
+                    == crate::file_secret_marks::SecretSight::Masked
+                {
+                    crate::secret_custody::masked_file_in_txn(&vault.store, txn, &blob.hash)?
+                } else {
+                    None
+                };
+                Some((
+                    AssetImage {
+                        content: blob.hash,
+                        pixels,
+                    },
+                    mark,
+                ))
+            }
+            _ => None,
+        };
         let mut derived = Vec::new();
         if row.is_some() {
             for edge in vault.store.port_edges(
@@ -260,7 +285,7 @@ pub(crate) fn asset_forms_in_lane(
                 derived.push(edge?.target);
             }
         }
-        Ok::<_, MemoryError>((row, media, derived))
+        Ok::<_, MemoryError>((row, media, image, derived))
     })?;
     if row.is_none() {
         return Ok(ScopedReadResult {
@@ -268,9 +293,19 @@ pub(crate) fn asset_forms_in_lane(
             receipt,
         });
     }
+    // Project only after retaining the canonical identity and the mark from
+    // the admitting snapshot; decoding needs no store or authority re-read.
+    let image = image
+        .map(|(mut image, mark)| {
+            if let Some(mark) = mark {
+                image.pixels = masked_image(image.pixels, &mark)?;
+            }
+            Ok::<_, MemoryError>(image)
+        })
+        .transpose()?;
     let mut forms = AssetForms {
         asset,
-        image: media.as_ref().and_then(image_of),
+        image,
         audio: media.as_ref().and_then(audio_of),
         text: None,
         omitted: None,
@@ -304,4 +339,44 @@ pub(crate) fn asset_forms_in_lane(
         value: Some(forms),
         receipt,
     })
+}
+
+/// The owner-ruled temporary posture for image formats with no sanitizer.
+const PASS_UNSUPPORTED_MASKED_IMAGES: bool = true;
+
+fn masked_image(
+    mut image: ImageBytes,
+    mark: &crate::secret_custody::MaskedFile,
+) -> MemoryResult<ImageBytes> {
+    use crate::file_secret_marks::{filled, masked_copy_withheld};
+    match super::image_mask::raster(&image) {
+        super::image_mask::Projection::Sanitized(image) => Ok(image),
+        super::image_mask::Projection::Unsupported if svg_document(&image.bytes) => {
+            image.bytes = filled(
+                &image.bytes,
+                mark.keys.iter().map(|key| (key.start, key.end)),
+            )?;
+            image.media_type = "image/svg+xml".to_owned();
+            Ok(image)
+        }
+        super::image_mask::Projection::Unsupported if PASS_UNSUPPORTED_MASKED_IMAGES => Ok(image),
+        _ => Err(masked_copy_withheld("gate.secret_scan.image_metadata").into()),
+    }
+}
+
+/// Recognize SVG by its actual root, including XML declarations and comments.
+fn svg_document(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut reader = quick_xml::Reader::from_str(text);
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(root) | quick_xml::events::Event::Empty(root)) => {
+                return root.local_name().as_ref() == "svg";
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
 }

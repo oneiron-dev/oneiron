@@ -347,6 +347,16 @@ class Oneiron:
         """
         return self._client.last_receipt_ref()
 
+    def native_limit_questions(self) -> list[dict[str, Any]] | None:
+        """The engine ``[limits]`` rows this client's own vault crossed, latest per row.
+
+        Each entry is ``{"row", "bound", "measured"}`` with exact integers.
+        ``None`` on a remote, attached, or rebound view; an empty list where
+        no row crossed yet.
+        """
+        raw = _translate(lambda: self._client.native_limit_questions())
+        return json.loads(raw) if raw is not None else None
+
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends the call a ``PENDING_ASK`` refusal answered, under its invocation.
 

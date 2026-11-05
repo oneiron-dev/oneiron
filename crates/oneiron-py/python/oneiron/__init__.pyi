@@ -386,6 +386,14 @@ class ExportReceipt(TypedDict):
     # BLAKE3 of the archive, lowercase hex.
     digest: str
 
+class NativeLimitQuestion(TypedDict):
+    # The [limits] row key that asked.
+    row: str
+    # What the row stood at for the work, exact.
+    bound: int
+    # What the work measured, exact.
+    measured: int
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -443,6 +451,8 @@ class Oneiron:
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
     def with_read_credential(self, credential: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
+    def native_limit_questions(self) -> list[NativeLimitQuestion] | None:
+        """The engine-limit crossings this client's own vault kept; None on a remote, attached, or rebound view."""
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
     def lens_frame_event(self, card_id: str, request: LensFrameEventRequest) -> LensFrameEventReply:
