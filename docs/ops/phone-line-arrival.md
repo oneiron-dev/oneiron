@@ -66,8 +66,18 @@ Each entity-row admission rechecks the current line, agent, bridge, owner and li
 arrival in the same snapshot, then checks the current scope and native facet placement.
 This also applies to point reads, derived sources and the session view. Erase, disable
 or a binding mismatch admits no row through the call key. Ordinary keys with no phone
-ceiling keep their existing behavior. This native read factory is not an audio-session
-consumer or an output barrier; the answering path and its no-recognition mode remain open.
+ceiling keep their existing behavior. `ScopedRead::phone_line_scope` reports the live
+consent ceiling for prepared-context invalidation. `phone_line_output_scope` checks that
+ceiling and every supplied source row in one snapshot, without materializing source
+bodies. A caller must compare it with the scope captured before assembling context;
+re-stamping an old response with the new scope does not make that response safe.
+
+The server has an optional call-bound reader and a weak PCM dequeue fence. Existing
+voice sessions set that reader to `None` and keep their owner-only behavior. No phone
+session factory or audio route activates the new reader yet. Prepared-generation
+registration, anonymous context/history handling, explicit no-recognition execution and
+the actual answering lifecycle remain open. These native read and output-check ports
+are not a claim that a phone call can be answered.
 
 ## HTTP doors
 

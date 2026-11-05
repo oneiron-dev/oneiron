@@ -3,6 +3,65 @@
 use super::*;
 
 impl ScopedRead<'_> {
+    /// The call's current consent ceiling, for invalidating prepared context
+    /// and output when that ceiling changes. This is not a read grant or a
+    /// substitute for checking every source row under this same read key.
+    /// Ordinary readers have no phone ceiling and return `None`.
+    pub fn phone_line_scope(&self) -> Result<Option<crate::federation::Scope>> {
+        if self.actor_key.phone_lines.is_empty() {
+            return Ok(None);
+        }
+        self.persist_grant_clock()?;
+        let txn = self.vault.store.env.read_txn()?;
+        let _policy = self.live_policy_manifest_in(&txn)?;
+        if !self.proof_live_in(&txn)? {
+            return Err(crate::phone_line::invalid());
+        }
+        self.phone_line_scope_in(&txn)
+    }
+
+    /// Revalidates prepared output's source rows and current call consent in
+    /// one snapshot, without materializing any source body. `None` means no
+    /// phone call, never permission to send an anonymous answer.
+    pub fn phone_line_output_scope(
+        &self,
+        sources: &[EntityId],
+    ) -> Result<Option<crate::federation::Scope>> {
+        if self.actor_key.phone_lines.is_empty() {
+            return Ok(None);
+        }
+        self.persist_grant_clock()?;
+        let txn = self.vault.store.env.read_txn()?;
+        let scope = self.phone_line_scope_in(&txn)?;
+        let _policy = self.live_policy_manifest_in(&txn)?;
+        if !self.proof_live_in(&txn)?
+            || self
+                .entities_readable_in_txn(&txn, sources)?
+                .into_iter()
+                .any(|readable| !readable)
+        {
+            return Err(crate::phone_line::invalid());
+        }
+        Ok(scope)
+    }
+
+    fn phone_line_scope_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<crate::federation::Scope>> {
+        let mut scope: Option<crate::federation::Scope> = None;
+        for ceiling in &self.actor_key.phone_lines {
+            let current = ceiling
+                .current_scope_in(self.vault, txn, self.actor_key.actor_ref())?
+                .ok_or_else(crate::phone_line::invalid)?;
+            scope = Some(match scope {
+                Some(prior) => prior.meet(&current),
+                None => current,
+            });
+        }
+        Ok(scope)
+    }
+
     pub(super) fn phone_lines_allow_in(
         &self,
         txn: &heed::RoTxn<'_>,
