@@ -315,7 +315,9 @@ impl OfferLadder {
         release: MediaDispatchRelease<'_>,
         admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices, release, admitted)
-            .await
+        self.media_from(
+            run, request, selector, deadline, true, voices, release, admitted,
+        )
+        .await
     }
 }

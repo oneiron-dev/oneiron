@@ -4,9 +4,9 @@
 pub use oneiron_store::key_custody::protocol::*;
 
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
-pub use super::log::{CustodyEpoch, CustodyPosition};
 use crate::EntityId;
 use crate::error::{Error, Result};
+pub use oneiron_store::key_custody::log::{CustodyEpoch, CustodyPosition};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
