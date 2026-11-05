@@ -417,6 +417,8 @@ pub(crate) use served_vaults::served_vault_at;
 pub(crate) use backup_change::telemetry_batch_class;
 pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
+pub(crate) use body_envelope::BodyInstance;
+#[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_INSTANCES, BODY_KEYS, BodyFile, BodyKeyRow,
     BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
