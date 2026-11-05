@@ -582,7 +582,16 @@ fn enter_run(
         status.attempt.id.as_bytes(),
     )));
     let entered = enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
+        vault,
+        provider,
+        &bound,
+        config,
+        compaction,
+        reactor,
+        meter,
+        model_seat,
+        planned,
+        status.input.definition.models.clone(),
     );
     door.bind_meter(None);
     door.bind_lease(None);
