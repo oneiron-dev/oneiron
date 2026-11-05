@@ -642,8 +642,17 @@ pub(crate) fn drop_inputs_for_in_txn(
     id: &EntityId,
 ) -> Result<usize> {
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    drop_inputs_with_fold_in_txn(&vault.store, wtxn, id, &fold)
+}
+
+pub(super) fn drop_inputs_with_fold_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    fold: &crate::authority::AuthorityFold,
+) -> Result<usize> {
     let doomed: Vec<([u8; 32], Vec<u8>)> = INPUTS
-        .scan(&vault.store, wtxn)?
+        .scan(store, wtxn)?
         .into_iter()
         .filter(|(_, bytes)| {
             RelayedInput::decode(bytes).is_some_and(|input| {
@@ -657,14 +666,14 @@ pub(crate) fn drop_inputs_for_in_txn(
         .iter()
         .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
         .collect();
-    retire_input_carriers_in_txn(vault, wtxn, &carriers);
+    retire_input_carriers_in_txn(store, wtxn, &carriers);
     for (key, _) in &doomed {
-        INPUTS.delete(&vault.store, wtxn, key)?;
+        INPUTS.delete(store, wtxn, key)?;
     }
     // Every witness part kept for such a request goes too (FIX 8088); a
     // fault finding them is warned, and they go with the settle.
-    let witnesses = witness::drop_witnesses_in_txn(vault, wtxn, |group| {
-        witness::witness_target(&fold, group) == Some(*id)
+    let witnesses = witness::drop_witnesses_for_store_in_txn(store, wtxn, |group| {
+        witness::witness_target(fold, group) == Some(*id)
     })
     .unwrap_or_else(|error| {
         tracing::warn!(kind = ?error.kind(), "a revoked secret's witness parts stay for its settle");
@@ -722,7 +731,7 @@ impl Vault {
             return Ok(0);
         }
         let forgot = self.with_write_txn(|txn| {
-            retire_input_carriers_in_txn(self, txn, &carriers);
+            retire_input_carriers_in_txn(&self.store, txn, &carriers);
             for (key, _) in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
