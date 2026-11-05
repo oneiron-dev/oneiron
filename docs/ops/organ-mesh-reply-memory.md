@@ -14,6 +14,11 @@ an existing reservation through the existing values' last use. A host without
 a frame lease still uses the same path with `None`. Inputs, forwarded asks,
 client reassembly, staged-file retention and disk-floor accounting are unchanged.
 
+If staging an output fails after the organ has run, the existing failed reply
+keeps the ask receipts collected by that run. Failures before a run still carry
+no ask receipts. The failure kind and detail do not change. Keeping these
+receipts does not retain or replay the completed outcome.
+
 This is not complete mesh-copy memory accounting. Per-output inline copies,
 encoded-result copies, reply encoding and `Get` piece buffers still need their
 own exact allocation and last-use accounting. Spilled files are disk, not
