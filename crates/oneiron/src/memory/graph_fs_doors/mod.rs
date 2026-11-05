@@ -133,7 +133,7 @@ impl Memory<'_> {
     pub fn graph_fs_read_file_with_pacing(
         &self,
         input: GraphFsPathRequest,
-        pacing: &crate::batch::secret_scan::ReadPacing,
+        pacing: &crate::batch::ReadPacing,
     ) -> MemoryResult<GraphFsOutput> {
         self.graph_fs_bytes_with_reader(
             input,

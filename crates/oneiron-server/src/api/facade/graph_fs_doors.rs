@@ -14,7 +14,7 @@ pub(super) async fn graph_fs_read_file(
     let (actor, class) = facade_actor(server, auth)?;
     let server = Arc::clone(server);
     let owned = call.owned();
-    oneiron::batch::secret_scan::read_cooperatively(move |pacing| {
+    oneiron::batch::read_cooperatively(move |pacing| {
         let producers = oneiron::memory::ProducerRows::default();
         let output = super::invoke::facade_invoke_on_thread(
             &server,
