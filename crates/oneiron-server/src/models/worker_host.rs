@@ -66,13 +66,13 @@ use probe::HouseProbe;
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, rung_admitted, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, rung_admitted, turn_admitted,
 };
 
 pub(super) use reporting::{
-    refresh, refresh_devices, register_device_executor, report_device_activity,
-    report_device_stats, report_receipt, snapshot_status,
+    prepare_policy, prepared_tail_status, refresh, refresh_devices, register_device_executor,
+    report_device_activity, report_device_stats, report_receipt, snapshot_status,
 };
 pub(super) use routes::{
     ManagedLaunchEvidence, external_workers, is_current, managed_http_evidence, managed_worker,
