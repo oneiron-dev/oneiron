@@ -12,7 +12,7 @@ use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock_for_secre
 use super::{INSTEAD, emit, read_kit_passphrase, read_kit_pieces};
 use crate::cli::RecoveryKitAuthorityArgs;
 use crate::config::{ServeConfig, resolve_serve_config};
-use crate::owner::local_owner;
+use crate::owner::host_owner;
 use crate::owner::vault_key::hex;
 
 #[derive(Serialize)]
@@ -32,7 +32,7 @@ pub(super) fn enroll(args: RecoveryKitAuthorityArgs) -> anyhow::Result<()> {
         .transpose()?;
     let machine = crate::owner::recovery_kit::authority_holding_machine(&vault, named)?
         .ok_or_else(|| anyhow::anyhow!("this install has no machine in the vault"))?;
-    let authority = ActAuthority::Owner(local_owner(&vault)?, ActSurface::ThisInstall);
+    let authority = ActAuthority::Owner(host_owner(&vault)?, ActSurface::ThisInstall);
     let seed = RecoveryRootSeed::from_restored_kit(secret)?;
     let issuer = host_issuer(&config, &vault, false)?;
     let receipt =
