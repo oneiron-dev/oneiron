@@ -395,11 +395,12 @@ fn stored_scope(
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`); every other record, and any
-/// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
-/// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
-/// gone or was never settled, a NOTE in no single world), which a read
-/// narrowed on worlds keeps out.
+/// it (`note_world`). An ASSET or ASSET_TEXT uses its kind- and birth-facet-bound
+/// singleton stamp, retaining base reality when no such single world is proved.
+/// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
+/// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
+/// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
+/// which a read narrowed on worlds keeps out.
 pub(crate) fn record_world_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -427,7 +428,11 @@ pub(crate) fn record_world_in(
         return Ok(note_world::note_worlds_in(store, txn, id).world());
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
+    let asset = matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
+    );
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -437,6 +442,9 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
+    if asset {
+        return Ok(Some(stamped.flatten()));
+    }
     // An epoch summary is one whatever form its body takes, and a pointer no
     // head stands for may be one (Astra 1384e).
     if summary
