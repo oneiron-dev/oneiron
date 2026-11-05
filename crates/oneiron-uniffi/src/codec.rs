@@ -52,7 +52,9 @@ mod policy_settings;
 mod proposal_results;
 mod proposals;
 mod results;
+mod shape_groups;
 mod shape_plans;
+pub(crate) use shape_groups::lift_shape_groups;
 mod skill_callables;
 mod wire_json;
 

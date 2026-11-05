@@ -213,17 +213,17 @@ export_facade! {
 "vault.shape.read" => fn vault_shape_read(&self) -> ShapeRead = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.read")?;
     let output = client.vault_shape_read(&input)?;
-    crate::codec::lift_record("vault.shape.read", &output)
+    Lift::lift(output)
 };
 "vault.shape.plan" => fn vault_shape_plan(&self, input: ShapePlanRequest) -> ShapePlan = |client| {
     let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan", input)?;
     let output = client.vault_shape_plan(&input)?;
-    crate::codec::lift_record("vault.shape.plan", &output)
+    Lift::lift(output)
 };
 "vault.shape.apply" => fn vault_shape_apply(&self, input: ShapeApplyRequest) -> ShapeApplyReceipt = |client| {
     let input: oneiron::vault_shape::ShapeApplyRequest = crate::codec::lower_record("vault.shape.apply", input)?;
     let output = client.vault_shape_apply(&input)?;
-    crate::codec::lift_record("vault.shape.apply", &output)
+    Lift::lift(output)
 };
 "vault.shape.plan.card" => fn vault_shape_plan_card(&self, input: ShapePlanRequest) -> ShapePlanCardView = |client| {
     let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan.card", input)?;
@@ -233,17 +233,17 @@ export_facade! {
 "vault.shape.items.receipt" => fn vault_shape_items_receipt(&self, input: ShapeItemReceiptRequest) -> Option<ShapeItemReceipt> = |client| {
     let input: oneiron::memory::ShapeItemReceiptRequest = crate::codec::lower_record("vault.shape.items.receipt", input)?;
     let output = client.vault_shape_items_receipt(&input)?;
-    crate::codec::lift_record("vault.shape.items.receipt", &output)
+    Lift::lift(output)
 };
 "vault.shape.groups" => fn vault_shape_groups(&self) -> Vec<ShapeInboxGroup> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.groups")?;
     let output = client.vault_shape_groups(&input)?;
-    crate::codec::lift_record("vault.shape.groups", &output)
+    crate::codec::lift_shape_groups(output)
 };
 "vault.shape.groups.resolve" => fn vault_shape_groups_resolve(&self, input: ShapeGroupResolveRequest) -> ShapeApplyReceipt = |client| {
     let input: oneiron::memory::ShapeGroupResolveRequest = crate::codec::lower_record("vault.shape.groups.resolve", input)?;
     let output = client.vault_shape_groups_resolve(&input)?;
-    crate::codec::lift_record("vault.shape.groups.resolve", &output)
+    Lift::lift(output)
 };
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
@@ -1069,12 +1069,12 @@ export_facade! {
 "vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> UnifiedInboxGroupPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
     let output = client.vault_inbox_groups(&input)?;
-    crate::codec::lift_record("vault.inbox.groups", &output)
+    Lift::lift(output)
 };
 "vault.inbox.groups.resolve" => fn vault_inbox_groups_resolve(&self, input: InboxGroupResolveRequest) -> InboxGroupResolution = |client| {
     let input: oneiron::inbox::InboxGroupResolveRequest = crate::codec::lower_record("vault.inbox.groups.resolve", input)?;
     let output = client.vault_inbox_groups_resolve(&input)?;
-    crate::codec::lift_record("vault.inbox.groups.resolve", &output)
+    Lift::lift(output)
 };
 "vault.weave.digest.render" => fn vault_weave_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.digest.render")?;
@@ -2104,7 +2104,7 @@ export_facade! {
 "self.off_record.results.list" => fn self_off_record_results_list(&self, input: OffRecordResultsRequest) -> OffRecordResultCards = |client| {
     let input: oneiron::task_verb::sdk::OffRecordResultsRequest = crate::codec::lower_record("self.off_record.results.list", input)?;
     let output = client.self_off_record_results_list(&input)?;
-    crate::codec::lift_record("self.off_record.results.list", &output)
+    Lift::lift(output)
 };
 "self.off_record.results.read" => fn self_off_record_results_read(&self, input: OffRecordResultReadRequest) -> OffRecordResultRead = |client| {
     let input: oneiron::task_verb::sdk::OffRecordResultReadRequest = crate::codec::lower_record("self.off_record.results.read", input)?;
@@ -3384,7 +3384,7 @@ export_facade! {
 "vault.results.read" => fn vault_results_read(&self, input: ResultOccurrenceRequest) -> ResultReadView = |client| {
     let input: oneiron::memory::result_doors::ResultOccurrenceRequest = crate::codec::lower_record("vault.results.read", input)?;
     let output = client.vault_results_read(&input)?;
-    crate::codec::lift_record("vault.results.read", &output)
+    Lift::lift(output)
 };
 "vault.results.slice" => fn vault_results_slice(&self, input: ResultSliceRequest) -> ResultSliceView = |client| {
     let input: oneiron::memory::result_doors::ResultSliceRequest = crate::codec::lower_record("vault.results.slice", input)?;
