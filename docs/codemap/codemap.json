@@ -6811,7 +6811,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -23982,7 +23982,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -24030,9 +24030,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/migration.rs",
-     "purpose": "Idempotent lazy and maintenance migration of legacy conversation turns",
+     "purpose": "Idempotent local initialization of received conversation DAGs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -24271,7 +24271,7 @@
      "path": "src/conversation_dag/writes.rs",
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -29306,7 +29306,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CoachHealAuthor",
@@ -29320,7 +29320,7 @@
       "crate-vis": 9,
       "enum": 1,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2,
       "trait": 1
      }
@@ -29335,6 +29335,19 @@
       "const": 2,
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoachPromptDraft"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_prompt_repair.rs",
+     "purpose": "A case-backed prompt draft is data for owner review, never permission to inject it or resume the failed run",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
      }
     },
     {
@@ -70389,7 +70402,7 @@
      "path": "src/store/centroid_evidence/erase.rs",
      "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -73837,7 +73850,7 @@
      "path": "src/store/text_index/index.rs",
      "purpose": "Index/deindex mutation paths plus the missing-posting repair proof",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -89854,7 +89867,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90918,9 +90931,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 155,
+   "over_bar": 156,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6385,
+   "source_files": 6386,
    "test_files": 895
   },
   "oneiron-android": {
