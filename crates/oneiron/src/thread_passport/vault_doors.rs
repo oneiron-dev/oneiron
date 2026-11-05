@@ -1,3 +1,6 @@
+//! Typed [`Vault`] doors for thread passports: record, read, join, and mask.
+//! Entry [`Vault::record_thread_passport`]; the one-transaction passport-plus-alias write.
+//! Owned by `thread_passport`; rows are validated in `storage` before they land.
 use super::*;
 
 // ---------------------------------------------------------------------------

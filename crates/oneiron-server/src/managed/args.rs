@@ -253,6 +253,10 @@ pub struct ManagedArgs {
     /// The supervisor's credential broker binding, validated by the same
     /// rules as `[models.broker]`; absent keeps the same-user default.
     pub broker: Option<crate::config::models::BrokerConfig>,
+    /// The explicit per-vault host allocation (`--host-memory-bytes`,
+    /// `--host-cpu-millis`), as the operator supplied it; absent is
+    /// unbounded per field. Reported through the managed host, not enforced.
+    pub host_limits: oneiron_vault_contract::host::HostLimits,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,
