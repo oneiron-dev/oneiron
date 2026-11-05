@@ -68,6 +68,9 @@ impl SyncServer {
         input: RecallRequest,
         payer: Option<&PayerPerson>,
     ) -> MemoryResult<MemoryPack> {
+        // Bind the request last so early returns drop it before its memory lease.
+        let (mut request_memory, input) = (self.memory.empty_lease(), input);
+        request_memory.materialized(0, input.query.capacity() as u64);
         let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
