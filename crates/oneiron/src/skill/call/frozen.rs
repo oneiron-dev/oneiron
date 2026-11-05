@@ -328,6 +328,7 @@ impl JsCodeModeHost for CaseHost {
             outcome: SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: "callable_case_no_caller".to_owned(),
+                code: None,
             }),
             budget: None,
             view: None,

@@ -1164,6 +1164,22 @@ secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
 
+A served host also supplies `native_mail.jmap` against its installed native
+mail server and `broker.models` against a configured broker-backed
+OpenAI-compatible provider. The latter takes
+`arguments: {"provider": "<configured provider name>"}` and returns that
+provider's actual `/v1/models` JSON. It presents the requested handle, not the
+provider's configured secret, under the existing `broker:model` binding.
+The host uses one actual model rung only as the broker's bodyless-request
+binding; it does not filter the listing or claim that model is serving.
+The broker is connected before custody releases the value. Both result and
+failure text are cleared inside the same credential door. The handle's
+record, a run-bound record and an operation grant use their existing doors,
+and the receipt names the generation actually presented. A refused broker
+request or a lost channel does not claim a confirmed presentation. No paid
+inference or media request is made by this operation. The host and broker
+must be rebuilt together; no new configuration setting is required.
+
 On a server, `self.use` also takes `connector.call`: one connector call with
 the secret as the call's credential, in place of the connector's own. Its
 `arguments` are what `connector.call` takes: `name`, `tool`, the tool's
@@ -1705,8 +1721,12 @@ provider's `timeout_secs` (120 s by default), so raise it for long clips. A
 Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
-key in `key_env` or `key_secret` (sent as `x-goog-api-key`). It serves the image and video
-seats only. An image is `models/{model}:generateContent` asked for image
+key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
+`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
+when the model declares it; a `key_secret` chat goes through the credential broker as
+a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`generationConfig.maxOutputTokens` on both paths. It also serves the image and video
+seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
 (`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
 `imageSize` (`1K` up to 1024 px a side, `2K` up to 2048, else `4K`),
