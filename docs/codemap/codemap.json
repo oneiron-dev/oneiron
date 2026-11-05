@@ -22876,6 +22876,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/scratchpad/run_lifecycle.rs",
+     "purpose": "Exact-pad ownership at a durable code run's close",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -28230,7 +28241,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "re-export": 1,
       "struct": 2
@@ -30262,7 +30273,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 1
      }
     },
@@ -34127,7 +34138,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 2,
       "struct": 1
      }
@@ -49180,13 +49191,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/support/transactions.rs",
      "purpose": "Write plumbing: owner authorship, host origin, claim envelopes and actor-verified write txns",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -51467,7 +51478,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -70239,7 +70250,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 34
      }
     },
     {
@@ -70250,6 +70261,16 @@
      "purpose": "A body finished under its reader's pin (FIX 5399b)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/finish_scanned.rs",
+     "purpose": "Scans a completed sink using its existing inline bytes or finished spill",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -90900,7 +90921,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91845,7 +91866,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 487,
+     "files": 488,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92085,7 +92106,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6427,
+   "source_files": 6429,
    "test_files": 895
   },
   "oneiron-android": {
@@ -101003,6 +101024,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites.rs",
+     "purpose": "Source-defined preset sites retained when Edit Points makes a freeform",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites/data.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -102112,7 +102153,7 @@
      "purpose": "A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its…"
     },
     "live": {
-     "files": 61,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102205,7 +102246,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 166,
+   "source_files": 168,
    "test_files": 14
   },
   "oneiron-driver": {
