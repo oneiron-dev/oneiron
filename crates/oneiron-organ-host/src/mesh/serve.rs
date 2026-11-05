@@ -23,7 +23,7 @@ use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::outcome::{OrganOutcome, OutputBytes};
 use crate::receipt::AskReceipt;
-use crate::resource_memory::{FloorLease, MemoryGrow};
+use crate::resource_memory::{FloorLease, MemoryGrow, SharedFloor};
 use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
@@ -55,7 +55,48 @@ struct CallReply {
     result: PeerResult,
     // Fields drop in declaration order: the result's values before their guards.
     _outputs: Vec<InlineOutputHold>,
+    _copies: Vec<Box<dyn FloorLease>>,
     _frame: Option<crate::budget::Lease>,
+}
+
+/// One allocated reply buffer, released before its machine-floor record.
+struct TrackedReply<T> {
+    value: T,
+    _lease: Option<Box<dyn FloorLease>>,
+}
+
+impl<T> TrackedReply<T> {
+    fn untracked(value: T) -> Self {
+        Self {
+            value,
+            _lease: None,
+        }
+    }
+
+    fn map<U>(self, map: impl FnOnce(T) -> U) -> TrackedReply<U> {
+        TrackedReply {
+            value: map(self.value),
+            _lease: self._lease,
+        }
+    }
+}
+
+/// Records an existing allocation, without admitting or waiting for new bytes.
+fn track_bytes(bytes: Vec<u8>, floor: Option<&SharedFloor>) -> TrackedReply<Vec<u8>> {
+    let lease = floor.map(|floor| floor.0.track_allocated(bytes.capacity() as u64));
+    TrackedReply {
+        value: bytes,
+        _lease: lease,
+    }
+}
+
+fn track_carried(carried: Carried, floor: Option<&SharedFloor>) -> TrackedReply<Carried> {
+    match carried {
+        Carried::Inline(bytes) => {
+            track_bytes(bytes.into_vec(), floor).map(|bytes| Carried::Inline(ByteBuf::from(bytes)))
+        }
+        carried => TrackedReply::untracked(carried),
+    }
 }
 
 /// Original reservations for an inline output moved into the reply without copying.
@@ -74,6 +115,7 @@ impl CallReply {
                 asks,
             }),
             _outputs: Vec::new(),
+            _copies: Vec::new(),
             _frame: None,
         }
     }
@@ -175,16 +217,16 @@ impl OrganService {
             // A stopping host admits no new call: the asking node tries
             // another, or holds the call.
             Request::Offers | Request::Call { .. } if self.cancel.is_stopping() => {
-                Reply::Refused("this node is stopping".into())
+                TrackedReply::untracked(Reply::Refused("this node is stopping".into()))
             }
             // What this host can start now, never an install it refuses.
-            Request::Offers => Reply::Offers(
+            Request::Offers => TrackedReply::untracked(Reply::Offers(
                 self.host
                     .offered()
                     .into_iter()
                     .map(|(organ, verbs)| Offer { organ, verbs })
                     .collect(),
-            ),
+            )),
             Request::Put {
                 hash,
                 total,
@@ -196,17 +238,18 @@ impl OrganService {
                     self.vault
                         .measure_limit(EngineLimit::OrganMeshObjectBytes, total);
                 }
-                match staging.put(hash, total, offset, &bytes) {
+                TrackedReply::untracked(match staging.put(hash, total, offset, &bytes) {
                     Ok(()) => {
                         self.measure_staged(&staging);
                         Reply::Put
                     }
                     Err(why) => Reply::Refused(why),
-                }
+                })
             }
             Request::Get { hash, offset } => match staging.piece(hash, offset) {
-                Ok(piece) => Reply::Piece(piece),
-                Err(why) => Reply::Refused(why),
+                Ok(piece) => track_bytes(piece.into_vec(), self.host.floor().as_ref())
+                    .map(|bytes| Reply::Piece(ByteBuf::from(bytes))),
+                Err(why) => TrackedReply::untracked(Reply::Refused(why)),
             },
             Request::Call { call } => {
                 let result = match self.call(conn, &staging, &call).await {
@@ -214,18 +257,23 @@ impl OrganService {
                     Err(detail) => CallReply::failed(detail, Vec::new()),
                 };
                 match encode(&result.result) {
-                    Ok(bytes) => match staging.offer(&bytes) {
-                        Ok(carried) => {
-                            self.measure_staged(&staging);
-                            Reply::Call(carried)
+                    Ok(bytes) => {
+                        let bytes = track_bytes(bytes, self.host.floor().as_ref());
+                        match staging.offer(&bytes.value) {
+                            Ok(carried) => {
+                                let carried = track_carried(carried, self.host.floor().as_ref());
+                                self.measure_staged(&staging);
+                                carried.map(Reply::Call)
+                            }
+                            Err(why) => TrackedReply::untracked(Reply::Refused(why)),
                         }
-                        Err(why) => Reply::Refused(why),
-                    },
-                    Err(err) => Reply::Refused(err.to_string()),
+                    }
+                    Err(err) => TrackedReply::untracked(Reply::Refused(err.to_string())),
                 }
             }
         };
-        stream.send(&encode(&reply)?).await
+        let message = track_bytes(encode(&reply.value)?, self.host.floor().as_ref());
+        stream.send(&message.value).await
     }
 
     async fn call(
@@ -342,12 +390,12 @@ impl OrganService {
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => {
-                offered(outcome, staging).unwrap_or_else(|detail| CallReply::failed(detail, asked))
-            }
+            Ok(outcome) => offered(outcome, staging, self.host.floor().as_ref())
+                .unwrap_or_else(|detail| CallReply::failed(detail, asked)),
             Err(err) => CallReply {
                 result: PeerResult::Failed(failure(err, asked)),
                 _outputs: Vec::new(),
+                _copies: Vec::new(),
                 _frame: None,
             },
         })
@@ -399,29 +447,37 @@ impl MeshService for OrganService {
 }
 
 /// The outcome as it crosses back: each output's bytes offered by hash.
-fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String> {
+fn offered(
+    outcome: OrganOutcome,
+    staging: &Staging,
+    floor: Option<&SharedFloor>,
+) -> Result<CallReply, String> {
     let mut held_outputs = Vec::new();
+    let mut copied_outputs = Vec::new();
     let outputs = outcome
         .outputs
         .into_iter()
         .map(|output| {
-            let bytes = match output.bytes {
+            let tracked = match output.bytes {
                 OutputBytes::Inline(bytes) if bytes.len() <= INLINE => {
                     held_outputs.push(InlineOutputHold {
                         _kept: output._kept,
                         _leased: output._leased,
                     });
-                    Carried::Inline(ByteBuf::from(bytes))
+                    TrackedReply::untracked(Carried::Inline(ByteBuf::from(bytes)))
                 }
-                OutputBytes::Inline(bytes) => staging.offer(&bytes)?,
+                OutputBytes::Inline(bytes) => track_carried(staging.offer(&bytes)?, floor),
                 #[cfg(unix)]
-                OutputBytes::Mapped(region) => staging.offer(&region)?,
+                OutputBytes::Mapped(region) => track_carried(staging.offer(&region)?, floor),
             };
+            if let Some(lease) = tracked._lease {
+                copied_outputs.push(lease);
+            }
             Ok(PeerOutput {
                 name: output.name,
                 media_type: output.media_type,
                 content_hash: output.content_hash,
-                bytes,
+                bytes: tracked.value,
             })
         })
         .collect::<Result<_, String>>()?;
@@ -433,6 +489,7 @@ fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String
             outputs,
         }),
         _outputs: held_outputs,
+        _copies: copied_outputs,
         _frame: outcome._frame,
     })
 }
