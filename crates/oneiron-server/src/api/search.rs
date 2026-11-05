@@ -18,6 +18,7 @@ use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
 use crate::protocol::ResponseMeta;
 use crate::server::{QueryDoor, SyncServer, query_caller};
+use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
@@ -40,6 +41,7 @@ use utoipa::ToSchema;
 
 mod deadline;
 mod home_text;
+mod semantic_body;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };
@@ -838,7 +840,7 @@ pub(crate) struct SemanticSearchRequest {
         ),
         (
             status = 500,
-            description = "Vector search or projection failed.",
+            description = "Request body resource or read failure, vector search or projection failed.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -854,13 +856,11 @@ pub(crate) async fn search_semantic(
     parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
-    body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
+    body: Body,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
-    let Json(params) = body.map_err(|rejection| {
-        ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
-    })?;
+    let params = semantic_body::read(&server, &parts.headers, body).await?;
     server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
