@@ -454,7 +454,11 @@ impl Vault {
                     &entry.id,
                     SecretRevealCause::RunSeatEnded,
                 )?;
-                crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                crate::batch::deindex_entity(
+                    &crate::secret_custody::CustodyWrite::of(self),
+                    wtxn,
+                    &entry.id,
+                )?;
                 crate::secret_custody::erase_secret_handle_label_in_txn(
                     &self.store,
                     wtxn,
@@ -501,7 +505,11 @@ impl Vault {
                         &entry.id,
                         SecretRevealCause::RunSeatEnded,
                     )?;
-                    crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                    crate::batch::deindex_entity(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        wtxn,
+                        &entry.id,
+                    )?;
                     crate::secret_custody::erase_secret_handle_label_in_txn(
                         &self.store,
                         wtxn,
