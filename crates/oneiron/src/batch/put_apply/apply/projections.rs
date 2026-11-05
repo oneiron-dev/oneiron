@@ -94,13 +94,14 @@ pub(super) fn stage_put_projections(
         dispatch.authority_entry_observation.as_ref(),
     )?;
 
+    let (stored_occurred, stored_learned_at, _) = fixed.storage_body_and_times(data)?;
     stage_entity_index_rows(
         store,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        fixed.occurred,
-        fixed.learned_at,
+        stored_occurred,
+        stored_learned_at,
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_TURN && consolidation_dirty {
         crate::dreamer_consolidation::admit_turn_position_in_txn(store, wtxn, &fixed.id)?;

@@ -34,6 +34,22 @@ pub(super) struct FixedPut<'a> {
     pub(super) mutation_recorded_at: u64,
 }
 
+impl FixedPut<'_> {
+    /// The physical row stays immutable for a headed native state operation.
+    /// All semantic gates and effects continue to receive the logical body.
+    pub(super) fn storage_body_and_times<'row>(
+        &'row self,
+        data: &'row [u8],
+    ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8])> {
+        #[cfg(feature = "sync")]
+        if let Some(request) = self.skill_state_write {
+            let (occurred, learned_at) = request.snapshot().physical_times()?;
+            return Ok((occurred, learned_at, request.snapshot().physical_body()));
+        }
+        Ok((self.occurred, self.learned_at, data))
+    }
+}
+
 /// Body buffers the staged `data` slice borrows, in shadow order. The parent
 /// holds them so the slice stays borrowed across phases.
 #[derive(Default)]
@@ -141,6 +157,8 @@ pub(super) fn admit_put<'a>(
         replicated,
         origin,
         posture,
+        #[cfg(feature = "sync")]
+        skill_state_write,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
