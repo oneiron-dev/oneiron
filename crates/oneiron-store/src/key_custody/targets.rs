@@ -85,13 +85,13 @@ pub fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T> {
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SetWire {
-    version: u8,
-    revision: u64,
-    members: Vec<MemberWire>,
+pub struct SetWire {
+    pub version: u8,
+    pub revision: u64,
+    pub members: Vec<MemberWire>,
     /// The owner's drains and re-enrolments (FIX 5843).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    history: Vec<drain::SetEvent>,
+    pub history: Vec<drain::SetEvent>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
