@@ -197,3 +197,18 @@ record codec, including omitted empty collections and checked count widths.
 Native reads, applies, owner proof, release checks, public records, typed client
 calls and input conversions remain unchanged. This completes these selected
 output families only, not the general input, depth, heap or runtime work.
+
+
+`self.inbox.list`, `self.inbox.mark` and `self.inbox.get` consume every
+notification action argument into the existing required `WireJson` field.
+A null argument remains present; action order, empty-action omission, seen and
+acknowledged state, counts and page cursors retain the original record codec.
+The opened inbox item also consumes every component property in its optional
+lens, using a child-stack walk before either subtree can return an error.
+Optional null properties remain absent. The original lens version pair is
+captured before consuming its root; it is not restamped or validated again.
+All other node and atom fields keep the original finite record codec, including
+text framing, bindings, present empty children and scalar widths. Native
+notification readers, action selection, meeting cards, owner/scope checks,
+client calls and inputs are unchanged. The finite lens tree still has arbitrary
+child depth; this does not claim end-to-end depth, heap or runtime closure.

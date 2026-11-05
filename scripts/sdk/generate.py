@@ -2165,6 +2165,9 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::agent_inbox_lens::InboxItemView': 'InboxItemView',
+    'crate::inbox::NotificationPage': 'NotificationPage',
+    'crate::inbox::NotificationRow': 'NotificationRow',
     'crate::task_verb::sdk::OffRecordResultCards': 'OffRecordResultCards',
     'crate::memory::result_doors::ResultReadView': 'ResultReadView',
     'crate::vault_shape::ShapeRead': 'ShapeRead',
