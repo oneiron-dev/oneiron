@@ -1,7 +1,8 @@
-//! `/v1/owner/settings/models`: the owner's model settings. Today that is
-//! the Responses `store` switch (OF-602): off, nothing is kept at the
-//! provider and a reconnected socket sends the whole conversation; on, the
-//! provider keeps each response and a reconnected socket resumes the chain.
+//! `/v1/owner/settings/models`: the owner's model settings and first-run setup.
+//! The Responses `store` switch (OF-602): off, nothing is kept at the provider
+//! and a reconnected socket sends the whole conversation; on, the provider
+//! keeps each response and a reconnected socket resumes the chain. `/setup`
+//! configures the model slots on the vault this server already opened.
 
 use std::sync::Arc;
 
@@ -10,9 +11,10 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::{CHANGED, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
+use crate::commands::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
@@ -40,6 +42,19 @@ pub(super) fn owner_table() -> OwnerTable {
                 )),
             },
             post(put),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/models/setup",
+                summary: "Configures first-run models on the vault this server already opened.",
+                row: None,
+                shape: Some(
+                    RestShape::json(model_setup_answers_schema, model_setup_outcome_schema)
+                        .refusing(&[CHANGED]),
+                ),
+            },
+            post(setup),
         ),
     ]
 }
@@ -94,4 +109,26 @@ async fn put(
     })
     .await?;
     Ok(Json(settings))
+}
+
+/// The model answers accepted by first-run setup.
+pub(crate) fn model_setup_answers_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ModelSetupAnswers>()
+}
+
+/// The configuration and model slots first-run setup installed.
+pub(crate) fn model_setup_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ModelSetupOutcome>()
+}
+
+/// `POST /v1/owner/settings/models/setup` on the already-open vault.
+async fn setup(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ModelSetupAnswers>,
+) -> OwnerReply<ModelSetupOutcome> {
+    let owner = owner(&auth, &server)?;
+    let answers = payload.read(&server).await?;
+    let outcome = blocking(move || setup_models_on_open_vault(&server, &owner, answers)).await?;
+    Ok(Json(outcome))
 }
