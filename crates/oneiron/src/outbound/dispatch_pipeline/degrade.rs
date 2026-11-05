@@ -79,15 +79,22 @@ pub(in crate::outbound) fn ambient_alternative_dispatch_request(
     ambient_alternative_request(parent, alternative)
 }
 
-/// Names an interrupt's alternative and what came of it on the interrupt's
-/// receipt, as a degraded dispatch names it.
+/// Names an interrupt's alternative, its receipt when known, and what came
+/// of it on the interrupt's receipt, as a degraded dispatch names them.
 pub(in crate::outbound) fn name_ambient_alternative(
     receipt: &mut crate::receipt::ReceiptRecord,
     parent: &OutboundDispatchRequest,
     alternative: &OutboundAmbientAlternative,
     outcome: &str,
+    child_receipt: Option<&str>,
 ) {
     let fields = &mut receipt.fields;
+    if let Some(child_receipt) = child_receipt {
+        fields.insert(
+            ALTERNATIVE_RECEIPT_REF_FIELD.to_owned(),
+            child_receipt.to_owned(),
+        );
+    }
     fields.insert(
         ALTERNATIVE_SURFACE_FIELD.to_owned(),
         alternative.surface.clone(),
