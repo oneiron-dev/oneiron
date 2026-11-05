@@ -143,4 +143,69 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
+
+    fn send_override_for_send_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        party_ref: &EntityId,
+        channel_class: &str,
+        send_ref: Option<&str>,
+        now: u64,
+    ) -> crate::write_envelope::communication::CommResult<
+        Option<crate::write_envelope::communication::SendOverrideMatch>,
+    > {
+        crate::comm::send_override_for_send_in_txn(
+            store,
+            txn,
+            party_ref,
+            channel_class,
+            send_ref,
+            now,
+        )
+    }
+
+    fn send_stop_reason_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        persons: &[EntityId],
+        counterparty: &str,
+        channel_class: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<&'static str>> {
+        crate::comm::send_stop_reason_in_txn(store, txn, persons, counterparty, channel_class)
+    }
+
+    fn active_thread_refs_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party_ref: EntityId,
+    ) -> crate::write_envelope::communication::CommResult<BTreeSet<String>> {
+        crate::comm::active_thread_refs_in_txn(vault, rtxn, party_ref)
+    }
+
+    fn check_claim_against_descriptor_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        body: &crate::claim::ClaimBody,
+    ) -> Result<()> {
+        crate::comm::check_claim_against_descriptor_in_txn(store, txn, body)
+    }
+
+    fn seed_claim_class_descriptors(&self, vault: &crate::Vault) -> Result<()> {
+        crate::comm::seed_claim_class_descriptors(vault)
+    }
+
+    fn supersede_party_opt_out_head_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        reason: crate::counterparty_contact::CounterpartyOptOutReason,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::supersede_party_opt_out_head_in_txn(vault, wtxn, party, reason, occurred_at)
+    }
 }

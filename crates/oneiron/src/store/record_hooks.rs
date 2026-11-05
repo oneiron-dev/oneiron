@@ -137,4 +137,56 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `comm::send_override_for_send_in_txn`.
+    fn send_override_for_send_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        party_ref: &EntityId,
+        channel_class: &str,
+        send_ref: Option<&str>,
+        now: u64,
+    ) -> crate::write_envelope::communication::CommResult<
+        Option<crate::write_envelope::communication::SendOverrideMatch>,
+    >;
+
+    /// The engine's `comm::send_stop_reason_in_txn`.
+    fn send_stop_reason_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        persons: &[EntityId],
+        counterparty: &str,
+        channel_class: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<&'static str>>;
+
+    /// The engine's `comm::active_thread_refs_in_txn`.
+    fn active_thread_refs_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party_ref: EntityId,
+    ) -> crate::write_envelope::communication::CommResult<BTreeSet<String>>;
+
+    /// The engine's `comm::check_claim_against_descriptor_in_txn`.
+    fn check_claim_against_descriptor_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        body: &crate::claim::ClaimBody,
+    ) -> Result<()>;
+
+    /// The engine's `comm::seed_claim_class_descriptors`.
+    fn seed_claim_class_descriptors(&self, vault: &crate::Vault) -> Result<()>;
+
+    /// The engine's `comm::supersede_party_opt_out_head_in_txn`.
+    fn supersede_party_opt_out_head_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        reason: crate::counterparty_contact::CounterpartyOptOutReason,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
 }
