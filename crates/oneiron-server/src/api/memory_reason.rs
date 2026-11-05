@@ -59,10 +59,12 @@ use crate::server::{QueryDoor, SyncServer, query_caller};
 
 mod answer_admission;
 mod deep_admission;
+mod evidence;
 mod host;
 mod render;
 pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
+use evidence::CollectedEvidence;
 use render::render_evidence;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
@@ -468,13 +470,18 @@ pub(crate) async fn companion_memory_reason(
                 &server.vault,
                 server.config.limits.projection_body_bytes,
             );
-            let (evidence, evidence_omitted) =
-                collect_evidence(&server.vault, &scoped_read, &mut retrieved, &mut bodies)?;
+            let (evidence, evidence_omitted) = collect_evidence(
+                &server.vault,
+                &scoped_read,
+                &mut retrieved,
+                &mut bodies,
+                &server.memory,
+            )?;
             let answered = answer_from(
                 &request,
                 &query,
                 remaining,
-                &evidence,
+                evidence.as_slice(),
                 admission.as_ref(),
                 &server.vault,
                 &auth,
@@ -603,7 +610,8 @@ fn collect_evidence(
     scoped_read: &ScopedRead<'_>,
     retrieved: &mut DepthSearchResult,
     bodies: &mut crate::projection::BodyBudget<'_>,
-) -> Result<(Vec<MemoryReasonEvidence>, Vec<Value>), ApiError> {
+    memory: &oneiron::host_memory::MachineMemory,
+) -> Result<(CollectedEvidence, Vec<Value>), ApiError> {
     let refs: Vec<_> = retrieved
         .hits
         .iter()
@@ -622,7 +630,7 @@ fn collect_evidence(
         .read(&refs, requested.as_ref())
         .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?;
     retrieved.narrowing.push(projected.receipt);
-    let mut evidence = Vec::with_capacity(refs.len());
+    let mut evidence = CollectedEvidence::with_capacity(memory, refs.len());
     let mut omitted = Vec::new();
     for (read, row) in refs.into_iter().zip(projected.value) {
         let Some(oneiron::claim::ReadRow {
