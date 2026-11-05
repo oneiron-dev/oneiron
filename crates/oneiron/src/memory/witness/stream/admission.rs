@@ -245,7 +245,7 @@ impl Memory<'_> {
             if entries.contains_key(&id) {
                 return Err(MessageStreamError::StreamAlreadyActive(id));
             }
-            entries.insert(id, Arc::clone(&entry));
+            entries.insert(id, Resident::Recorded(Arc::clone(&entry)));
         }
         let admitted: MessageStreamResult<()> =
             self.vault
@@ -746,15 +746,16 @@ pub(super) fn committed_text(
     // The stored birth parts ride the expected envelope, so a Continue on a
     // parted MESSAGE compares the full body it was born with instead of
     // failing against a part-less rebuild. Absent on a text-only MESSAGE.
-    let parts: Option<Vec<crate::ContentPart>> = value
+    let parts: Option<Vec<crate::store::witness_message_body::StoredMessagePart>> = value
         .get("parts")
         .map(|parts| serde_json::from_value(parts.clone()))
         .transpose()
         .map_err(|_| Error::CorruptedIndex("message parts"))?;
-    let expected: serde_json::Value = rmp_serde::from_slice(
-        &witness_message_envelope(&seed.message_with_parts(text.clone(), parts)).encode_body()?,
-    )
-    .map_err(|_| Error::CorruptedIndex("message envelope"))?;
+    let message = seed.message_with_parts(text.clone(), None);
+    let mut envelope = witness_message_envelope(&message);
+    envelope.parts = parts;
+    let expected: serde_json::Value = rmp_serde::from_slice(&envelope.encode_body()?)
+        .map_err(|_| Error::CorruptedIndex("message envelope"))?;
     if value != expected {
         return Err(MessageStreamError::InvalidRequest(
             "continuation axes differ",

@@ -39,8 +39,9 @@ pub struct BatchBuilder<'a> {
     commit_checks: Vec<CommitCheck>,
     /// Why this batch may touch the ids it touches (ARCH-0052 D2).
     origin: BaseWriteOrigin<'a>,
-    /// The FACET every NOTE and ASSET this batch births is stamped with.
-    /// `None` stamps the vault default.
+    /// The FACET every NOTE, ASSET, EVENT and TURN this batch births is
+    /// stamped with. `None` stamps the vault default. A CLAIM carries its
+    /// facet in its body and ignores the mask (FIX 7757).
     birth_mask: Option<EntityId>,
     /// Every source each ASSET_TEXT this batch births was written from.
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
@@ -124,8 +125,9 @@ impl<'a> BatchBuilder<'a> {
         }
     }
 
-    /// Sets the active mask every NOTE and ASSET this batch births is
-    /// stamped with. It must be a stored FACET row.
+    /// Sets the active mask every NOTE, ASSET, EVENT and TURN this batch
+    /// births is stamped with. It must be a stored FACET row. A CLAIM carries
+    /// its facet in its body and ignores the mask (FIX 7757).
     pub(crate) fn mask(mut self, mask: Option<EntityId>) -> Self {
         self.birth_mask = mask;
         self
