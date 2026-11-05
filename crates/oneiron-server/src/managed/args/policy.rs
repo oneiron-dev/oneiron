@@ -126,6 +126,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
+        "vm-outbox-companion-admitted",
+        |args| args.vm_outbox_companion_admitted,
+        ArgvUse::Read,
+    ),
+    (
         "vm-restore-revision",
         |args| args.vm_restore_revision.is_some(),
         ArgvUse::Read,
@@ -198,6 +203,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "broker-extra-roots",
         |args| args.broker_extra_roots.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-memory-bytes",
+        |args| args.host_memory_bytes.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-cpu-millis",
+        |args| args.host_cpu_millis.is_some(),
         ArgvUse::Read,
     ),
     // The embedder's layered flags: managed mode reads its settings file.
