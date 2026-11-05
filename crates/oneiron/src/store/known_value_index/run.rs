@@ -80,6 +80,28 @@ impl Vault {
 }
 
 impl RunKnownSource {
+    /// Replaces only this run's PERSON values in a typed text payload.
+    /// Custody hits keep their bytes for the caller's existing custody sweep.
+    pub(crate) fn replace_person_text(&self, text: &str) -> Result<Option<String>> {
+        self.pass(|custody, person| {
+            let Some(person) = person else {
+                return Ok(None);
+            };
+            let data = text.as_bytes();
+            let custody = custody
+                .map(|known| known.matched_spans_except(data, |_| false))
+                .unwrap_or_default();
+            let spans = person_spans(person, data, &custody);
+            if spans.is_empty() {
+                return Ok(None);
+            }
+            let (bytes, _) = replace_spans(data, data.len(), spans);
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| Error::CorruptedIndex("PERSON output text encoding"))
+        })?
+    }
+
     pub(super) fn pass<T>(
         &self,
         use_pass: impl FnOnce(Option<&KnownValues>, Option<&KnownValues>) -> T,
@@ -150,13 +172,21 @@ pub(super) fn replaced_until(
     let mut spans = custody
         .map(|known| known.matched_spans_except(data, |_| false))
         .unwrap_or_default();
-    let mut persons = person.matched_spans_except(data, |_| false);
-    persons.retain(|hit| {
-        !spans
-            .iter()
-            .any(|custody| hit.span.start < custody.span.end && custody.span.start < hit.span.end)
-    });
-    spans.extend(persons);
+    spans.extend(person_spans(person, data, &spans));
     spans.sort_by_key(|hit: &MatchedSpan<'_>| hit.span.start);
     replace_spans(data, limit, spans)
+}
+
+fn person_spans<'k>(
+    person: &'k KnownValues,
+    data: &[u8],
+    custody: &[MatchedSpan<'_>],
+) -> Vec<MatchedSpan<'k>> {
+    let mut persons = person.matched_spans_except(data, |_| false);
+    persons.retain(|hit| {
+        !custody
+            .iter()
+            .any(|held| hit.span.start < held.span.end && held.span.start < hit.span.end)
+    });
+    persons
 }

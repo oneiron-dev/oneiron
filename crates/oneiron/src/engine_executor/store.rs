@@ -1,5 +1,6 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod reply_evidence;
 mod script_context;
 pub(super) use script_context::load_script_context;
 
@@ -82,17 +83,18 @@ pub(super) fn bind_published_output(
     digest_bindings.push((name, output.handle.clone()));
 }
 
-/// A step's model reply as the provider gave it, kept apart from the program
-/// healed out of it: untrusted evidence, never executed. It streams into its
-/// body as it is encoded.
+/// A step's model reply, kept apart from the program healed out of it:
+/// untrusted evidence, never executed. Only typed text receives the run's
+/// PERSON substitutions before the original custody sweep and JSON encoding.
 pub(super) fn record_reply_evidence(
     storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
     reply: &crate::LlmMessage,
 ) -> EngineExecutorResult<()> {
+    let reply = reply_evidence::for_run(storage, record.run_id, reply)?;
     let mut sink = storage.code_run_output_sink()?;
-    write_json(&mut sink, reply)?;
+    write_json(&mut sink, &reply)?;
     publish_output(storage, record, reply_output_path(seq), sink).map(drop)
 }
 
