@@ -6558,7 +6558,7 @@
     },
     {
       "name": "vault.off_record.notes.create",
-      "description": "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
@@ -6574,7 +6574,7 @@
     },
     {
       "name": "vault.off_record.claims.upsert",
-      "description": "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordClaimRequest",
       "output": "crate::memory::CommitReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
@@ -6685,7 +6685,7 @@
     },
     {
       "name": "vault.off_record.rooms.start",
-      "description": "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential.",
+      "description": "A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential.",
       "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
@@ -6745,7 +6745,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+      "description": "A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
