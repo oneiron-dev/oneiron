@@ -14,7 +14,8 @@ mod reads;
 pub(crate) use reads::PreparedNoteRead;
 pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
-    NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+    NoteEditorClosed, NoteHistoryView, NoteIndexedReadRequest, NoteReadRequest, NoteReadSource,
+    NoteReadSpan, NoteReadView,
 };
 #[cfg(feature = "sync")]
 mod residence_read;

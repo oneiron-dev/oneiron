@@ -28,7 +28,6 @@ mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;
 
 pub(crate) use storage::capture_entity_document;
-pub(crate) use storage::{capture_native_note_in_txn, finish_native_note_publication_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;
 pub use storage::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
@@ -38,6 +37,9 @@ pub(crate) use storage::{
     publish_room_revision, read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
     remove_entity_revisions, revision_for_body_hash_in_txn, revision_for_mode_in_txn,
     storage_manages_text, vectors_embed_body,
+};
+pub(crate) use storage::{
+    capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,

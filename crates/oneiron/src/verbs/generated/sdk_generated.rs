@@ -6469,6 +6469,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteReadRequest>(),
             ),
             (
+                "vault.notes.read_indexed",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteIndexedReadRequest>(
+                ),
+            ),
+            (
                 "vault.notes.history",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
@@ -7891,6 +7896,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.notes.follow_citation",
     "vault.notes.author_take",
     "vault.notes.read",
+    "vault.notes.read_indexed",
     "vault.notes.history",
     "vault.notes.fork",
     "vault.notes.forks.read",
@@ -10378,6 +10384,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
+        >(),
+        "vault.notes.read_indexed" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
@@ -18719,6 +18728,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.read_indexed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23192,6 +23208,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.read" => {
             let _input: crate::note::NoteReadRequest = decode(value.clone())?;
         }
+        "vault.notes.read_indexed" => {
+            let _input: crate::note::NoteIndexedReadRequest = decode(value.clone())?;
+        }
         "vault.notes.history" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
@@ -25803,6 +25822,7 @@ pub fn invoke(
         "vault.notes.author_take" => encode(vault_notes_author_take(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
+        "vault.notes.read_indexed" => encode(vault_notes_read_indexed(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
         "vault.notes.fork" => encode(vault_notes_fork(memory, decode(value)?)?),
         "vault.notes.forks.read" => encode(vault_notes_forks_read(memory, decode(value)?)?),
@@ -35962,6 +35982,12 @@ pub fn vault_notes_read(
     input: crate::note::NoteReadRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
     memory.read_note(&input)
+}
+pub fn vault_notes_read_indexed(
+    memory: &Memory<'_>,
+    input: crate::note::NoteIndexedReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
+    memory.read_indexed_note(&input)
 }
 pub fn vault_notes_history(
     memory: &Memory<'_>,

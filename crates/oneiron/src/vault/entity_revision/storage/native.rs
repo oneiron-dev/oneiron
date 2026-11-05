@@ -277,3 +277,34 @@ pub(crate) fn finish_native_note_publication_in_txn(
     crate::embed::mark_on_publication_in_txn(vault, txn, &id, raw[0])?;
     crate::dreamer_wake::mark_on_publication_in_txn(store, txn, &id)
 }
+
+/// The indexed binding in this exact content view, not the NOTE's current head.
+pub(crate) fn indexed_native_note_in_txn(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
+) -> Result<Option<(EntityId, LoroDoc)>> {
+    let Some(current) = state(store, txn, id)? else {
+        return Ok(None);
+    };
+    // Every activated namespace retains its live entry. Absence is corruption,
+    // not evidence that this NOTE has never activated its native ledger.
+    if current.has_doc && !FRONTIER.contains(store, txn, &(*id, current.live.0))? {
+        return Err(Error::CorruptedIndex("NOTE live binding missing"));
+    }
+    let Some(encoded) = active_note(store, txn, id, current.indexed)? else {
+        if active_note(store, txn, id, current.live)?.is_some() {
+            return Err(Error::CorruptedIndex("NOTE indexed binding missing"));
+        }
+        return Ok(None);
+    };
+    let (slot, row, frontier) = FrontierEntry::decode(&encoded)?
+        .committed_note(id, current.indexed, &encoded)?
+        .ok_or(Error::CorruptedIndex("NOTE indexed binding"))?;
+    super::history::physical_revision_raw(store, txn, id, row)?;
+    let stored =
+        crate::note::revision::stored_slot_with_pending_in_txn(store, txn, *id, slot, pending)?
+            .ok_or(Error::EntityNotFound)?;
+    Ok(Some((slot, stored.at(frontier)?)))
+}

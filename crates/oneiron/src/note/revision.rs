@@ -45,6 +45,17 @@ impl StoredNoteSlot {
         }
         if self.doc.oplog_frontiers() == frontier {
             Ok(self.doc)
+        } else if self.doc.is_shallow() {
+            let bytes = self
+                .doc
+                .export(loro::ExportMode::state_only(Some(&frontier)))
+                .map_err(|_| Error::EntityNotFound)?;
+            let selected = LoroDoc::from_snapshot(&bytes)
+                .map_err(|_| Error::CorruptedIndex("NOTE retained snapshot"))?;
+            if selected.oplog_frontiers() != frontier {
+                return Err(Error::CorruptedIndex("NOTE retained frontier"));
+            }
+            Ok(selected)
         } else {
             self.doc
                 .fork_at(&frontier)
@@ -60,6 +71,16 @@ pub(crate) fn stored_slot_in_txn(
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     slot: EntityId,
+) -> Result<Option<StoredNoteSlot>> {
+    stored_slot_with_pending_in_txn(store, txn, note, slot, store.pending_scan_checks())
+}
+
+pub(crate) fn stored_slot_with_pending_in_txn(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    slot: EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
 ) -> Result<Option<StoredNoteSlot>> {
     let slot = DocumentSlot::of(slot);
     let Some(bytes) = store.port_document_row(txn, slot, DocumentRow::Snapshot)? else {
@@ -83,13 +104,7 @@ pub(crate) fn stored_slot_in_txn(
                 .map_err(|_| super::document::invalid("NOTE stored shallow frontier"))
         })
         .transpose()?;
-    super::scan::measure_document(
-        store,
-        txn,
-        note,
-        &canonical.doc,
-        store.pending_scan_checks(),
-    )?;
+    super::scan::measure_document(store, txn, note, &canonical.doc, pending)?;
     Ok(Some(StoredNoteSlot {
         doc: canonical.doc,
         floor,
@@ -138,4 +153,18 @@ pub(super) fn index_stored_note_in_txn(
         crate::vault::entity_revision::finish_native_note_publication_in_txn(vault, txn, note)?;
     }
     Ok(())
+}
+
+/// Keeps the exact stored head id beside its selected causal state for editor
+/// versions and anchors. Admission and lifted-view handling stay at the caller.
+pub(super) fn indexed_doc_in_txn(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
+) -> Result<Option<super::documents::NoteDocument>> {
+    Ok(
+        crate::vault::entity_revision::indexed_native_note_in_txn(store, txn, &note, pending)?
+            .map(|(head, doc)| super::documents::NoteDocument { note, head, doc }),
+    )
 }
