@@ -1,11 +1,12 @@
 //! Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists
 //! the vault's own hook bindings whose contract moved under them,
 //! `vault.hooks.regen.get` reads one binding's regen record, and
-//! `vault.hooks.regen.adopt` enacts the candidate pending on it. Each one
-//! projects the engine's own operation: `Vault::hooks_due_for_regen`,
-//! `Vault::hook_regen_record` and `Vault::adopt_hook_regen`, which installs
-//! through the owner's own pack put. No door runs a hook's intent again:
-//! no production regenerator exists to run it.
+//! `vault.hooks.regen.adopt` enacts the candidate pending on it.
+//! `vault.hooks.regen.cancel` sets a waiting decision aside,
+//! `vault.hooks.regen.revert` puts back the body an adoption replaced, and
+//! `vault.hooks.regen.history` reads the hook's regen receipts (FIX 4690,
+//! 4691). Each one projects the engine's own operation on `Vault`; adopt
+//! and revert install through the owner's own pack put.
 //!
 //! Authority is the owner's live proof (`Memory::hook_regen_owner`), from
 //! any surface the owner is authenticated on, checked before any binding
@@ -18,6 +19,7 @@ pub use types::*;
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
+use crate::runtime_hooks::{HookRegenCancel, HookRegenReceipt, MAX_HOOK_REGEN_HISTORY};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use serde::{Deserialize, Serialize};
@@ -176,7 +178,79 @@ impl Memory<'_> {
                 )
                 .map_err(adopt_refusal)?,
         );
-        // The source the put staged, which its receipt names.
+        self.produced_from_put(&put);
+        Ok(put)
+    }
+
+    /// `vault.hooks.regen.cancel`: the owner sets aside the decision waiting
+    /// on one binding, named as `vault.hooks.regen.get` showed it, through
+    /// `Vault::cancel_hook_regen`. The hook keeps its body, and the contract
+    /// the decision targeted is declined until it moves again.
+    pub fn hooks_regen_cancel_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenCancelRequest,
+    ) -> MemoryResult<HookRegenCancel> {
+        self.hook_regen_owner(owner)?;
+        if input
+            .candidate_hash
+            .as_deref()
+            .is_some_and(|hash| !is_body_hash(hash))
+        {
+            return Err(MemoryError::bad_request(
+                "candidate_hash is the pending candidate body's BLAKE3, 64 lowercase hex",
+            ));
+        }
+        self.hook_regen_binding(input.binding)?;
+        self.vault
+            .cancel_hook_regen(owner, input.binding, input.candidate_hash.as_deref())
+            .map_err(adopt_refusal)
+    }
+
+    /// `vault.hooks.regen.revert`: the owner puts back the body the last
+    /// adoption on one binding replaced, through `Vault::revert_hook_regen`
+    /// and the owner's own pack put. The answer is that put's own receipt:
+    /// a Candidate or Blocked put installs nothing, and the record stays.
+    pub fn hooks_regen_revert_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenRevertRequest,
+    ) -> MemoryResult<PackPutReceipt> {
+        self.hook_regen_owner(owner)?;
+        if !is_body_hash(&input.adopted_hash) {
+            return Err(MemoryError::bad_request(
+                "adopted_hash is the adopted body's BLAKE3, 64 lowercase hex",
+            ));
+        }
+        self.hook_regen_binding(input.binding)?;
+        let put = PackPutReceipt::from(
+            self.vault
+                .revert_hook_regen(owner, input.binding, &input.adopted_hash)
+                .map_err(adopt_refusal)?,
+        );
+        self.produced_from_put(&put);
+        Ok(put)
+    }
+
+    /// `vault.hooks.regen.history`: one page of a binding's regen receipts,
+    /// newest first, across the hook's rebinds. It changes nothing.
+    pub fn hooks_regen_history_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenHistoryRequest,
+    ) -> MemoryResult<Vec<HookRegenReceipt>> {
+        self.hook_regen_owner(owner)?;
+        self.hook_regen_binding(input.binding)?;
+        let limit = input
+            .limit
+            .map_or(MAX_HOOK_REGEN_HISTORY, |limit| limit as usize);
+        Ok(self
+            .vault
+            .hook_regen_history(input.binding, input.before, limit)?)
+    }
+
+    /// The source a pack put staged, which its receipt names.
+    fn produced_from_put(&self, put: &PackPutReceipt) {
         if let Some(source) = put
             .receipt
             .as_deref()
@@ -184,7 +258,6 @@ impl Memory<'_> {
         {
             self.produced_from([source]);
         }
-        Ok(put)
     }
 }
 

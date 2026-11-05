@@ -3384,9 +3384,27 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.hooks.regen.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenHistoryRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.revert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenRevertRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.regen.adopt",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenCancelRequest,
                 >(),
             ),
             (
@@ -7550,7 +7568,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "host.budget.hit",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
+    "vault.hooks.regen.history",
+    "vault.hooks.regen.revert",
     "vault.hooks.regen.adopt",
+    "vault.hooks.regen.cancel",
     "vault.artifacts.publish_approval",
     "vault.artifacts.publish",
     "vault.artifacts.repoint",
@@ -9335,8 +9356,17 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.hooks.regen.get" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::hook_regen_doors::HookRegenView>,
         >(),
+        "vault.hooks.regen.history" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::runtime_hooks::HookRegenReceipt>,
+        >(),
+        "vault.hooks.regen.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
         "vault.hooks.regen.adopt" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "vault.hooks.regen.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::runtime_hooks::HookRegenCancel>()
         }
         "vault.artifacts.publish_approval" => crate::code_run::vault_read::request_schema::<
             crate::artifact_hosting::door_types::ArtifactPublishApproval,
@@ -14991,7 +15021,28 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.regen.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.revert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.regen.adopt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.cancel" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21346,8 +21397,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::hook_regen_doors::HookRegenBindingRequest =
                 decode(value.clone())?;
         }
+        "vault.hooks.regen.history" => {
+            let _input: crate::memory::hook_regen_doors::HookRegenHistoryRequest =
+                decode(value.clone())?;
+        }
+        "vault.hooks.regen.revert" => {
+            let _input: crate::memory::hook_regen_doors::HookRegenRevertRequest =
+                decode(value.clone())?;
+        }
         "vault.hooks.regen.adopt" => {
             let _input: crate::memory::hook_regen_doors::HookRegenAdoptRequest =
+                decode(value.clone())?;
+        }
+        "vault.hooks.regen.cancel" => {
+            let _input: crate::memory::hook_regen_doors::HookRegenCancelRequest =
                 decode(value.clone())?;
         }
         "vault.artifacts.publish_approval" => {
@@ -24850,7 +24913,10 @@ pub fn invoke(
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.hooks.regen.due" => encode(vault_hooks_regen_due(memory, decode(value)?)?),
         "vault.hooks.regen.get" => encode(vault_hooks_regen_get(memory, decode(value)?)?),
+        "vault.hooks.regen.history" => encode(vault_hooks_regen_history(memory, decode(value)?)?),
+        "vault.hooks.regen.revert" => encode(vault_hooks_regen_revert(memory, decode(value)?)?),
         "vault.hooks.regen.adopt" => encode(vault_hooks_regen_adopt(memory, decode(value)?)?),
+        "vault.hooks.regen.cancel" => encode(vault_hooks_regen_cancel(memory, decode(value)?)?),
         "vault.artifacts.publish_approval" => {
             encode(vault_artifacts_publish_approval(memory, decode(value)?)?)
         }
@@ -31449,11 +31515,29 @@ pub fn vault_hooks_regen_get(
 ) -> MemoryResult<Option<crate::memory::hook_regen_doors::HookRegenView>> {
     memory.hooks_regen_record_as(&memory.embedded_owner("vault.hooks.regen.get")?, input)
 }
+pub fn vault_hooks_regen_history(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenHistoryRequest,
+) -> MemoryResult<Vec<crate::runtime_hooks::HookRegenReceipt>> {
+    memory.hooks_regen_history_as(&memory.embedded_owner("vault.hooks.regen.history")?, input)
+}
+pub fn vault_hooks_regen_revert(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenRevertRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    memory.hooks_regen_revert_as(&memory.embedded_owner("vault.hooks.regen.revert")?, input)
+}
 pub fn vault_hooks_regen_adopt(
     memory: &Memory<'_>,
     input: crate::memory::hook_regen_doors::HookRegenAdoptRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     memory.hooks_regen_adopt_as(&memory.embedded_owner("vault.hooks.regen.adopt")?, input)
+}
+pub fn vault_hooks_regen_cancel(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenCancelRequest,
+) -> MemoryResult<crate::runtime_hooks::HookRegenCancel> {
+    memory.hooks_regen_cancel_as(&memory.embedded_owner("vault.hooks.regen.cancel")?, input)
 }
 pub fn vault_artifacts_publish_approval(
     memory: &Memory<'_>,

@@ -625,7 +625,10 @@ pub enum AgentVerb {
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
+    VaultHooksRegenHistory,
+    VaultHooksRegenRevert,
     VaultHooksRegenAdopt,
+    VaultHooksRegenCancel,
     VaultArtifactsPublishApproval,
     VaultArtifactsPublish,
     VaultArtifactsRepoint,
@@ -1882,7 +1885,10 @@ impl AgentVerb {
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
+        Self::VaultHooksRegenHistory,
+        Self::VaultHooksRegenRevert,
         Self::VaultHooksRegenAdopt,
+        Self::VaultHooksRegenCancel,
         Self::VaultArtifactsPublishApproval,
         Self::VaultArtifactsPublish,
         Self::VaultArtifactsRepoint,
@@ -3162,7 +3168,10 @@ impl AgentVerb {
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
+            Self::VaultHooksRegenHistory => "vault.hooks.regen.history",
+            Self::VaultHooksRegenRevert => "vault.hooks.regen.revert",
             Self::VaultHooksRegenAdopt => "vault.hooks.regen.adopt",
+            Self::VaultHooksRegenCancel => "vault.hooks.regen.cancel",
             Self::VaultArtifactsPublishApproval => "vault.artifacts.publish_approval",
             Self::VaultArtifactsPublish => "vault.artifacts.publish",
             Self::VaultArtifactsRepoint => "vault.artifacts.repoint",
@@ -4435,7 +4444,10 @@ impl AgentVerb {
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenHistory
+                | Self::VaultHooksRegenRevert
                 | Self::VaultHooksRegenAdopt
+                | Self::VaultHooksRegenCancel
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -5721,7 +5733,10 @@ impl AgentVerb {
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenHistory
+                | Self::VaultHooksRegenRevert
                 | Self::VaultHooksRegenAdopt
+                | Self::VaultHooksRegenCancel
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -6411,6 +6426,7 @@ impl AgentVerb {
                 | Self::VaultDisclosureReveals
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
+                | Self::VaultHooksRegenHistory
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultStandingBlocksList
                 | Self::VaultWorkspaceRoster
@@ -7151,7 +7167,10 @@ impl AgentVerb {
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenHistory
+                | Self::VaultHooksRegenRevert
                 | Self::VaultHooksRegenAdopt
+                | Self::VaultHooksRegenCancel
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -8091,7 +8110,9 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksRegenRevert
                 | Self::VaultHooksRegenAdopt
+                | Self::VaultHooksRegenCancel
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
                 | Self::VaultArtifactsUnpublish
@@ -9121,7 +9142,10 @@ impl AgentVerb {
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
+            Self::VaultHooksRegenHistory => &["spec"],
+            Self::VaultHooksRegenRevert => &["spec"],
             Self::VaultHooksRegenAdopt => &["spec"],
+            Self::VaultHooksRegenCancel => &["spec"],
             Self::VaultArtifactsPublishApproval => &["spec"],
             Self::VaultArtifactsPublish => &["spec"],
             Self::VaultArtifactsRepoint => &["spec"],
@@ -10379,7 +10403,10 @@ impl AgentVerb {
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
+            Self::VaultHooksRegenHistory => &["spec"],
+            Self::VaultHooksRegenRevert => &["spec"],
             Self::VaultHooksRegenAdopt => &["spec"],
+            Self::VaultHooksRegenCancel => &["spec"],
             Self::VaultArtifactsPublishApproval => &["spec"],
             Self::VaultArtifactsPublish => &["spec"],
             Self::VaultArtifactsRepoint => &["spec"],
@@ -12850,8 +12877,17 @@ impl AgentVerb {
             Self::VaultHooksRegenGet => {
                 "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."
             }
+            Self::VaultHooksRegenHistory => {
+                "Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing."
+            }
+            Self::VaultHooksRegenRevert => {
+                "Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt."
+            }
             Self::VaultHooksRegenAdopt => {
                 "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."
+            }
+            Self::VaultHooksRegenCancel => {
+                "Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again."
             }
             Self::VaultArtifactsPublishApproval => {
                 "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."

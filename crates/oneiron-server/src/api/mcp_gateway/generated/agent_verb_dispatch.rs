@@ -769,7 +769,10 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.due" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.hooks.regen.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.hooks.regen.revert" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.adopt" => a.spec.clone().ok_or_else(invalid),
+        "vault.hooks.regen.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.publish_approval" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.publish" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.repoint" => a.spec.clone().ok_or_else(invalid),
@@ -3415,7 +3418,16 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.hooks.regen.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.hooks.regen.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.hooks.regen.revert" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.hooks.regen.adopt" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.hooks.regen.cancel" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.publish_approval" => {
@@ -16416,6 +16428,42 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.hooks.regen.history" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.hooks.regen.history", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::hook_regen_doors::HookRegenHistoryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_hooks_regen_history(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.hooks.regen.revert" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.hooks.regen.revert", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::hook_regen_doors::HookRegenRevertRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_hooks_regen_revert(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.hooks.regen.adopt" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.hooks.regen.adopt", &input)
@@ -16424,6 +16472,24 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_hooks_regen_adopt(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.hooks.regen.cancel" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.hooks.regen.cancel", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::hook_regen_doors::HookRegenCancelRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_hooks_regen_cancel(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

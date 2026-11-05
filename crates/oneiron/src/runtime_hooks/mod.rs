@@ -47,8 +47,10 @@ pub use outcome::{
 pub use read::grant_view::hook_evidence_views;
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
-    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
-    HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
+    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookGoldenManifest, HookRegenActor,
+    HookRegenCancel, HookRegenDecision, HookRegenEvent, HookRegenFailure, HookRegenFailurePhase,
+    HookRegenOutcome, HookRegenPrior, HookRegenReceipt, HookRegenRecord, HookRegenRequest,
+    HookRegenerator, MAX_HOOK_REGEN_HISTORY,
 };
 pub use replay::{
     HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,
@@ -79,7 +81,7 @@ pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::block::hooks_block_accepts_masked;
-pub(crate) use self::regen::hooks_regen_accepts_masked;
+pub(crate) use self::regen::{hooks_regen_accepts_masked, hooks_regen_receipt_accepts_masked};
 pub(crate) use self::store::hooks_intent_accepts_masked;
 pub(crate) use self::store::hooks_memo_accepts_masked;
 pub(crate) use self::store::hooks_receipt_accepts_masked;

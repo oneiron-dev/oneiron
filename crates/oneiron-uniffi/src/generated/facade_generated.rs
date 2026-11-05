@@ -3106,10 +3106,25 @@ export_facade! {
     let output = client.vault_hooks_regen_get(&input)?;
     crate::codec::lift_record("vault.hooks.regen.get", &output)
 };
+"vault.hooks.regen.history" => fn vault_hooks_regen_history(&self, input: HookRegenHistoryRequest) -> Vec<HookRegenReceipt> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenHistoryRequest = crate::codec::lower_record("vault.hooks.regen.history", input)?;
+    let output = client.vault_hooks_regen_history(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.history", &output)
+};
+"vault.hooks.regen.revert" => fn vault_hooks_regen_revert(&self, input: HookRegenRevertRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenRevertRequest = crate::codec::lower_record("vault.hooks.regen.revert", input)?;
+    let output = client.vault_hooks_regen_revert(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.revert", &output)
+};
 "vault.hooks.regen.adopt" => fn vault_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
     let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("vault.hooks.regen.adopt", input)?;
     let output = client.vault_hooks_regen_adopt(&input)?;
     crate::codec::lift_record("vault.hooks.regen.adopt", &output)
+};
+"vault.hooks.regen.cancel" => fn vault_hooks_regen_cancel(&self, input: HookRegenCancelRequest) -> HookRegenCancel = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenCancelRequest = crate::codec::lower_record("vault.hooks.regen.cancel", input)?;
+    let output = client.vault_hooks_regen_cancel(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.cancel", &output)
 };
 "vault.artifacts.publish_approval" => fn vault_artifacts_publish_approval(&self, input: ArtifactPublishRequest) -> ArtifactPublishApproval = |client| {
     let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.publish_approval", input)?;
