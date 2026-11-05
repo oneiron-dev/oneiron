@@ -222,6 +222,9 @@ async fn cut_origin_authority(
     payload: OwnerJsonBody<CutOriginAuthority>,
 ) -> Result<Json<OriginAuthority>, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
+    // Where the owner's cut came from, for the act each cut it signs records
+    // (FIX 15740): the host's own reading of the request, never its input.
+    let surface = crate::api::facade::owner_binding::act_surface(&auth);
     let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
@@ -241,6 +244,7 @@ async fn cut_origin_authority(
         // The proof is revalidated where the row commits (FIX 8214).
         Ok(vault.set_served_origin_authority_as_owner(
             &owner,
+            surface,
             &request.repo,
             request.expected_epoch,
             request.residence,
