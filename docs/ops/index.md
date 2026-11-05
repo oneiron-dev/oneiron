@@ -7,6 +7,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
   `import`, `files`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
 - [Retry a publisher issue signature](publisher-signature-retry.md) — an explicit owner new logical send after proved non-delivery, with the same frozen signature and normal outbound checks.
+- [Call receipts after actor erasure](call-receipt-erase.md) — deferred writes keep their receipt while applying the native hard-erased actor identity scrub.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
   restore left pending, `secrets import-supplement` for an export's secret supplements, and a
@@ -59,6 +60,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
 - [Proposal birth attribution](proposal-birth-attribution.md) — captured draft attempts,
   snapshot/finalize retention, and the evidence-door fallback order.
+- [Coach code-fix candidate provenance](coach-code-fix-provenance.md) — native Coach/publisher origin records, separate from model verdicts and independent learning evidence.
 - [Coach pilot answer release](coach-pilot-release.md) — frozen source rows for pilot
   replies, device-local details and invocation replay.
 - [Frozen pattern revision witnesses](planned-spawn-revisions.md) — hard-erase scrubs,

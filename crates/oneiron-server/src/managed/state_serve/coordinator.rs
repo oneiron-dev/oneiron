@@ -5,7 +5,7 @@
 use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
 
 use super::{
-    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, HostLimits, ManagedArgs,
+    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, ManagedArgs,
     ManagedCtl, ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal,
     SyncServer, UnixTs, WakeLedger, WriteKind, admission, build_managed_app,
     build_managed_artifact_app, escrow_vault_key, final_ledger_push, managed_page_seal,
@@ -47,7 +47,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // is still the only adoption.
     let shutdown = ManagedShutdown::new();
     let mut host =
-        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+        super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
@@ -262,7 +262,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
-    crate::builtin_host::install_served_transports(&sync_server);
+    crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
