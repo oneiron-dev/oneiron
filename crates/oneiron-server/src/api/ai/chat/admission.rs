@@ -158,9 +158,6 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }
         None => (None, None),
     };
-    // Where the craft rides after the history, when the layout puts it
-    // there (I1 = C: then it, not the board, follows the history).
-    let craft_in_tail = turn_context;
     // A role admission this turn meets or refuses with, early and late
     // (FIX 6924): the same refusal, whichever snapshot judges it.
     let role_refused = |refusal: RoleRefusal| match refusal {
@@ -612,14 +609,14 @@ pub(in crate::api::ai::chat) async fn start_turn(
         answering,
     );
     // DESIGN-V2 R2: once the reply lands whole, the session coordinator
-    // stages its canonical successor; I1 = C: then prepares the next turn's
-    // state part beside it, when that part is the message right after the
-    // history: the board rode, and no resident craft rides there.
-    let next = (recalled && craft_in_tail.is_none()).then(|| {
+    // stages its canonical successor; I1 = C: then prepares beside it what
+    // the next turn puts right after the history, when the board rode: the
+    // craft where the layout puts it there (FIX 14888), then the state part.
+    let next = recalled.then(|| {
         Arc::new(super::next_turn::ChatNextTurn {
             server: Arc::clone(server),
-            auth: auth.clone(),
-            credential: credential.clone(),
+            reader: session_reader.clone(),
+            agent,
             conversation: origin,
         }) as Arc<dyn crate::models::NextTurnSource>
     });

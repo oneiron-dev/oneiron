@@ -328,6 +328,7 @@ pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
+pub(crate) use result_attachment::{retire_message_result_in_row, retire_message_results_in_rows};
 pub use room_turn::RoomTurnHandle;
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest,
