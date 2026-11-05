@@ -16508,7 +16508,7 @@
      "path": "src/code_run/consent_wait/replay.rs",
      "purpose": "The parked run's side of a code consent wait (DOOR-079 1b)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -16645,13 +16645,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/binding.rs",
      "purpose": "Host construction, binding and captured identity for a dispatcher",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 10
      }
     },
@@ -18486,7 +18486,7 @@
      "path": "src/code_run/wait_rows.rs",
      "purpose": "The rows a parked call's delivered reply was derived from (FIX 5455)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -33467,7 +33467,7 @@
      "path": "src/embed/repo_projection.rs",
      "purpose": "What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
