@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "macos-app-icon",
+  "description": "Read or select the two built-in running Dock icon appearances. No paths or other native access.",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "macOS"
+  ],
+  "permissions": [
+    "allow-get-app-icon-appearance",
+    "allow-set-app-icon-appearance"
+  ]
+}

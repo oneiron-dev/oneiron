@@ -51,6 +51,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::Team,
                 error: code.to_owned(),
                 code: None,
+                disk_floor: None,
             }),
         })
     }
