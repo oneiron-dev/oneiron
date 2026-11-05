@@ -487,7 +487,6 @@ pub(super) fn effective_observation_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
-    fields: &PackAttributionFields,
     subject: &EntityId,
     success: bool,
     weight: f64,
@@ -496,7 +495,6 @@ pub(super) fn effective_observation_in_txn(
         vault,
         txn,
         subject,
-        Some(fields.executor.as_str()),
         &credit.attempt_receipt,
     )? {
         Some(share) => Ok((false, f64::from(share))),
@@ -594,7 +592,7 @@ fn reconcile_in_txn(
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
             let (success, weight) =
-                effective_observation_in_txn(vault, txn, credit, &fields, subject, true, *weight)?;
+                effective_observation_in_txn(vault, txn, credit, subject, true, *weight)?;
             let evidence = credit_evidence(credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
         }
@@ -611,7 +609,6 @@ fn reconcile_in_txn(
             vault,
             txn,
             subject,
-            Some(fields.executor.as_str()),
             &credit.attempt_receipt,
         )? {
             Some(share) => {

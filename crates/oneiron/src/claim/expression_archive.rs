@@ -1,6 +1,8 @@
 //! Foreign expression histories restored by their owning source-aware writer.
 //! Archive evidence is data, never a local actor, grant, or provenance stamp.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::expression_preference::{ExpressionPreferenceWrite, ExpressionWriteOrigin};
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -24,16 +26,28 @@ pub(crate) struct ArchivedExpressionPreference {
     pub(crate) learned_at: u64,
 }
 
-/// A complete, unambiguous linear history for exactly one subject/predicate.
+/// A complete archived history for exactly one subject/predicate, in the
+/// shapes the native writer leaves: mixed sources under source precedence,
+/// same-second closes, retracted heads, and several live heads at once.
+/// The rows alone do not say which head closed which, so the archived
+/// Supersedes links among them are part of the history.
 pub(crate) struct ExpressionPreferenceArchive {
     rows: Vec<ArchivedExpressionPreference>,
+    /// Every archived Supersedes link among `rows`: (closer, closed, at).
+    links: Vec<(EntityId, EntityId, u64)>,
+    /// The close each Superseded row stands in, ordered so every closer is
+    /// still active when its close is applied: (closer, closed, at).
+    closes: Vec<(EntityId, EntityId, u64)>,
 }
 
 impl ExpressionPreferenceArchive {
-    pub(crate) fn new(mut rows: Vec<ArchivedExpressionPreference>) -> Result<Self> {
+    pub(crate) fn new(
+        mut rows: Vec<ArchivedExpressionPreference>,
+        links: Vec<(EntityId, EntityId, u64)>,
+    ) -> Result<Self> {
         rows.sort_by_key(|row| (row.learned_at, row.id));
         let first = rows.first().ok_or_else(|| invalid("empty history"))?;
-        for (index, row) in rows.iter().enumerate() {
+        for row in &rows {
             let body = &row.body;
             // Revalidate even at this crate-private door. Never normalize away
             // scope, demotion or a parked consent that the native writer cannot replay.
@@ -42,7 +56,6 @@ impl ExpressionPreferenceArchive {
                 || row.subject != first.subject
                 || body.subject != first.body.subject
                 || body.predicate != first.body.predicate
-                || body.source != first.body.source
                 || !matches!(
                     body.source,
                     Some(ClaimSource::UserStated | ClaimSource::Inferred | ClaimSource::Imported)
@@ -57,28 +70,121 @@ impl ExpressionPreferenceArchive {
                 || body.session_tag.is_some()
                 || body.stale
             {
-                return Err(invalid(
-                    "mixed precedence or unsupported native history shape",
-                ));
+                return Err(invalid("unsupported native history shape"));
             }
-            if let Some(next) = rows.get(index + 1) {
-                if row.learned_at >= next.learned_at
-                    || body.valid_from > next.body.valid_from
-                    || body.lifecycle != ClaimLifecycleStatus::Superseded
-                    || body.valid_to != Some(next.learned_at)
-                    || row.occurred.end != next.learned_at
-                {
-                    return Err(invalid("ambiguous or incomplete supersession history"));
-                }
-            } else if body.lifecycle != ClaimLifecycleStatus::Active || body.valid_to.is_some() {
-                return Err(invalid("history must end in one active head"));
+            // Each lifecycle stands as its native transition leaves it: a
+            // supersede closes at its `now` (the end never before the
+            // start), a retract at its own.
+            let closed = match body.lifecycle {
+                ClaimLifecycleStatus::Active => body.valid_to.is_none(),
+                ClaimLifecycleStatus::Superseded => body
+                    .valid_to
+                    .is_some_and(|at| row.occurred.end == at.max(row.occurred.start)),
+                ClaimLifecycleStatus::Retracted => body
+                    .valid_to
+                    .is_some_and(|at| row.occurred.end == at && at >= row.occurred.start),
+            };
+            if !closed {
+                return Err(invalid("row does not stand as its lifecycle leaves it"));
             }
         }
-        Ok(Self { rows })
-    }
-
-    pub(crate) fn subject(&self) -> EntityId {
-        self.rows[0].subject
+        let by_id: BTreeMap<EntityId, &ArchivedExpressionPreference> =
+            rows.iter().map(|row| (row.id, row)).collect();
+        if by_id.len() != rows.len() {
+            return Err(invalid("duplicate row in history"));
+        }
+        let mut pairs = BTreeSet::new();
+        for &(closer, closed, _) in &links {
+            if closer == closed
+                || !by_id.contains_key(&closer)
+                || !by_id.contains_key(&closed)
+                || !pairs.insert((closer, closed))
+            {
+                return Err(invalid("supersession link outside the history"));
+            }
+        }
+        // A Superseded row stands closed by the link minted at its
+        // `valid_to`. A retracted closer is impossible: the family retract
+        // restores its direct predecessors, so none stands closed by it.
+        let mut closes = Vec::new();
+        for row in &rows {
+            if row.body.lifecycle != ClaimLifecycleStatus::Superseded {
+                continue;
+            }
+            let at = row
+                .body
+                .valid_to
+                .ok_or_else(|| invalid("superseded row has no close"))?;
+            // REVIEW-4378 P1: several closers for one row at one time is
+            // the branching-ambiguous shape this history refuses: require
+            // exactly one eligible closer, never silently keep the max.
+            // Blind-review P1 (round 2): a Retracted closer is a retained
+            // historical edge, never a standing close — exclude it before
+            // the uniqueness check (its link stays exempt below). A row
+            // whose only closer is retracted still refuses: a retracted row
+            // closes no standing row.
+            let mut matching: Vec<EntityId> = links
+                .iter()
+                .filter(|&(_, closed, link_at)| *closed == row.id && *link_at == at)
+                .map(|&(closer, _, _)| closer)
+                .filter(|closer| by_id[closer].body.lifecycle != ClaimLifecycleStatus::Retracted)
+                .collect();
+            matching.sort();
+            matching.dedup();
+            let &[closer] = matching.as_slice() else {
+                return Err(invalid("superseded row has no unique archived closer"));
+            };
+            closes.push((closer, row.id, at));
+        }
+        // REVIEW-4378 P1: every archived link must take effect as a
+        // selected close. A link whose closed row stands Active (a
+        // reciprocal pair, a never-applied edge) restores branching/cyclic
+        // history the edge import would then whitelist, so refuse it here.
+        // Blind-review P1: a link whose closer stands Retracted is a
+        // retained historical edge whose effect the retraction undid, so it
+        // takes no standing effect and is exempt. Cycles and standing
+        // closes still validate on the effective set above and below.
+        if !links.iter().all(|link| {
+            closes.contains(link)
+                || by_id[&link.0].body.lifecycle == ClaimLifecycleStatus::Retracted
+        }) {
+            return Err(invalid("supersession link takes no archived effect"));
+        }
+        // Blind-review P1 (round 2): the historical-edge exemption above
+        // must not smuggle cycles — two retracted rows with reciprocal
+        // links leave `closes` empty and would replay the cycle. Check
+        // acyclicity over ALL archived links, retracted closers included,
+        // separately from ordering the effective closes below.
+        let mut pending_all: Vec<(EntityId, EntityId)> = links
+            .iter()
+            .map(|&(closer, closed, _)| (closer, closed))
+            .collect();
+        while !pending_all.is_empty() {
+            let Some(at) = pending_all
+                .iter()
+                .position(|&(_, closed)| !pending_all.iter().any(|&(closer, _)| closer == closed))
+            else {
+                return Err(invalid("cyclic supersession history"));
+            };
+            pending_all.remove(at);
+        }
+        // A closer must still be active when its close lands, so a row
+        // closes before the close that closes it. No such order, no history.
+        let mut ordered = Vec::with_capacity(closes.len());
+        let mut pending = closes;
+        while !pending.is_empty() {
+            let Some(at) = pending.iter().position(|&(_, closed, _)| {
+                !pending.iter().any(|&(closer, _, _)| closer == closed)
+            }) else {
+                return Err(invalid("cyclic supersession history"));
+            };
+            ordered.push(pending.remove(at));
+        }
+        Ok(Self {
+            rows,
+            links,
+            closes: ordered,
+        })
     }
 
     pub(crate) fn ids(&self) -> impl Iterator<Item = EntityId> + '_ {
@@ -86,9 +192,7 @@ impl ExpressionPreferenceArchive {
     }
 
     pub(crate) fn supersessions(&self) -> impl Iterator<Item = (EntityId, EntityId, u64)> + '_ {
-        self.rows
-            .windows(2)
-            .map(|pair| (pair[1].id, pair[0].id, pair[1].learned_at))
+        self.links.iter().copied()
     }
 
     /// Caller must abort the WHOLE transaction on any error. No JSON field is
@@ -125,7 +229,11 @@ impl ExpressionPreferenceArchive {
             return Err(invalid("partial history overlaps existing local rows"));
         }
         if existing_count == 0 {
-            for (index, row) in self.rows.iter().enumerate() {
+            // Every row lands first, closing nothing: uniform Imported
+            // precedence cannot re-derive who closed whom. The archived
+            // closes and retracts then land through the same lifecycle
+            // doors the native writer uses, at their archived times.
+            for row in &self.rows {
                 let result = vault.write_expression_preference_in_txn(
                     txn,
                     actor,
@@ -134,15 +242,20 @@ impl ExpressionPreferenceArchive {
                     row.occurred,
                     row.learned_at,
                 )?;
-                let expected: Vec<_> = index
-                    .checked_sub(1)
-                    .map(|i| self.rows[i].id)
-                    .into_iter()
-                    .collect();
-                if result.superseded_claim_ids != expected {
-                    return Err(invalid(
-                        "local precedence cannot reconstruct the archived history",
-                    ));
+                if !result.superseded_claim_ids.is_empty() {
+                    return Err(invalid("replay write closed a head on its own"));
+                }
+            }
+            for &(closer, closed, at) in &self.closes {
+                vault.supersede_claim_in_txn(txn, &closer, &closed, at)?;
+            }
+            for row in &self.rows {
+                if row.body.lifecycle == ClaimLifecycleStatus::Retracted {
+                    let at = row
+                        .body
+                        .valid_to
+                        .ok_or_else(|| invalid("retracted row has no close"))?;
+                    vault.retract_claim_in_txn(txn, &row.id, at)?;
                 }
             }
         }
@@ -223,6 +336,7 @@ fn write_spec(row: &ArchivedExpressionPreference) -> Result<ExpressionPreference
             .valid_from
             .ok_or_else(|| invalid("missing validity start"))?,
         origin: ExpressionWriteOrigin::Imported,
+        replay: true,
     })
 }
 

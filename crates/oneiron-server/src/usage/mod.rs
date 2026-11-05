@@ -20,7 +20,7 @@ pub use meters::{
 pub use model::{
     CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates,
     UsageCounter, UsageEvent, UsageEventType, UsageMode, UsageRecordResult, UsageRollup,
-    UsageRollupStatus, UsageRun, UsageTokenCounts,
+    UsageRollupStatus, UsageRun, UsageServiceCost, UsageServiceCostBasis, UsageTokenCounts,
 };
 pub use pricing::catalog_cost_rates;
 pub(crate) use repair::{UsageScope, removal_conflict_reason};

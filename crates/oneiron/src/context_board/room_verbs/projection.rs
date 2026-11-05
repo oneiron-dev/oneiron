@@ -4,7 +4,7 @@
 //! Every read takes the whole room again under the caller's current read:
 //! the whole roster gives the terms, every admitted rule folds into the
 //! posture, and only then is a page cut, so a later restrictive rule is never
-//! hidden behind an earlier page. Scope, posture, host and offers ride every
+//! hidden behind an earlier page. Stretches, scope, posture, host and offers ride every
 //! page whole. No count of members or rules refuses a room. The page sizes
 //! pace the output and the rule scan, and a caller asking for more gets it by
 //! continuing (CALLS "256-row room pages, 1000-row loop pages, continuing to
@@ -12,7 +12,7 @@
 
 use super::super::paging::{BoardPageCursor, decode_page_cursor, encode_page_cursor, page_binding};
 use super::super::people::PeopleView;
-use super::super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection};
+use super::super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch};
 use super::super::{BoardFrameError, BoardSection};
 use crate::EntityId;
 use crate::claim::{
@@ -102,6 +102,17 @@ impl Memory<'_> {
         let invitable = self.room_invitable(room, &read)?;
         Ok(RoomSection {
             room,
+            stretches: self
+                .vault()
+                .off_record_session_vault()
+                .room_stretches_for(room, self.actor())?
+                .into_iter()
+                .map(|(session_ref, instance_ref, mode)| RoomStretch {
+                    session_ref,
+                    instance_ref,
+                    mode,
+                })
+                .collect(),
             roster,
             scope,
             posture: rules.posture,

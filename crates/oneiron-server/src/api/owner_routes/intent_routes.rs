@@ -1,10 +1,11 @@
 //! `/v1/owner/intents`: the owner states an intent in his own words (FIX
 //! 8949). His words land as an Approved, UserStated `profile.intent` about
 //! him, the intent the digest's urgent breakthrough weighs a wait against,
-//! citing the MESSAGE they came from when he names one. The engine checks
-//! his proof again in the write. A Dreamer extraction never lands here: a
-//! stated intent the Dreamer noticed is his to confirm at
-//! `/v1/owner/decisions`.
+//! citing the MESSAGE they came from when he names one, with his stated
+//! `needed_before` Unix-seconds time kept as factual evidence when he states
+//! one. The engine checks his proof again in the write. A Dreamer extraction
+//! never lands here: a stated intent the Dreamer noticed is his to confirm
+//! at `/v1/owner/decisions`.
 
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ pub(super) fn owner_table() -> OwnerTable {
         OwnerRoute {
             method: "post",
             path: "/intents",
-            summary: "The owner states an intent in his own words (FIX 8949): `text` (required, his exact words) and an optional `message` (32 hex, the MESSAGE they came from). They land as an Approved, UserStated `profile.intent` claim about him, citing that MESSAGE when one is named. Answers `{claim}`, the claim's id as 32 hex.",
+            summary: "The owner states an intent in his own words (FIX 8949): `text` (required, his exact words), an optional `message` (32 hex, the MESSAGE they came from), and an optional `needed_before` (Unix seconds, factual evidence the urgent question reads). They land as an Approved, UserStated `profile.intent` claim about him, citing that MESSAGE when one is named. Answers `{claim}`, the claim's id as 32 hex.",
             row: None,
             shape: Some(RestShape::json(
                 state_intent_body_schema,
@@ -35,14 +36,17 @@ pub(super) fn owner_table() -> OwnerTable {
     )]
 }
 
-/// The owner's intent: his exact words, and the MESSAGE (32 hex) they came
-/// from, when there is one.
+/// The owner's intent: his exact words, the MESSAGE (32 hex) they came from
+/// when there is one, and his stated `needed_before` Unix-seconds time as
+/// factual evidence when he states one.
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct StateIntent {
     text: String,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    needed_before: Option<u64>,
 }
 
 /// The intent's claim, as 32 hex.
@@ -75,9 +79,12 @@ async fn state_intent(
             .as_deref()
             .map(|hex| entity_id("message", hex))
             .transpose()?;
-        let claim = server
-            .vault()
-            .record_owner_intent(&owner, &request.text, message)?;
+        let claim = server.vault().record_owner_intent(
+            &owner,
+            &request.text,
+            request.needed_before,
+            message,
+        )?;
         Ok(IntentStated {
             claim: claim.to_hex(),
         })

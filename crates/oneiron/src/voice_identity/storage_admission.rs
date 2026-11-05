@@ -11,15 +11,15 @@ use crate::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_RELATIONSHIP
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 
-use super::codec_records::decode_print_record;
 use super::math_keys::{
     corrupt_voice_row, digest16, invalid_voice, l2_normalize, require_non_empty,
     require_session_key, voice_cosine_in_space,
 };
+use super::stored::{StoredPrint, StoredSample};
 use super::types::{
     VOICE_CALIBRATION_MIN_LANGUAGES, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentOrigin,
     VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintCalibration,
-    VoicePrintPurpose, VoicePrintRecordV1, VoiceSegmentEmbeddingInput, VoiceSessionRosterV1,
+    VoicePrintPurpose, VoiceSegmentEmbeddingInput, VoiceSessionRosterV1,
 };
 use crate::error::RegistryError;
 
@@ -40,11 +40,11 @@ pub(super) const PRINT_POINTER: SideTable<EntityId, String, Raw> =
 
 /// Print row: one centroid for one (subject, embedding space). Key: subject
 /// id16 + digest16(space id).
-pub(super) const PRINT_RECORD: SideTable<(EntityId, [u8; 16]), VoicePrintRecordV1, Raw> =
+pub(super) const PRINT_RECORD: SideTable<(EntityId, [u8; 16]), StoredPrint, Raw> =
     SideTable::new(&side_table::VOICE_IDENTITY_PRINT);
 
 /// Enrollment sample row. Key: digest16(subject id16 + sample id).
-pub(super) const SAMPLE: SideTable<[u8; 16], VoiceEnrollmentSampleV1, Raw> =
+pub(super) const SAMPLE: SideTable<[u8; 16], StoredSample, Raw> =
     SideTable::new(&side_table::VOICE_IDENTITY_SAMPLE);
 
 /// Resolved session speaker roster. Key: digest16(voice session ref).
@@ -91,7 +91,7 @@ pub(super) fn read_active_print(
     store: &Store,
     rtxn: &RoTxn<'_>,
     subject: &EntityId,
-) -> Result<Option<VoicePrintRecordV1>> {
+) -> Result<Option<StoredPrint>> {
     let Some(space_id) = PRINT_POINTER.get(store, rtxn, subject)? else {
         return Ok(None);
     };
@@ -99,18 +99,39 @@ pub(super) fn read_active_print(
     let Some(record) = PRINT_RECORD.get(store, rtxn, &(*subject, digest))? else {
         return Err(corrupt_voice_row());
     };
+    if record.metadata.subject_ref != *subject || record.metadata.space.space_id != space_id {
+        return Err(corrupt_voice_row());
+    }
     Ok(Some(record))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn read_sample(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
     subject: &EntityId,
     sample_id: &str,
+    machine: Result<crate::world_keys::MachineSecret>,
 ) -> Result<Option<VoiceEnrollmentSampleV1>> {
-    let digest = sample_digest(subject, sample_id);
-    SAMPLE.get(store, rtxn, &digest)
+    let Some(print) = read_active_print(&vault.store, rtxn, subject)? else {
+        return Ok(None);
+    };
+    if !print.metadata.sample_ids.iter().any(|id| id == sample_id)
+        || !super::recognition::recognition_readable_here_in(vault, rtxn, print.metadata.world_ref)?
+    {
+        return Ok(None);
+    }
+    let Some(sample) = SAMPLE.get(&vault.store, rtxn, &sample_digest(subject, sample_id))? else {
+        return Ok(None);
+    };
+    let secret = if sample.needs_world_key() {
+        Some(machine?)
+    } else {
+        None
+    };
+    sample
+        .sample(vault, rtxn, &print.metadata, sample_id, secret.as_ref())
+        .map(Some)
 }
 
 /// The digest half of a sample row's key: subject id and sample id, hashed
@@ -187,8 +208,8 @@ pub(super) fn delete_voice_prints_in_txn(
             tally.active_pointer = true;
             continue;
         }
-        let record = decode_print_record(&value)?;
-        for sample_id in &record.sample_ids {
+        let record = PRINT_RECORD.decode_value(&value)?;
+        for sample_id in &record.metadata.sample_ids {
             sample_digests.insert(sample_digest(subject, sample_id));
         }
         // One print row holds exactly one centroid vector.
@@ -460,13 +481,15 @@ pub(super) fn load_match_candidates(
     space_id: &str,
     purpose: &VoicePrintPurpose,
     now: u64,
+    machine: Result<crate::world_keys::MachineSecret>,
 ) -> Result<Vec<VoiceMatchCandidate>> {
     let store = &vault.store;
     let mut candidates = Vec::new();
     for subject in active_print_subjects(store, rtxn)? {
-        let Some(record) = read_active_print(store, rtxn, &subject)? else {
+        let Some(stored) = read_active_print(store, rtxn, &subject)? else {
             continue;
         };
+        let record = &stored.metadata;
         if record.space.space_id != space_id {
             // A print pinned to another space is simply not a candidate here;
             // it is never compared and never scored low.
@@ -480,11 +503,20 @@ pub(super) fn load_match_candidates(
         if !super::recognition::admit_recognition_candidate_in(vault, rtxn, &record, purpose)? {
             continue;
         }
+        let secret = if stored.needs_world_key() {
+            Some(match machine {
+                Ok(ref secret) => secret,
+                Err(error) => return Err(error),
+            })
+        } else {
+            None
+        };
+        let centroid = stored.centroid(vault, rtxn, secret)?;
         candidates.push(VoiceMatchCandidate {
             subject_ref: record.subject_ref,
             contact_ref: record.contact_ref,
             space_id: record.space.space_id.clone(),
-            centroid: l2_normalize(&record.centroid, record.space.dimension)?,
+            centroid: l2_normalize(&centroid, record.space.dimension)?,
             calibration: record.calibration,
             print_generation: record.print_generation,
         });

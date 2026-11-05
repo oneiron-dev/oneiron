@@ -35,7 +35,7 @@ use oneiron::llm::{
     CallSchedule, INFERENCE_CALLS_KEY, InferenceCallReceipt, ScheduleAck, ScheduleUpdate,
     SchedulingReceipt, SessionOp,
 };
-use oneiron_driver::{DeviceGrant, WorkerLease};
+use oneiron_driver::{DeviceGrant, InferenceWorker, WorkerLease};
 use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
@@ -467,7 +467,12 @@ impl Channel {
     /// deadline: the worker releases at its next pass. False when the
     /// terminal says the worker could not release the call's Job, which it
     /// still charges.
-    async fn cancel(mut self, request_id: u64, worker_id: Option<&str>, epoch: &str) -> bool {
+    async fn cancel(
+        mut self,
+        request_id: u64,
+        worker: Option<&InferenceWorker>,
+        epoch: &str,
+    ) -> bool {
         if self
             .send("cancel", request_id, None, json!({}))
             .await
@@ -483,7 +488,7 @@ impl Channel {
                         // The call already settled without this body; its
                         // partial receipt and cheap stats go to the device
                         // ledger and supervisor only (FIX 9297).
-                        report_released(worker_id, epoch, &frame.body);
+                        report_released(worker, epoch, &frame.body);
                         return true;
                     }
                     "refused" => return true,
@@ -650,20 +655,20 @@ fn logged(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
 /// ledger and supervisor (FIX 9297). The call already settled without
 /// them, so they never reach the settlement sink; `physical` stays absent
 /// (host-stamped custody the cancel task cannot re-derive, and worker
-/// JSON is never its source).
-fn report_released(worker_id: Option<&str>, epoch: &str, body: &JsonValue) {
-    let Some(worker_id) = worker_id else {
+/// JSON is never its source). The worker is the call's actual origin
+/// instance, never a re-resolved id (FIX 13845).
+fn report_released(worker: Option<&InferenceWorker>, epoch: &str, body: &JsonValue) {
+    let Some(worker) = worker else {
         return;
     };
+    let worker_id = worker.spec().worker_id.as_str();
     if let Some(stats) = body.get("stats") {
-        worker_host::report_device_stats(worker_id, stats);
+        worker_host::report_device_stats(worker, stats);
         // Released stats feed the same supervisor path as finals (FIX 9297):
         // without it the queue, open calls and residency go stale until a
         // later poll.
-        if let Some(worker) = worker_host::hosted_worker(worker_id)
-            && let Some(activity) = super::activity_of(stats)
-        {
-            worker_host::report_device_activity(&worker, activity);
+        if let Some(activity) = super::activity_of(stats) {
+            worker_host::report_device_activity(worker, activity);
         }
     }
     let receipt = body
@@ -688,8 +693,9 @@ pub(super) struct Call {
     channel: Option<Channel>,
     request_id: u64,
     /// The worker the call went to, for released-body ledger reports; none
-    /// on a worker-less qualification probe (FIX 9297).
-    worker_id: Option<String>,
+    /// on a worker-less qualification probe (FIX 9297). The actual origin
+    /// instance, never a re-resolved id (FIX 13845).
+    worker: Option<InferenceWorker>,
     /// The incarnation the call went to, which its updates name.
     epoch: String,
     /// The lease on the incarnation the call went to, held until the call
@@ -719,7 +725,7 @@ impl Call {
         lease: Option<WorkerLease>,
         session: Option<JsonValue>,
         schedule: Option<&CallSchedule>,
-        worker_id: Option<&str>,
+        worker: Option<&InferenceWorker>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
@@ -743,7 +749,7 @@ impl Call {
         let mut call = Self {
             channel: Some(channel),
             request_id,
-            worker_id: worker_id.map(str::to_owned),
+            worker: worker.cloned(),
             epoch: epoch.to_owned(),
             lease,
             grant: None,
@@ -869,7 +875,7 @@ impl Call {
                     // here, not in the cancel task, so its partial receipt
                     // and cheap stats go to the device ledger and supervisor
                     // from this branch; never the settlement sink (FIX 9297).
-                    report_released(self.worker_id.as_deref(), &self.epoch, &frame.body);
+                    report_released(self.worker.as_ref(), &self.epoch, &frame.body);
                     return Err(Cut(unexpected("released", "before `final`")));
                 }
                 _ => {}
@@ -889,15 +895,13 @@ impl Drop for Call {
         let lease = self.lease.take();
         let grant = self.grant.take();
         let request_id = self.request_id;
-        let worker_id = self.worker_id.clone();
+        let worker = self.worker.clone();
         let epoch = self.epoch.clone();
         // Outside a runtime the connection's close is the cancel: the worker
         // cancels every call of a connection that goes.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                if !channel
-                    .cancel(request_id, worker_id.as_deref(), &epoch)
-                    .await
+                if !channel.cancel(request_id, worker.as_ref(), &epoch).await
                     && let Some(lease) = &lease
                 {
                     // The worker still charges the call: so does the lease.

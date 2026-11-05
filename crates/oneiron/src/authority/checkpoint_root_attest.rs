@@ -273,7 +273,9 @@ impl Vault {
         let posture = candidate.aggregate.posture;
         let view = self.authority_view_readonly_in_txn(txn)?;
         // A policy the roster cannot fix under that posture counts nothing.
-        let Ok(counted) = checkpoint_root_policy_of(&view, posture) else {
+        let Ok(counted) =
+            checkpoint_root_policy_of(&view, posture, self.checkpoint_policy_selection_available())
+        else {
             return Ok(Some(WAIT_NOT_COUNTED));
         };
         if !ROOT_CHECKPOINT_AUTHORITY.signs_under(&counted, &candidate.root_policy) {

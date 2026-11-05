@@ -55,9 +55,10 @@ pub(crate) use self::replay_bodies::{
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
-    ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    finalize_capsule, fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule,
-    put_unavailable, step_replay_capsules_in_txn, store_fork_response,
+    ForkProvenance, ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body,
+    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, finalize_capsule, fork_response,
+    fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
+    step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -112,7 +113,9 @@ pub(crate) use self::wait_holders::{
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::continuation::code_run_continuation_accepts_masked;
+pub(crate) use self::reader_folds::code_run_summary_memo_accepts_masked;
 pub(crate) use self::reader_jobs::code_run_reader_job_accepts_masked;
 pub(crate) use self::reader_jobs::code_run_reader_wait_accepts_masked;
+pub(crate) use self::records::code_run_replay_record_accepts_masked;
 pub(crate) use self::replay_capsule::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::type_diagnostics::code_run_type_diagnostics_accepts_masked;

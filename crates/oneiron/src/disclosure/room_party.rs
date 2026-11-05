@@ -58,6 +58,28 @@ pub(crate) fn is_vault_owner(
             && crate::authority::actor_binding_is_active(fold, member, "human"))
 }
 
+/// The existing Owner party rule for a positively placed live PERSON,
+/// without reading a non-Owner's contact or adding a clearance term.
+pub(crate) fn live_vault_owner_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: EntityId,
+) -> Result<bool> {
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?,
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_PERSON,
+            ..
+        }
+    ) {
+        return Ok(false);
+    }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
+    Ok(owners.contains(&member)
+        || is_vault_owner(&fold, crate::vault::embedded_owner_actor_id()?, &member))
+}
+
 /// One member's room party with the facts the party alone no longer
 /// carries since FIX 6558 moved every reader onto the one live-Owner
 /// notion: the contact a roster or roster-like read names the member by,

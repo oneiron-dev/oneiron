@@ -130,6 +130,7 @@ impl Vault {
                     actor_class: import.actor.actor_class(),
                     learned_at: import.learned_at,
                     explicit_prior: None,
+                    scope_project: None,
                     imported_evidence: Some(import.evidence),
                     generated_evidence: None,
                 },

@@ -1,0 +1,163 @@
+/* ── the lens pages — a saved watch is an instrument: the eyebrow names
+   the agent and the as-of; the definition is the only sentence in quotes;
+   everything else is ledgers and one calm digest. Shared by every custom
+   lens (supplier watch first); every selector is scoped under
+   main.pane.lens so the chassis never learns a lens class by accident. ── */
+
+/* the sheet holds body + a summoned context column (the Slack model,
+   rule 31 · rule 39 rec A: the column is something you READ) */
+main.pane.lens {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+main.pane.lens .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+main.pane.lens aside.context {
+  width: var(--ctx-w); flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--ctx-bg);         /* a tinted zone divides, not a line */
+  display: flex; flex-direction: column; gap: 12px;
+}
+main.pane.lens aside.context[hidden] { display: none; }
+main.pane.lens .ctx-head { display: flex; align-items: center; gap: 10px; }
+main.pane.lens .ctx-crumb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4); flex: 1; min-width: 0; }
+main.pane.lens .ctx-title { font-family: var(--serif); font-size: 16px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+main.pane.lens .ctx-by { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+main.pane.lens .ctx-body { font-family: var(--serif); font-size: 13.5px; line-height: 1.6; color: var(--silver-2); max-width: 52ch; white-space: pre-line; }
+main.pane.lens .ctx-acts { display: flex; gap: 12px; }
+main.pane.lens .ctx-close {
+  flex: none; width: 20px; height: 20px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 13px; color: var(--silver-4);
+  transition: color 160ms ease, background 160ms ease;
+}
+main.pane.lens .ctx-close:hover, main.pane.lens .ctx-close:focus-visible { color: var(--silver-1); background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
+
+/* ── head: the title and a quiet serif meta beside it — a lens is
+   yours, and it says since when ── */
+main.pane.lens .pane-head { flex-wrap: wrap; row-gap: 2px; }
+main.pane.lens .lens-meta { font-family: var(--serif); font-size: 13px; color: var(--silver-3); }
+
+/* ── the watch definition — the ONE sentence in quotes on the page.
+   serif voice, its acts beside it; edit turns the line into an inline
+   serif input (6px rung); pause / delete settle in place ── */
+main.pane.lens .watch-def { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; max-width: 84ch; }
+main.pane.lens .def-quote {
+  font-family: var(--serif); font-size: 15.5px; line-height: 1.5;
+  color: var(--silver-1); flex: 1; min-width: 24ch;
+}
+main.pane.lens .def-quote::before { content: "\201C"; color: var(--silver-3); }
+main.pane.lens .def-quote::after  { content: "\201D"; color: var(--silver-3); }
+main.pane.lens .def-input {
+  font-family: var(--serif); font-size: 15.5px; line-height: 1.5;
+  color: var(--silver-1); background: var(--bg-well);
+  border: 0; border-radius: 6px; padding: 5px 10px;
+  flex: 1; min-width: 24ch; max-width: 72ch;
+}
+main.pane.lens .def-input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+main.pane.lens .def-acts { display: flex; align-items: baseline; gap: 12px; flex: none; }
+/* the receipt: mono, quiet — the outcome IS the line, no toast */
+main.pane.lens .receipt { display: inline-flex; align-items: baseline; gap: 12px; }
+main.pane.lens .receipt .meta-line { display: inline; }
+/* paused: the definition stays legible but the instrument rests */
+main.pane.lens .paused .def-quote { color: var(--silver-3); }
+main.pane.lens .paused .instrument, main.pane.lens .paused .lens-foot { opacity: 0.6; transition: opacity 200ms ease-out; }
+/* deleted: the page body dims; the receipt line holds the record and its undo */
+main.pane.lens .deleted .instrument, main.pane.lens .deleted .lens-foot {
+  opacity: 0.28; pointer-events: none; user-select: none;
+  transition: opacity 240ms ease-out;
+}
+main.pane.lens .deleted .def-quote { color: var(--silver-4); }
+
+/* ── the instrument region — agent-rendered; the eyebrow names the
+   agent (in its ink) and the as-of ── */
+main.pane.lens .instrument { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+main.pane.lens .instrument > .label { display: flex; align-items: baseline; gap: 6px; color: var(--silver-4); }
+main.pane.lens .instrument > .label .aname { letter-spacing: 0.12em; }
+
+/* sections are FLAT on the one sheet: serif head + air, no rules */
+main.pane.lens .bundle { display: flex; flex-direction: column; }
+main.pane.lens .bundle + .bundle { margin-top: 20px; }
+main.pane.lens .bundle.closed + .bundle { margin-top: 0; }   /* collapsed heads stack tight */
+main.pane.lens .bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; }
+main.pane.lens .bundle .head:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 5px; }
+main.pane.lens .bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+/* the head count exists ONLY when the rows are hidden (rule 16) */
+main.pane.lens .bundle .head .meta-line { margin-left: auto; display: none; }
+main.pane.lens .bundle.closed .head .meta-line { display: inline; }
+main.pane.lens .bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+main.pane.lens .bundle .head:hover .fold-hint, main.pane.lens .bundle .head:focus-visible .fold-hint { opacity: 1; }
+main.pane.lens .bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+main.pane.lens .bundle.closed .sec-body { display: none; }
+
+/* the digest — the agent's words under the heading, name-fronted,
+   serif voice (rule 9), the door beside the last line */
+main.pane.lens .digest { display: flex; gap: 9px; align-items: baseline; max-width: 72ch; padding: 1px 0 3px; }
+main.pane.lens .digest .aname { flex: none; }
+main.pane.lens .digest .words { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); }
+main.pane.lens .digest .words .act { margin-left: 10px; }
+
+/* ── the matched-claims ledger — the vault's ledger idiom: mono data
+   columns, serif claim column, hover/selected rows with soft ends;
+   dividers are SPACE (one padded head row, no rules) ── */
+main.pane.lens .ledger-wrap { overflow-x: auto; }
+main.pane.lens table.ledger td { border-top: 0; }
+main.pane.lens table.ledger thead th { padding-bottom: 10px; }
+main.pane.lens table.ledger .c-dot { width: 26px; padding-right: 0; text-align: center; }
+main.pane.lens table.ledger .c-occ, main.pane.lens table.ledger .c-lrn { width: 96px; }
+main.pane.lens table.ledger .c-world { width: 72px; }
+main.pane.lens table.ledger .c-src { width: 110px; }
+main.pane.lens table.ledger tbody tr.row { cursor: pointer; outline: none; }
+main.pane.lens table.ledger tbody tr.row:focus-visible { outline: 2px solid var(--safelight); outline-offset: -2px; }
+@media (hover:hover) {
+  main.pane.lens table.ledger tbody tr.row:hover td { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+  main.pane.lens table.ledger tbody tr.row:hover td:first-child { border-radius: 5px 0 0 5px; }
+  main.pane.lens table.ledger tbody tr.row:hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+main.pane.lens table.ledger tr.row.open td, main.pane.lens table.ledger tr.row:focus-visible td { background: var(--bg-well); }
+main.pane.lens table.ledger tr.row.open td:first-child, main.pane.lens table.ledger tr.row:focus-visible td:first-child { border-radius: 5px 0 0 5px; }
+main.pane.lens table.ledger tr.row.open td:last-child, main.pane.lens table.ledger tr.row:focus-visible td:last-child { border-radius: 0 5px 5px 0; }
+main.pane.lens table.ledger .dot { transform: translateY(-1px); }
+main.pane.lens .clk { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+main.pane.lens .clk.hollow { color: var(--silver-4); }
+main.pane.lens .world { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+/* every mono token is a door: the source column */
+main.pane.lens .src { font-family: var(--mono); font-size: 12px; color: var(--silver-3); transition: color 160ms ease; }
+main.pane.lens .src:hover, main.pane.lens .src:focus-visible { color: var(--safelight); }
+/* under the row = glance + act (rule 39, rec A): the why and its doors */
+main.pane.lens table.ledger tr.detail td { padding: 0 10px 0 36px; height: auto; }
+main.pane.lens .row-detail { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+main.pane.lens .row-detail.open { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
+main.pane.lens .row-detail > .rd-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
+main.pane.lens .row-detail.open > .rd-inner { padding: 4px 0 12px; }
+main.pane.lens .rd-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 56ch; }
+main.pane.lens .rd-acts { display: flex; gap: 12px; }
+
+/* ── the matched messages — the one-line row idiom: date · channel
+   glyph · who · what was said. a row clicks into the context column ── */
+main.pane.lens .mrows { display: flex; flex-direction: column; gap: 4px; padding-top: 3px; }
+main.pane.lens .w-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 6px;
+  border-radius: 5px; cursor: pointer; text-align: left; width: 100%;
+  transition: background 160ms ease;
+}
+main.pane.lens .w-row:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+main.pane.lens .w-row.sel { background: var(--bg-well); }
+main.pane.lens .w-time { font-family: var(--mono); font-size: 11px; color: var(--silver-4); width: 44px; flex: none; text-align: right; font-feature-settings: "tnum" 1; }
+main.pane.lens .w-chan { flex: none; display: flex; align-items: center; color: var(--silver-3); }
+main.pane.lens .w-chan svg { width: 13px; height: 13px; display: block; }
+main.pane.lens .w-row .t-msg { font-size: 13px; color: var(--silver-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── the foot: two quiet doors; the first settles in place ── */
+main.pane.lens .lens-foot { display: flex; align-items: baseline; gap: 16px; padding-top: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  main.pane.lens .row-detail { transition: none; }
+  main.pane.lens .paused .instrument, main.pane.lens .deleted .instrument,
+  main.pane.lens .paused .lens-foot, main.pane.lens .deleted .lens-foot { transition: none; }
+}

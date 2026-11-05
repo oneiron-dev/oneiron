@@ -336,6 +336,7 @@ impl Vault {
             tracing::warn!(error = %error, "probe evaluation copies stay pending");
         }
         let documents = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let gate = egress
                 .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))

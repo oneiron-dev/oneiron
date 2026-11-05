@@ -35,19 +35,18 @@ use std::collections::BTreeSet;
 /// The `comm.opt_out` reason vocabulary is the RECEIPT vocabulary
 /// (`CounterpartyOptOutReason::receipt_reason`), never the `as_str()` one: the
 /// landed heads carry these tokens, and swapping vocabularies would invalidate
-/// them. Pinned to the enum's own const fn so the two can never drift.
-pub(super) const OPT_OUT_REASON_STOP: &str = CounterpartyOptOutReason::Stop.receipt_reason();
+/// them. The enum and claim validator share the store-owned vocabulary.
+pub(super) const OPT_OUT_REASON_STOP: &str =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_STOP;
 
-const OPT_OUT_REASON_UNSUBSCRIBE: &str = CounterpartyOptOutReason::Unsubscribe.receipt_reason();
+const OPT_OUT_REASON_UNSUBSCRIBE: &str =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_UNSUBSCRIBE;
 
 const OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL: &str =
-    CounterpartyOptOutReason::BlockOrFriendRemoval.receipt_reason();
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL;
 
-pub(super) const OPT_OUT_REASONS: [&str; 3] = [
-    OPT_OUT_REASON_STOP,
-    OPT_OUT_REASON_UNSUBSCRIBE,
-    OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
-];
+pub(super) const OPT_OUT_REASONS: [&str; 3] =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASONS;
 
 pub(super) use crate::write_envelope::communication_record::MAX_SEND_REF_BYTES;
 

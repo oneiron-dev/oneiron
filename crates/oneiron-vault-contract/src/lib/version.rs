@@ -188,6 +188,21 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// its outbox revision to 4 at the floor. No `Ping` field is added and this
 /// version stays 3.
 ///
+/// VM descriptor-first outbox sets (FIX 11071 / 6685): carrier revision 5
+/// sends the complete set as descriptor-only
+/// [`VmOutboxFrame::Offer`](crate::vm_outbox::VmOutboxFrame::Offer) frames,
+/// then waits for [`VmOutboxFrame::Go`](crate::vm_outbox::VmOutboxFrame::Go)
+/// before body chunks. Only the existing ordered final acks report the
+/// result after the set; an early deferral returns them without bodies.
+/// It carries a build floor at the engine revision it merges in: the host
+/// library, guest image and companion all speak revision 5, and LC's image
+/// acceptance moves its outbox revision to 5 at that floor. Other revisions
+/// are refused at the hello, with no old reader. Native staging allocation
+/// uses the same file through body receipt and publication; unsupported
+/// allocation keeps the original write path and later failures keep their
+/// final outcomes. No cap, timing or `Ping` field changes, and this version
+/// stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s

@@ -3,9 +3,7 @@
 //! cites its inputs names the rows of the very value it read.
 
 use super::fit::cached_fit;
-use super::{
-    SettingMode, SettingScope, SettingSpec, read_scopes, read_scopes_in_txn, scoped_row_value,
-};
+use super::{SettingMode, SettingScope, SettingSpec, read_scopes, read_scopes_in_txn, scoped_row};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -14,8 +12,8 @@ use crate::store::Store;
 
 /// The row that decided a setting read.
 pub(super) enum Decided {
-    /// An owner pin or seed, which keeps no witness row.
-    Owner,
+    /// The native PUT act of the owner row that decided this read.
+    Owner { witness: Option<EntityId> },
     /// One cell's cached fit: its project when it is scoped to one, its
     /// subject when that is not the knob's global one, and its type node
     /// when that is not the root.
@@ -72,8 +70,13 @@ pub(super) fn resolve_in_txn(
     type_ref: Option<&TypeRef>,
 ) -> Result<(f64, Decided)> {
     for scope in scopes {
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Pin, scope)? {
-            return Ok((value, Decided::Owner));
+        if let Some(row) = scoped_row(store, txn, spec, SettingMode::Pin, scope)? {
+            return Ok((
+                row.value,
+                Decided::Owner {
+                    witness: row.witness,
+                },
+            ));
         }
     }
     let project = scopes.iter().find_map(|scope| match scope {
@@ -113,8 +116,13 @@ pub(super) fn resolve_in_txn(
                 return Ok((value, decided));
             }
         }
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
-            return Ok((value, Decided::Owner));
+        if let Some(row) = scoped_row(store, txn, spec, SettingMode::Seed, scope)? {
+            return Ok((
+                row.value,
+                Decided::Owner {
+                    witness: row.witness,
+                },
+            ));
         }
     }
     if let Some(value) = cached_fit(store, txn, spec, None, None, None)? {
@@ -126,8 +134,13 @@ pub(super) fn resolve_in_txn(
         return Ok((value, decided));
     }
     Ok(
-        match scoped_row_value(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)? {
-            Some(value) => (value, Decided::Owner),
+        match scoped_row(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)? {
+            Some(row) => (
+                row.value,
+                Decided::Owner {
+                    witness: row.witness,
+                },
+            ),
             None => (spec.seed, Decided::Catalog),
         },
     )

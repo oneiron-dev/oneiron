@@ -104,7 +104,8 @@ pub(crate) fn execute_foreign_code_on(
         backend,
         Arc::new(NoCredentials),
         CredentialAllowlist::new(),
-    )?;
+    )?
+    .with_credential_relay(Arc::clone(&relay));
     let result = adapter.run_cancellable(&image, budget, cancel);
     let manifest = adapter.session_manifest();
     let recorded = manifest

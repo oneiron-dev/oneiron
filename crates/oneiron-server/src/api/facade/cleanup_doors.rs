@@ -25,24 +25,30 @@ pub(crate) async fn vault_cleanup_run(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupRunView> = super::clock_ingress::run_blocking(move || {
-        oneiron::vault_cleanup::surface::run_as_owner(server.vault(), &owner, &input)
-            .map_err(MemoryError::from)
-    })
-    .await
-    .map_err(|_| internal(VERB))
-    .and_then(|answer| answer);
-    let rows = answer.as_ref().map_or_else(
-        |_| Vec::new(),
-        |report| {
-            report
+    let sourced: MemoryResult<(CleanupRunView, Vec<oneiron::EntityId>)> =
+        super::clock_ingress::run_blocking(move || {
+            oneiron::vault_cleanup::surface::run_sourced_as_owner(server.vault(), &owner, &input)
+                .map_err(MemoryError::from)
+        })
+        .await
+        .map_err(|_| internal(VERB))
+        .and_then(|answer| answer);
+    // FIX 10494: named non-attempt rows plus genuine known attempt sources.
+    let (answer, rows) = match sourced {
+        Ok((view, sources)) => {
+            let mut rows: Vec<oneiron::EntityId> = view
                 .candidates
                 .iter()
                 .filter(|candidate| candidate.kind != CleanupKind::CompletedAttempt)
                 .map(|candidate| candidate.entity)
-                .collect()
-        },
-    );
+                .collect();
+            rows.extend(sources);
+            rows.sort_unstable();
+            rows.dedup();
+            (Ok(view), rows)
+        }
+        Err(error) => (Err(error), Vec::new()),
+    };
     (answer, rows)
 }
 
@@ -60,26 +66,33 @@ pub(crate) async fn vault_cleanup_review(
     };
     let locality = auth.locality();
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupReviewView> = super::clock_ingress::run_blocking(move || {
-        let vault = server.vault();
-        let actor = owner.revalidate(vault).map_err(MemoryError::from)?;
-        let memory = vault.memory(actor, EdgeActorClass::Human).at(locality);
-        oneiron::vault_cleanup::review_cleanup_proposal_as(&memory, &owner, &input)
-    })
-    .await
-    .map_err(|_| internal(VERB))
-    .and_then(|answer| answer);
+    let sourced: MemoryResult<(CleanupReviewView, Vec<oneiron::EntityId>)> =
+        super::clock_ingress::run_blocking(move || {
+            let vault = server.vault();
+            let actor = owner.revalidate(vault).map_err(MemoryError::from)?;
+            let memory = vault.memory(actor, EdgeActorClass::Human).at(locality);
+            oneiron::vault_cleanup::review_cleanup_proposal_sourced_as(&memory, &owner, &input)
+        })
+        .await
+        .map_err(|_| internal(VERB))
+        .and_then(|answer| answer);
     // The records the review discloses; an attempt names no record.
-    let rows = answer.as_ref().map_or_else(
-        |_| Vec::new(),
-        |view| {
-            view.items
+    // FIX 10494: plus its genuine known attempt sources.
+    let (answer, rows) = match sourced {
+        Ok((view, sources)) => {
+            let mut rows: Vec<oneiron::EntityId> = view
+                .items
                 .iter()
                 .filter(|item| item.kind != Some(CleanupKind::CompletedAttempt))
                 .filter_map(|item| item.entity)
-                .collect()
-        },
-    );
+                .collect();
+            rows.extend(sources);
+            rows.sort_unstable();
+            rows.dedup();
+            (Ok(view), rows)
+        }
+        Err(error) => (Err(error), Vec::new()),
+    };
     (answer, rows)
 }
 
@@ -96,22 +109,31 @@ pub(crate) async fn vault_cleanup_decide(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupDecideView> = super::clock_ingress::run_blocking(move || {
-        server.vault().decide_cleanup_proposal_as(&owner, &input)
-    })
-    .await
-    .map_err(|_| internal(VERB))
-    .and_then(|answer| answer);
-    let rows = answer.as_ref().map_or_else(
-        |_| Vec::new(),
-        |view| {
-            view.items
+    let sourced: MemoryResult<(CleanupDecideView, Vec<oneiron::EntityId>)> =
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .decide_cleanup_proposal_sourced_as(&owner, &input)
+        })
+        .await
+        .map_err(|_| internal(VERB))
+        .and_then(|answer| answer);
+    // FIX 10494: named non-attempt rows plus genuine known attempt sources.
+    let (answer, rows) = match sourced {
+        Ok((view, sources)) => {
+            let mut rows: Vec<oneiron::EntityId> = view
+                .items
                 .iter()
                 .filter(|item| item.kind != Some(CleanupKind::CompletedAttempt))
                 .filter_map(|item| item.entity)
-                .collect()
-        },
-    );
+                .collect();
+            rows.extend(sources);
+            rows.sort_unstable();
+            rows.dedup();
+            (Ok(view), rows)
+        }
+        Err(error) => (Err(error), Vec::new()),
+    };
     (answer, rows)
 }
 

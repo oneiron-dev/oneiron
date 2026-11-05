@@ -887,6 +887,7 @@ impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;
-        self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)
+        let held = HeldAuthority::for_request(None);
+        self.is_entity_retrievable_held_in(txn, &policy, &filter, id, &held)
     }
 }

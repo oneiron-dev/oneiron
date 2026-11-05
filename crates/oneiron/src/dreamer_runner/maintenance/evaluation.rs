@@ -17,6 +17,11 @@ use crate::{ClaimApprovalStatus, ClaimSource, EntityId, Result, TimeRange, Vault
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod of360;
+pub use of360::{
+    HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation, HarnessOf360Scheduled,
+};
+
 /// The tuning config artifact's media type.
 pub const DREAMER_TUNING_CONFIG_MEDIA_TYPE: &str = "application/json";
 /// The owner reviews the self-audit scores: the trailing window of the
@@ -88,14 +93,22 @@ fn config_in_txn(
     if !evaluation.score.is_finite() || !(0.0..=1.0).contains(&evaluation.score) {
         return Err(invalid());
     }
+    config_target_in_txn(vault, txn, evaluation.artifact, evaluation.version)
+}
+fn config_target_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact_ref: EntityId,
+    version: u64,
+) -> Result<DreamerTuningConfig> {
     let artifact = vault
-        .get_blob_artifact_in_txn(txn, &evaluation.artifact)?
+        .get_blob_artifact_in_txn(txn, &artifact_ref)?
         .ok_or_else(invalid)?;
     if artifact.media_type != DREAMER_TUNING_CONFIG_MEDIA_TYPE {
         return Err(invalid());
     }
     let bytes = vault
-        .read_blob_artifact_version_in_txn(txn, &evaluation.artifact, evaluation.version)?
+        .read_blob_artifact_version_in_txn(txn, &artifact_ref, version)?
         .ok_or_else(invalid)?;
     let config: DreamerTuningConfig = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     config.validate()?;
@@ -333,15 +346,58 @@ pub(super) fn run(
     now: u64,
 ) -> Result<Option<EntityId>> {
     let input = &attempt.status.payload.input;
-    let evaluation: HarnessEvaluation = if input.is_nil() {
+    let (evaluation, baseline_key, observation) = if input.is_nil() {
         match audit(vault, now)? {
-            Some(evaluation) => evaluation,
+            Some(evaluation) => {
+                let key = evaluation.artifact;
+                (evaluation, key, None)
+            }
             None => return Ok(None),
         }
     } else {
-        serde_json::from_str(input.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ScheduledEvaluation {
+            Owner(HarnessEvaluation),
+            Of360(of360::QueuedOf360Evaluation),
+        }
+        match serde_json::from_str(input.as_str().ok_or_else(invalid)?).map_err(|_| invalid())? {
+            ScheduledEvaluation::Owner(evaluation) => {
+                let key = evaluation.artifact;
+                (evaluation, key, None)
+            }
+            ScheduledEvaluation::Of360(input) => {
+                let prepared = of360::prepare(&input.of360)?;
+                let Some(evaluation) = prepared.evaluation else {
+                    return Ok(None);
+                };
+                (
+                    evaluation,
+                    prepared.baseline_key,
+                    Some(prepared.observation),
+                )
+            }
+        }
     };
-    let current = config(vault, &evaluation)?;
+    run_evaluation(
+        vault,
+        attempt,
+        &evaluation,
+        baseline_key,
+        observation.as_ref(),
+        now,
+    )
+}
+
+fn run_evaluation(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    evaluation: &HarnessEvaluation,
+    baseline_key: EntityId,
+    observation: Option<&HarnessOf360Observation>,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let current = config(vault, evaluation)?;
     let thresholds: RetuneThresholds =
         load_row(vault, THRESHOLDS, include_str!("retune_defaults.json"))?;
     thresholds.validate()?;
@@ -350,7 +406,7 @@ pub(super) fn run(
     // The finding is a diagnosis: it applies at once (OF-023) and deploys nothing.
     proposals::land(vault, HARNESS_FACET, attempt.status.attempt.id, |landing| {
         vault.with_write_txn_grouped(|txn| {
-            let prior = BASELINE.get(&vault.store, &*txn, &evaluation.artifact)?;
+            let prior = BASELINE.get(&vault.store, &*txn, &baseline_key)?;
             if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
                 return Ok(None);
             }
@@ -376,7 +432,10 @@ pub(super) fn run(
                     let score_regressed = score_drop > thresholds.prompts_score_regression
                         || score_drop > thresholds.weights_score_regression
                         || score_drop > thresholds.manifest_thresholds_score_regression;
-                    let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
+                    let mut value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
+                    if let Some(observation) = observation {
+                        value["of360"] = serde_json::to_value(observation).map_err(|_| invalid())?;
+                    }
                     Some(landing.land_in_txn(vault, txn, &proposals::Finding {
                         subject: evaluation.artifact, predicate: "dreamer.harness.retune_proposal",
                         value: &value, evidence: &[evaluation.artifact] },
@@ -385,7 +444,7 @@ pub(super) fn run(
             } else { None };
             let baseline = Baseline { version: evaluation.version, score: evaluation.score,
                 config: current.clone(), observed_at: now };
-            BASELINE.put(&vault.store, txn, &evaluation.artifact, &baseline)?;
+            BASELINE.put(&vault.store, txn, &baseline_key, &baseline)?;
 
             Ok(proposal)
         })

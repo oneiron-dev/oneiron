@@ -394,6 +394,29 @@ impl WindowPadEnvelope {
         window_key: &str,
         sub_tag: u8,
     ) -> Result<Vec<Vec<u8>>, TransportError> {
+        self.encode_frames_with_batch_room(window_key, sub_tag, false)
+    }
+
+    /// Frames sized for a node batch, including its tag and member length.
+    /// The envelope header, binding and ordered offsets are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// The same field and key faults as [`Self::encode_frames`].
+    pub fn encode_batch_frames(
+        &self,
+        window_key: &str,
+        sub_tag: u8,
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
+        self.encode_frames_with_batch_room(window_key, sub_tag, true)
+    }
+
+    fn encode_frames_with_batch_room(
+        &self,
+        window_key: &str,
+        sub_tag: u8,
+        batched: bool,
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
         if WindowPadKind::of_sub_tag(sub_tag) != Some(self.kind) {
             return Err(invalid("window pad envelope of another kind"));
         }
@@ -403,11 +426,19 @@ impl WindowPadEnvelope {
         let lead = 3 + key.len();
         // The payload and the tail go end to end after the header.
         let body = self.payload.len() + tail.len();
-        let inline = body.min(MAX_ENCODED_FRAME_BYTES - lead);
+        let batch_overhead = if batched { 1 + size_of::<u32>() } else { 0 };
+        let first_room = MAX_ENCODED_FRAME_BYTES
+            - lead
+            - if batched {
+                header.len() + batch_overhead
+            } else {
+                0
+            };
+        let inline = body.min(first_room);
         let [payload, rest] = body_slices(&self.payload, &tail, 0, inline);
         let mut frames = vec![frame(key, sub_tag, &[&header[..], payload, rest])];
         let id = blake3::hash(&header);
-        let step = MAX_ENCODED_FRAME_BYTES - lead - PART_LEAD;
+        let step = MAX_ENCODED_FRAME_BYTES - lead - PART_LEAD - batch_overhead;
         let mut offset = inline;
         while offset < body {
             let end = body.min(offset + step);
@@ -561,7 +592,11 @@ pub fn validate_window_pad_member(sub_tag: u8, payload: &[u8]) -> Result<(), Tra
     if header.payload_len == 0 {
         return Err(invalid("batch requires window writes"));
     }
-    window_pad_frame_payload(payload).map(|_| ())
+    if header.total().is_some_and(|total| payload.len() <= total) {
+        Ok(())
+    } else {
+        Err(invalid("window pad envelope length"))
+    }
 }
 
 impl WindowPadReceipt {
