@@ -263,7 +263,7 @@ pub mod claim_descriptors;
 mod claim_vad_owed;
 pub use oneiron_store::code_artifact_body;
 pub use oneiron_store::code_document_values;
-pub use oneiron_store::code_memory_values;
+pub mod code_memory_values;
 pub mod code_snapshot;
 pub(crate) use oneiron_store::query_memo_codec;
 pub mod query_memos;
