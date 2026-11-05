@@ -179,7 +179,7 @@ fn result_body(
         return Ok(false);
     }
     let key = RAW_OUTPUTS.key_bytes(&output.handle);
-    let Some(mut input) = read.result_body(&key, output.raw_blake3, output.raw_len)? else {
+    let Some(mut input) = read.result_body(&key, output.raw_blake3, output.raw_len) else {
         return Ok(false);
     };
     collector.component(

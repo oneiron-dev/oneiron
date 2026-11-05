@@ -272,9 +272,14 @@ live capture sends it. It follows only when:
   of that digest and length;
 - current custody still opens its instance.
 
-The body is read back through its sealed chunks, each frame checked. When any
-of these fails, the message is in `absent_result_bodies`: uncaptured, never
-filled from the live vault or another source.
+The body is read back through its sealed chunks, each frame checked. A
+captured message whose row names a result attachment is in
+`absent_result_bodies` when its occurrence there did not open or does not
+hold that output, the artifact does not carry the body, or current custody
+no longer opens its instance. That body stays uncaptured, never filled from
+the live vault or another source. A message whose row names no attachment is
+not listed. A descriptor that does not decode, or a carried stream that fails
+its checks, aborts the capture before its summary.
 
 ## Prospective message capture
 

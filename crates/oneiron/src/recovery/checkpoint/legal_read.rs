@@ -198,7 +198,7 @@ impl ArtifactRead<'_> {
         key: &[u8],
         digest: [u8; 32],
         len: u64,
-    ) -> Result<Option<Box<dyn Read + '_>>> {
+    ) -> Option<Box<dyn Read + '_>> {
         let files = self.image.bodies.len();
         let inline = self.image.inline_bodies.iter().position(|carried| {
             carried.database == "vault_meta"
@@ -221,28 +221,22 @@ impl ArtifactRead<'_> {
                     Some((index, file.instance))
                 }),
         };
-        let Some((stream, instance)) = found else {
-            return Ok(None);
-        };
+        let (stream, instance) = found?;
         let plan = self.custody.plan_mut();
-        let Some(binding) = plan.source().cloned() else {
-            return Ok(None);
-        };
+        let binding = plan.source().cloned()?;
         // Retired, or with no custody here: the body stays uncaptured.
         if !require_body_instances(&BTreeSet::from([instance]), plan)
             .is_ok_and(|retired| retired.is_empty())
         {
-            return Ok(None);
+            return None;
         }
-        let Ok(file_key) = body_key_in(&binding, &instance) else {
-            return Ok(None);
-        };
-        Ok(Some(Box::new(SealedStream::plaintext(
+        let file_key = body_key_in(&binding, &instance).ok()?;
+        Some(Box::new(SealedStream::plaintext(
             self.bodies.body(stream),
             file_key,
             digest,
             len,
-        ))))
+        )))
     }
 }
 
