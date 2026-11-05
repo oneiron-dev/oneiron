@@ -345,7 +345,7 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
     // and the mode it was admitted under are one snapshot. A secret the door
     // places goes to custody and leaves its handle (OF-560); a file keeps
     // its bytes and is marked.
-    let (masked_files, masked_claim_pre) = secret_scan::mask_batch_ops(
+    let (masked_files, masked_claim_pre) = secret_scan::mask_batch_ops_for_record_document(
         store,
         config,
         analyzer,
@@ -356,6 +356,8 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
             || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
                 if grant.selected_saver().is_some()),
         mutation_recorded_at,
+        #[cfg(feature = "sync")]
+        record_document,
     )?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
     // transaction (FIX 11356), in op order per id: the candidate apply
