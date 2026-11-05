@@ -12,9 +12,10 @@
 //!
 //! A configured rung reaches its worker by the row's explicit binding, its
 //! provider and wire model ([`managed_worker`]); nothing is inferred from a
-//! URL or a name. A row whose config changed gets a new supervisor once the
-//! old one has drained and stopped; a row that is no longer configured keeps
-//! its supervisor, since another runtime in the process may still use it.
+//! URL or a name. A row whose config changed publishes a replacement whose
+//! startup waits for the old worker and any pending predecessors to drain
+//! and stop; a row that is no longer configured keeps its supervisor, since
+//! another runtime in the process may still use it.
 //!
 //! A managed EXL3 worker's launch also has a native socket (DESIGN-V2 §8,
 //! V2-R1): its provider's calls to it go there ([`native_route`],
@@ -30,6 +31,7 @@ mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod llama_metrics;
 mod media_worker;
 mod probe;
 #[cfg(unix)]
@@ -572,6 +574,10 @@ pub(super) fn configure(
                 Some(worker) => worker,
                 None => {
                     let (worker, slot) = host.supervisor(row, provider);
+                    let worker = match workers.get(&row.id) {
+                        Some(previous) => worker.with_predecessor(&previous.worker),
+                        None => worker,
+                    };
                     let hosted = Hosted {
                         row: row.clone(),
                         provider: provider.clone(),

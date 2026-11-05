@@ -139,7 +139,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
         ),
         (
             Value::from(KEY_DETERMINISM),
-            encode_determinism(&record.determinism),
+            record
+                .determinism
+                .as_ref()
+                .map_or(Value::Nil, encode_determinism),
         ),
         (
             Value::from(KEY_BRIDGE_CALLS),
@@ -214,7 +217,10 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
 
     let record = CodeRunReplayRecord {
         run_id: entity_value(required(fields[1], "missing replay run_id")?)?,
-        determinism: decode_determinism(required(fields[2], "missing replay determinism")?)?,
+        determinism: match required(fields[2], "missing replay determinism")? {
+            Value::Nil => None,
+            value => Some(decode_determinism(value)?),
+        },
         bridge_calls: decode_array(
             required(fields[3], "missing replay bridge_calls")?,
             decode_bridge_call,

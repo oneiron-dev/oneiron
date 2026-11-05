@@ -104,6 +104,7 @@ credential.
 | `Oneiron.pair(link)` | `{"memory", "credential", "pin", "comm"}` (`Paired`): a remote handle, the credential to store, the checkpoint pin the link named (`None` when the vault has none) for a local replica to adopt by, and the credential's comm reach |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
+| `handle.with_read_credential(credential)` | a new handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle raises `FORBIDDEN` |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
 | `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotencyKey"}` on a lens card the connected server rendered; answers `{"$state"}`, `{"outcome", "readReceipt"}`, or a model round trip's `{"queued", "callbackId"}` |
