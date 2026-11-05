@@ -69,7 +69,18 @@ fn apply_upsert(
     for parsed in &feed.events {
         super::admit_connector_event(vault, system, record.as_str(), parsed, now)?;
     }
-    super::sweep_connector_resource(vault, system, &record, &feed, &uid, now)
+    // Only a series can have dropped an instance this resource no longer
+    // carries; a single event has nothing to sweep, and the sweep reads
+    // every EVENT.
+    let series = feed.events.len() > 1
+        || feed
+            .events
+            .first()
+            .is_some_and(|master| master.properties.rrule.is_some());
+    if series {
+        super::sweep_connector_resource(vault, system, &record, &feed, &uid, now)?;
+    }
+    Ok(())
 }
 
 /// One resource: one UID's master first, then its detached instances.
