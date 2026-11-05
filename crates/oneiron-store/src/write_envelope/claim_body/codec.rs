@@ -129,6 +129,7 @@ pub fn decode_claim_body_with_scope_memory(
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
+    let mut value_memory = memory.map(ClaimScopeReadMemory::value_lease);
     let mut cursor = Cursor::new(data);
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?;
@@ -309,11 +310,18 @@ pub fn decode_claim_body_with_scope_memory(
     // scope decision. Unknown sibling entries are not inspected.
     validate_known_claim_scope_entries(scope.as_ref())?;
 
+    if let Some(value_memory) = &mut value_memory {
+        value_memory.materialized(0, read_memory::value_storage_bytes(&claim_value));
+    }
+    let retained_value_bytes = value_memory.as_ref().map_or(0, |lease| lease.bytes());
     let rel = rel.expect("required relationship scope was validated");
     let mut memory = match (memory, rel.len()) {
-        (Some(memory), Some(count)) => {
-            Some(memory.admit(count).map_err(ClaimBodyReadError::Refused)?)
-        }
+        (Some(memory), Some(count)) => Some(
+            memory
+                .with_additional_pinned(retained_value_bytes)
+                .admit(count)
+                .map_err(ClaimBodyReadError::Refused)?,
+        ),
         _ => None,
     };
     let reserved = rel.len().map_or(0, read_memory::relationship_bytes);
@@ -348,5 +356,6 @@ pub fn decode_claim_body_with_scope_memory(
             stale: stale.unwrap_or(false),
         },
         memory,
+        value_memory,
     ))
 }

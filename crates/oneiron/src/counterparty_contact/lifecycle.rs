@@ -1,7 +1,7 @@
 //! Counterparty contact cache rematerialization, claim supersession, and opt-out folding.
 
 use super::codec::{
-    counterparty_contact_body_key, decode_counterparty_contact_value,
+    counterparty_contact_body_key, decode_counterparty_contact_fields,
     encode_counterparty_contact_body, is_counterparty_contact_claim_predicate,
 };
 use super::read_memory::ContactClaim;
@@ -25,7 +25,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
+use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueRead};
 use rmpv::Value;
 
 /// Closes `old_id` in favour of `new_id` for one claim whose FAMILY DOOR owns
@@ -410,9 +410,11 @@ fn contact_claim_values_in_txn(
     let mut bodies = Vec::new();
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
+    let mut retained_value_bytes = 0u64;
     // Keep the first duplicate for the fold, but read every claim so later
     // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
+        let memory = memory.map(|memory| memory.with_additional_pinned(retained_value_bytes));
         if let Some(body) = vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, memory)? {
             if duplicate {
                 continue;
@@ -421,6 +423,8 @@ fn contact_claim_values_in_txn(
                 continue;
             };
             duplicate = std::mem::replace(&mut seen[value.predicate_index], true);
+            retained_value_bytes =
+                retained_value_bytes.saturating_add(value.value.retained_bytes());
             bodies.push(value);
         }
     }
@@ -538,7 +542,7 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
 
 struct ContactClaimValue {
     predicate_index: usize,
-    value: Value,
+    value: ClaimValueRead,
 }
 
 fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
@@ -557,7 +561,8 @@ fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
 fn counterparty_contact_record_from_heads(
     bodies: Vec<ContactClaimValue>,
 ) -> Result<CounterpartyContactRecord> {
-    let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    let mut heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()] =
+        std::array::from_fn(|_| None);
     for body in bodies {
         let index = body.predicate_index;
         if heads[index].is_some() {
@@ -568,21 +573,26 @@ fn counterparty_contact_record_from_heads(
         heads[index] = Some(body.value);
     }
 
-    let mut entries = vec![(
-        Value::from(KEY_SCHEMA_VERSION),
-        Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION),
-    )];
-    for (index, predicate) in COUNTERPARTY_CONTACT_CLAIM_PREDICATES.iter().enumerate() {
-        let value = heads[index].take().ok_or(Error::Record(
-            RecordError::InvalidCounterpartyContactBody(
+    for head in &heads {
+        if head.is_none() {
+            return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
                 "counterparty contact claim family is missing a live head",
-            ),
-        ))?;
-        entries.push((Value::from(counterparty_contact_body_key(predicate)), value));
+            )));
+        }
     }
-    // Straight back through the canonical decoder, so the rebuilt record clears
-    // exactly the validation a stored body clears.
-    decode_counterparty_contact_value(&Value::Map(entries))
+    let schema_version = Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION);
+    // Borrow through the canonical decoder while each value retains its guard.
+    decode_counterparty_contact_fields(|key| {
+        if key == KEY_SCHEMA_VERSION {
+            return Ok(&schema_version);
+        }
+        COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+            .iter()
+            .position(|predicate| counterparty_contact_body_key(predicate) == key)
+            .and_then(|index| heads[index].as_ref())
+            .map(|value| &**value)
+            .ok_or_else(super::codec::invalid_contact)
+    })
 }
 
 fn fold_party_opt_out_heads_in_txn(
