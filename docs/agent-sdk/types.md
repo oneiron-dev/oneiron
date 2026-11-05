@@ -4193,7 +4193,7 @@ class Oneiron:
         def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
         def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
-            """The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google or ICS calendar whose events land bound to their owner."""
+            """The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""

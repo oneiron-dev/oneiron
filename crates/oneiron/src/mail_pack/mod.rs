@@ -31,8 +31,8 @@
 //! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
 //! ([`microsoft365`]). Calendar sources land through the calendar engine's
 //! connector admission, each EVENT bound to its source at birth
-//! ([`calendar`]), read from Google Calendar ([`google_calendar`]) or an ICS subscription
-//! ([`ics_calendar`]).
+//! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
+//! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
 //! The owner runs a step on this device through [`local_sync`].
 
 mod calendar;
@@ -47,6 +47,7 @@ mod inbox;
 mod landing;
 mod local_sync;
 mod microsoft365;
+mod microsoft365_calendar;
 mod pack;
 mod provider_delete;
 mod rest;
@@ -80,6 +81,9 @@ pub use inbox::{
 };
 pub use local_sync::MailSourceSyncRequest;
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
+pub use microsoft365_calendar::{
+    HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
+};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };

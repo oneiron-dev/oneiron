@@ -10,6 +10,7 @@ use super::google_calendar::HttpGoogleCalendarWire;
 use super::ics_calendar::HttpIcsCalendarWire;
 use super::importer::{MailSyncBudget, MailSyncReport};
 use super::microsoft365::HttpGraphMailWire;
+use super::microsoft365_calendar::HttpGraphCalendarWire;
 use super::source::MailProvider;
 use crate::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -48,13 +49,17 @@ impl Memory<'_> {
                 let wire = HttpGoogleCalendarWire::new(vault)?;
                 return vault.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
             }
+            if calendar.provider == MailProvider::Microsoft365 {
+                let wire = HttpGraphCalendarWire::new(vault)?;
+                return vault.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
+            }
             if calendar.provider == MailProvider::Ics {
                 let wire = HttpIcsCalendarWire::new(vault)?;
                 return vault.mail_calendar_sync_step(source, &wire, 1);
             }
             return Err(MemoryError::bad_request_with(
-                "this device reads Google calendars and ICS subscriptions so far",
-                &["Connect a Google or ICS calendar; Microsoft 365 and CalDAV calendars follow."],
+                "this device reads Google, Microsoft 365 and ICS calendars so far",
+                &["CalDAV calendars follow; connect another calendar meanwhile."],
             ));
         }
         let snapshot = vault
