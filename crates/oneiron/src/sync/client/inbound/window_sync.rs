@@ -30,6 +30,14 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A world the owner keeps on one other machine left this one and never
+        // lands here again (FIX 14534): its frames read as nothing.
+        if let Some(world) = key.world()
+            && crate::sync::residence::world_placed_elsewhere(&self.vault, world)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            return Ok(Vec::new());
+        }
         // A window the server stopped pushing to this socket changed. An owner-lane device that
         // follows it asks for it again, and the request subscribes it again; anything else reads
         // the notice as nothing, since the server may not know what this device follows. A world
