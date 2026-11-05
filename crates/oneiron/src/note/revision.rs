@@ -32,10 +32,12 @@ impl StoredNoteSlot {
         if self.retains(frontier) {
             return false;
         }
-        let covers = |floor: &VersionVector| {
-            !frontier.is_empty() && frontier.iter().all(|id| floor.includes_id(id))
-        };
-        covers(&self.doc.shallow_since_vv().to_vv()) || self.floor.as_ref().is_some_and(covers)
+        let has_cut = !self.doc.shallow_since_vv().to_vv().is_empty()
+            || self.floor.as_ref().is_some_and(|floor| !floor.is_empty());
+        let known = self.doc.oplog_vv();
+        // A cut can make a concurrent frontier unreadable too. Require its
+        // tips to belong to this stored slot, not an unknown or missing image.
+        has_cut && !frontier.is_empty() && frontier.iter().all(|id| known.includes_id(id))
     }
 
     pub(crate) fn at(self, frontier: &[u8]) -> Result<LoroDoc> {
@@ -131,15 +133,40 @@ pub(crate) fn row_with_markdown_in_txn(
     Ok(selected)
 }
 
+/// Capture before replacing a canonical snapshot: the old indexed frontier
+/// may no longer be readable once a shallow or StateOnly image lands.
+pub(super) fn indexed_input_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<Option<Vec<u8>>> {
+    match crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        &note,
+        crate::vault::entity_revision::ReadMode::Indexed,
+    ) {
+        Ok(before) => Ok(before),
+        Err(Error::EntityNotFound) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// Indexes the actual stored image. The optional closed replay grant is the
 /// same admission the caller used for its selected save, never a new mint.
 pub(super) fn index_stored_note_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
+    indexed_before: Option<&[u8]>,
     grant: Option<&crate::off_record::promote::PromoteReplayGrant>,
 ) -> Result<()> {
-    let capture = crate::vault::entity_revision::capture_native_note_in_txn(vault, txn, note)?;
+    let capture = crate::vault::entity_revision::capture_native_note_in_txn(
+        vault,
+        txn,
+        note,
+        indexed_before,
+    )?;
     if capture.changed || capture.published {
         let batch = match grant {
             Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),

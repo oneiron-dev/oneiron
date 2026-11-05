@@ -126,8 +126,9 @@ fn persist_structural(
     }
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
+    let indexed_before = super::revision::indexed_input_in_txn(vault, txn, doc.id)?;
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    super::revision::index_stored_note_in_txn(vault, txn, doc.id, None)?;
+    super::revision::index_stored_note_in_txn(vault, txn, doc.id, indexed_before.as_deref(), None)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
@@ -583,6 +584,8 @@ impl Memory<'_> {
                     .export(loro::ExportMode::shallow_snapshot(&through))
                     .map_err(|_| invalid("NOTE history purge failed"))?;
                 let shallow = NoteDocument::load(note, &snapshot)?;
+                let indexed_before =
+                    super::revision::indexed_input_in_txn(self.vault(), txn, note)?;
                 super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
                 let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
                 self.vault().store.port_document_shallow_since_put(
@@ -590,7 +593,13 @@ impl Memory<'_> {
                     slot,
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
                 )?;
-                super::revision::index_stored_note_in_txn(self.vault(), txn, note, None)?;
+                super::revision::index_stored_note_in_txn(
+                    self.vault(),
+                    txn,
+                    note,
+                    indexed_before.as_deref(),
+                    None,
+                )?;
                 let applied = through.encode();
                 let receipt = PurgeReceipt {
                     receipt: receipt_id.to_hex(),
