@@ -11,7 +11,9 @@ use oneiron_base::error::Result;
 
 #[cfg(unix)]
 use crate::root_directory::file_identity;
+#[cfg(unix)]
 use crate::root_directory::named_directory_identity;
+#[cfg(unix)]
 use crate::root_directory::open_root_directory;
 
 /// Lock-file name for the process-owner single-writer lease (ONE-1441 WIRE-P1).

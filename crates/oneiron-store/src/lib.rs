@@ -27,6 +27,7 @@ pub mod batch;
 pub mod batch_op;
 pub mod blob_artifact;
 pub mod body_descriptor;
+#[cfg(unix)]
 pub mod body_envelope;
 pub mod build_cache;
 pub mod bundle_generations;
@@ -241,6 +242,7 @@ pub mod vector_refinement;
 pub mod vector_row;
 pub mod verb_domain;
 pub mod verb_invocation;
+#[cfg(feature = "sync")]
 pub mod window_key;
 pub mod window_protocol;
 #[cfg(feature = "sync")]
