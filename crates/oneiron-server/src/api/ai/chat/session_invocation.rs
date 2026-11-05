@@ -68,7 +68,7 @@ pub(super) fn replay(
     vault: &Vault,
     auth: &CoreAuth,
     binding: Option<&SessionWitnessBinding>,
-    mut outcome: oneiron::runtime_hooks::InvocationOutcome,
+    mut outcome: oneiron::runtime_hooks::verb::InvocationOutcome,
 ) -> Response {
     if let Some(binding) = binding {
         if let Some(release) = &mut outcome.release
