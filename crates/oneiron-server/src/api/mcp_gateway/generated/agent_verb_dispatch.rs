@@ -1466,6 +1466,9 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mail.compliance.set" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.log" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.sources.sync_status" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.inbox" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.threads.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.compliance.search" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -5220,6 +5223,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.sources.sync_status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.inbox" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.threads.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.compliance.search" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.answer" => {
@@ -25648,6 +25660,30 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::mail_pack::MailSourceRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_mail_sources_sync_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.inbox" => {
+            let input: oneiron::mail_pack::MailInboxRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_inbox(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.threads.read" => {
+            let input: oneiron::mail_pack::MailThreadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_threads_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.compliance.search" => {
+            let input: oneiron::mail_pack::MailComplianceSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_compliance_search(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

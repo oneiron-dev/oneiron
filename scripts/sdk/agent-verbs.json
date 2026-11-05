@@ -20808,6 +20808,45 @@
       },
       "mcp_scope": "unrestricted",
       "section": false
+    },
+    {
+      "name": "vault.mail.inbox",
+      "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
+      "input": "crate::mail_pack::MailInboxRequest",
+      "output": "crate::mail_pack::MailInboxPage",
+      "call": "memory.mail_inbox(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.read",
+      "description": "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.",
+      "input": "crate::mail_pack::MailThreadRequest",
+      "output": "crate::mail_pack::MailThreadView",
+      "call": "memory.mail_thread(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.search",
+      "description": "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers.",
+      "input": "crate::mail_pack::MailComplianceSearchRequest",
+      "output": "crate::mail_pack::MailComplianceSearchReply",
+      "call": "memory.mail_compliance_search(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
     }
   ]
 }

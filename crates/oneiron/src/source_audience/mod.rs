@@ -516,6 +516,27 @@ pub(crate) fn thread_shares_in(
     })
 }
 
+/// The thread policies of the source policy `source` that `actor` reads by
+/// a share: how a reader finds the threads of a mailbox it does not read.
+pub(crate) fn threads_shared_with_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+    actor: EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let mut shared = BTreeSet::new();
+    for row in THREADS.iter_from(&vault.store, txn, source.as_bytes())? {
+        let (_, thread) = row?;
+        if let Some((_, shared_with)) = thread_shares_in(vault, txn, &thread)?
+            && !shared_with.is_empty()
+            && names_reader_in(vault, txn, &shared_with, actor)?
+        {
+            shared.insert(thread);
+        }
+    }
+    Ok(shared)
+}
+
 /// One change to a policy's readers, as its receipt list shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

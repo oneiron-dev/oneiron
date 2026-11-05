@@ -5756,6 +5756,9 @@ class Oneiron:
         @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs":
             return Oneiron._VaultMailComplianceVerbs(self._client)
+        def inbox(self, spec):
+            """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+            return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))
     class _VaultMailPackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5804,6 +5807,9 @@ class Oneiron:
         def unshare(self, spec):
             """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
             return json.loads(_translate(lambda: self._client.vault_mail_threads_unshare(json.dumps(spec))))
+        def read(self, spec):
+            """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+            return json.loads(_translate(lambda: self._client.vault_mail_threads_read(json.dumps(spec))))
     class _VaultMailComplianceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5816,6 +5822,9 @@ class Oneiron:
         def log(self, spec=None):
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
             return json.loads(_translate(lambda: self._client.vault_mail_compliance_log(json.dumps({} if spec is None else spec))))
+        def search(self, spec):
+            """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

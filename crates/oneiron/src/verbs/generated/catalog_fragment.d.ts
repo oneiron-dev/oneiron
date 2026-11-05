@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1295 code-mode rows (1255 host rows, 40 run rows), 4565 declarations.
-// Replies: 1109 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1298 code-mode rows (1258 host rows, 40 run rows), 4575 declarations.
+// Replies: 1112 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -4428,6 +4428,16 @@ declare namespace Sdk {
   type MailComplianceEventKind = "enabled" | "disabled" | "search";
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
   type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
+  type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; before?: number | null; limit?: number | null };
+  type MailStage = "headers" | "body";
+  type MailPresence = "present" | { source_deleted: { at: number } } | { forgotten: { at: number } };
+  type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean };
+  type MailInboxPage = { items: MailInboxItem[]; next_before?: number | null };
+  type MailThreadRequest = { thread_ref: string };
+  type MailThreadView = { thread_ref: string; source_ref: string; messages: MailInboxItem[]; shared_with?: string[] };
+  type MailComplianceSearchRequest = { query: string; purpose: string; limit?: number | null };
+  type MailComplianceHit = { source_ref: string; thread_ref: string; message_ref: string; score: number; text?: string | null };
+  type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -6487,11 +6497,15 @@ declare const vault: Sdk.VaultHost & {
     compliance: {
       /** The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it. */
       log(input: Sdk.EmptyRequest): Promise<Sdk.MailComplianceEventView[] | StoredResult>;
+      /** Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers. */
+      search(input: Sdk.MailComplianceSearchRequest): Promise<Sdk.MailComplianceSearchReply | StoredResult>;
       /** Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log. */
       set(input: Sdk.MailComplianceSetRequest): Promise<Sdk.MailComplianceSettingView | StoredResult>;
       /** Whether org compliance search across mailboxes is on; off by default. */
       setting(input: Sdk.EmptyRequest): Promise<Sdk.MailComplianceSettingView | StoredResult>;
     };
+    /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
+    inbox(input: Sdk.MailInboxRequest): Promise<Sdk.MailInboxPage | StoredResult>;
     pack: {
       /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
       install(input: Sdk.EmptyRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
@@ -6515,6 +6529,8 @@ declare const vault: Sdk.VaultHost & {
       sync_status(input: Sdk.MailSourceRef): Promise<Sdk.MailSyncStatusView | StoredResult>;
     };
     threads: {
+      /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
+      read(input: Sdk.MailThreadRequest): Promise<Sdk.MailThreadView | StoredResult>;
       /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
       share(input: Sdk.MailThreadShareRequest): Promise<Sdk.MailThreadShareReceipt | StoredResult>;
       /** Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving. */

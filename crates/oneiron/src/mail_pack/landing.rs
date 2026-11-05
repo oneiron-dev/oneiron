@@ -363,6 +363,8 @@ impl<'v> Landing<'v> {
                 presence: MailPresence::Present,
                 labels: Vec::new(),
                 rfc_message_id: None,
+                from: None,
+                subject: None,
                 received_at: headers.received_at,
                 searched,
                 landed_at: self.imported_at,
@@ -374,6 +376,12 @@ impl<'v> Landing<'v> {
                 occurrence.stage = stage;
             }
             occurrence.labels.clone_from(&headers.labels);
+            if headers.from.is_some() {
+                occurrence.from = headers.from.as_deref().map(label);
+            }
+            if headers.subject.is_some() {
+                occurrence.subject = headers.subject.as_deref().map(label);
+            }
             if headers.rfc_message_id.is_some() {
                 occurrence
                     .rfc_message_id

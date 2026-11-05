@@ -37855,6 +37855,72 @@ async fn vault_mail_sources_sync_status(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_mail_inbox(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.inbox",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_threads_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.threads.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_compliance_search(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.compliance.search",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn connector_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41961,6 +42027,11 @@ async fn call_verb_row(
         }
         "vault.mail.sources.sync_status" => {
             Box::pin(vault_mail_sources_sync_status(server, call, input)).await
+        }
+        "vault.mail.inbox" => Box::pin(vault_mail_inbox(server, call, input)).await,
+        "vault.mail.threads.read" => Box::pin(vault_mail_threads_read(server, call, input)).await,
+        "vault.mail.compliance.search" => {
+            Box::pin(vault_mail_compliance_search(server, call, input)).await
         }
         "connector.answer" => Box::pin(connector_answer(server, call, input)).await,
         "self.browser.open" => Box::pin(self_browser_open(server, call, input)).await,

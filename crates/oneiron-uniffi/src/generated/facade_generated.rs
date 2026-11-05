@@ -6031,6 +6031,21 @@ export_facade! {
     let output = client.vault_mail_sources_sync_status(&input)?;
     crate::codec::lift_record("vault.mail.sources.sync_status", &output)
 };
+"vault.mail.inbox" => fn vault_mail_inbox(&self, input: MailInboxRequest) -> MailInboxPage = |client| {
+    let input: oneiron::mail_pack::MailInboxRequest = crate::codec::lower_record("vault.mail.inbox", input)?;
+    let output = client.vault_mail_inbox(&input)?;
+    crate::codec::lift_record("vault.mail.inbox", &output)
+};
+"vault.mail.threads.read" => fn vault_mail_threads_read(&self, input: MailThreadRequest) -> MailThreadView = |client| {
+    let input: oneiron::mail_pack::MailThreadRequest = crate::codec::lower_record("vault.mail.threads.read", input)?;
+    let output = client.vault_mail_threads_read(&input)?;
+    crate::codec::lift_record("vault.mail.threads.read", &output)
+};
+"vault.mail.compliance.search" => fn vault_mail_compliance_search(&self, input: MailComplianceSearchRequest) -> MailComplianceSearchReply = |client| {
+    let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
+    let output = client.vault_mail_compliance_search(&input)?;
+    crate::codec::lift_record("vault.mail.compliance.search", &output)
+};
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;

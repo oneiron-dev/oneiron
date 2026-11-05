@@ -1232,6 +1232,9 @@ pub enum AgentVerb {
     VaultMailComplianceSet,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
+    VaultMailInbox,
+    VaultMailThreadsRead,
+    VaultMailComplianceSearch,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2501,6 +2504,9 @@ impl AgentVerb {
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailInbox,
+        Self::VaultMailThreadsRead,
+        Self::VaultMailComplianceSearch,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3807,6 +3813,9 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailInbox => "vault.mail.inbox",
+            Self::VaultMailThreadsRead => "vault.mail.threads.read",
+            Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -5056,6 +5065,9 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6354,6 +6366,9 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7744,6 +7759,9 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8501,6 +8519,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
+                | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -9810,6 +9829,9 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailInbox => &["spec"],
+            Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailComplianceSearch => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11080,6 +11102,9 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailInbox => &["spec"],
+            Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailComplianceSearch => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14722,6 +14747,15 @@ impl AgentVerb {
             }
             Self::VaultMailSourcesSyncStatus => {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
+            }
+            Self::VaultMailInbox => {
+                "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."
+            }
+            Self::VaultMailThreadsRead => {
+                "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."
+            }
+            Self::VaultMailComplianceSearch => {
+                "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

@@ -274,3 +274,157 @@ pub(crate) fn erase_compliance_actor_in_txn(
     }
     Ok(())
 }
+
+/// `vault.mail.compliance.search`'s input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailComplianceSearchRequest {
+    /// The words searched; the log keeps their BLAKE3, not the words.
+    pub query: String,
+    /// Why, in the searcher's words; kept in the compliance log.
+    pub purpose: String,
+    /// How many messages at most; 50 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// One message a compliance search found, across mailboxes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailComplianceHit {
+    pub source_ref: String,
+    pub thread_ref: String,
+    pub message_ref: String,
+    pub score: f32,
+    /// The message's words as the vault holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// What a compliance search answered, after its log entry was kept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailComplianceSearchReply {
+    /// The compliance log entry this search wrote before answering.
+    pub log_sequence: u64,
+    pub hits: Vec<MailComplianceHit>,
+}
+
+impl Memory<'_> {
+    /// Org compliance search across every mailbox (owner MAIL-SHARE = A):
+    /// while the setting is on, the vault's Owner or an Admin searches the
+    /// mail the vault holds, whoever's mailbox it is. The search is logged
+    /// (who, when, why, the query's BLAKE3 and how many messages it found)
+    /// before anything is answered; a search the log cannot record answers
+    /// nothing. This is the one read across mailboxes; it grants no lasting
+    /// read of any of them.
+    pub fn mail_compliance_search(
+        &self,
+        input: &MailComplianceSearchRequest,
+    ) -> MemoryResult<MailComplianceSearchReply> {
+        valid_purpose(&input.purpose)?;
+        if input.query.trim().is_empty() {
+            return Err(MemoryError::bad_request(
+                "a compliance search names its words",
+            ));
+        }
+        let limit = input.limit.unwrap_or(50).max(1) as usize;
+        let vault = self.vault();
+        let actor = self.actor();
+        let hits = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            super::pack::require_pack_active_in(vault, &txn)?;
+            if !manages_in(vault, &txn, actor)? || !compliance_search_enabled_in(vault, &txn)? {
+                return Err(MemoryError::bad_request(
+                    "org compliance search is off, or the caller is not the vault's Owner or an Admin",
+                ));
+            }
+            vault.ensure_text_index_trusted()?;
+            let sources = super::inbox::sources_by_audience_in(vault, &txn)?;
+            let config = crate::config::Bm25RankProfile::default()
+                .to_bm25_config()
+                .map_err(crate::Error::from)?;
+            let mut mail_bound = |id: &EntityId| -> Result<bool> {
+                Ok(crate::source_audience::binding_in(vault, &txn, id)?.is_some())
+            };
+            let scored = crate::bm25::search_text_scoped_with_recency(
+                &vault.store,
+                &txn,
+                &vault.analyzer,
+                &config,
+                &input.query,
+                limit,
+                crate::bm25::Bm25SearchOptions {
+                    recency: None,
+                    exact_posting_matches_scope: &mut mail_bound,
+                    private_note_ids: None,
+                },
+            )?;
+            let mut hits = Vec::new();
+            for scored in scored {
+                let id = scored.id;
+                if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &txn, &id)?
+                    .deleted
+                    || vault.get_entity_type_in_txn(&txn, &id)?
+                        != Some(crate::registry::ENTITY_TYPE_MESSAGE)
+                {
+                    continue;
+                }
+                let Some(thread) = crate::source_audience::binding_in(vault, &txn, &id)? else {
+                    continue;
+                };
+                let Some((source_policy, _)) =
+                    crate::source_audience::thread_shares_in(vault, &txn, &thread)?
+                else {
+                    continue;
+                };
+                let Some((source, _)) = sources.get(&source_policy) else {
+                    continue;
+                };
+                let turn = crate::conversation_dag::counted_edge_ids(
+                    &vault.store,
+                    &txn,
+                    &id,
+                    crate::EdgeKind::PartOf,
+                    false,
+                )?
+                .into_iter()
+                .next();
+                let conversation = match turn {
+                    Some(turn) => crate::conversation_dag::counted_edge_ids(
+                        &vault.store,
+                        &txn,
+                        &turn,
+                        crate::EdgeKind::ChildOf,
+                        false,
+                    )?
+                    .into_iter()
+                    .next(),
+                    None => None,
+                };
+                let text = match turn {
+                    Some(turn) => crate::tagging::message_text_in_txn(vault, &txn, &turn, &id)?,
+                    None => None,
+                };
+                hits.push(MailComplianceHit {
+                    source_ref: source.to_hex(),
+                    thread_ref: conversation.map(|id| id.to_hex()).unwrap_or_default(),
+                    message_ref: id.to_hex(),
+                    score: scored.score,
+                    text,
+                });
+            }
+            hits
+        };
+        let count = hits.len() as u64;
+        let log_sequence = vault.with_write_txn_grouped(|txn| {
+            if !manages_in(vault, txn, actor)? {
+                return Err(crate::Error::InvalidConfig(
+                    "the searcher is no longer the vault's Owner or an Admin".into(),
+                ));
+            }
+            record_compliance_search_in_txn(vault, txn, actor, &input.purpose, &input.query, count)
+        })?;
+        Ok(MailComplianceSearchReply { log_sequence, hits })
+    }
+}
