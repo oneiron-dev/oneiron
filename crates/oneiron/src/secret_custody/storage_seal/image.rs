@@ -12,6 +12,7 @@
 //! hold is named, never brought back from the image.
 
 use std::borrow::Borrow;
+use std::collections::BTreeSet;
 
 use zeroize::Zeroize;
 
@@ -235,6 +236,9 @@ pub(crate) enum CredentialDisposition {
     /// row carried no sealed value: it rests sealed, pending, with a warned
     /// retry, or re-enter it.
     PendingCustody,
+    /// Still pending here; this exact image row's source custody already
+    /// lacked a live key when the image was captured. Diagnostic only.
+    PendingSourceKeyUnavailable,
 }
 
 /// A restore's or an activation's credentials, planned: each value whose
@@ -378,6 +382,18 @@ impl PlannedCredentials {
                      sealed, pending"
                 );
                 self.pending(credential);
+            }
+        }
+    }
+
+    /// Adds capture-time context only to pending diagnostics after read-back.
+    /// This evidence never plans, withholds or retires a value or key.
+    pub(crate) fn note_source_key_unavailable(&mut self, unavailable: &BTreeSet<(EntityId, u32)>) {
+        for (credential, disposition) in &mut self.noted {
+            if *disposition == CredentialDisposition::PendingCustody
+                && unavailable.contains(&(credential.id, credential.generation))
+            {
+                *disposition = CredentialDisposition::PendingSourceKeyUnavailable;
             }
         }
     }

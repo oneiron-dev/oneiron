@@ -293,7 +293,6 @@ trybuild = "1"
 # Integration tests forge/sign attested receipts independently of the
 # engine's signer (contract-grounded test vectors, ONE-1140).
 ed25519-dalek = { workspace = true }
-yrs = { version = "0.25", features = ["sync"] }
 
 # The consolidated sync-cluster integration binary. The feature gate lives
 # here at the target level, so the whole cluster (including the formerly
