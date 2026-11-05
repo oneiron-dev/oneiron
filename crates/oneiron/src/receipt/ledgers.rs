@@ -151,7 +151,13 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
                 .ok_or(Error::InvalidClaimBody("executor role has no token"))?;
             receipt.fields.insert(FIELD_EXECUTOR_ROLE.to_owned(), token);
         }
-        append_pack_manifest_fields(&mut receipt, record.manifest())?;
+        let mut manifest = record.manifest().to_vec();
+        crate::store::attempt_manifest::scrub_hard_erased_manifest_revisions_in_txn(
+            store,
+            wtxn,
+            &mut manifest,
+        );
+        append_pack_manifest_fields(&mut receipt, &manifest)?;
         if attributed {
             let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
             if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {

@@ -39,9 +39,6 @@ impl HostSelfDispatcher<'_> {
         };
         let (session, route) = (&binding.session, &binding.route);
         let verb = call.verb.as_str();
-        if !session.verb_hooks_may_run(verb) {
-            return Ok(context.answer(read, self.actor, &call.input));
-        }
         let parked = SelfCall::AgentVerb(call.clone());
         let invocation = self.verb_invocation(&parked, site)?;
         // The same call a hook's ask parked names that pause, and resumes
