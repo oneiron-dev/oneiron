@@ -53,6 +53,7 @@ impl DreamerWakeDriver<'_> {
                     &step_hashes,
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
+                self.log_attempt_completed(admitted);
                 self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
                 report.completed += 1;
             }
