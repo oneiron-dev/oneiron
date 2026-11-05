@@ -287,7 +287,9 @@ pub(super) fn apply_ops_with_authority_beside(
         wtxn,
         &mut ops.ops,
         text_index_trusted,
-        !replay,
+        !replay
+            || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
+                if grant.selected_saver().is_some()),
         mutation_recorded_at,
     )?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
@@ -421,6 +423,7 @@ pub(super) fn apply_ops_with_authority_beside(
                 entity_type,
                 occurred,
                 learned_at,
+                row_version,
                 data,
                 allow_maintenance,
                 allow_reserved_predicate,
@@ -437,6 +440,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     entity_type,
                     occurred,
                     learned_at,
+                    row_version,
                     data,
                     allow_maintenance,
                     allow_reserved_predicate,
@@ -477,7 +481,16 @@ pub(super) fn apply_ops_with_authority_beside(
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 ops_claim::apply_reconcile_lexical_arm(
-                    store, &mut *wtxn, &mut state, source, keep,
+                    &crate::secret_custody::CustodyWrite {
+                        store,
+                        config,
+                        analyzer,
+                        text_index_trusted,
+                    },
+                    &mut *wtxn,
+                    &mut state,
+                    source,
+                    keep,
                 )?;
             }
             BatchOp::Vector {
@@ -503,7 +516,17 @@ pub(super) fn apply_ops_with_authority_beside(
             | BatchOp::SetEdgeWeight { .. }
             | BatchOp::SetEdgeVad { .. }
             | BatchOp::DeleteEdge { .. }) => {
-                ops_misc::apply_edge_arm(store, &mut *wtxn, &mut state, op)?;
+                ops_misc::apply_edge_arm(
+                    &crate::secret_custody::CustodyWrite {
+                        store,
+                        config,
+                        analyzer,
+                        text_index_trusted,
+                    },
+                    &mut *wtxn,
+                    &mut state,
+                    op,
+                )?;
             }
             BatchOp::Text { id, fields } => {
                 ops_text::apply_text_arm(
