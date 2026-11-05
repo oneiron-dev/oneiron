@@ -51,6 +51,13 @@ fn ambient_alternative_request(
         OutboundDeliveryWindowDecision::DeliverNow,
     );
     request.ledger_identity_ref = parent.ledger_identity_ref.as_deref().map(derive);
+    // It never goes beside an interrupt whose own send may have gone.
+    request.exclusive_route_ref = Some(
+        parent
+            .ledger_identity_ref
+            .clone()
+            .unwrap_or_else(|| parent.intent_ref.clone()),
+    );
     request.counterparty_ref = alternative.counterparty_ref.clone();
     request.originating_session_ref = parent.originating_session_ref.clone();
     request.active_delivery_contexts = parent.active_delivery_contexts.clone();

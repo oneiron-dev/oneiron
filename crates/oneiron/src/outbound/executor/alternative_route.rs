@@ -112,6 +112,9 @@ pub(super) fn route_bound_alternative<S: OutboundExecutionSink>(
         Ok(route)
     })?;
     match route {
+        // The interrupt's first admission names its bound alternative and is
+        // refused should that be admitted meanwhile (an executor whose lease
+        // ran out sending it).
         AlternativeRoute::Open => Ok(RoutedAttempt::Interrupt),
         AlternativeRoute::InterruptAlone => {
             request.ambient_alternative = None;
@@ -252,21 +255,13 @@ fn send_live_alternative<S: OutboundExecutionSink>(
         ) => {
             // Its binding no longer stands: the alternative stops, and the
             // next attempt routes by the stop.
-            let (attempt_id, binding) = alternative_identity(task, alternative)?;
-            vault.with_write_txn_grouped(|wtxn| {
-                reconcile_connector_intent_in_txn(
-                    vault,
-                    wtxn,
-                    attempt_id,
-                    &binding,
-                    Some(IntentEscalationReason::BindingInvalid),
-                    now,
-                )
-                .map(drop)
-                .map_err(|_| {
-                    Error::InvariantViolation("ambient alternative frozen ledger binding mismatch")
-                })
-            })?;
+            stop_alternative(
+                vault,
+                task,
+                alternative,
+                IntentEscalationReason::BindingInvalid,
+                now,
+            )?;
             retry_connector_task_attempt(
                 queue,
                 attempt,
@@ -350,9 +345,31 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             )?;
             Ok(RoutedAttempt::Settled)
         }
+        OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+            if parked.receipt.fields.get("suppression").map(String::as_str) == Some("dedupe") {
+                // The common door recorded the semantic dedupe: the TASK
+                // settles as the interrupt's would.
+                settle_suppressed_send(vault, attempt, task.task_ref, now)?;
+                return Ok(RoutedAttempt::Settled);
+            }
+            // The Gate refuses the alternative now: it stops, so the next
+            // attempt routes by the stop instead of asking again.
+            let stop =
+                if parked.gate_reason_codes.iter().any(|code| {
+                    code == crate::gate::GateReasonCode::DenyConnectorKeySuspended.as_str()
+                }) {
+                    IntentEscalationReason::ConnectorRevoked
+                } else {
+                    IntentEscalationReason::BindingInvalid
+                };
+            stop_alternative(vault, task, alternative, stop, now)?;
+            let reason = format!("ambient_alternative_{}", outcome.as_str());
+            retry_connector_task_attempt(queue, attempt, now, &reason, None)?;
+            Ok(RoutedAttempt::Settled)
+        }
         _ => {
-            // A stopped or refused alternative: the next attempt routes by
-            // what its row now says.
+            // A stopped alternative: the next attempt routes by what its row
+            // now says.
             let reason = format!("ambient_alternative_{}", outcome.as_str());
             retry_connector_task_attempt(
                 queue,
@@ -364,6 +381,24 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             Ok(RoutedAttempt::Settled)
         }
     }
+}
+
+/// Stops the alternative's admitted call with `stop`, in a writer of its own.
+fn stop_alternative(
+    vault: &Vault,
+    task: &ConnectorSendTask,
+    alternative: &OutboundAmbientAlternative,
+    stop: IntentEscalationReason,
+    now: u64,
+) -> Result<(), Error> {
+    let (attempt_id, binding) = alternative_identity(task, alternative)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        reconcile_connector_intent_in_txn(vault, wtxn, attempt_id, &binding, Some(stop), now)
+            .map(drop)
+            .map_err(|_| {
+                Error::InvariantViolation("ambient alternative frozen ledger binding mismatch")
+            })
+    })
 }
 
 /// The alternative's dispatch result as the interrupt's: its outcome,
