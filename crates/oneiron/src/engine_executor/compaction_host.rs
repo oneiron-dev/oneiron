@@ -11,7 +11,7 @@ use super::record::completed_step_count;
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
     load_observation_window, load_script_context, observation_output_path, recoverable_chunk_path,
-    script_output_path,
+    scan_output_windows, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
@@ -289,23 +289,21 @@ impl EngineNativeExecutor<'_> {
                             "byte_len": output.raw_len,
                             "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
                         }))?];
-                        let window = load_observation_window(
-                            &self.storage,
-                            record,
-                            &path,
-                            COMPACTION_OBSERVATION_WINDOW_BYTES,
-                        )?;
+                        // The whole output, by range: a ref past the first
+                        // window stays in the stub too.
                         let mut reads = std::collections::BTreeSet::new();
-                        super::compaction::result_reads(&window, &mut reads);
+                        let mut ids = std::collections::BTreeSet::new();
+                        scan_output_windows(&self.storage, record, output, |window| {
+                            super::compaction::result_reads(window, &mut reads);
+                            ids.extend(super::compaction::text_ids(window));
+                        })?;
                         for read in reads {
-                            handles.push(serde_json::to_string(
-                                &serde_json::json!({ "sandbox.fs.read_file": read }),
-                            )?);
+                            handles.push(super::compaction::result_read_affordance(&read)?);
                         }
                         outputs.push(FoldedOutput {
                             step: seq,
                             handles,
-                            ids: super::compaction::text_ids(&window),
+                            ids: ids.into_iter().collect(),
                         });
                     }
                 }
@@ -381,9 +379,7 @@ impl EngineNativeExecutor<'_> {
             }
         }
         for read in reads {
-            handles.push(serde_json::to_string(
-                &serde_json::json!({ "sandbox.fs.read_file": read }),
-            )?);
+            handles.push(super::compaction::result_read_affordance(&read)?);
         }
         let mut pins = super::compaction::window_pins(&window);
         if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
