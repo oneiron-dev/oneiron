@@ -15,6 +15,8 @@ pub struct SessionWitnessContext<'v> {
     caller: Memory<'v>,
     session: OffRecordSession<'v>,
     route: SessionWriteRoute,
+    room: Option<EntityId>,
+    entered_by: Option<[u8; 16]>,
 }
 
 /// A session witness's actual retention, without inventing a durable receipt.
@@ -46,11 +48,7 @@ impl<'v> Memory<'v> {
             .off_record_session_vault()
             .bind_caller_session(session_ref, principal)?;
         let (route, _) = session.landing_route()?;
-        let context = SessionWitnessContext {
-            caller: self.clone(),
-            session,
-            route,
-        };
+        let context = SessionWitnessContext::new(self.clone(), session, route)?;
         {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             context.admit_in_txn(&txn)?;
@@ -59,7 +57,29 @@ impl<'v> Memory<'v> {
     }
 }
 
-impl SessionWitnessContext<'_> {
+impl<'v> SessionWitnessContext<'v> {
+    fn new(
+        caller: Memory<'v>,
+        session: OffRecordSession<'v>,
+        route: SessionWriteRoute,
+    ) -> MemoryResult<Self> {
+        // Session state precedes the base writer. Capture instance metadata
+        // here; admission inside the writer never takes that mutex.
+        let record = session.record()?;
+        if record.closing {
+            return Err(caller_refused());
+        }
+        let room = record.room.map(EntityId::from_bytes).transpose()?;
+        route.revalidate()?;
+        Ok(Self {
+            caller,
+            session,
+            route,
+            room,
+            entered_by: record.entered_by,
+        })
+    }
+
     /// Whether the captured route retains nothing. Check this before opening
     /// any durable stream, custody, invocation or receipt state for the call.
     pub fn keeps_no_record(&self) -> bool {
@@ -80,7 +100,7 @@ impl SessionWitnessContext<'_> {
         }
         let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
             self.admit_in_txn(txn)?;
-            if let Some(room) = self.session.room()?
+            if let Some(room) = self.room
                 && !self.session.is_member_in_txn(txn, room, author.actor)?
             {
                 return Err(caller_refused());
@@ -137,7 +157,7 @@ impl SessionWitnessContext<'_> {
                 route: Some(&self.route),
                 summary: None,
                 admit: Some(&admit),
-                rostered: self.session.room()?,
+                rostered: self.room,
                 turn_vector: None,
             },
             WitnessDoor::Guest,
@@ -150,11 +170,10 @@ impl SessionWitnessContext<'_> {
 
     fn admit_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         verify_caller_in_txn(&self.caller, txn)?;
-        let record = self.session.record()?;
-        if record.closing {
+        if !self.session.is_open_for_witness() {
             return Err(caller_refused());
         }
-        match self.session.room()? {
+        match self.room {
             Some(room) => {
                 if !self
                     .session
@@ -171,7 +190,7 @@ impl SessionWitnessContext<'_> {
                     return Err(caller_refused());
                 }
                 Some(_) => {}
-                None => match record.entered_by {
+                None => match self.entered_by {
                     Some(entered_by) if entered_by != *self.caller.actor.as_bytes() => {
                         return Err(caller_refused());
                     }

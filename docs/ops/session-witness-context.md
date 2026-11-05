@@ -10,7 +10,12 @@ A retained witness uses the existing witness program and its author/envelope
 checks. The caller's proof, holder, class and current room membership are checked
 again in every owning transaction. The author must independently belong to a
 session's room. A human caller's credential never becomes an agent author's proof.
-A mode change invalidates the captured route rather than silently re-minting it.
+A mode change or close invalidates the captured route rather than silently re-minting it.
+Session instance metadata is captured before the owning transaction opens.
+Admission rechecks live caller proof, room membership, the exact instance's
+published open state and the captured route in that transaction without acquiring
+the session-state mutex. This preserves the
+session-state-before-base-writer lock order used by promotion and close.
 
 - OffRecord witnesses retain only session-local rows and return
   `SessionWitnessOutcome::Retained` with the session-local witness receipt.

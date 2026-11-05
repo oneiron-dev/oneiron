@@ -102,10 +102,6 @@ impl SessionWitnessBinding {
         if !matches!(&self.caller.authority, CallerAuthority::Native) {
             caller.transport_invocation = true;
         }
-        Ok(SessionWitnessContext {
-            caller,
-            session,
-            route: self.route.clone(),
-        })
+        SessionWitnessContext::new(caller, session, self.route.clone())
     }
 }
