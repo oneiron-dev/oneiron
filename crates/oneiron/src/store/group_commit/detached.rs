@@ -35,7 +35,7 @@
 //! When the handle a leader took turns out to be the last, because every
 //! other holder let go while the write ran, the vault closes on a thread of
 //! its own just after. Each handle a leader takes is counted on its vault's
-//! open path from before it is taken until it is let go of, its close
+//! open path from when it is taken until it is let go of, its close
 //! included ([`LeaderHolds`]), so a reopen of that path in this process waits
 //! for that close rather than finding the vault still open (FIX 12316).
 //!
@@ -46,7 +46,6 @@
 //! before any group ran it is told `false` as it is said lost.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -608,7 +607,7 @@ const LEADER_HOLD_POLL: Duration = Duration::from_millis(10);
 
 /// The vault handles a store's leader holds, counted on the store's open path
 /// (FIX 12316): one for each handle taken from a weak one to run a detached
-/// write or its callback, from before it is taken until it is let go of, and
+/// write or its callback, from when it is taken until it is let go of, and
 /// when it is the last, until the vault it held has closed. A reopen of the
 /// path that finds every handle on the vault there counted here waits for
 /// them, since the vault closes once they are let go of, instead of finding
@@ -618,49 +617,75 @@ pub(crate) struct LeaderHolds(Arc<LeaderHoldCount>);
 
 #[derive(Default)]
 struct LeaderHoldCount {
-    held: AtomicUsize,
+    /// The handles counted. It changes only under this lock, together with
+    /// the vault's strong count (a take's upgrade, a release's
+    /// `Arc::into_inner`), and a reopen reads both under it, so the two are
+    /// never read apart (REVIEW-5658 P1).
+    held: Mutex<usize>,
     /// The vault the handles are taken on, from the first one taken.
     vault: OnceLock<Weak<Vault>>,
 }
 
 impl LeaderHolds {
-    /// A handle on `vault` while a holder keeps it, counted from before it
-    /// is taken, so a reopen never sees it uncounted; `None` once every
-    /// holder let go.
+    fn held(&self) -> MutexGuard<'_, usize> {
+        self.0.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A handle on `vault` while a holder keeps it, counted as it is taken;
+    /// `None` once every holder let go.
     pub(crate) fn take(&self, vault: &Weak<Vault>) -> Option<LeaderHold> {
-        self.0.held.fetch_add(1, Ordering::SeqCst);
+        let mut held = self.held();
         self.0.vault.get_or_init(|| vault.clone());
-        match vault.upgrade() {
-            Some(handle) => Some(LeaderHold {
-                vault: Some(handle),
-                holds: self.clone(),
-            }),
-            None => {
-                self.release();
-                None
+        let handle = vault.upgrade()?;
+        *held += 1;
+        Some(LeaderHold {
+            vault: Some(handle),
+            holds: self.clone(),
+        })
+    }
+
+    /// Lets go of a counted handle. The last one keeps its count until the
+    /// vault it held has closed, on a thread of its own; the vault never
+    /// closes under this lock.
+    fn release(&self, vault: Arc<Vault>) {
+        let last = {
+            let mut held = self.held();
+            let last = Arc::into_inner(vault);
+            if last.is_none() {
+                *held -= 1;
             }
+            last
+        };
+        if let Some(last) = last {
+            close_vault_elsewhere(last, self.clone());
         }
     }
 
-    fn release(&self) {
-        self.0.held.fetch_sub(1, Ordering::SeqCst);
+    /// The count a last handle kept, once the vault it held has closed (or
+    /// will never close here).
+    fn release_closed(&self) {
+        *self.held() -= 1;
     }
 
     /// Every handle on the vault is one counted here, or none is left and
     /// its close is on its way: the vault closes once these are let go of.
     pub(crate) fn close_pending(&self) -> bool {
-        let held = self.0.held.load(Ordering::SeqCst);
-        held > 0
+        let held = self.held();
+        *held > 0
             && self
                 .0
                 .vault
                 .get()
-                .is_some_and(|vault| vault.strong_count() <= held)
+                .is_some_and(|vault| vault.strong_count() <= *held)
+    }
+
+    fn count(&self) -> usize {
+        *self.held()
     }
 
     /// Waits until no handle is counted here, or until `deadline`.
     pub(crate) fn wait_for_release(&self, deadline: Instant) {
-        while self.0.held.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+        while self.count() > 0 && Instant::now() < deadline {
             std::thread::sleep(LEADER_HOLD_POLL);
         }
     }
@@ -697,12 +722,8 @@ impl std::ops::Deref for LeaderHold {
 
 impl Drop for LeaderHold {
     fn drop(&mut self) {
-        let Some(vault) = self.vault.take() else {
-            return;
-        };
-        match Arc::into_inner(vault) {
-            Some(last) => close_vault_elsewhere(last, self.holds.clone()),
-            None => self.holds.release(),
+        if let Some(vault) = self.vault.take() {
+            self.holds.release(vault);
         }
     }
 }
@@ -731,7 +752,7 @@ fn close_vault_elsewhere(vault: Vault, holds: LeaderHolds) {
         .spawn(move || {
             let vault = held.lock().unwrap_or_else(PoisonError::into_inner).take();
             drop(vault);
-            closing.release();
+            closing.release_closed();
         });
     if let Err(error) = started {
         tracing::warn!(
@@ -739,6 +760,6 @@ fn close_vault_elsewhere(vault: Vault, holds: LeaderHolds) {
             "a vault whose last handle a detached write held stays open: its close thread did not start"
         );
         std::mem::forget(slot.lock().unwrap_or_else(PoisonError::into_inner).take());
-        holds.release();
+        holds.release_closed();
     }
 }
