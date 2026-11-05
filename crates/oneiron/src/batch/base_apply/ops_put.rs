@@ -30,6 +30,7 @@ pub(super) fn apply_put_arm(
     text_index_trusted: bool,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
+    native_publication: Option<NativePublicationContext<'_>>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -155,6 +156,7 @@ pub(super) fn apply_put_arm(
             },
             options: put_options,
             context: PutContext {
+                native_publication,
                 origin,
                 write_policy: state.write_policy.as_ref(),
                 write_envelope: materialization

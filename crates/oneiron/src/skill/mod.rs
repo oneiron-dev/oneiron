@@ -17,6 +17,8 @@ use oneiron_base::skill_invocations as invocation;
 pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
+#[cfg(feature = "sync")]
+mod native_state;
 mod pack_load;
 mod record;
 pub(crate) mod resident;
@@ -47,6 +49,8 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
     pin_loaded_in_txn, pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::native_state::SkillStateWrite;
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{

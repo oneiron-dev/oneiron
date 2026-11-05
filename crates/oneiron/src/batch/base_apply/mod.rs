@@ -225,6 +225,7 @@ pub(super) fn apply_ops_with_origin(
         origin,
         None,
         None,
+        None,
     )
 }
 
@@ -251,6 +252,7 @@ pub(super) fn apply_ops_with_authority_beside(
     origin: BaseWriteOrigin<'_>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
+    native_publication: Option<NativePublicationContext<'_>>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
@@ -448,6 +450,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     text_index_trusted,
                     authority_beside,
                     own_device,
+                    native_publication,
                 )?;
             }
             BatchOp::ClaimCandidate {

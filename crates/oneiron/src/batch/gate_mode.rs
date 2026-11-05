@@ -22,6 +22,13 @@ impl PendingAutoProbe {
     }
 }
 
+/// The actual Vault and caller of a native publication path, not admission.
+#[derive(Clone, Copy)]
+pub(super) struct NativePublicationContext<'vault> {
+    pub(super) vault: &'vault crate::Vault,
+    pub(super) actor: Option<crate::WriteActor>,
+}
+
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
     pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
