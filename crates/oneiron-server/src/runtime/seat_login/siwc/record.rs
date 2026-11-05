@@ -10,7 +10,7 @@ use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::commands::credential_file;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct CredentialRecord {
     pub version: u8,
     pub issuer: String,
@@ -20,6 +20,7 @@ pub(super) struct CredentialRecord {
     pub ext_agent_host_id: String,
     /// The registered scheme, host and path; only its port may change.
     pub redirect_uri: String,
+    pub nonce: String,
     pub id_token: String,
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -93,7 +94,7 @@ pub(super) fn lock(path: &Path) -> anyhow::Result<File> {
     };
     credential_file::admit(&path, &file)?;
     file.try_lock()
-        .map_err(|_| anyhow::anyhow!("another sign-in is using this SIWC record"))?;
+        .map_err(|_| anyhow::anyhow!("another SIWC operation is using this record"))?;
     Ok(file)
 }
 

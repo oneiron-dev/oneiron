@@ -16,6 +16,7 @@ pub(crate) struct CredentialSource {
     subject: String,
     client_id: String,
     host_id: String,
+    refresh: tokio::sync::Mutex<()>,
 }
 
 pub(crate) struct ActiveCredential {
@@ -33,6 +34,7 @@ impl CredentialSource {
             subject: record.subject.clone(),
             client_id: record.client_id.clone(),
             host_id: record.ext_agent_host_id.clone(),
+            refresh: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -43,12 +45,55 @@ impl CredentialSource {
             && record.ext_agent_host_id == self.host_id
     }
 
-    pub(crate) fn open(&self) -> anyhow::Result<ActiveCredential> {
-        let record = read(&self.path)?;
+    async fn current(&self) -> anyhow::Result<CredentialRecord> {
+        let path = self.path.clone();
+        let record = tokio::task::spawn_blocking(move || read(&path))
+            .await
+            .map_err(|_| anyhow::anyhow!("SIWC credential read stopped"))??;
+        self.check_registration(&record)?;
+        Ok(record)
+    }
+
+    fn check_registration(&self, record: &CredentialRecord) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.matches(&record),
+            self.matches(record),
             "SIWC registration changed; rebuild the model runtime"
         );
+        Ok(())
+    }
+
+    pub(crate) async fn open(&self) -> anyhow::Result<ActiveCredential> {
+        let mut record = self.current().await?;
+        if expired(&record)? {
+            let _refresh = self.refresh.lock().await;
+            record = self.current().await?;
+            if expired(&record)? {
+                // Lock the stable sibling, then reread: another process may
+                // have refreshed or signed out since the first read.
+                let path = self.path.clone();
+                let (_record_lock, current) = tokio::task::spawn_blocking(move || {
+                    let lock = super::record::lock(&path)?;
+                    Ok::<_, anyhow::Error>((lock, read(&path)?))
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("SIWC credential lock stopped"))??;
+                self.check_registration(&current)?;
+                record = current;
+                if expired(&record)? {
+                    let refreshed = super::refresh::rotate(record.clone()).await?;
+                    // A removed or replaced record must not be resurrected
+                    // after the network or verification await.
+                    anyhow::ensure!(
+                        self.current().await? == record,
+                        "SIWC credentials changed during refresh"
+                    );
+                    // No detached task publishes. Dropping this opening
+                    // future drops the exchange and the held record lock.
+                    refreshed.write(&self.path)?;
+                    record = refreshed;
+                }
+            }
+        }
         usable(&record)?;
         let bearer = Zeroizing::new(format!("Bearer {}", record.access_token));
         let mut authorization = HeaderValue::from_str(&bearer)
@@ -84,10 +129,14 @@ fn read(path: &Path) -> anyhow::Result<CredentialRecord> {
         .ok_or_else(|| anyhow::anyhow!("local SIWC credentials are missing; sign in first"))
 }
 
-fn usable(record: &CredentialRecord) -> anyhow::Result<()> {
+fn expired(record: &CredentialRecord) -> anyhow::Result<bool> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    Ok(record.expires_at <= now)
+}
+
+fn usable(record: &CredentialRecord) -> anyhow::Result<()> {
     anyhow::ensure!(
-        record.expires_at > now,
+        !expired(record)?,
         "local SIWC access token expired; sign in again"
     );
     anyhow::ensure!(

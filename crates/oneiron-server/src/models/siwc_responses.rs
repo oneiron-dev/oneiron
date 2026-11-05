@@ -110,13 +110,11 @@ impl SiwcResponses {
         lease: &'a BudgetLease,
         cancel: &WorkCancel,
     ) -> LlmResult<OpenAiCompatProviderStream<'a>> {
-        let credentials = Arc::clone(&self.credentials);
-        let opening = tokio::task::spawn_blocking(move || credentials.open());
+        let opening = self.credentials.open();
         let active = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(RetryableLlmError::DeviceAdmissionStopped.into()),
-            result = opening => result.map_err(|_| FatalLlmError::Auth)?
-                .map_err(|_| FatalLlmError::Auth)?,
+            result = opening => result.map_err(|_| FatalLlmError::Auth)?,
         };
         let release = || {
             if cancel.is_cancelled() {
