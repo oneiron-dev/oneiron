@@ -27,7 +27,7 @@ use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use super::super::container::{
-    Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
+    ContainerReader, Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
 };
 use super::super::release_hit;
 use super::body::reads_as_text;
@@ -227,6 +227,13 @@ fn residue(bytes: &[u8], keys: &[FileKey]) -> Result<Option<&'static str>> {
 /// member under it, read the retained repository way: the first reason
 /// either names. Never the generic scan, whose container read is bounded.
 fn validate_retained_repo_copy(copy: &[u8]) -> Result<Option<&'static str>> {
+    validate_retained_repo_copy_with_reader(copy, &ContainerReader::default())
+}
+
+fn validate_retained_repo_copy_with_reader(
+    copy: &[u8],
+    reader: &ContainerReader,
+) -> Result<Option<&'static str>> {
     if let Some(reason) = leaf_hit(copy)? {
         return Ok(Some(reason));
     }
@@ -236,7 +243,7 @@ fn validate_retained_repo_copy(copy: &[u8]) -> Result<Option<&'static str>> {
             None => Ok(()),
         }
     };
-    match walk_retained_repo_members(copy, &mut visit) {
+    match reader.walk_retained_repo_members(copy, &mut visit) {
         Ok(()) => Ok(None),
         Err(Stop::Refuse(reason)) => Ok(Some(reason)),
         Err(Stop::Fail(error)) => Err(error),

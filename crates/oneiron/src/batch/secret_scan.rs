@@ -40,7 +40,9 @@ pub(crate) use self::mask::carrier::{
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
-pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
+pub(crate) use self::mask::retained_repo::read::{
+    project_marked_retained_repo_blob, project_marked_retained_repo_blob_with_reader,
+};
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,

@@ -63,8 +63,8 @@ impl ReadContinuation {
 
 impl Vault {
     /// Resolve the same authorized file as the synchronous door, off the async
-    /// executor. Inline and file-backed masks cooperate at native checkpoints;
-    /// retained repository projections keep their existing synchronous work.
+    /// executor. Inline, file-backed and retained repository masks cooperate
+    /// at native checkpoints on the same worker and read transaction.
     /// The owner receives one final answer, never partial bytes or a poll URL.
     /// There is no wall timeout or new content refusal. Dropping this future
     /// cancels at the next checkpoint; an opaque codec unit is not preempted.

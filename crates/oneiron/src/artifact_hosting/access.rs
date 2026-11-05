@@ -315,7 +315,11 @@ impl Vault {
                 }
                 // A file a repo mark covers is served as its projection,
                 // found before its bytes are read, under its own hash (FIX 7608).
-                if let Some(copy) = self.repo_marked_asset_copy_in_txn(txn, &entry.content_hash)? {
+                if let Some(copy) = self.repo_marked_asset_copy_in_txn_with_reader(
+                    txn,
+                    &entry.content_hash,
+                    reader,
+                )? {
                     let bytes = copy.into_bytes();
                     let hash = *blake3::hash(&bytes).as_bytes();
                     (bytes, None, hash)

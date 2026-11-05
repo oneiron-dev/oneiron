@@ -54,7 +54,7 @@ use super::secret_marks::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, add_place,
 };
 use crate::Vault;
-use crate::batch::secret_scan::project_marked_retained_repo_blob;
+use crate::batch::secret_scan::{ContainerReader, project_marked_retained_repo_blob_with_reader};
 use crate::code_document::CodeDocumentFrontier;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -172,6 +172,17 @@ pub(crate) fn project_repo_bytes_in_txn(
     marks: &RepoBlobMarks,
     bytes: Vec<u8>,
 ) -> Result<RepoBodyProjection> {
+    project_repo_bytes_in_txn_with_reader(vault, txn, marks, bytes, &ContainerReader::default())
+}
+
+/// The same projection using one read's explicit container schedule.
+pub(crate) fn project_repo_bytes_in_txn_with_reader(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoBlobMarks,
+    bytes: Vec<u8>,
+    reader: &ContainerReader,
+) -> Result<RepoBodyProjection> {
     let Some(source_blob) = marks.source_blob().cloned() else {
         return Ok(RepoBodyProjection::Exact(bytes));
     };
@@ -189,7 +200,7 @@ pub(crate) fn project_repo_bytes_in_txn(
                 }
             }
         }
-        project_marked_retained_repo_blob(&bytes, &places)
+        project_marked_retained_repo_blob_with_reader(&bytes, &places, reader)
     };
     Ok(match copy {
         Some(bytes) => RepoBodyProjection::Masked { bytes, source_blob },

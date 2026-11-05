@@ -9,8 +9,8 @@
 
 use zeroize::Zeroizing;
 
-use super::super::super::container::{Stop, masked_retained_repo_copy};
-use super::validate_retained_repo_copy;
+use super::super::super::container::{ContainerReader, Stop};
+use super::validate_retained_repo_copy_with_reader;
 use crate::file_secret_marks::KeyPlaces;
 
 /// `bytes` with every span `places` names overwritten, members rebuilt and
@@ -19,14 +19,23 @@ pub(crate) fn project_marked_retained_repo_blob(
     bytes: &[u8],
     places: &KeyPlaces,
 ) -> Option<Vec<u8>> {
+    project_marked_retained_repo_blob_with_reader(bytes, places, &ContainerReader::default())
+}
+
+/// The same retained copy using one read's explicit container schedule.
+pub(crate) fn project_marked_retained_repo_blob_with_reader(
+    bytes: &[u8],
+    places: &KeyPlaces,
+    reader: &ContainerReader,
+) -> Option<Vec<u8>> {
     if places.is_empty() {
         return None;
     }
-    let mut copy = match masked_retained_repo_copy(bytes, places) {
+    let mut copy = match reader.masked_retained_repo_copy(bytes, places) {
         Ok(copy) => Zeroizing::new(copy),
         Err(Stop::Refuse(_) | Stop::Fail(_)) => return None,
     };
-    match validate_retained_repo_copy(&copy) {
+    match validate_retained_repo_copy_with_reader(&copy, reader) {
         Ok(None) => Some(std::mem::take(&mut *copy)),
         Ok(Some(_)) | Err(_) => None,
     }
