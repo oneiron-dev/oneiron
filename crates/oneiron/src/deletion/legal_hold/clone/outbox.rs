@@ -7,7 +7,7 @@
 //! every writer of the process stopped, sends one last batch naming the
 //! order's next ordinal and keeps the standing for a later start.
 
-use std::io;
+use std::io::{self, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron_crypto::HybridPublicKey;
-use oneiron_vault_contract::host_legal::{CaptureExtent, CaptureRequest};
+use oneiron_vault_contract::host_legal::{CaptureExtent, CaptureRequest, FrameHeader, FrameKind};
 
 use super::collector::{Collector, SummaryCounts};
 use crate::Vault;
@@ -60,6 +60,19 @@ impl super::HostLegalConnection {
             prospective::stand_in_txn(&vault.store, &mut wtxn, &request, request_digest)?;
             wtxn.commit()?;
         }
+        // The positive answer that this connection now stands the exact
+        // request and stays open through managed stop's trigger.
+        self.stream.write_all(
+            &FrameHeader {
+                kind: FrameKind::Standing,
+                member: 0,
+                part: 0,
+                len: request_digest.len() as u64,
+            }
+            .bytes(),
+        )?;
+        self.stream.write_all(&request_digest)?;
+        self.stream.flush()?;
         loop {
             // Sampled before the check: a stop or release after this point
             // either fails the check or moves the generation waited on.

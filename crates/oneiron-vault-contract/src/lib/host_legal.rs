@@ -300,6 +300,11 @@ pub enum FrameKind {
     Pending = 6,
     /// Exact native order standing ended; not HOST key destruction.
     Released = 7,
+    /// A prospective order stands and is attached to this connection, sent
+    /// once before its first batch; the payload is the exact request digest.
+    /// From here managed stop's trigger leaves the connection open for the
+    /// final drain.
+    Standing = 8,
 }
 
 /// Opaque member/part ordinals only. No source keys or content fingerprints
@@ -332,6 +337,7 @@ impl FrameHeader {
             5 => FrameKind::Ready,
             6 => FrameKind::Pending,
             7 => FrameKind::Released,
+            8 => FrameKind::Standing,
             _ => return Err(invalid("legal capture frame kind")),
         };
         Ok(Self {

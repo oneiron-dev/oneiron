@@ -191,8 +191,11 @@ MESSAGE row of the vault. Off-record overlay writes never reach it.
 The request's connection stands the order durably under `legal_hold:host:`
 (its capture binding, term, public recipient key and next ordinal), so it is
 carried with the host-order family and host-sealed in checkpoints, never in an
-owner image or export. A released generation is recorded and never stands
-again. While the order stands and before its `ends_at`, the shared base put
+owner image or export. Once the standing commits and the connection is
+attached, the engine answers with one `Standing` frame (kind 8) carrying the
+exact request digest, before any batch; from then on managed stop's trigger
+leaves the connection open for the final drain. A released generation is
+recorded and never stands again. While the order stands and before its `ends_at`, the shared base put
 seam seals each new MESSAGE row, exactly as staged, to the order's public key
 inside the same writer, and keeps the ciphertext in the order's outbox. The
 message and its sealed copy commit or roll back together. At the end of that
