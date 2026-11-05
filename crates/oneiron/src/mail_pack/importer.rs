@@ -179,6 +179,45 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// A message the change feed reports added: one that never landed lands
+    /// under the copy setting, and a kept copy the provider deleted is live
+    /// again when the provider's headers say it is out of trash and spam.
+    fn added(&mut self, provider_id: &str) -> MemoryResult<()> {
+        if !self.source_deleted(provider_id)? {
+            if self.row.copy != MailCopySetting::SearchOnly {
+                self.land_headers(provider_id)?;
+            }
+            return Ok(());
+        }
+        if let Some(headers) = self.wire.headers(&self.wire_source, provider_id)?
+            && !headers.trash_or_spam
+        {
+            update_labels(
+                self.vault,
+                self.source,
+                provider_id,
+                &headers.labels,
+                self.at,
+            )?;
+            restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
+        }
+        Ok(())
+    }
+
+    /// Whether the message's copy is a kept one the provider deleted.
+    fn source_deleted(&self, provider_id: &str) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(OCCURRENCES
+            .get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(self.source, provider_id),
+            )?
+            .is_some_and(|occurrence| {
+                matches!(occurrence.presence, MailPresence::SourceDeleted { .. })
+            }))
+    }
+
     /// A message out of the provider's trash or spam: a kept copy is live
     /// again, and one that never landed lands now, under the copy setting.
     fn restore(&mut self, provider_id: &str) -> MemoryResult<()> {
@@ -267,11 +306,7 @@ impl Step<'_> {
             };
             for change in read.changes {
                 match change {
-                    MailHistoryChange::Added(message) => {
-                        if self.row.copy != MailCopySetting::SearchOnly {
-                            self.land_headers(&message.provider_id)?;
-                        }
-                    }
+                    MailHistoryChange::Added(message) => self.added(&message.provider_id)?,
                     MailHistoryChange::Deleted { provider_id } => self.delete(&provider_id)?,
                     MailHistoryChange::Labels {
                         provider_id,

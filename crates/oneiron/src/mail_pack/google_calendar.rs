@@ -20,8 +20,7 @@
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use reqwest::header::AUTHORIZATION;
@@ -31,11 +30,11 @@ use serde_json::Value;
 use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire};
 use super::credential::WireReads;
 use super::gmail::reads_google_mail;
-use super::rest::{self, RestAnswer, array, bearer_header, refused, text_of};
+use super::rest::{self, RestAnswer, VerifiedCredentials, array, bearer_header, refused, text_of};
 use super::wire::MailSyncSource;
+use crate::Vault;
 use crate::calendar::{RemoteCalendarChange, RemoteCalendarObject};
 use crate::error::{Error, Result};
-use crate::{EntityId, Vault};
 
 /// The custody effector a Google Calendar credential is bound to.
 pub const GOOGLE_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:google_calendar";
@@ -58,8 +57,8 @@ struct GoogleCalendarCursor {
 pub struct HttpGoogleCalendarWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
-    /// The sources whose credential this wire has seen own their calendar.
-    verified: RefCell<BTreeSet<EntityId>>,
+    /// The credentials this wire has seen own their source's calendar.
+    verified: VerifiedCredentials,
 }
 
 impl<'v> HttpGoogleCalendarWire<'v> {
@@ -72,7 +71,7 @@ impl<'v> HttpGoogleCalendarWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
-            verified: RefCell::new(BTreeSet::new()),
+            verified: VerifiedCredentials::new(),
         })
     }
 
@@ -86,6 +85,12 @@ impl<'v> HttpGoogleCalendarWire<'v> {
         if !reads_google_mail(source.provider) {
             return Err(refused("google_calendar_wire_reads_google_calendars_only"));
         }
+        let calendar = source.address.trim();
+        require_id(calendar)?;
+        let entry_url = format!(
+            "{CALENDAR_API_URL}/users/me/calendarList/{}",
+            path_segment(calendar)
+        );
         let mut answer: Option<RestAnswer> = None;
         let _receipt = self.vault.with_source_token_at_door(
             source,
@@ -93,7 +98,30 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             GOOGLE_CALENDAR_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
-                let request = self.client.get(url).query(query).header(AUTHORIZATION, auth);
+                // The credential presented here is the one checked: its user
+                // owns the calendar the source names.
+                if !self.verified.holds(source.source_ref, token) {
+                    let request = self
+                        .client
+                        .get(&entry_url)
+                        .header(AUTHORIZATION, auth.clone());
+                    let entry = rest::send(request)?
+                        .found_or_gone("google_calendar")?
+                        .ok_or_else(|| {
+                            refused("google_calendar_not_in_the_credentials_calendar_list")
+                        })?;
+                    if entry.get("accessRole").and_then(Value::as_str) != Some("owner") {
+                        return Err(refused(
+                            "google_calendar_credential_does_not_own_the_calendar",
+                        ));
+                    }
+                    self.verified.insert(source.source_ref, token);
+                }
+                let request = self
+                    .client
+                    .get(url)
+                    .query(query)
+                    .header(AUTHORIZATION, auth);
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
@@ -108,29 +136,6 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             "{CALENDAR_API_URL}/calendars/{}",
             path_segment(calendar)
         ))
-    }
-
-    /// Checks once per source that its credential's user owns the calendar
-    /// the source names.
-    fn verify(&self, source: &MailSyncSource) -> Result<()> {
-        if self.verified.borrow().contains(&source.source_ref) {
-            return Ok(());
-        }
-        let calendar = source.address.trim();
-        require_id(calendar)?;
-        let url = format!(
-            "{CALENDAR_API_URL}/users/me/calendarList/{}",
-            path_segment(calendar)
-        );
-        let entry = self
-            .get(source, &url, &[])?
-            .found_or_gone("google_calendar")?
-            .ok_or_else(|| refused("google_calendar_not_in_the_credentials_calendar_list"))?;
-        if entry.get("accessRole").and_then(Value::as_str) != Some("owner") {
-            return Err(refused("google_calendar_credential_does_not_own_the_calendar"));
-        }
-        self.verified.borrow_mut().insert(source.source_ref);
-        Ok(())
     }
 
     /// Every event of the series with iCalendar UID `uid`: its master and
@@ -161,7 +166,6 @@ impl<'v> HttpGoogleCalendarWire<'v> {
 
 impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
     fn pull(&self, source: &MailSyncSource, cursor: Option<&str>) -> Result<MailCalendarRead> {
-        self.verify(source)?;
         let cursor: GoogleCalendarCursor = match cursor {
             Some(cursor) => serde_json::from_str(cursor)
                 .map_err(|_| refused("google_calendar_cursor_unreadable"))?,
@@ -366,12 +370,20 @@ fn write_vevent(
     });
     let transparent =
         declined || event.get("transparency").and_then(Value::as_str) == Some("transparent");
-    line(ics, "TRANSP", if transparent { "TRANSPARENT" } else { "OPAQUE" });
+    line(
+        ics,
+        "TRANSP",
+        if transparent { "TRANSPARENT" } else { "OPAQUE" },
+    );
     if let Some(organizer) = event.get("organizer")
         && let Some(email) = text_of(organizer.get("email"))
     {
         let name = cn_param(organizer.get("displayName"));
-        line(ics, &format!("ORGANIZER{name}"), &format!("mailto:{}", text(&email)));
+        line(
+            ics,
+            &format!("ORGANIZER{name}"),
+            &format!("mailto:{}", text(&email)),
+        );
     }
     for attendee in array(event, "attendees") {
         let Some(email) = text_of(attendee.get("email")) else {
