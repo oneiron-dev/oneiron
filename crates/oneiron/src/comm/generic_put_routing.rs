@@ -245,8 +245,8 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
 }
 
 /// Bound born touches keep their native row write and defer projection until
-/// that row and birth are staged. Other births and noncanonical scope keep the
-/// ordinary raw path.
+/// that row and birth are staged. Other births and unsupported context keep
+/// the ordinary raw path.
 pub(crate) fn take_projector_only_batch_puts_preserving_births_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -318,10 +318,13 @@ fn take_batch_puts_in_txn(
                 let projected = CommClaim::from_claim_body(&body)?.value.claim_body()?;
                 let same_world = body.world.unwrap_or_else(crate::claim::base_world_id)
                     == projected.world.unwrap_or_else(crate::claim::base_world_id);
-                let scoped_born_touch = birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH;
-                if (!same_world && !scoped_born_touch)
-                    || !super::scoped_touch::same_touch_context_except_world(&body, &projected)
-                {
+                let same_context = if birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH {
+                    super::scoped_touch::same_touch_context_except_position(&body, &projected)
+                } else {
+                    same_world
+                        && super::scoped_touch::same_touch_context_except_world(&body, &projected)
+                };
+                if !same_context {
                     continue;
                 }
             }

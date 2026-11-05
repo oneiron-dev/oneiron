@@ -137,7 +137,7 @@ pub(super) fn capture_scoped_touch_source(
         .claim_body()
         .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
-        || !same_touch_context_except_world(body, &canonical)
+        || !same_touch_context_except_position(body, &canonical)
     {
         return Err(Error::InvalidClaimBody(
             "unsupported scoped comm source context",
@@ -196,9 +196,13 @@ pub(super) fn scoped_touch_position(source: &ScopedTouchSource) -> Scope {
 }
 
 pub(super) fn same_touch_context_except_world(left: &ClaimBody, right: &ClaimBody) -> bool {
-    left.rel == right.rel
-        && left.scope_facet == right.scope_facet
+    left.scope_facet == right.scope_facet
         && left.scope_project == right.scope_project
+        && same_touch_context_except_position(left, right)
+}
+
+pub(super) fn same_touch_context_except_position(left: &ClaimBody, right: &ClaimBody) -> bool {
+    left.rel == right.rel
         && left.scope == right.scope
         && crate::claim::claim_sensitivity_band(left) == crate::claim::claim_sensitivity_band(right)
         && left.session_tag == right.session_tag
@@ -216,13 +220,12 @@ pub(super) fn touch_slot_body(
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = value.claim_body()?;
     if let Some(source) = source {
-        if source.facet != body.scope_facet
-            || source.project != body.scope_project
-            || Some(source.sensitivity) != crate::claim::claim_sensitivity_band(&body)
-        {
+        if Some(source.sensitivity) != crate::claim::claim_sensitivity_band(&body) {
             return Err(super::claims::CommError::InvalidRecord);
         }
         body.world = Some(source.world);
+        body.scope_facet = source.facet;
+        body.scope_project = source.project;
     }
     Ok(body)
 }
