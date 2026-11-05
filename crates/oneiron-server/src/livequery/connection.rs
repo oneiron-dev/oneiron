@@ -740,6 +740,13 @@ impl Connection {
 }
 
 impl Connection {
+    pub(crate) fn is_own_machine_reply(&self, data: &[u8]) -> bool {
+        super::routing::addressed(data, self.conn_id).is_some_and(|routed| {
+            routed.incarnation == super::routing::OWN_MACHINE_RPC_INCARNATION
+                && routed.frame.first() == Some(&crate::protocol::TAG_RPC)
+        })
+    }
+
     fn own_machine_reply_stands(
         &self,
         peer: oneiron::authority::PeerMachine,

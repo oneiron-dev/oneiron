@@ -376,6 +376,7 @@ pub(super) async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
+                let machine_only_reply = app_connection.is_own_machine_reply(&data);
                 let mut data = data;
                 // A queued app body is judged again at its last door before
                 // the send, by the rows it carries (DEC-0005).
@@ -405,7 +406,15 @@ pub(super) async fn handle_connection(
                         | super::super::conn_state::WindowSyncMode::Residence
                 ) && data.first().copied()
                     == Some(protocol::TAG_WINDOW_SYNC));
+                let machine_reply_allowed = machine_only_reply
+                    && conn_state.bound_auth.is_none()
+                    && !gone()
+                    && server
+                        .vault()
+                        .home_claim_vector_peer_stands(conn_state.peer_machine(server.vault()))
+                        .unwrap_or(false);
                 if app_frame
+                    && !machine_reply_allowed
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())
                     })
