@@ -57,6 +57,83 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
     })
 }
 
+/// The four rows of a native read cache whose blob is still the exact
+/// canonical row the caller selected. A checkpoint leaves the cache whole
+/// unless its opened window, document and touch row read as the producer
+/// wrote them. Removing its opened marker with the bytes permits refetch.
+pub(crate) fn checkpoint_read_cache_keys(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    item: EntityId,
+    canonical: &[u8],
+) -> Result<Option<[String; 4]>> {
+    let id = item.to_hex();
+    let opened = format!("ro:e:{id}");
+    let Some(raw_window) = store.sync_state.get(txn, &opened)? else {
+        return Ok(None);
+    };
+    let Some(window) = std::str::from_utf8(&raw_window)
+        .ok()
+        .and_then(WindowKey::try_new)
+    else {
+        return Ok(None);
+    };
+    if store
+        .sync_state
+        .get(txn, &format!("rp:w:{window}"))?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let blob_key = format!("ri:b:{id}");
+    let Some(raw) = store.sync_state.get(txn, &blob_key)? else {
+        return Ok(None);
+    };
+    if raw != canonical {
+        return Ok(None);
+    }
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if window
+        .start_timestamp()
+        .is_none_or(|start| header.learned_at < start)
+        || window
+            .end_timestamp()
+            .is_some_and(|end| header.learned_at >= end)
+    {
+        return Ok(None);
+    }
+    let document_key = format!("ri:d:{id}");
+    let Some(document) = store.sync_state.get(txn, &document_key)? else {
+        return Ok(None);
+    };
+    let Some((&crate::sync::transport::TAG_DOCUMENT, bytes)) = document.split_first() else {
+        return Ok(None);
+    };
+    let Ok(frame) = crate::sync::transport::decode_document(bytes) else {
+        return Ok(None);
+    };
+    if frame.entity != item
+        || !matches!(
+            frame.kind,
+            crate::sync::transport::document_sub_tags::STATE
+                | crate::sync::transport::document_sub_tags::UPDATE
+        )
+    {
+        return Ok(None);
+    }
+    let touched = format!("{TOUCH_PREFIX}{id}");
+    if !store
+        .sync_state
+        .get(txn, &touched)?
+        .is_some_and(|bytes| bytes.len() == std::mem::size_of::<u64>())
+    {
+        return Ok(None);
+    }
+    Ok(Some([blob_key, document_key, opened, touched]))
+}
+
 /// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
 /// STORE = A, FIX 10799): an erased item's cached body, text document,
 /// opened marker, touch row and thin index rows go in the erase's own

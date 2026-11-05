@@ -56,6 +56,18 @@ impl Selection {
             if !carried.unknown && !carried.worlds.is_empty() && off == carried.worlds {
                 out.entities.insert(entity.as_bytes().to_vec());
                 out.owners.insert(OwnerRef::entity(&entity));
+                #[cfg(feature = "sync")]
+                if let Some(keys) = crate::sync::residence::checkpoint_read_cache_keys(
+                    &vault.store,
+                    txn,
+                    entity,
+                    &raw,
+                )? {
+                    out.rows
+                        .entry(RowDb::SyncState)
+                        .or_default()
+                        .extend(keys.into_iter().map(String::into_bytes));
+                }
             }
         }
         if !out.owners.is_empty() {
