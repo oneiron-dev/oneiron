@@ -615,106 +615,115 @@ fn subscribe_map_observer(
     let lease_vault_id = materializer.lease_vault_id();
     let window_key = window_key.to_string();
     let cid = map.id();
-    subscription_doc.subscribe(
-        &cid,
-        Arc::new(move |event| {
-            if event.origin == DELETION_TOMBSTONE_ORIGIN {
-                // The owning LMDB transaction is still open. Publication owns
-                // its post-commit notification; never invalidate on this event.
-                return;
-            }
-            if super::provenance::is_bridge(event.origin) {
-                // A mirror identifies its source in the same Loro commit.
-                // Other/legacy bridge commits are independent foreign changes.
-                let sources = super::provenance::mirror_sources(event.origin);
-                for cdiff in &event.events {
-                    if let Some(delta) = cdiff.diff.as_map() {
-                        let path = format!("w:{window_key}/{}", live_query.0);
-                        let mut diff = entity_document_diff(&path, live_query.0, delta);
-                        if live_query.0 == "entities" {
-                            for key in delta.updated.keys() {
-                                if let Ok(entity) = EntityId::from_hex(key) {
-                                    diff.revision_events.push(super::RevisionEvent::Mirror {
-                                        entity,
-                                        source_revision: sources
-                                            .as_ref()
-                                            .and_then(|s| s.get(&entity).copied()),
-                                    });
-                                }
-                            }
+    let entity_observer = live_query.0 == "entities";
+    let callback: loro::event::Subscriber = Arc::new(move |event| {
+        if event.origin == DELETION_TOMBSTONE_ORIGIN {
+            // The owning LMDB transaction is still open. Publication owns
+            // its post-commit notification; never invalidate on this event.
+            return;
+        }
+        let entity_delta =
+            entity_observer.then(|| super::entities::entity_event_delta(&callback_doc, &event));
+        let deltas: Vec<&loro::event::MapDelta<'_>> = match &entity_delta {
+            Some(delta) if delta.updated.is_empty() => return,
+            Some(delta) => vec![delta],
+            None => event
+                .events
+                .iter()
+                .filter_map(|change| change.diff.as_map())
+                .collect(),
+        };
+        if super::provenance::is_bridge(event.origin) {
+            // A mirror identifies its source in the same Loro commit.
+            // Other/legacy bridge commits are independent foreign changes.
+            let sources = super::provenance::mirror_sources(event.origin);
+            for delta in deltas.iter().copied() {
+                let path = format!("w:{window_key}/{}", live_query.0);
+                let mut diff = entity_document_diff(&path, live_query.0, delta);
+                if live_query.0 == "entities" {
+                    for key in delta.updated.keys() {
+                        if let Ok(entity) = EntityId::from_hex(key) {
+                            diff.revision_events.push(super::RevisionEvent::Mirror {
+                                entity,
+                                source_revision: sources
+                                    .as_ref()
+                                    .and_then(|s| s.get(&entity).copied()),
+                            });
                         }
-                        materializer.notify_live_queries(
-                            &path,
-                            &diff,
-                            &OriginMark {
-                                conn_id: None,
-                                origin: Some(event.origin.to_owned()),
-                            },
-                        );
                     }
                 }
-                return;
+                materializer.notify_live_queries(
+                    &path,
+                    &diff,
+                    &OriginMark {
+                        conn_id: None,
+                        origin: Some(event.origin.to_owned()),
+                    },
+                );
             }
-            // What this import writes is already in the doc: the live mirror
-            // must not rewrite a carrier with it.
-            let _import = crate::sync::manager::import_scope();
-            for cdiff in &event.events {
-                if let Some(map_delta) = cdiff.diff.as_map() {
-                    let (replayed_entities, changes) = {
-                        let _guard = materializer.lock();
-                        if live_query.0 == "entities" {
-                            let (committed, changes) =
-                                super::entities::materialize_entities_with_changes(
-                                    &callback_doc,
-                                    map_delta,
-                                    &vault,
-                                    &window_key,
-                                    lease_vault_id,
-                                );
-                            (committed.then(Vec::new), changes)
-                        } else {
-                            (
-                                materialize(
-                                    &callback_doc,
-                                    map_delta,
-                                    &vault,
-                                    &window_key,
-                                    lease_vault_id,
-                                ),
-                                Vec::new(),
-                            )
-                        }
-                    };
-                    if let Some(replayed_entities) = replayed_entities {
-                        let path = format!("w:{window_key}/{}", live_query.0);
-                        let mut diff = entity_document_diff(&path, live_query.0, map_delta);
-                        diff.containers.extend(
-                            replayed_entities
-                                .iter()
-                                .map(|id| format!("e:{}", id.to_hex())),
-                        );
-                        diff.containers.sort_unstable();
-                        diff.containers.dedup();
-                        diff.revision_events = changes
-                            .into_iter()
-                            .map(super::RevisionEvent::Original)
-                            .collect();
-                        let by = OriginMark {
-                            conn_id: event
-                                .origin
-                                .strip_prefix("conn:")
-                                .and_then(|id| id.parse().ok()),
-                            origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
-                        };
-                        if let Some(tee) = &live_query.1 {
-                            tee.on_materialized(&path, &diff, &by);
-                        }
-                        materializer.notify_live_queries(&path, &diff, &by);
-                    }
+            return;
+        }
+        // What this import writes is already in the doc: the live mirror
+        // must not rewrite a carrier with it.
+        let _import = crate::sync::manager::import_scope();
+        for map_delta in deltas.iter().copied() {
+            let (replayed_entities, changes) = {
+                let _guard = materializer.lock();
+                if live_query.0 == "entities" {
+                    let (committed, changes) = super::entities::materialize_entities_with_changes(
+                        &callback_doc,
+                        map_delta,
+                        &vault,
+                        &window_key,
+                        lease_vault_id,
+                    );
+                    (committed.then(Vec::new), changes)
+                } else {
+                    (
+                        materialize(
+                            &callback_doc,
+                            map_delta,
+                            &vault,
+                            &window_key,
+                            lease_vault_id,
+                        ),
+                        Vec::new(),
+                    )
                 }
+            };
+            if let Some(replayed_entities) = replayed_entities {
+                let path = format!("w:{window_key}/{}", live_query.0);
+                let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                diff.containers.extend(
+                    replayed_entities
+                        .iter()
+                        .map(|id| format!("e:{}", id.to_hex())),
+                );
+                diff.containers.sort_unstable();
+                diff.containers.dedup();
+                diff.revision_events = changes
+                    .into_iter()
+                    .map(super::RevisionEvent::Original)
+                    .collect();
+                let by = OriginMark {
+                    conn_id: event
+                        .origin
+                        .strip_prefix("conn:")
+                        .and_then(|id| id.parse().ok()),
+                    origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
+                };
+                if let Some(tee) = &live_query.1 {
+                    tee.on_materialized(&path, &diff, &by);
+                }
+                materializer.notify_live_queries(&path, &diff, &by);
             }
-        }),
-    )
+        }
+    });
+    if entity_observer {
+        subscription_doc.subscribe_root(callback)
+    } else {
+        subscription_doc.subscribe(&cid, callback)
+    }
 }
 
 fn entity_document_diff(

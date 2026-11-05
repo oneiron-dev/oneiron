@@ -46,6 +46,74 @@ pub(super) fn materialize_entities_from_delta(
         .then(Vec::new)
 }
 
+/// Re-present a sidecar-only change through the original entity driver.
+/// An actual entity delta wins, including its deletes and non-binary values.
+/// These carrier bytes confer no native admission; the ingest ladder still
+/// selects the current import and runs every ordinary record phase.
+fn extend_skill_document_rows(
+    doc: &LoroDoc,
+    delta: &mut loro::event::MapDelta<'_>,
+    updated: &std::collections::BTreeSet<String>,
+) {
+    if updated.is_empty() {
+        return;
+    }
+    let carriers = doc.get_map("entities");
+    for entity in crate::sync::skill_docs::affected_rows(doc, updated) {
+        let key = entity.to_hex();
+        if delta.updated.contains_key(key.as_str()) {
+            continue;
+        }
+        if let Some(value @ loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))) =
+            carriers.get(&key)
+        {
+            delta
+                .updated
+                .insert(std::borrow::Cow::Owned(key), Some(value));
+        }
+    }
+}
+
+/// Coalesce one import's effective entity and native sidecar changes.
+/// Root container identities exclude nested maps and unrelated side families.
+pub(super) fn entity_event_delta(
+    doc: &LoroDoc,
+    event: &loro::event::DiffEvent<'_>,
+) -> loro::event::MapDelta<'static> {
+    let entities = loro::ContainerID::new_root("entities", loro::ContainerType::Map);
+    let skill_docs = loro::ContainerID::new_root(
+        crate::sync::skill_docs::SKILL_DOCS_MAP,
+        loro::ContainerType::Map,
+    );
+    let mut rows = loro::event::MapDelta {
+        updated: Default::default(),
+    };
+    let mut updated = std::collections::BTreeSet::new();
+    for change in &event.events {
+        let Some(delta) = change.diff.as_map() else {
+            continue;
+        };
+        if *change.target == entities {
+            rows.updated.extend(
+                delta
+                    .updated
+                    .iter()
+                    .map(|(key, value)| (std::borrow::Cow::Owned(key.to_string()), value.clone())),
+            );
+        } else if *change.target == skill_docs {
+            updated.extend(delta.updated.iter().filter_map(|(key, value)| {
+                matches!(
+                    value,
+                    Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
+                )
+                .then(|| key.to_string())
+            }));
+        }
+    }
+    extend_skill_document_rows(doc, &mut rows, &updated);
+    rows
+}
+
 /// Whether the doc's entities map now holds another binary carrier under
 /// `key` than the `blob` a delta brought.
 fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool {
