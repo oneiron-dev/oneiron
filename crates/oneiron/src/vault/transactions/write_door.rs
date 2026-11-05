@@ -61,7 +61,15 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows, settled_tasks, notifications_changed),
+            (
+                task_ids,
+                rows,
+                room_joins,
+                pad_windows,
+                settled_tasks,
+                notifications_changed,
+                note_document_ids,
+            ),
             retirement_staged,
         ) = self.store.group_write_classed(callback, class, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -129,6 +137,7 @@ impl Vault {
                         postcommit.pad_windows,
                         postcommit.settled_tasks,
                         postcommit.notifications_changed,
+                        postcommit.note_document_ids,
                     ),
                     staged != retirements_before
                         || crate::store::credential_erases_staged() != credentials_before,
@@ -143,6 +152,12 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // A pad seal can leave its text frontier unchanged. Wake live NOTE
+        // subscribers only now that the seal is durable (FIX 12110).
+        #[cfg(feature = "sync")]
+        for id in note_document_ids {
+            self.notify_note_document(id);
+        }
         // FIX 3084: a notification this write put or marked wakes the live
         // queries that follow notifications, now that it is durable.
         if notifications_changed {
@@ -165,7 +180,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         self.note_committed_rows(rows);
         #[cfg(not(feature = "sync"))]
-        drop((rows, room_joins));
+        drop((rows, room_joins, note_document_ids));
         // FIX 3321: a join this write filed reaches the live window of its
         // room or thread, now that it is durable.
         #[cfg(feature = "sync")]
