@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use heed::{RoTxn, RwTxn};
 
 use super::super::write_payload_hit;
+use super::accounting::Source;
 use super::{Done, LiftCause, Page, hex, table_page};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -67,8 +68,10 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
-            page.known_reads
-                .extend(source_of_in_txn(vault, txn, decl, key)?);
+            let source = source_of_in_txn(vault, txn, decl, key)?;
+            if !source.entities().is_empty() {
+                page.known_reads.push(source);
+            }
             // A repo-mutation row reads by its own door (FIX 2890).
             let found = match super::retained::hit(vault, txn, decl, key, value)? {
                 Some(found) => found,
@@ -149,14 +152,13 @@ pub(super) fn path(key: &[u8]) -> String {
 /// the first. An office-body fork pairs its artifact with its fork id; its
 /// source is the first. A repo-mutation proposal's key is its own admitted
 /// journal claim. An LFS object's source is its live native manifest ASSET
-/// binding in this transaction. Other formats remain unknown.
-pub(super) fn source_in_txn(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    key: &[u8],
-) -> Result<Option<EntityId>> {
+/// binding in this transaction. A MESSAGE continuation names its live
+/// MESSAGE. Parentless eval cases view their native receipts, whose frozen
+/// read sets establish known dependencies independently of unknown labels.
+/// Other formats remain unknown.
+pub(super) fn source_in_txn(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<Source> {
     let Some((decl, row_key)) = carrier_of(key) else {
-        return Ok(None);
+        return Ok(Source::Unmapped);
     };
     source_of_in_txn(vault, txn, decl, row_key)
 }
@@ -166,26 +168,41 @@ fn source_of_in_txn(
     txn: &RoTxn<'_>,
     decl: &SideTableDecl,
     row_key: &[u8],
-) -> Result<Option<EntityId>> {
+) -> Result<Source> {
+    if std::ptr::eq(decl, &t::SKILL_OPTIMIZE_EVAL_CASE) {
+        let Some(case) = row_key
+            .strip_prefix(decl.prefix)
+            .and_then(<EntityId as SideKey>::decode_key)
+        else {
+            return Ok(Source::Unmapped);
+        };
+        return Ok(Source::of_set(
+            vault.eval_case_receipt_sources_in_txn(txn, &case)?,
+        ));
+    }
     if std::ptr::eq(decl, &t::ORIGIN_LFS_OBJECT) {
         let Some(oid) = row_key
             .strip_prefix(decl.prefix)
             .and_then(LfsOid::decode_key)
         else {
-            return Ok(None);
+            return Ok(Source::Unmapped);
         };
-        return vault.lfs_object_source_in_txn(txn, oid);
+        return Ok(vault
+            .lfs_object_source_in_txn(txn, oid)?
+            .map_or(Source::Unmapped, Source::Entity));
     }
     if std::ptr::eq(decl, &t::MESSAGE_STREAM_ACTIVE) {
         let Some(message) = row_key
             .strip_prefix(decl.prefix)
             .and_then(<EntityId as SideKey>::decode_key)
         else {
-            return Ok(None);
+            return Ok(Source::Unmapped);
         };
-        return vault.message_stream_continuation_source_in_txn(txn, &message);
+        return Ok(vault
+            .message_stream_continuation_source_in_txn(txn, &message)?
+            .map_or(Source::Unmapped, Source::Entity));
     }
-    Ok(source_of(decl, row_key))
+    Ok(source_of(decl, row_key).map_or(Source::Unmapped, Source::Entity))
 }
 
 fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
