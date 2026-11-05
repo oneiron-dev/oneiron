@@ -95,6 +95,21 @@ impl PreparedSavedNote {
         if !grant.exempts(&self.id) || grant.selected_saver() != Some(saver) {
             return Err(invalid("selected NOTE does not belong to this save"));
         }
+        let birth_mask = edges.iter().find_map(|op| match op {
+            BatchOp::EdgeWithCreatedAt {
+                src,
+                kind: crate::edge::EdgeKind::FacetOf,
+                tgt,
+                ..
+            }
+            | BatchOp::PublicEdgeWithCreatedAt {
+                src,
+                kind: crate::edge::EdgeKind::FacetOf,
+                tgt,
+                ..
+            } if *src == self.id => Some(*tgt),
+            _ => None,
+        });
         let mut ops = vec![BatchOp::Put {
             id: self.id,
             entity_type: crate::registry::ENTITY_TYPE_NOTE,
@@ -109,7 +124,9 @@ impl PreparedSavedNote {
             hub_sync_imported: false,
         }];
         ops.extend(edges);
-        BatchBuilder::promotion_replay(vault, ops, grant).apply_actor(txn, &saver)?;
+        BatchBuilder::promotion_replay(vault, ops, grant)
+            .mask(birth_mask)
+            .apply_actor(txn, &saver)?;
         if self.head != self.id || self.sequence != 0 {
             super::documents::set_head(&vault.store, txn, self.id, self.head, self.sequence)?;
         }
