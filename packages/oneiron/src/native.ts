@@ -279,6 +279,7 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsFitSet(input: unknown): unknown
+vaultSkillsAdvisoryAskSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
 vaultSkillsOptimizeStart(input: unknown): unknown
 vaultSkillsOptimizeResult(input: unknown): unknown
