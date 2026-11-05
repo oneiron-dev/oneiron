@@ -5,8 +5,7 @@ use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
     protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session,
-        Snapshot,
+        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
     },
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
