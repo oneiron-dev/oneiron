@@ -560,7 +560,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             if framed_tokens(run.instruction, &user, &run.schema)? > run.manifest.pins.window {
                 return self.split(run, ctx, position, row);
             }
-            if row.mode == ChildMode::Single {
+            if row.mode == ChildMode::Single || shape.kind == KIND_REVIEW {
                 let candidates: Vec<_> = context
                     .shown
                     .keys()
