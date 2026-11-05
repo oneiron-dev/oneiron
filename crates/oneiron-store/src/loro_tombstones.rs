@@ -140,14 +140,14 @@ pub fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u8>> {
 }
 
 fn parse_tombstone_key(key: &str) -> Option<EntityId> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     TOMBSTONE_KEY_PARSES.with(|parses| parses.set(parses.get() + 1));
     EntityId::from_hex(key).ok()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// Tombstone keys this thread parsed as entity ids: the H15 work pin.
-    pub(crate) static TOMBSTONE_KEY_PARSES: std::cell::Cell<u64> =
+    pub static TOMBSTONE_KEY_PARSES: std::cell::Cell<u64> =
         const { std::cell::Cell::new(0) };
 }
