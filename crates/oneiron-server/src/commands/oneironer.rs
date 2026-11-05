@@ -370,6 +370,73 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
     }))
 }
 
+/// Fetch progress to stderr: each file's written and pinned bytes, whole
+/// percents only, bytes never verdicts.
+///
+/// Lives inside the fetch thread and locks stderr per line, so no lock
+/// crosses threads. Stdout keeps its single JSON object. A failed stderr
+/// write silences the presenter; the fetch itself never notices.
+struct FetchProgress {
+    /// Whether stderr is a terminal: redrawn lines there, one line per
+    /// whole percent elsewhere.
+    tty: bool,
+    /// The file last reported, its last whole percent, and whether its
+    /// final bytes were already shown.
+    last: Option<(String, u64, bool)>,
+    /// Set once a stderr write fails; nothing more is emitted.
+    failed: bool,
+}
+
+impl FetchProgress {
+    fn new() -> Self {
+        use std::io::IsTerminal as _;
+        Self {
+            tty: std::io::stderr().is_terminal(),
+            last: None,
+            failed: false,
+        }
+    }
+
+    /// Reports `file` at `written` of `expected` bytes: the first report
+    /// for a file, every whole-percent change, and the final bytes.
+    fn report(&mut self, file: &str, written: u64, expected: u64) {
+        if self.failed {
+            return;
+        }
+        // u128: `written * 100` would overflow u64 near the top of it.
+        let percent = if expected == 0 {
+            100
+        } else {
+            ((written as u128 * 100) / expected as u128).min(100) as u64
+        };
+        let final_bytes = written >= expected;
+        let print = match &self.last {
+            Some((last_file, last_percent, last_final)) => {
+                last_file != file || *last_percent != percent || (final_bytes && !last_final)
+            }
+            None => true,
+        };
+        if !print {
+            return;
+        }
+        self.last = Some((file.to_owned(), percent, final_bytes));
+        let line = format!("{file}: {written}/{expected} bytes ({percent}%)");
+        let result = if self.tty {
+            let mut err = std::io::stderr().lock();
+            if final_bytes {
+                writeln!(err, "\r{line}")
+            } else {
+                write!(err, "\r{line}")
+            }
+        } else {
+            writeln!(std::io::stderr().lock(), "{line}")
+        };
+        if result.is_err() {
+            self.failed = true;
+        }
+    }
+}
+
 /// Places a shipped release under a models root and prints one JSON object:
 /// the outcome, the bundle's directory and, once the bundle is there, the
 /// platform rows it holds and those it does not, and the `[oneironer]`
@@ -398,10 +465,23 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
         anyhow::bail!("the bundle directory {} is not UTF-8", dir.display());
     };
     // The blocking HTTP client cannot run on the CLI's async runtime, so the
-    // fetch gets a thread of its own.
+    // fetch gets a thread of its own. The progress presenter lives inside
+    // that thread with it: stderr is locked per line there, and stdout
+    // keeps its single JSON object below.
     let fetched = std::thread::scope(|scope| {
         scope
-            .spawn(|| release::fetch_release(entry, &source, &root, selected))
+            .spawn(|| {
+                let mut progress = FetchProgress::new();
+                release::fetch_release(
+                    entry,
+                    &source,
+                    &root,
+                    selected,
+                    &mut |file: &str, written: u64, expected: u64| {
+                        progress.report(file, written, expected);
+                    },
+                )
+            })
             .join()
     });
     let outcome = fetched.map_err(|_| anyhow::anyhow!("the oneironer fetch panicked"))??;

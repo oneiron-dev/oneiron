@@ -11986,6 +11986,7 @@ class GraphFsDirectoryView(TypedDict):
     path: str
     entries: list[GraphFsEntryView]
     next_cursor: NotRequired[str | None]
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 GraphFsEncoding = Literal["utf8", "base64"]
 GraphFsPlan = Literal["pushdown", "walk"]
 class GraphFsOutput(TypedDict):
@@ -11995,6 +11996,7 @@ class GraphFsOutput(TypedDict):
     encoding: GraphFsEncoding
     next_cursor: NotRequired[str | None]
     plan: GraphFsPlan
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 class GraphFsLinkRequest(TypedDict):
     mount: GraphFsMountRequest
     path: str
