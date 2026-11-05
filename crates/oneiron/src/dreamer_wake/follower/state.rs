@@ -461,10 +461,11 @@ pub(super) fn forget_frames_in_txn(
 /// whole, a suffix's result keeps its other readings, and a row that no
 /// longer decodes goes, so an erase never fails on it.
 pub(super) fn forget_results_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     turns: &[EntityId],
 ) -> Result<()> {
+    let store = write.store;
     let rows = RESULTS
         .iter_raw_from(store, txn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -508,6 +509,9 @@ pub(super) fn forget_results_in_txn(
         match (kept, <ResultKey as SideKey>::decode_key(&raw)) {
             (Some(kept), Some(key)) => RESULTS.put(store, txn, &key, &kept)?,
             _ => {
+                crate::secret_custody::revoke_side_row_prefix_custody_in_txn(
+                    write, txn, &RESULTS, &raw,
+                )?;
                 RESULTS.delete_from(store, txn, &raw)?;
             }
         }
