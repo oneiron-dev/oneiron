@@ -80,7 +80,7 @@ fn layout_actor(auth: &CoreAuth) -> Option<EntityId> {
 }
 
 /// The class a board filter gives a person row.
-fn person_class(kind: PersonKind) -> BoardActorClass {
+pub(crate) fn person_class(kind: PersonKind) -> BoardActorClass {
     match kind {
         PersonKind::Human => BoardActorClass::Human,
         PersonKind::Agent => BoardActorClass::Agent,

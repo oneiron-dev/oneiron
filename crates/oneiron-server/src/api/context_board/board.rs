@@ -485,6 +485,24 @@ pub(super) fn board_parts(
                 )
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
             let later = slice.later;
+            // The layout's INBOX filter (BOARD-LAYOUT) narrows the rows by
+            // sender; the fold line still counts every admitted row.
+            let inbox_who = layout
+                .filter("inbox")
+                .and_then(|filter| filter.who.as_ref());
+            let inbox_members = match inbox_who.and_then(|who| who.group()) {
+                Some(group)
+                    if read
+                        .is_entity_readable(&group)
+                        .map_err(|error| core_engine_error("board inbox failed", error))? =>
+                {
+                    vault
+                        .board_filter_group_members(group)
+                        .map_err(|error| core_engine_error("board inbox failed", error))?
+                }
+                _ => BTreeSet::new(),
+            };
+            let mut admitted = 0_usize;
             for (mut item, state) in slice.rows {
                 let mut admitting = Vec::new();
                 for participant in item
@@ -511,15 +529,27 @@ pub(super) fn board_parts(
                 if !admitting.is_empty() {
                     // FIX 9745: the sender renders only while the caller's
                     // read reads it; otherwise the row names no sender.
-                    if let Some(sender) = item.sender {
-                        if read
-                            .is_ref_readable(&sender)
-                            .map_err(|error| core_engine_error("board inbox failed", error))?
+                    let sender = match item.sender {
+                        Some(sender)
+                            if read.is_ref_readable(&sender).map_err(|error| {
+                                core_engine_error("board inbox failed", error)
+                            })? =>
                         {
-                            inbox_sources.push(sender);
-                        } else {
-                            item.sender = None;
+                            Some(sender)
                         }
+                        _ => None,
+                    };
+                    admitted += 1;
+                    if inbox_who.is_some_and(|who| {
+                        !who.matches(sender, layout_actor, &inbox_members, |id| {
+                            people.kind(id).map(super::person_class)
+                        })
+                    }) {
+                        continue;
+                    }
+                    match sender {
+                        Some(sender) => inbox_sources.push(sender),
+                        None => item.sender = None,
                     }
                     inbox_sources.extend(admitting);
                     inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
@@ -528,6 +558,13 @@ pub(super) fn board_parts(
             }
             oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
                 .map_err(board_frame_error)?
+                .map(|section| match inbox_who {
+                    Some(_) => section.with_fold_summary(
+                        oneiron::context_board::FoldSummary::total(admitted + later)
+                            .count("later", later),
+                    ),
+                    None => section,
+                })
         }
         None => None,
     };
