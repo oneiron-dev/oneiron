@@ -177,10 +177,13 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
             ("singleEvents", "false".to_owned()),
             ("maxResults", EVENTS_PAGE_SIZE.to_string()),
         ];
-        match (&cursor.page, &cursor.sync) {
-            (Some(page), _) => query.push(("pageToken", page.clone())),
-            (None, Some(sync)) => query.push(("syncToken", sync.clone())),
-            (None, None) => {}
+        // An incremental read sends its sync token on every page, the page
+        // token beside it; a full listing sends its page token alone.
+        if let Some(sync) = &cursor.sync {
+            query.push(("syncToken", sync.clone()));
+        }
+        if let Some(page) = &cursor.page {
+            query.push(("pageToken", page.clone()));
         }
         let page = match self.get(source, &url, &query)? {
             RestAnswer::Found(page) => page,

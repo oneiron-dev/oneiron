@@ -508,6 +508,8 @@ impl Vault {
                 ..MailSyncReport::default()
             },
         };
+        // An erased message's attachment artifacts owed their delete go first.
+        super::attachments::collect_after_delete(self);
         let outcome = (|| -> MemoryResult<()> {
             if step.state()?.anchor.is_none() {
                 let anchor = step.wire.current_anchor(&step.wire_source)?;

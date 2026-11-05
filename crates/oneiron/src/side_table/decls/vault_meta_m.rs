@@ -11,6 +11,9 @@ side_tables! {
     /// artifact bound to its thread. Key: id16(source) + blake3 (32) of the provider id and
     /// part id.
     MAIL_PACK_ATTACHMENT: VaultMeta b"mail_pack:attachment:v1:" Named;
+    /// The opened-attachment artifacts whose message was erased, owed their own delete after
+    /// that erase commits (FIX 12559). Key: id16(artifact). Value: when it was owed.
+    MAIL_PACK_ATTACHMENT_ERASE: VaultMeta b"mail_pack:attachment_erase:v1:" Named;
     /// The mail messages that landed with their headers only and wait for their bodies, newest
     /// first (FIX 12559). Key: id16(source) + u64be (u64::MAX less the receive time) + blake3
     /// (32) of the provider id.
