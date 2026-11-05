@@ -47897,7 +47897,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 40,
       "re-export": 69
      }
@@ -48889,9 +48889,19 @@
      "purpose": "The typed result a MESSAGE carries in place of an answer too large to say (FIX 365): a bounded preview of…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/result_attachment/restore.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -57994,7 +58004,7 @@
      "path": "src/ports/lmdb_query/checkpoint.rs",
      "purpose": "The checkpoint getter of the entity and edge rows (KS7-2): each raw entity row by its own entity tree, and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -60621,7 +60631,7 @@
      "path": "src/recovery/checkpoint/payload/restore.rs",
      "purpose": "KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -90332,7 +90342,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 362,
+     "files": 363,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91041,7 +91051,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6374,
+   "source_files": 6375,
    "test_files": 895
   },
   "oneiron-android": {
