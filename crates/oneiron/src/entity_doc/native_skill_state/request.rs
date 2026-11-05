@@ -122,7 +122,7 @@ impl SkillStateSnapshot {
         &self.raw[ENTITY_METADATA_HEADER_LEN..]
     }
 
-    pub(crate) fn physical_times(&self) -> Result<(TimeRange, u64)> {
+    pub(crate) fn physical_metadata(&self) -> Result<(TimeRange, u64, u64)> {
         let header = EntityMetadataHeader::parse(&self.raw)
             .ok_or(Error::CorruptedIndex("headed SKILL header"))?;
         Ok((
@@ -131,6 +131,7 @@ impl SkillStateSnapshot {
                 end: header.occurred_end,
             },
             header.learned_at,
+            header.row_version,
         ))
     }
 }

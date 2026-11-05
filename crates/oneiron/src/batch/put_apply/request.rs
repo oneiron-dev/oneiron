@@ -41,6 +41,7 @@ pub(in crate::batch) struct PutRow<'a> {
     pub(in crate::batch) occurred: TimeRange,
     pub(in crate::batch) learned_at: u64,
     pub(in crate::batch) data: &'a [u8],
+    pub(in crate::batch) row_version: Option<u64>,
 }
 
 /// Every flag a put is admitted under, grouped by what it governs.

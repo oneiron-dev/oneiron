@@ -127,6 +127,7 @@ pub(super) fn apply_claim_candidate(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version: None,
             },
             // A candidate opens no admit band and no hub inlet.
             options: PutOptions {
@@ -190,6 +191,7 @@ pub(super) fn apply_claim_candidate(
                     entity_type: crate::registry::ENTITY_TYPE_PERSON,
                     occurred,
                     learned_at,
+                    row_version: None,
                     data: crate::vault::encode_embedded_owner_actor_body()?,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,

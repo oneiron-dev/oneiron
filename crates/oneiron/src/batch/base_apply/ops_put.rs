@@ -19,6 +19,7 @@ pub(super) fn apply_put_arm(
     mut entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: Option<u64>,
     data: Vec<u8>,
     allow_maintenance: bool,
     allow_reserved_predicate: bool,
@@ -86,6 +87,7 @@ pub(super) fn apply_put_arm(
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
+                    row_version: None,
                 }],
                 text_index_trusted,
                 ApplyOpsGateMode::new(
@@ -155,6 +157,7 @@ pub(super) fn apply_put_arm(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version,
             },
             options: put_options,
             context: PutContext {
@@ -236,6 +239,7 @@ pub(super) fn apply_put_arm(
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
+                row_version: None,
             }],
             text_index_trusted,
             ApplyOpsGateMode::new(
