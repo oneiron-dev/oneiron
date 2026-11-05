@@ -182,26 +182,53 @@ impl Memory<'_> {
     }
 
     /// `receipts` cut to what this handle's credential reads, before any page
-    /// cut (OF-172 D2): a receipt whose trigger names a row the lane
-    /// withholds takes no page place, and pure metadata stays. An unbound
-    /// handle keeps them all, in one lane read over all named rows.
+    /// cut (OF-172 D2). Triggers and a prepared guest window's private source
+    /// world and rows must all pass the same lane read. Pure metadata stays;
+    /// an unbound handle keeps its actor's existing receipt behavior.
     fn credential_kept_receipts(
         &self,
         receipts: Vec<ReceiptRecord>,
     ) -> MemoryResult<Vec<ReceiptRecord>> {
-        if receipts.is_empty() {
+        if receipts.is_empty() || self.read_proof.is_none() {
             return Ok(receipts);
         }
-        let ids: Vec<EntityId> = receipts.iter().filter_map(trigger_row_of).collect();
-        if ids.is_empty() {
-            return Ok(receipts);
+        let mut named = Vec::with_capacity(receipts.len());
+        for receipt in receipts {
+            let mut rows: Vec<EntityId> = trigger_row_of(&receipt).into_iter().collect();
+            if receipt.receipt_kind == ReceiptKind::Share && receipt.outcome == "prepared" {
+                let Some(sequence) = receipt
+                    .receipt_id
+                    .strip_prefix("share:export:")
+                    .and_then(|sequence| sequence.parse().ok())
+                else {
+                    continue;
+                };
+                let Some(source) =
+                    crate::share_travel::export_travel_source_rows(self.vault, sequence)?
+                else {
+                    continue;
+                };
+                rows.extend(source);
+            }
+            named.push((receipt, rows));
         }
-        let Some(readable) = self.credential_readable_ids(&ids)? else {
-            return Ok(receipts);
+        let ids: Vec<EntityId> = named
+            .iter()
+            .flat_map(|(_, rows)| rows.iter().copied())
+            .collect();
+        let readable = if ids.is_empty() {
+            None
+        } else {
+            self.credential_readable_ids(&ids)?
         };
-        Ok(receipts
+        Ok(named
             .into_iter()
-            .filter(|receipt| trigger_row_of(receipt).is_none_or(|id| readable.contains(&id)))
+            .filter(|(_, rows)| {
+                readable
+                    .as_ref()
+                    .is_none_or(|readable| rows.iter().all(|id| readable.contains(id)))
+            })
+            .map(|(receipt, _)| receipt)
             .collect())
     }
 
