@@ -25,7 +25,7 @@ impl BigModel {
         // A route the vault narrowed past what this server serves, or one
         // with no offer the call may go to, ends the call here, before
         // anything leaves.
-        let (ladder, request) = self.admit_decision_route(
+        let (ladder, request) = self.admit_decision_route_with_egress(
             request,
             context.and_then(|context| context.extraction_egress),
         )?;
