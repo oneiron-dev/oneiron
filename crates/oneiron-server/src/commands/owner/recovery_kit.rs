@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oneiron::error::SecretError;
-use oneiron::recovery::{KitError, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+use oneiron::recovery::{KitError, KitId, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::fetch_sealed_bundle_with_kit;
@@ -28,7 +28,7 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use super::vault_key::{
-    HostUnlock, KeyNeed, UnlockRequest, open_with_unlock, read_secret, refuse_two_stdin_secrets,
+    HostUnlock, KeyNeed, UnlockRequest, open_with_unlock_for_secret, read_secret,
 };
 use super::{emit, open_stopped_vault};
 use crate::cli::{
@@ -229,17 +229,10 @@ struct Confirmed {
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
-    refuse_two_stdin_secrets(
-        &unlock,
-        args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
-        "the kit passphrase",
-        "--secret-file",
-    )?;
     anyhow::ensure!(
         !args.kit.pieces.is_empty(),
         "confirm reads the kit's pieces: --piece"
     );
-    let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let carry = args
         .carry
         .iter()
@@ -253,7 +246,16 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     // names (FIX 2201), or nothing is confirmed. A vault with no key gets no
     // wrap.
     let config = resolve_serve_config(&args.serve)?;
-    let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
+    let vault = open_with_unlock_for_secret(
+        &config,
+        &unlock,
+        KeyNeed::HeldIfAny,
+        INSTEAD,
+        args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
+        "the kit passphrase",
+        "--secret-file",
+    )?;
+    let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
@@ -621,13 +623,12 @@ pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
     )
 }
 
-/// A kit's unlock from its pieces, the passphrase read from `secret_file` or
-/// stdin, for the vault `vault_id` names: the id the kit is bound to, which
-/// the caller is given and never reads from a mirror. `oneiron restore
-/// --unlock kit` and `oneiron vault-key add-device --unlock kit` both open
-/// the `world-kit` escrow wrap with a world kit's. A data-key kit's pieces,
-/// by the kind they carry, go to the engine whole: they rebuild the vault
-/// data key there, checked against its commitment, with no wrap (FIX 5614).
+/// A fresh restore's kit unlock, bound to the owner-given `vault_id`, never
+/// one read from a mirror. A world kit rebuilds from the given pieces and
+/// opens the `world-kit` escrow wrap; no kept piece joins (FIX 11973).
+/// A data-key kit's pieces go to the engine whole to rebuild the data key,
+/// checked against its commitment with no wrap (FIX 5614). Existing vaults
+/// use [`kit_unlock_existing`] instead.
 pub(super) fn kit_unlock_with(
     vault_id: Option<&str>,
     files: &[PathBuf],
@@ -641,9 +642,9 @@ pub(super) fn kit_unlock_with(
         !files.is_empty(),
         "--unlock kit reads the kit's pieces: --piece"
     );
-    // A world kit opened before the vault exists (a fresh restore or sealed
-    // pages) rebuilds from the pieces given alone (FIX 11973). An already-open
-    // plain vault uses kit_unlock_with_vault so its kept piece can join.
+    // A fresh restore rebuilds from the pieces given alone (FIX 11973).
+    // Existing plain and sealed vaults use kit_unlock_existing so this
+    // install's exact kept piece can join.
     let (pieces, passphrase) = read_kit(files, secret_file, false)?;
     if pieces
         .first()
@@ -671,15 +672,16 @@ pub(super) fn kit_unlock_with(
     })
 }
 
-/// A kit unlock for a plain vault already open: its own kept piece counts
-/// toward the passphrase choice, and a world kit is carried to that vault so
-/// the engine can join its kept recovery-root piece (FIX 11974, FIX 12055).
-/// Pre-open callers use [`kit_unlock_with`] instead.
-pub(super) fn kit_unlock_with_vault(
+/// An existing plain or sealed vault's kit unlock. Count its exact kept
+/// piece before checking stdin demand and reading a passphrase, then carry
+/// the same pieces to the engine (FIX 11974, FIX 12055, FIX 12396).
+/// Fresh restores use [`kit_unlock_with`] instead.
+pub(super) fn kit_unlock_existing(
     vault_id: Option<&str>,
     files: &[PathBuf],
     secret_file: Option<&Path>,
-    vault: &oneiron::Vault,
+    keeps_piece: impl FnOnce(KitSecretKind, KitId) -> anyhow::Result<bool>,
+    before_secret: impl FnOnce(bool) -> anyhow::Result<()>,
 ) -> anyhow::Result<HostUnlock> {
     let vault_id = vault_id.ok_or_else(|| {
         anyhow::anyhow!("--unlock kit names the vault the kit is bound to: --vault-id")
@@ -691,7 +693,9 @@ pub(super) fn kit_unlock_with_vault(
     );
     let pieces = read_kit_pieces(files)?;
     let kind = pieces[0].kind();
-    let kept = vault.keeps_kit_piece_for(kind, pieces[0].kit_id());
+    let kit = pieces[0].kit_id();
+    let kept = keeps_piece(kind, kit)?;
+    before_secret(secret_file.is_none() && pieces.len() + usize::from(kept) == 1)?;
     let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
     if kind == KitSecretKind::VaultKey {
         return Ok(HostUnlock::VaultKeyKit {
@@ -702,6 +706,7 @@ pub(super) fn kit_unlock_with_vault(
     }
     Ok(HostUnlock::WorldKit {
         vault_id: *vault_id,
+        kit,
         pieces,
         passphrase,
     })

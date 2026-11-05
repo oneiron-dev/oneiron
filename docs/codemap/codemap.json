@@ -84930,7 +84930,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1263
+      "fn": 1264
      }
     },
     {
@@ -86180,6 +86180,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "SkillAdvisoryAskRequest",
       "SkillCapabilityView",
       "SkillCodeAutoInstallRequest",
       "SkillConvertReceipt",
@@ -86214,9 +86215,9 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1,
-      "struct": 25
+      "struct": 26
      }
     },
     {
@@ -106420,7 +106421,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1231
+      "fn": 1232
      }
     },
     {
@@ -108173,7 +108174,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1232
+      "fn": 1233
      }
     },
     {
@@ -114109,7 +114110,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -118831,13 +118832,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key/unlocked_open.rs",
      "purpose": "The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -121683,9 +121684,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence.rs",
-     "purpose": "Grant-scoped home-node reads for opened-item devices",
+     "purpose": "Home-node reads for opened-item devices and proved machines",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -121785,7 +121786,7 @@
      "path": "src/livequery/residence/pad_custody.rs",
      "purpose": "`residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -135119,6 +135120,7 @@
       "SiteSkillErrorCode",
       "SiteSkillMatch",
       "SizeRepresents",
+      "SkillAdvisoryAskRequest",
       "SkillAuthoringReceipt",
       "SkillCallInput",
       "SkillCapabilityView",
@@ -135834,7 +135836,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1108,
-      "struct": 3373
+      "struct": 3374
      }
     },
     {
