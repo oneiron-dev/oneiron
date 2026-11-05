@@ -1,14 +1,11 @@
 //! The Gmail wire of the mail importer (FIX 12559 row 1b; MAIL-GOOGLE = A):
 //! Gmail REST over `reqwest::blocking`, for a Google Workspace or Google
-//! mailbox source, and the owner's door that runs one import step with it on
-//! this device (`vault.mail.sources.sync`).
+//! mailbox source.
 //!
 //! Each provider call reads the source's own credential at its door
-//! ([`Vault::with_mail_source_token_at_door`]): the custody record the source
-//! names now, while the source is Active and the pack installed. HTTPS only,
-//! no redirects; the Bearer header exists only inside the door callback,
-//! marked sensitive. The token the door injects is the bare OAuth access
-//! token or JSON carrying `access_token`; refreshing it is the host's custody
+//! ([`Vault::with_mail_source_token_at_door`]), effector `connector:gmail`.
+//! HTTPS only, no redirects; the Bearer header exists only inside the door
+//! callback, marked sensitive. Refreshing the token is the host's custody
 //! job. Before a source's first read the wire checks that the credential
 //! reads the mailbox the source names (the Gmail profile's address), so a
 //! credential for one mailbox never fills another mailbox's source.
@@ -17,35 +14,26 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::io::Read;
-use std::time::Duration;
 
 use base64::Engine as _;
-use dom_query::Document;
-use reqwest::StatusCode;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
-use serde::{Deserialize, Serialize};
+use reqwest::header::AUTHORIZATION;
 use serde_json::Value;
 
-use super::importer::{MailSyncBudget, MailSyncReport};
-use super::source::{MailProvider, MailSourceStatus, SOURCES};
+use super::rest::{
+    self, RestAnswer, array, bearer_header, header_value, html_text, refused, text_of,
+};
+use super::source::MailProvider;
 use super::wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
 };
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
-use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::secret_lease::DoorInjectionReceipt;
+use crate::error::Result;
 use crate::{EntityId, Vault};
 
 const GMAIL_USER_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
-/// The largest Gmail answer read: a whole message with its inline parts.
-const MAX_GMAIL_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 const GMAIL_LIST_PAGE_SIZE: u32 = 100;
 const GMAIL_HISTORY_PAGE_SIZE: u32 = 500;
-/// The most bodies one step of `vault.mail.sources.sync` fills in.
-const MAX_BODIES_PER_STEP: u32 = 500;
 /// The deepest MIME nesting read for a body.
 const MAX_PART_DEPTH: usize = 32;
 /// The headers a header stage reads.
@@ -59,74 +47,6 @@ const MESSAGE_HEADERS: [&str; 8] = [
     "In-Reply-To",
     "References",
 ];
-/// HTML elements whose text is not the message's.
-const HTML_IGNORED: [&str; 6] = ["head", "script", "style", "template", "noscript", "title"];
-/// HTML elements that start a new line of text.
-const HTML_BLOCKS: [&str; 18] = [
-    "p",
-    "div",
-    "br",
-    "tr",
-    "li",
-    "ul",
-    "ol",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "table",
-    "blockquote",
-    "pre",
-    "hr",
-    "section",
-];
-
-impl Vault {
-    /// Runs `apply` with the credential of the mailbox source `source` at
-    /// its door: the custody record the source names now, while the pack is
-    /// installed, the source Active and still the one the wire was given
-    /// (provider, address and custody record), and no other source names
-    /// that custody record. The value never leaves `apply`; the receipt
-    /// carries no value bytes.
-    pub(crate) fn with_mail_source_token_at_door(
-        &self,
-        source: &MailSyncSource,
-        effector: &str,
-        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<DoorInjectionReceipt> {
-        let wtxn = self.store.env.write_txn()?;
-        if super::pack::require_pack_active_in(self, &wtxn).is_err() {
-            return Err(refused("mail_source_pack_not_installed"));
-        }
-        let row = SOURCES
-            .get(&self.store, &wtxn, &source.source_ref)?
-            .ok_or_else(|| refused("mail_source_unknown"))?;
-        if row.status != MailSourceStatus::Active
-            || !row.kind.is_mailbox()
-            || row.provider != source.provider
-            || row.custody_ref != source.custody_ref
-            || !row.address.eq_ignore_ascii_case(&source.address)
-        {
-            return Err(refused("mail_source_changed_or_not_active"));
-        }
-        // One credential fills one mailbox source: a second mailbox naming
-        // the same custody record reads nothing through it. (A person's
-        // calendar may ride the same Google credential.)
-        for other in SOURCES.iter_from(&self.store, &wtxn, &[])? {
-            let (other_ref, other) = other?;
-            if other_ref != source.source_ref
-                && other.kind.is_mailbox()
-                && other.custody_ref == row.custody_ref
-            {
-                return Err(refused("mail_source_credential_backs_another_source"));
-            }
-        }
-        let custody_ref = row.custody_ref;
-        self.inject_secret_at_door_in_txn(wtxn, &custody_ref, effector, apply)
-    }
-}
 
 /// Host-side Gmail REST mail wire over `reqwest::blocking`, for the mailbox
 /// sources of one vault.
@@ -137,92 +57,51 @@ pub struct HttpGmailMailWire<'v> {
     verified: RefCell<BTreeSet<EntityId>>,
 }
 
-/// One Gmail answer: its JSON, or the provider's "not found".
-enum GmailAnswer {
-    Found(Value),
-    Gone,
-}
-
 impl<'v> HttpGmailMailWire<'v> {
     /// Builds the wire: HTTPS only, no redirects, a 60 s timeout.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when the TLS client cannot be built.
+    /// [`crate::Error::InvalidConfig`] when the TLS client cannot be built.
     pub fn new(vault: &'v Vault) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|_| refused("gmail_mail_http_client_setup_failed"))?;
         Ok(Self {
             vault,
-            client,
+            client: rest::https_client()?,
             verified: RefCell::new(BTreeSet::new()),
         })
     }
 
-    /// One GET with the source's credential, read at its door.
+    /// One GET with the source's credential, read at its door; `None` for
+    /// Gmail's "not found".
     fn get(
         &self,
         source: &MailSyncSource,
         url: &str,
         query: &[(&str, String)],
-    ) -> Result<GmailAnswer> {
+    ) -> Result<Option<Value>> {
         if !reads_google_mail(source.provider) {
             return Err(refused("gmail_mail_wire_reads_google_mailboxes_only"));
         }
-        let mut answer = None;
+        let mut answer: Option<RestAnswer> = None;
         let _receipt = self.vault.with_mail_source_token_at_door(
             source,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
-                answer = Some(self.send(&auth, url, query)?);
+                let request = self.client.get(url).query(query).header(AUTHORIZATION, auth);
+                answer = Some(rest::send(request)?);
                 Ok(())
             },
         )?;
-        answer.ok_or_else(|| refused("gmail_mail_credential_door_refused"))
-    }
-
-    fn send(&self, auth: &HeaderValue, url: &str, query: &[(&str, String)]) -> Result<GmailAnswer> {
-        let response = self
-            .client
-            .get(url)
-            .query(query)
-            .header(AUTHORIZATION, auth.clone())
-            .send()
-            .map_err(|_| refused("gmail_mail_transport_failed"))?;
-        let status = response.status();
-        if status == StatusCode::NOT_FOUND {
-            return Ok(GmailAnswer::Gone);
-        }
-        if !status.is_success() {
-            return Err(Error::InvalidConfig(format!(
-                "gmail_mail_status_{}",
-                status.as_u16()
-            )));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(MAX_GMAIL_RESPONSE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| refused("gmail_mail_response_unreadable"))?;
-        if bytes.len() as u64 > MAX_GMAIL_RESPONSE_BYTES {
-            return Err(refused("gmail_mail_response_too_large"));
-        }
-        serde_json::from_slice(&bytes)
-            .map(GmailAnswer::Found)
-            .map_err(|_| refused("gmail_mail_response_unreadable"))
+        answer
+            .ok_or_else(|| refused("gmail_mail_credential_door_refused"))?
+            .found_or_gone("gmail_mail")
     }
 
     /// The mailbox's Gmail profile: its address and current history id.
     fn profile(&self, source: &MailSyncSource) -> Result<Value> {
-        match self.get(source, &format!("{GMAIL_USER_URL}/profile"), &[])? {
-            GmailAnswer::Found(profile) => Ok(profile),
-            GmailAnswer::Gone => Err(refused("gmail_mail_profile_not_found")),
-        }
+        self.get(source, &format!("{GMAIL_USER_URL}/profile"), &[])?
+            .ok_or_else(|| refused("gmail_mail_profile_not_found"))
     }
 
     /// Checks once per source that its credential reads the mailbox it
@@ -280,11 +159,9 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         if let Some(page) = page {
             params.push(("pageToken", page.to_owned()));
         }
-        let GmailAnswer::Found(listed) =
-            self.get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
-        else {
-            return Err(refused("gmail_mail_listing_not_found"));
-        };
+        let listed = self
+            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
+            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
         let mut messages = Vec::new();
         for entry in array(&listed, "messages") {
             messages.push(MailMessageRef {
@@ -307,8 +184,8 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                 .map(|header| ("metadataHeaders", (*header).to_owned())),
         );
         match self.get(source, &Self::message_url(provider_id)?, &params)? {
-            GmailAnswer::Found(message) => headers_of(&message).map(Some),
-            GmailAnswer::Gone => Ok(None),
+            Some(message) => headers_of(&message).map(Some),
+            None => Ok(None),
         }
     }
 
@@ -316,8 +193,8 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         self.verify(source)?;
         let params = [("format", "full".to_owned())];
         match self.get(source, &Self::message_url(provider_id)?, &params)? {
-            GmailAnswer::Found(message) => full_of(&message).map(Some),
-            GmailAnswer::Gone => Ok(None),
+            Some(message) => full_of(&message).map(Some),
+            None => Ok(None),
         }
     }
 
@@ -342,9 +219,8 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             params.push(("pageToken", page.to_owned()));
         }
         // Gmail answers 404 for a start it no longer keeps history from.
-        let listed = match self.get(source, &format!("{GMAIL_USER_URL}/history"), &params)? {
-            GmailAnswer::Found(listed) => listed,
-            GmailAnswer::Gone => return Ok(MailHistoryRead::Expired),
+        let Some(listed) = self.get(source, &format!("{GMAIL_USER_URL}/history"), &params)? else {
+            return Ok(MailHistoryRead::Expired);
         };
         let mut changes = Vec::new();
         for record in array(&listed, "history") {
@@ -393,7 +269,7 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
 }
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.
-const fn reads_google_mail(provider: MailProvider) -> bool {
+pub(super) const fn reads_google_mail(provider: MailProvider) -> bool {
     matches!(provider, MailProvider::GoogleWorkspace | MailProvider::Google)
 }
 
@@ -541,67 +417,6 @@ fn charset_of(content_type: &str) -> Option<String> {
     })
 }
 
-/// The visible text of an HTML body, a line per block.
-fn html_text(html: &str) -> String {
-    let document = Document::from(html);
-    let mut out = String::new();
-    let mut pending = vec![document.root()];
-    while let Some(node) = pending.pop() {
-        if node.is_text() {
-            out.push_str(&node.text());
-            continue;
-        }
-        if let Some(name) = node.node_name() {
-            let name = name.to_ascii_lowercase();
-            if HTML_IGNORED.contains(&name.as_str()) {
-                continue;
-            }
-            if HTML_BLOCKS.contains(&name.as_str()) && !out.ends_with('\n') {
-                out.push('\n');
-            }
-        }
-        let children = node.children_it(false).collect::<Vec<_>>();
-        pending.extend(children.into_iter().rev());
-    }
-    tidy_text(&out)
-}
-
-/// Text with each line's runs of whitespace made one space and no more than
-/// one blank line in a row.
-fn tidy_text(text: &str) -> String {
-    let mut out = String::new();
-    let mut blank = false;
-    for line in text.lines() {
-        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if line.is_empty() {
-            if blank || out.is_empty() {
-                continue;
-            }
-            blank = true;
-        } else {
-            blank = false;
-        }
-        out.push_str(&line);
-        out.push('\n');
-    }
-    out.trim_end().to_owned()
-}
-
-/// The value of the header `name` in a Gmail header list, if any.
-fn header_value<'v>(headers: Option<&'v Value>, name: &str) -> Option<&'v str> {
-    headers?
-        .as_array()?
-        .iter()
-        .find(|header| {
-            header
-                .get("name")
-                .and_then(Value::as_str)
-                .is_some_and(|held| held.eq_ignore_ascii_case(name))
-        })?
-        .get("value")?
-        .as_str()
-}
-
 /// The addresses of an address-list header, split at the commas outside
 /// quotes and angle brackets.
 fn address_list(value: &str) -> Vec<String> {
@@ -654,21 +469,6 @@ fn trash_or_spam(labels: &[String]) -> bool {
     labels.iter().any(|label| label == "TRASH" || label == "SPAM")
 }
 
-fn array<'v>(value: &'v Value, key: &str) -> &'v [Value] {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice)
-}
-
-/// A nonempty string field.
-fn text_of(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
-}
-
 /// A Gmail id that is a string or a number (`historyId`, `internalDate`).
 fn id_text(value: &Value) -> Option<String> {
     match value {
@@ -690,73 +490,4 @@ fn require_plain_id(id: &str) -> Result<()> {
         return Err(refused("gmail_mail_message_id_not_plain"));
     }
     Ok(())
-}
-
-/// The sensitive `Authorization: Bearer` value for one injected credential.
-fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
-    let invalid = || refused("gmail_mail_credential_not_an_access_token");
-    let text = std::str::from_utf8(token).map_err(|_| invalid())?.trim();
-    let access_token = if text.starts_with('{') {
-        let value: Value = serde_json::from_str(text).map_err(|_| invalid())?;
-        value
-            .get("access_token")
-            .and_then(Value::as_str)
-            .ok_or_else(invalid)?
-            .trim()
-            .to_owned()
-    } else {
-        text.to_owned()
-    };
-    if access_token.is_empty() {
-        return Err(invalid());
-    }
-    let mut value =
-        HeaderValue::from_str(&format!("Bearer {access_token}")).map_err(|_| invalid())?;
-    value.set_sensitive(true);
-    Ok(value)
-}
-
-fn refused(code: &str) -> Error {
-    Error::InvalidConfig(code.to_owned())
-}
-
-/// `vault.mail.sources.sync`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailSourceSyncRequest {
-    /// The mailbox source, 32-hex.
-    pub source_ref: String,
-    /// The bodies this step fills in; 50 when absent, at most 500.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bodies: Option<u32>,
-}
-
-impl Memory<'_> {
-    /// One bounded import step of a Google mailbox source on this device,
-    /// through the Gmail wire, by the vault's owner (FIX 12559 row 1b): new
-    /// changes since the source's anchor, the next newest-first pages under
-    /// its copy setting, then waiting bodies. The rows land bound to the
-    /// source's audience; the owner's authority lands them and reads none.
-    /// It reads the provider over blocking HTTP: call it off any async
-    /// runtime, as the local SDKs do.
-    pub fn mail_sources_sync(&self, input: &MailSourceSyncRequest) -> MemoryResult<MailSyncReport> {
-        let owner = self.embedded_owner("vault.mail.sources.sync")?;
-        let source = EntityId::from_hex(&input.source_ref)?;
-        let vault = self.vault();
-        let snapshot = vault
-            .mail_sync_source(source)?
-            .ok_or_else(|| MemoryError::not_found("no mailbox source by that ref"))?;
-        if !reads_google_mail(snapshot.provider) {
-            return Err(MemoryError::bad_request_with(
-                "this device reads Google mailboxes so far",
-                &["Connect a Google Workspace or Google mailbox; other providers follow."],
-            ));
-        }
-        let wire = HttpGmailMailWire::new(vault)?;
-        let mut budget = MailSyncBudget::default();
-        if let Some(bodies) = input.bodies {
-            budget.bodies = bodies.min(MAX_BODIES_PER_STEP);
-        }
-        vault.mail_sync_step(&owner, source, &wire, budget)
-    }
 }

@@ -69770,7 +69770,7 @@ pub struct MailSyncStatusView {
     pub last_error: Option<String>,
 }
 
-/// `oneiron::mail_pack::gmail::MailSourceSyncRequest`.
+/// `oneiron::mail_pack::local_sync::MailSourceSyncRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MailSourceSyncRequest {

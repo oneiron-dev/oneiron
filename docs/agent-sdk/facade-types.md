@@ -8645,7 +8645,7 @@ export type MailComplianceEventKind = "enabled" | "disabled" | "search"
 export type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null }
 /** `oneiron::mail_pack::state::MailSyncStatusView` */
 export type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null }
-/** `oneiron::mail_pack::gmail::MailSourceSyncRequest` */
+/** `oneiron::mail_pack::local_sync::MailSourceSyncRequest` */
 export type MailSourceSyncRequest = { source_ref: string; bodies?: number | null }
 /** `oneiron::mail_pack::importer::MailSyncReport` */
 export type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean }
