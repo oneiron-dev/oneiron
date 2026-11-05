@@ -26,6 +26,9 @@ serde_json = { workspace = true }
 sha2 = "0.10" # the deck gate runner pins candidates by SHA-256, as the Office oracle does
 # The engine's own diff: a body's mark changes align to the text it keeps.
 similar = "2.6"
+harfrust = "0.15"
+unicode-bidi = "0.3"
+unicode-script = "0.5"
 
 [features]
 # OpcPackage::upsert and opc_package::write, for the engine's own tests: `oneiron`

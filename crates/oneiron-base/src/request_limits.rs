@@ -2,8 +2,7 @@
 
 use oneiron_contracts::memory::MemoryError;
 
-/// The shared 1,000-row window: the floor a narrowed read fetches,
-/// and the ceiling a clamped door serves at.
+/// The 1,000-row candidate floor a narrowed read fetches.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
 /// How many candidates a read that narrows its rows after ranking fetches
@@ -48,14 +47,6 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// A ranked retrieval's row count served at [`MAX_SEARCH_LIMIT`]: the
-/// effective limit, and whether the caller's was lowered to it. An
-/// over-large limit is served and says so, never refused (rule 5).
-#[must_use]
-pub fn clamp_search_limit(limit: usize) -> (usize, bool) {
-    (limit.min(MAX_SEARCH_LIMIT), limit > MAX_SEARCH_LIMIT)
-}
 
 /// Longest recall deadline a request or a vault may name, in milliseconds:
 /// one minute. Past it a deadline stops being a cut and becomes a wait.

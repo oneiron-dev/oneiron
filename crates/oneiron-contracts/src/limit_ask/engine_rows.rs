@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 139] = [
+    pub const ALL: [Self; 142] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -88,6 +88,7 @@ impl EngineLimit {
         Self::SealAnswerBytes,
         Self::SealMemoryAsks,
         Self::SealCrlBytes,
+        Self::SealOcspBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
@@ -145,6 +146,8 @@ impl EngineLimit {
         Self::RecallQueryBytes,
         Self::RequestedResultRows,
         Self::EmbeddingDimensions,
+        Self::MemoryReasonEvidenceRows,
+        Self::MemoryReasonTokens,
     ];
 
     /// The config key that sets the row.
@@ -232,6 +235,7 @@ impl EngineLimit {
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
             Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
+            Self::SealOcspBytes => "limits.seal_ocsp_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
@@ -289,6 +293,8 @@ impl EngineLimit {
             Self::RecallQueryBytes => "limits.recall_query_bytes",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
+            Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
+            Self::MemoryReasonTokens => "limits.memory_reason_tokens",
         }
     }
 
@@ -372,14 +378,14 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
-            // The batch, principal, image byte and image count ceilings the
-            // e-sign sweeps, principals and signature upload refused past
-            // before Rule 5.
+            // The old sweep and principal refusal ceilings remain ask points.
             Self::EsignSweepDocuments => 100,
             Self::EsignSigningPrincipals => 256,
-            Self::EsignSignatureInputBytes => 2 << 20,
-            Self::EsignSignaturePngBytes => 2 << 20,
-            Self::EsignSignatureDocumentBytes => 64 << 20,
+            // The owner's signature-image byte ask points (ABC 57, 60, 61).
+            Self::EsignSignatureInputBytes => 256 << 20,
+            Self::EsignSignaturePngBytes => 256 << 20,
+            Self::EsignSignatureDocumentBytes => 4 << 30,
+            // The former recipient-image count ceiling is only an ask point.
             Self::EsignSignatureRecipientImages => 16,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
@@ -419,6 +425,7 @@ impl EngineLimit {
             // worth of reservations.
             Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
+            Self::SealOcspBytes => 1 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,
@@ -507,6 +514,14 @@ impl EngineLimit {
             // in ordinary use. Past it the row asks, and the vault serves
             // as opened.
             Self::EmbeddingDimensions => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonEvidenceRows => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonTokens => 16_777_216,
         }
     }
 }

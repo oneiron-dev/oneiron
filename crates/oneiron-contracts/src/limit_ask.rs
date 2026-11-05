@@ -322,6 +322,9 @@ pub enum EngineLimit {
     /// Bytes of one CRL a seal fetches. Past it the row asks and the CRL is read
     /// whole.
     SealCrlBytes,
+    /// Bytes of one OCSP reply a seal fetches. Past it the row asks and the
+    /// reply is read whole.
+    SealOcspBytes,
     /// Bytes of one timestamp reply a seal fetches. Past it the row asks and the
     /// reply is read whole.
     SealTsaBytes,
@@ -534,6 +537,16 @@ pub enum EngineLimit {
     /// where its host serves it. Past it the row asks whether everything
     /// is okay and the vault serves as opened.
     EmbeddingDimensions,
+    /// Evidence rows one memory-reason question reads, measured where the
+    /// door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole
+    /// question is served.
+    MemoryReasonEvidenceRows,
+    /// Token budget offered for one memory-reason question, measured where
+    /// the door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole budget
+    /// is offered to the existing execution path.
+    MemoryReasonTokens,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
