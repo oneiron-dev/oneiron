@@ -23846,7 +23846,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/body.rs",
@@ -23932,7 +23932,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 7,
       "re-export": 1,
@@ -48608,7 +48608,6 @@
      "path": "src/memory/reads/receipt_page.rs",
      "purpose": "`vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest…",
      "surface": {
-      "const": 1,
       "fn": 3,
       "struct": 1
      }
@@ -59879,13 +59878,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -86393,7 +86392,7 @@
       "VaultReceiptsRequest"
      ],
      "path": "src/verbs/receipts_page.rs",
-     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on the gate ledger and at…",
+     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on either ledger, with…",
      "surface": {
       "re-export": 1,
       "struct": 1

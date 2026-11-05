@@ -1936,13 +1936,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_projection/spec.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/contract_oracle/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Persisted, deterministic Rust API, schema and command-output contracts |
 | `src/conversation/attendee.rs` | src | m | 2 struct · 1 enum · 6 fn · 3 crate-vis | ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
-| `src/conversation/body.rs` | src | s | 4 fn · 1 re-export · 4 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
+| `src/conversation/body.rs` | src | m | 4 fn · 1 re-export · 4 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
 | `src/conversation/chat_breakpoint.rs` | src | m | 2 struct · 1 enum · 6 fn · 2 crate-vis | ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale | `chat_breakpoint_storage` (FIX 4465 D): a self agent's per-reply chat breakpoint, the restart-readable seed… |
 | `src/conversation/deletion/mod.rs` | src | m | 3 fn · 7 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
 | `src/conversation/deletion/private_thread.rs` | src | s | 3 crate-vis | — | A private thread's delete by the vault's Owner or an Admin (owner ruling 2026-10-20, FIX 6381, 6382): "The… |
 | `src/conversation/deletion/record.rs` | src | s | 2 fn · 2 crate-vis | — | A room record's delete as its author, or as a room owner or admin for policy: the gate it meets and the rail… |
 | `src/conversation/live_speakers.rs` | src | m | 2 struct · 10 fn · 5 crate-vis | LiveSpeakerCall, RoomLiveSpeakerEntries | The live speakers of a room (FIX 1388/1389 C1/C2): the one engine source of which voice calls are live in a… |
-| `src/conversation/membership.rs` | src | m | 1 struct · 2 enum · 7 fn · 1 re-export · 15 crate-vis | HistoryChoice, MembershipAction, MembershipRow | Append-only membership ledger |
+| `src/conversation/membership.rs` | src | m | 1 struct · 2 enum · 7 fn · 1 re-export · 16 crate-vis | HistoryChoice, MembershipAction, MembershipRow | Append-only membership ledger |
 | `src/conversation/mod.rs` | src | s | 1 mod · 10 re-export · 10 crate-vis | — | Room bodies, membership windows, session presence and audience visibility |
 | `src/conversation/output_guard.rs` | src | s | 3 fn · 1 re-export · 1 crate-vis | — | The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a… |
 | `src/conversation/preview.rs` | src | s | 1 fn · 6 crate-vis | — | Visible text projection over a checked selected path or the current ChildOf writer |
@@ -3893,7 +3893,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/read_lane.rs` | src | m | 4 fn · 24 crate-vis | — | The bound actor's one read lane |
 | `src/memory/read_selection.rs` | src | s | 1 enum · 2 crate-vis | RecallWorlds | Caller-selected world and project filters |
 | `src/memory/reads.rs` | src | m | 5 struct · 9 fn · 1 re-export · 5 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
-| `src/memory/reads/receipt_page.rs` | src | m | 1 struct · 3 fn · 1 const | VaultReceiptsPage | `vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest… |
+| `src/memory/reads/receipt_page.rs` | src | m | 1 struct · 3 fn | VaultReceiptsPage | `vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest… |
 | `src/memory/recall/admission.rs` | src | s | 5 fn | — | — |
 | `src/memory/recall/call_mode.rs` | src | s | 1 enum · 5 fn · 1 re-export · 2 crate-vis | RecallEffort | Call mode (retrieval hub #call-mode): recall for live calls |
 | `src/memory/recall/conversation.rs` | src | s | 4 crate-vis | — | Conversation and PERSON narrowing for one recall selection |
@@ -4850,7 +4850,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 16 crate-vis | — | — |
 | `src/receipt/lens.rs` | src | s | 2 struct · 2 enum | LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision | The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a… |
 | `src/receipt/mod.rs` | src | s | 5 mod · 19 re-export · 24 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
-| `src/receipt/off_device.rs` | src | s | 2 crate-vis | — | A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its… |
+| `src/receipt/off_device.rs` | src | m | 3 crate-vis | — | A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its… |
 | `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 8 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/prompt_stamp.rs` | src | s | 1 struct · 1 const | PromptRecompileStamp | Receipt stamp for a compiled prompt package |
@@ -6997,7 +6997,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/pack_preview.rs` | src | s | 1 struct · 1 fn | PackPreviewRequest | `vault.packs.preview` (FIX 5493): the owner's look at a pack folder before `vault.packs.put` |
 | `src/verbs/persona.rs` | src | s | 9 struct · 2 enum · 5 fn | CompanionAccessRequestAnswer, CompanionAccessRequestAnswerRequest, CompanionAccessRequestAnswered, CompanionProfileRequestedScope, PersonaSnapshotCopyReceipt, PersonaSnapshotExportedCopy, PersonaSnapshotMemoryPack, PersonaSnapshotMemoryPackRow +3 | Typed owner doors for profile request answers and accepted persona copies |
 | `src/verbs/proxy.rs` | src | m | 14 struct · 7 enum · 8 fn | ChatCompletionChoice, ChatCompletionMemory, ChatCompletionMessage, ChatCompletionObject, ChatCompletionRememberError, ChatCompletionRemembered, ChatCompletionRequest, ChatCompletionResponse +13 | Typed OpenAI memory-proxy requests, replies and owner admission views (OF-445) |
-| `src/verbs/receipts_page.rs` | src | s | 1 struct · 1 re-export | VaultReceiptsRequest | `vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on the gate ledger and at… |
+| `src/verbs/receipts_page.rs` | src | s | 1 struct · 1 re-export | VaultReceiptsRequest | `vault.receipts`'s input and its page (FIX 10186): any positive limit, requested on either ledger, with… |
 | `src/verbs/record_erase.rs` | src | m | 8 struct · 3 fn · 1 crate-vis | EraseHeldBytes, EraseLfsChunk, EraseSameBytesRow, EraseShare, RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest | The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would… |
 | `src/verbs/reply.rs` | src | s | 6 struct | AiReply, AiReplyCompanion, AiReplyL2Base, AiReplyReader, AiReplyRequest, AiReplyStanding | Context-bearing text replies through the host's configured inference door |
 | `src/verbs/research.rs` | src | m | 23 struct · 1 enum · 19 fn · 2 crate-vis | ResearchArchive, ResearchArchiveWire, ResearchBasisWire, ResearchBenchmarkWire, ResearchBindWire, ResearchBudgetView, ResearchCandidateWire, ResearchChildReceipt +16 | `vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record… |
