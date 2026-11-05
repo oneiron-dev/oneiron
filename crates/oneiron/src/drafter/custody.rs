@@ -53,6 +53,19 @@ pub struct DrafterSealing {
 }
 
 impl DrafterSealing {
+    /// The sealing of one side of version `version`'s corpus (FIX 14973):
+    /// `file` is that side's random id, and `key` its erasable key, minted
+    /// under the version as the load set's is, so an erase of the version
+    /// retires it too. A corpus sealing is never published as a load set.
+    pub(super) fn for_corpus(version: EntityId, file: [u8; 16], key: DrafterArtifactKey) -> Self {
+        Self {
+            version,
+            generation: 0,
+            artifact: file,
+            key,
+        }
+    }
+
     /// The version the artifact belongs to.
     #[must_use]
     pub fn version(&self) -> EntityId {
