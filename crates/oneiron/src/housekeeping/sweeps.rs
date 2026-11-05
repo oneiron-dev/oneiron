@@ -41,6 +41,10 @@ const PPR_CACHE_PAGE: usize = 512;
 /// and go on, so this page only paces the walk.
 const ESIGN_PAGE: usize = 32;
 
+/// Bodies one line-index rebuild run drains: each streams a whole body, so
+/// the page stays small and the run stops between bodies at the deadline.
+const BODY_LINE_INDEX_REBUILD_PAGE: usize = 8;
+
 /// What one sweep run did.
 pub(super) struct Run {
     pub(super) work: SweepWork,
@@ -148,6 +152,7 @@ pub(super) fn run(
             });
         }
         HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
+        HousekeepingSweep::BodyLineIndexRebuild => return body_line_index_rebuild(vault, deadline),
         HousekeepingSweep::AnnotationBodyAnchors => {
             let (moved, failed, cursor) =
                 vault.sweep_annotation_body_anchors(cursor, || deadline.passed())?;
@@ -339,6 +344,120 @@ fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
             });
         }
     }
+}
+
+/// Rebuilds whole-body line indexes reads found missing or short (FIX 1186b):
+/// drains up to [`BODY_LINE_INDEX_REBUILD_PAGE`] noted bodies and streams
+/// each once from the vault's own `bodies/` — the structural owning-route
+/// gate, so session-spill, inline, arm and gone bodies drop without a write.
+/// A sidecar present now drops as already fixed; an `open_reader` `None`
+/// drops as inline/gone; an `open_reader` error or a rebuild that returns
+/// `None` or an unreadable publish retries as failed. Failures feed the
+/// existing backoff; a remainder the page or deadline leaves stays due
+/// without counting as a content failure. No session-spill or off-record
+/// write.
+fn body_line_index_rebuild(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+    let drained = vault.begin_body_line_index_rebuilds(BODY_LINE_INDEX_REBUILD_PAGE);
+    // Entries still queued beyond the page, before this run retries any
+    // failure: those stay due whatever this run rebuilds.
+    let had_remainder = vault.has_queued_body_line_index_rebuilds();
+    let mut rebuilt = 0;
+    let mut failed = 0;
+    let mut dropped = 0;
+    let complete = |rebuilt, failed, dropped, complete| Run {
+        work: SweepWork::BodyLineIndexRebuild {
+            rebuilt,
+            failed,
+            dropped,
+        },
+        complete,
+        cursor: None,
+        covered_until: None,
+    };
+    // The vault base alone: session-spill bodies never resolve here and drop
+    // below, so no off-record write is possible by construction.
+    let dir = match vault.store.body_dir() {
+        Ok(dir) => dir,
+        Err(_) => {
+            for (digest, _) in &drained {
+                vault.retry_body_line_index_rebuild(digest);
+            }
+            return Ok(complete(0, 0, 0, false));
+        }
+    };
+    let mut index = 0;
+    while index < drained.len() {
+        let (digest, len) = drained[index];
+        // Custody guard and pin in the read-body order, before the snapshot
+        // and held through the key's last use (FIX 6019); dropped after each
+        // body. A guard that fails is global: the body and the rest stay due.
+        let guard = match vault.store.gate_custody_read_guard() {
+            Ok(guard) => guard,
+            Err(_) => {
+                for (digest, _) in &drained[index..] {
+                    vault.retry_body_line_index_rebuild(digest);
+                }
+                return Ok(complete(rebuilt, failed, dropped, false));
+            }
+        };
+        let pin = vault.pin_result_body(digest);
+        // The vault store only, never a composed view; `None` is a plain or
+        // missing row, not an error.
+        let row = match vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|rtxn| crate::store::body_key_row_in_txn(&vault.store, &rtxn, &digest))
+        {
+            Ok(row) => row,
+            Err(_) => {
+                drop(pin);
+                drop(guard);
+                for (digest, _) in &drained[index..] {
+                    vault.retry_body_line_index_rebuild(digest);
+                }
+                return Ok(complete(rebuilt, failed, dropped, false));
+            }
+        };
+        if dir.line_index_of(&digest, len, row.as_ref()).is_some() {
+            vault.finish_body_line_index_rebuild(&digest);
+            dropped += 1;
+        } else {
+            match dir.open_reader(&digest, len, row.as_ref()) {
+                Ok(None) => {
+                    vault.finish_body_line_index_rebuild(&digest);
+                    dropped += 1;
+                }
+                Err(_) => {
+                    vault.retry_body_line_index_rebuild(&digest);
+                    failed += 1;
+                }
+                Ok(Some(_)) => match dir.rebuild_line_index(&digest, len, row.as_ref()) {
+                    Some((_, true)) => {
+                        vault.finish_body_line_index_rebuild(&digest);
+                        rebuilt += 1;
+                    }
+                    Some((_, false)) | None => {
+                        vault.retry_body_line_index_rebuild(&digest);
+                        failed += 1;
+                    }
+                },
+            }
+        }
+        drop(pin);
+        drop(guard);
+        index += 1;
+        // Between bodies only: the run always finishes one, so it makes
+        // progress. The rest stay due, not failed.
+        if index < drained.len() && deadline.passed() {
+            for (digest, _) in &drained[index..] {
+                vault.retry_body_line_index_rebuild(digest);
+            }
+            return Ok(complete(rebuilt, failed, dropped, false));
+        }
+    }
+    Ok(complete(rebuilt, failed, dropped, !had_remainder))
 }
 
 /// The envelope the host lapses an overdue instance under: the vault owner's,

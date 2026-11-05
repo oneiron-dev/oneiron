@@ -4,7 +4,6 @@ use super::{Result, refused};
 pub const WORKSPACE_ROOT: &str = "/mnt/workspace";
 pub const MAX_WORKSPACE_PATH_BYTES: usize = 4096;
 pub const MAX_PATH_COMPONENT_BYTES: usize = 255;
-pub const MAX_PATH_COMPONENTS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkspacePath(String);
@@ -14,7 +13,6 @@ impl WorkspacePath {
             .strip_prefix("/mnt/workspace/")
             .ok_or_else(|| refused("not a workspace file"))?;
         if path.len() > MAX_WORKSPACE_PATH_BYTES
-            || relative.split('/').count() > MAX_PATH_COMPONENTS
             || relative.split('/').any(|part| {
                 part.is_empty()
                     || part == "."
