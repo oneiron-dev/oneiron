@@ -152,7 +152,7 @@ export type ScratchpadSealRequest = { session_id: string }
 /** `oneiron::context_board::layout::FoldBaseline` */
 export type FoldBaseline = { total: number; counts?: Record<string, number> }
 /** `oneiron::context_board::layout::SectionFold` */
-export type SectionFold = { note?: string | null; keep?: EntityId[]; baseline?: FoldBaseline | null }
+export type SectionFold = { note?: string | null; keep?: EntityId[]; baseline?: FoldBaseline | null; section_baselines?: Record<string, FoldBaseline> }
 /** `oneiron::context_board::layout::BoardActorClass` */
 export type BoardActorClass = "human" | "agent" | "system"
 /** `oneiron::context_board::layout::BoardWhoFilter` */

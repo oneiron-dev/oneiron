@@ -15,7 +15,7 @@
 //! ([`crate::settings::BoardLayoutSettings`]).
 
 use super::BoardHistoryError;
-use super::layout::{BoardLayout, BoardLayoutError, FoldBaseline};
+use super::layout::{BoardLayout, BoardLayoutError, FoldCounts};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -80,7 +80,7 @@ impl BoardLayoutCandidate {
     /// The candidate with the live counts of each fold its batch starts, so
     /// the fold line counts its changes from the turn the fold applied.
     #[must_use]
-    pub fn with_fold_baselines(mut self, counts: &BTreeMap<String, FoldBaseline>) -> Self {
+    pub fn with_fold_baselines(mut self, counts: &BTreeMap<String, FoldCounts>) -> Self {
         self.layout = self.layout.with_fold_baselines(counts);
         self
     }

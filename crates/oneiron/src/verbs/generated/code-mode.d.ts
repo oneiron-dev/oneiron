@@ -88,7 +88,7 @@ declare namespace Sdk {
   type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sealed_prior?: EntityId | null };
   type ScratchpadSealRequest = { session_id: string };
   type FoldBaseline = { total: number; counts?: Record<string, number> };
-  type SectionFold = { note?: string | null; keep?: EntityId[]; baseline?: FoldBaseline | null };
+  type SectionFold = { note?: string | null; keep?: EntityId[]; baseline?: FoldBaseline | null; section_baselines?: Record<string, FoldBaseline> };
   type BoardActorClass = "human" | "agent" | "system";
   type BoardWhoFilter = { kind: "mine" } | { kind: "actor"; actor: EntityId } | { kind: "class"; class: BoardActorClass } | { kind: "group"; group: EntityId };
   type SectionFilter = { who?: BoardWhoFilter | null; status?: string[] };
