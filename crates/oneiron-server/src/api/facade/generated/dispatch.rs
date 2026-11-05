@@ -15070,6 +15070,41 @@ async fn vault_coach_training_offers_sources(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_coach_training_runs_cancel(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_runs.cancel")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_runs.cancel", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.coach.training_runs.cancel", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_coach_training_runs_cancel(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_research_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40166,6 +40201,9 @@ async fn call_verb_row(
         }
         "vault.coach.training_offers.sources" => {
             Box::pin(vault_coach_training_offers_sources(server, call, input)).await
+        }
+        "vault.coach.training_runs.cancel" => {
+            Box::pin(vault_coach_training_runs_cancel(server, call, input)).await
         }
         "vault.research.bind" => Box::pin(vault_research_bind(server, call, input)).await,
         "vault.research.fork" => Box::pin(vault_research_fork(server, call, input)).await,

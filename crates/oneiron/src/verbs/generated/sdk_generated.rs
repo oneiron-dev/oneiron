@@ -2519,6 +2519,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.coach.training_runs.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::TrainingRunRef,
+                >(),
+            ),
+            (
                 "vault.research.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchBindWire,
@@ -7452,6 +7458,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
     "vault.coach.training_offers.sources",
+    "vault.coach.training_runs.cancel",
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.authority.handoff_alarms",
@@ -9041,6 +9048,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.sources" => crate::code_run::vault_read::request_schema::<
             crate::edit_distance::reservoir::ReservoirSourcePreview,
         >(),
+        "vault.coach.training_runs.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::embed::PendingEmbedderBinding>()
+        }
         "vault.research.reserve_exploration" => {
             crate::code_run::vault_read::request_schema::<crate::entity_id::EntityId>()
         }
@@ -13976,6 +13986,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.coach.training_offers.sources" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_runs.cancel" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20845,6 +20862,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.coach.training_offers.sources" => {
             let _input: crate::task_verb::sdk::ReservoirSourcesRequest = decode(value.clone())?;
         }
+        "vault.coach.training_runs.cancel" => {
+            let _input: crate::skill_optimize::offer_doors::TrainingRunRef = decode(value.clone())?;
+        }
         "vault.research.bind" => {
             let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
         }
@@ -24546,6 +24566,9 @@ pub fn invoke(
         )?),
         "vault.coach.training_offers.sources" => {
             encode(vault_coach_training_offers_sources(memory, decode(value)?)?)
+        }
+        "vault.coach.training_runs.cancel" => {
+            encode(vault_coach_training_runs_cancel(memory, decode(value)?)?)
         }
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
         "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
@@ -30163,6 +30186,17 @@ pub fn vault_coach_training_offers_sources(
         &memory.embedded_owner("vault.coach.training_offers.sources")?,
         input,
     )
+}
+pub fn vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::TrainingRunRef,
+) -> MemoryResult<crate::embed::PendingEmbedderBinding> {
+    crate::skill_optimize::offer_doors::cancel_training_run(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_runs.cancel")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_research_bind(
     memory: &Memory<'_>,

@@ -500,6 +500,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultResearchEvaluateSplit,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -1235,6 +1236,7 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.coach.training_runs.cancel" => Self::VaultCoachTrainingRunsCancel,
             "vault.research.evaluate_split" => Self::VaultResearchEvaluateSplit,
             "vault.authority.handoff_alarms" => Self::VaultAuthorityHandoffAlarms,
             "vault.authority.handoff_alarms.acknowledge" => {
