@@ -468,11 +468,10 @@ pub(crate) fn skill_tradeoff_ask_sourced(
     let txn = vault.store.env.read_txn()?;
     let (pending, verdict_rows) = skill_edit_verdict_sourced_in_txn(vault, &txn, proposal)?;
     let Some(pending) = pending else {
-        return Ok((None, Some(verdict_rows)));
+        return Ok((None, verdict_rows));
     };
     let (ask, ask_rows) = bound_ask_sourced_in_txn(vault, &txn, &pending)?;
-    let sources =
-        crate::attempt_queue::source_rows::union_source_rows([Some(verdict_rows), ask_rows]);
+    let sources = crate::attempt_queue::source_rows::union_source_rows([verdict_rows, ask_rows]);
     Ok((ask.map(|(ask, _)| ask), sources))
 }
 

@@ -566,10 +566,19 @@ pub fn skill_edit_cycle_cap(vault: &Vault) -> Result<u32> {
 }
 
 pub(super) fn cycle_cap_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<u32> {
+    cycle_cap_sourced_in_txn(vault, rtxn).map(|(cap, _)| cap)
+}
+
+/// A stored cap is a body on a singleton carrier with no row identity.
+/// Absence uses the unchanged default and consumes no stored cap body.
+pub(super) fn cycle_cap_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<(u32, Option<Vec<EntityId>>)> {
     let Some(bytes) = SKILL_EDIT_CYCLE_CAP.get(&vault.store, rtxn, &())? else {
-        return Ok(DEFAULT_SKILL_EDIT_CYCLE_CAP);
+        return Ok((DEFAULT_SKILL_EDIT_CYCLE_CAP, Some(Vec::new())));
     };
-    Ok(u32::from_be_bytes(bytes))
+    Ok((u32::from_be_bytes(bytes), None))
 }
 
 /// Sets K.

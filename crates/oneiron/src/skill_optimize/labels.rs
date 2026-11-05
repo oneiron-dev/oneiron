@@ -538,15 +538,27 @@ pub(crate) fn anchor_labels_since_in_txn(
     txn: &heed::RoTxn<'_>,
     since: u64,
 ) -> Result<u64> {
+    anchor_labels_since_sourced_in_txn(vault, txn, since).map(|(count, _)| count)
+}
+
+/// The anchor count beside the real row ids of every decoded label, including
+/// labels outside the anchor or before `since`. Ask keys are not row ids.
+pub(crate) fn anchor_labels_since_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> Result<(u64, Vec<EntityId>)> {
     let mut fresh = 0_u64;
+    let mut source_rows = Vec::new();
     for row in LABELS.iter_from(&vault.store, txn, &[])? {
         let (key, label) = row?;
         if key != label.ask.id {
             return Err(Error::CorruptedIndex("judge label identity"));
         }
+        source_rows.push(label.row_id);
         fresh += u64::from(label.in_anchor() && label.picked_at > since);
     }
-    Ok(fresh)
+    Ok((fresh, source_rows))
 }
 
 /// Ingest an authenticated human's A/B pick, at most once for an ask. A
