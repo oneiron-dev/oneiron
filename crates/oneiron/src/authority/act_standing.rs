@@ -122,6 +122,19 @@ impl CausalPoints {
             },
         )
     }
+
+    /// Whether `act`'s carrier and owner stood at its signed heads (FIX
+    /// 4703, evidence-only): the `stood` behind [`Self::standing`], without
+    /// today's removal race. Historical Grant issuance is judged at its own
+    /// signed causal point, not invalidated by a later carrier removal.
+    /// `None` where this set was not built for `act` or holds no state for
+    /// its heads (pending/missing history).
+    pub(super) fn carrier_and_owner_stood_at_signed_heads(
+        &self,
+        act: &ExternalAct,
+    ) -> Option<bool> {
+        self.at.get(act)?.as_ref().map(|at| at.stood)
+    }
 }
 
 /// How this install counts `machine`'s chain under `admitter`, as its own
