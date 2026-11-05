@@ -23,6 +23,13 @@ cutoff, verifies the same active job generation and binding, and restores
 its committed replay through the native executor. No model call polls an
 unsettled wait. Other kinds of child waits keep their previous refusal.
 
+The worker advances a separate in-memory queue cursor for the canonical
+store and each live session. A full parent's queued siblings cannot keep
+later grandchildren hidden behind the same queue page on every tick. The
+existing per-tick page size and per-parent resident limits stay in force.
+At the end of a queue, one empty-page wrap checks the head before deciding
+that a session has no queued work. A restart resets only this scan position.
+
 Each level still uses native stored-source admission, committed-output
 checks, range and row checks, taint checks, current job generation and its
 original canonical or off-record participant route. A nested door supplies
