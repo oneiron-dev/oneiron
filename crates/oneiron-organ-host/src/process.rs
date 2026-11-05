@@ -798,7 +798,7 @@ impl OrganProcess {
             Clock::new(set, room.waits()).with_reader(&self.inbox.room)
         };
         let call = ToOrgan::Call(call);
-        let unwanted = || grant.revoked() || !self.is_alive();
+        let unwanted = || grant.revoked() || !self.is_alive() || (fixed_deadline && clock.passed());
         let sent = self
             .book(&call, room, clock, &unwanted)
             .and_then(|_frame| self.send(&call, fds, self.max_call_frame, clock.deadline()));
@@ -806,6 +806,9 @@ impl OrganProcess {
             Ok(len) => asks.frame_sent(len),
             // Withdrawn while it waited for room: nothing left.
             Err(FrameError::Withdrawn) if grant.revoked() => return Err(CallFailure::Revoked),
+            Err(FrameError::Withdrawn) if fixed_deadline && self.is_alive() && clock.passed() => {
+                return Err(CallFailure::Deadline { stopped: false });
+            }
             Err(FrameError::Withdrawn) => return Err(CallFailure::Crashed),
             // Nothing left: the organ is in step and keeps its other calls.
             Err(FrameError::Late) => return Err(CallFailure::Deadline { stopped: false }),
