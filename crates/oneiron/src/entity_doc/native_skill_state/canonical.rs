@@ -121,7 +121,35 @@ impl<'a> CanonicalSkillState<'a> {
     }
 }
 
-impl CanonicalRebuiltDocument<'_> {
+impl<'a> CanonicalRebuiltDocument<'a> {
+    /// Own the ordinary fixed replay when it emits no native state at any
+    /// retained version. Repair must not reload the damaged old document to
+    /// establish what this producer itself wrote.
+    pub(in crate::entity_doc) fn ordinary(row: &'a CanonicalEntityDocument) -> Result<Self> {
+        if has_witness(row) {
+            return Err(invalid());
+        }
+        let (document, frontiers) = recovery::rebuild_canonical_document(row, None)?;
+        let inventory = inspect(&document)?;
+        if inventory.current.is_some()
+            || inventory
+                .floor
+                .as_ref()
+                .is_some_and(|floor| floor.fact.is_some())
+            || !inventory.mutations.is_empty()
+        {
+            return Err(invalid());
+        }
+        let frontier = document.frontier();
+        Ok(Self {
+            source: CanonicalSkillState { row },
+            document,
+            frontiers,
+            frontier,
+            inventory,
+        })
+    }
+
     pub(in crate::entity_doc) fn document(&self) -> &EntityDoc {
         &self.document
     }
