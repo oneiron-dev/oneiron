@@ -48,6 +48,9 @@ use crate::{EntityId, Error, Result};
 /// The taint a result reads under: its state and the secret scan's reason.
 type Taint = (ArtifactTaintState, Option<String>);
 
+mod taint;
+use self::taint::{exported_mark, stored_taint};
+
 /// Where the arm's program reads its run's bodies back by path, as the
 /// executor names them.
 pub(crate) struct ArmReads {
@@ -253,12 +256,17 @@ impl<'a> ShadowBridgeHost<'a> {
         std::mem::take(&mut self.streams)
     }
 
-    /// The results the arm stored, each by its ref.
+    /// The results the arm stored, each by its ref; a tainted one leaves withheld.
     pub(crate) fn own_results(&self) -> Vec<ShadowBodyRef> {
         self.results
             .iter()
             .filter(|result| result.own)
-            .map(|result| ShadowBodyRef::of(&result.output, result.secret.as_deref()))
+            .map(|result| {
+                ShadowBodyRef::of(
+                    &result.output,
+                    exported_mark(result.state, result.secret.as_deref()),
+                )
+            })
             .collect()
     }
 
@@ -798,19 +806,6 @@ fn response_erased(outcome: &SelfDispatchOutcome) -> bool {
 /// TASK was declined: the step closes the run, and fails nothing.
 fn declined_halt(outcome: &SelfDispatchOutcome) -> bool {
     matches!(outcome, SelfDispatchOutcome::Failed(failed) if failed.error == "task_declined")
-}
-
-/// The taint a value the arm stored reads under: the secret scan's mark on
-/// its own bytes, else the first taint among the results it was made from.
-fn stored_taint(secret: Option<&'static str>, inherit: &[Taint]) -> Taint {
-    if let Some(reason) = secret {
-        return (ArtifactTaintState::TaintedLive, Some(reason.to_owned()));
-    }
-    inherit
-        .iter()
-        .find(|(state, _)| state.is_tainted())
-        .cloned()
-        .unwrap_or((ArtifactTaintState::Clean, None))
 }
 
 /// An offset as a read path writes it: decimal digits, no sign, no
