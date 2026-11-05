@@ -27,6 +27,23 @@ impl BatchBuilder<'_> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
     }
 
+    /// The typed SKILL door's caller-transaction terminal. The request remains
+    /// target-bound; every ordinary batch and actor check still runs in apply.
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_skill_state(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        request: crate::skill::SkillStateWrite,
+    ) -> Result<()> {
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true).with_skill_state_write(request),
+            None,
+            None,
+            None,
+        )
+    }
+
     /// [`Self::apply`] for the replicated put a sync window's ingest door
     /// admitted, with what that door judged beside it. A replicated
     /// AUTHORITY_LOG put is judged beside `authority_beside`, the other

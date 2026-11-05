@@ -136,6 +136,8 @@ pub(super) fn apply_claim_candidate(
                 ..PutOptions::default()
             },
             context: PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write: None,
                 native_publication: None,
                 // A claim candidate is never part of a promotion closure:
                 // promote replays the session's typed journal, which stages
