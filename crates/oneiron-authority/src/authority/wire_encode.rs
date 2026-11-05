@@ -287,6 +287,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)
         }
         AuthorityOp::FrontierJoin(join) => super::frontier_join::frontier_join_value(join),
+        AuthorityOp::OriginCut(cut) => super::origin_cut::origin_cut_value(cut),
     }
 }
 

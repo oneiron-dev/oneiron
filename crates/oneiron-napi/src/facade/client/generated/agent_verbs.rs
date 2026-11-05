@@ -10837,6 +10837,138 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_mail_pack_install(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.pack.install", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_connect(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.connect", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_settings_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.settings.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_members_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.members.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_audience_events(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.audience_events", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_threads_share(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.threads.share", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_threads_unshare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.threads.unshare", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_compliance_setting(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.compliance.setting", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_compliance_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.compliance.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_compliance_log(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.compliance.log", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_sources_sync_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.sync_status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_inbox(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.inbox", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_threads_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.threads.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_compliance_search(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.compliance.search", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn connector_answer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("connector.answer", js_json(input))
