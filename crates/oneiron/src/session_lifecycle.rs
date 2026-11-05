@@ -946,5 +946,6 @@ const fn end_reason_word(reason: SessionEndReason) -> &'static str {
         SessionEndReason::LifetimeCeiling => "lifetime_ceiling",
     }
 }
+
 #[cfg(test)]
 mod tests;
