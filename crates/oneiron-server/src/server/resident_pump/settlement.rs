@@ -45,6 +45,8 @@ pub(super) fn settle(
     };
     let mut retry_at = now;
     let reason = match ran {
+        // The media step already committed its trap and signal park together.
+        Ok(BoundRun::Trapped) => return Ok(()),
         // CUA E4: a bound try whose program met its TASK's goal settles on
         // its receipt, with no model call.
         Ok(BoundRun::Library(receipt)) => {
