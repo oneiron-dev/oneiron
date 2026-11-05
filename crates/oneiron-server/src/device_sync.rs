@@ -65,6 +65,8 @@ mod removal_delivery;
 mod renewal;
 #[cfg(feature = "mesh")]
 mod route;
+#[cfg(feature = "mesh")]
+mod url;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
@@ -275,15 +277,19 @@ async fn open(
     };
     let resolve = route::resolver(Arc::clone(host.vault()), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
+    let mesh_dialer = match mesh {
+        Some(mesh) => Some(
+            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>,
+        ),
+        None => url::dialer(&url)?,
+    };
     let link = Link {
         freeze: freeze.clone(),
         windows: host.windows(),
         topology,
         url,
         worlds,
-        mesh_dialer: mesh.map(|mesh| {
-            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>
-        }),
+        mesh_dialer,
         pin,
         machine,
         candidacy,
