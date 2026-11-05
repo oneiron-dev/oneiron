@@ -9,7 +9,7 @@
 /// not StructuralKinds either. Classification, not zone position, is what makes
 /// a kind engine-authored: a kind classified `Pack` stays publicly writable
 /// wherever its byte sits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
     Semantic,
@@ -33,7 +33,7 @@ pub enum EntityClassification {
 ///
 /// This table validates allocation only. Replication scopes resolve a registry
 /// kind's declared classification and family, never a byte interval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum TypeByteZone {
     /// Byte `0` — CLAIM's semantic type byte, not a StructuralKind.
     Semantic,

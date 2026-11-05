@@ -136,6 +136,35 @@ pub(crate) fn rebind_mask_origin_in_txn(
     MASK_ORIGIN.put(store, wtxn, custody, &origin)
 }
 
+/// Keeps an immutable part whole in existing custody. Only its handle leaves
+/// this writer; the original bytes, including any signature, are never masked.
+/// The caller has already detected a secret in the part and supplies its exact
+/// owning record and position, so erase reaches this record's custody as usual.
+pub(crate) fn seal_whole_part_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    place: &str,
+    value: &[u8],
+    reason: Option<&'static str>,
+    at: u64,
+) -> Result<String> {
+    let mut plan = Masker::default();
+    plan.found.push(Found {
+        value: Zeroizing::new(value.to_vec()),
+        reason: reason.unwrap_or(REASON_KNOWN_VALUE),
+        record,
+        place: place.to_owned(),
+    });
+    let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
+    handles
+        .get(value)
+        .map(|(handle, _)| handle.clone())
+        .ok_or(Error::InvariantViolation(
+            "a sealed part's custody record has no handle",
+        ))
+}
+
 /// Records each file `files` marks: each key's span, in the file's bytes or
 /// in the member that holds it, with the custody record `minted` holds it in
 /// or the record custody held it in before, and the file's band.

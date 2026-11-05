@@ -160,8 +160,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
-    let (embedder, gpu_poller) =
-        crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
+    let crate::commands::BuiltEmbedder {
+        slot: embedder,
+        gpu_pool,
+        poller: gpu_poller,
+    } = crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
     // The tagger slot `[oneironer]` names, as plain serve builds it; its
     // worker starts under the write admission too. Its engine rows sit in
     // the data directory: managed mode reads no HOME or XDG (FIX 6873).
@@ -176,6 +179,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_model_setup_config(&config, &crate::config::ServeArgs::default())
+        .with_gpu_pool(gpu_pool)
         .with_broker(broker)
         .with_owner_host(owner_host)
         .with_browser_guest(
@@ -288,6 +293,22 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         managed.hypnos_socket.clone(),
         &credentials,
     )?;
+    // The native preview socket has only exact held-lease origins. No flag
+    // means no registration caller or listener, preserving standalone hosts.
+    let previews = managed
+        .preview_socket
+        .as_deref()
+        .map(crate::managed::preview::PreviewRouteListener::bind)
+        .transpose()?;
+    let preview_routes = if previews.is_some() {
+        let routes = Arc::new(crate::managed::preview::PreviewRoutes::new(
+            ledger.preview_route_client(),
+        ));
+        sync_server.configure_artifact_preview_routes(Arc::clone(&routes))?;
+        Some(routes)
+    } else {
+        None
+    };
     // The frame is spent. `Credentials` zeroizes on drop, so releasing it here
     // rather than at end of scope is what keeps the DEK out of memory for the
     // rest of the process lifetime.
@@ -634,6 +655,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             let stop = shutdown.triggered();
             tokio::spawn(async move { listener.serve_until(app, stop).await })
         });
+        let preview_task = previews.zip(preview_routes).map(|(listener, routes)| {
+            let stop = shutdown.clone();
+            tokio::spawn(async move { listener.serve(routes, stop).await })
+        });
         // Graceful shutdown couples "stop accepting" and "drain in-flight": the
         // listener closes the moment SIGTERM lands, and this resolves once the
         // requests already in the runtime have finished.
@@ -655,6 +680,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         host.on_stop()?;
         let _ = ctl_task.await;
         if let Some(task) = artifact_task {
+            let _ = task.await;
+        }
+        if let Some(task) = preview_task {
             let _ = task.await;
         }
         // A call in flight ends through its usual teardown before the freeze.
@@ -687,7 +715,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         let _ = failure_signals.await;
         let _ = futures_util::future::OptionFuture::from(tagging.take()).await;
         // Tagging has ended: each platform child is shut down and reaped (FIX 7383).
-        if let Some(slot) = sync_server.tagger.as_ref() {
+        if let Some(slot) = sync_server.tagger_slot() {
             slot.closer().close().await;
         }
         for worker in ladder_workers {
@@ -747,7 +775,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         shutdown.trigger();
         let _ = tagging.await;
         // A failed start reaps its platform children too (FIX 7383).
-        if let Some(slot) = sync_server.tagger.as_ref() {
+        if let Some(slot) = sync_server.tagger_slot() {
             slot.closer().close().await;
         }
     }
