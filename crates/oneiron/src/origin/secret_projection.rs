@@ -27,7 +27,7 @@ pub(crate) mod checkout;
 pub(crate) mod checkout_recipient;
 pub(crate) mod claims;
 pub(crate) mod clearance;
-pub(crate) mod copy_id;
+pub(crate) use oneiron_store::origin::secret_projection::copy_id;
 pub(crate) mod disposal;
 pub(crate) mod edit;
 pub(crate) mod git;
