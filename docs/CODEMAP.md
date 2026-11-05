@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6509 | 895 | 147 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6512 | 895 | 147 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -55,8 +55,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 20 | 5 | 0 |
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
-| [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 2 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1562 | 182 | 48 |
+| [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1563 | 182 | 48 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 159 | 4 | 0 |
@@ -79,7 +79,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 23 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 14 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 77 | L | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 250 | L | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 251 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 24 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 194 | XL | yes | — |
 | `blob_artifact` | dir | 88 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -143,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `dreamer_prefilter` | dir | 8 | m | yes | ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth… |
 | `dreamer_promotion` | file+dir | 10 | m | — | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
-| `dreamer_runner` | dir | 197 | L | yes | Private Dreamer runner store plus atomic admission |
+| `dreamer_runner` | dir | 198 | L | yes | Private Dreamer runner store plus atomic admission |
 | `dreamer_tournament` | dir | 6 | m | — | OF-366 tournament claim-authoring runner primitives |
 | `dreamer_wake` | dir | 70 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge_regeneration` | file | 1 | s | — | The `regenerates` link proofs over stored rows (FIX 5972) |
@@ -178,7 +178,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `inbox` | dir | 16 | L | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `inference_context` | file | 1 | s | — | Host-bound inference identity and extraction context |
 | `inference_snapshot` | dir | 6 | m | yes | A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped… |
-| `ingest` | dir | 63 | m | yes | Ingest source registry and source-local normalization |
+| `ingest` | dir | 64 | m | yes | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | L | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `learning` | dir | 17 | m | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
 | `learning_setting` | file+dir | 8 | m | — | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
@@ -380,7 +380,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `deadline` | file | 1 | s | One call's deadline (FIX 8559) |
 | `digest` | file | 1 | s | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `error` | file | 1 | s | Why a call stopped |
-| `form` | file | 1 | s | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
+| `form` | file | 1 | m | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
 | `frame` | file | 1 | m | The wire between the daemon and the broker, one connection per call |
 | `peer` | file | 1 | s | Who this process is, and closing its memory to processes of its own uid |
 | `responses` | file | 1 | m | OpenAI Responses over one broker-upgraded WebSocket per call |
@@ -842,7 +842,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `handler` | dir | 36 | L | WebSocket upgrade handler and connection lifecycle |
 | `home_candidacy` | file | 1 | s | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
 | `hook_verdict` | file | 1 | s | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
-| `http_listener` | file+dir | 3 | m | The TCP accept loop the server and the embedder endpoint serve through |
+| `http_listener` | file+dir | 4 | m | The TCP accept loop the server and the embedder endpoint serve through |
 | `idempotency` | file+dir | 7 | m | Durable HTTP idempotency storage and replay state |
 | `import_audience` | file | 1 | m | The import audience sweep (OF-492) |
 | `invocation_claims` | file | 1 | m | Durable client-named invocation claims (FIX 11889) |
