@@ -8,20 +8,20 @@ use std::time::{Duration, Instant};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
-use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal};
+use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf};
 use tokio::runtime::Handle;
 use tokio::task::JoinSet;
 
 use super::staging::Staging;
 use super::{
-    Carried, FailureKind, ORGAN_ALPN, Offer, PeerAnswer, PeerAsk, PeerCall, PeerFailure,
+    Carried, FailureKind, INLINE, ORGAN_ALPN, Offer, PeerAnswer, PeerAsk, PeerCall, PeerFailure,
     PeerOutcome, PeerOutput, PeerResult, Reply, Request, decode, encode,
 };
 use crate::error::HostError;
 use crate::fetch::GuardedFetch;
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
-use crate::outcome::OrganOutcome;
+use crate::outcome::{OrganOutcome, OutputBytes};
 use crate::receipt::AskReceipt;
 use crate::resource_memory::{FloorLease, MemoryGrow};
 use crate::shutdown::MeshCancel;
@@ -50,11 +50,18 @@ pub struct OrganService {
     cancel: MeshCancel,
 }
 
-/// Keeps the decoded body and report charged until their last encoding use.
+/// Keeps the returned values charged until their last encoding use.
 struct CallReply {
     result: PeerResult,
-    // Fields drop in declaration order: the result's values before their lease.
+    // Fields drop in declaration order: the result's values before their guards.
+    _outputs: Vec<InlineOutputHold>,
     _frame: Option<crate::budget::Lease>,
+}
+
+/// Original reservations for an inline output moved into the reply without copying.
+struct InlineOutputHold {
+    _kept: Option<crate::budget::Kept>,
+    _leased: Option<crate::outcome::Leased>,
 }
 
 impl CallReply {
@@ -66,6 +73,7 @@ impl CallReply {
                 organ: None,
                 asks,
             }),
+            _outputs: Vec::new(),
             _frame: None,
         }
     }
@@ -339,6 +347,7 @@ impl OrganService {
             }
             Err(err) => CallReply {
                 result: PeerResult::Failed(failure(err, asked)),
+                _outputs: Vec::new(),
                 _frame: None,
             },
         })
@@ -391,15 +400,28 @@ impl MeshService for OrganService {
 
 /// The outcome as it crosses back: each output's bytes offered by hash.
 fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String> {
+    let mut held_outputs = Vec::new();
     let outputs = outcome
         .outputs
-        .iter()
+        .into_iter()
         .map(|output| {
+            let bytes = match output.bytes {
+                OutputBytes::Inline(bytes) if bytes.len() <= INLINE => {
+                    held_outputs.push(InlineOutputHold {
+                        _kept: output._kept,
+                        _leased: output._leased,
+                    });
+                    Carried::Inline(ByteBuf::from(bytes))
+                }
+                OutputBytes::Inline(bytes) => staging.offer(&bytes)?,
+                #[cfg(unix)]
+                OutputBytes::Mapped(region) => staging.offer(&region)?,
+            };
             Ok(PeerOutput {
-                name: output.name.clone(),
-                media_type: output.media_type.clone(),
+                name: output.name,
+                media_type: output.media_type,
                 content_hash: output.content_hash,
-                bytes: staging.offer(output)?,
+                bytes,
             })
         })
         .collect::<Result<_, String>>()?;
@@ -410,6 +432,7 @@ fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String
             receipt: outcome.receipt,
             outputs,
         }),
+        _outputs: held_outputs,
         _frame: outcome._frame,
     })
 }
