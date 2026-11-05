@@ -207,15 +207,15 @@ impl Metrics {
         let mut lines = 1;
         let mut used = 0;
         let mut width = first.max(1);
-        for word in words(text) {
+        for (word, space_before) in words(text) {
             let need = self.advance(word);
-            let gap = if used == 0 { 0 } else { space };
+            let gap = if used == 0 || !space_before { 0 } else { space };
             if used > 0 && used + gap + need > width {
                 lines += 1;
                 used = 0;
                 width = rest.max(1);
             }
-            let gap = if used == 0 { 0 } else { space };
+            let gap = if used == 0 || !space_before { 0 } else { space };
             used += gap + need;
             while used > width {
                 lines += 1;
@@ -242,7 +242,11 @@ impl Metrics {
             return None;
         }
         let mut height = top + bottom;
-        for (index, paragraph) in paragraphs.iter().enumerate() {
+        for (index, paragraph) in paragraphs
+            .iter()
+            .flat_map(|paragraph| paragraph.split('\n'))
+            .enumerate()
+        {
             if index > 0 {
                 height += self.spaced(self.before);
             }
@@ -254,8 +258,8 @@ impl Metrics {
 }
 
 /// Break opportunities: runs of non-space text, with every wide character
-/// a word of its own.
-fn words(text: &str) -> impl Iterator<Item = &str> {
+/// a word of its own. The flag marks the start of a whitespace word.
+fn words(text: &str) -> impl Iterator<Item = (&str, bool)> {
     text.split_whitespace().flat_map(|word| {
         let mut pieces = Vec::new();
         let mut start = 0;
@@ -272,6 +276,9 @@ fn words(text: &str) -> impl Iterator<Item = &str> {
             pieces.push(&word[start..]);
         }
         pieces
+            .into_iter()
+            .enumerate()
+            .map(|(index, piece)| (piece, index == 0))
     })
 }
 
