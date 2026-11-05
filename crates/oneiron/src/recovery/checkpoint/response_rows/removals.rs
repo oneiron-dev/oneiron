@@ -45,7 +45,7 @@ pub(in crate::recovery::checkpoint) fn scrub_in_txn(
     let store = write.store;
     for id in since {
         crate::llm::erase_submissions_in_txn(store, wtxn, id)?;
-        crate::saved_query::erase_memos_for_source_in_txn(store, wtxn, id)?;
+        crate::store::query_memo_lifetime::erase_memos_for_source_in_txn(store, wtxn, id)?;
         crate::memory::erase_birth_reply_assertions_in_txn(store, wtxn, id)?;
         // The whole blob-artifact teardown, not only its pointers, so the
         // restored copy releases the erased artifact's ASSETs as the erase

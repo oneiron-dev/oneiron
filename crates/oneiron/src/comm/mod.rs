@@ -69,8 +69,8 @@ pub(crate) use self::descriptor::{
     check_claim_against_compiled_descriptor, is_compiled_generic_claim_predicate,
 };
 pub(crate) use self::descriptor::{
-    check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
-    seed_claim_class_descriptors,
+    check_claim_against_descriptor_in_txn, claim_class_descriptor_in_txn,
+    is_restrictive_comm_predicate, seed_claim_class_descriptors,
 };
 pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
 pub(crate) use self::generic_put_routing::{
