@@ -20,7 +20,7 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        search_resident(&self.vault, &self.config, query, limit, None, None).await
+        search_resident(&self.vault, &self.config, query, limit, None, None, None).await
     }
 }
 
@@ -45,6 +45,7 @@ pub(crate) async fn search_resident(
     query: &str,
     limit: usize,
     scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
+    as_of: Option<u64>,
     caller: Option<(
         &crate::authority::ForwardedCallerProof,
         crate::claim::CallerLocality,
@@ -68,6 +69,7 @@ pub(crate) async fn search_resident(
                 limit,
                 &selector_wire,
                 scope,
+                as_of,
                 caller,
             )
             .await
