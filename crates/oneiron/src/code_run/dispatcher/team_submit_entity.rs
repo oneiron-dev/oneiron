@@ -11,11 +11,14 @@
 //!
 //! Kinds. The two kinds are disjoint. `claim:` names a live type-0 CLAIM
 //! whose bytes at that revision decode as a claim body. `document:` names a
-//! live record of another kind that owns a common document (a NOTE, a
-//! MESSAGE, a SUMMARY), at a version that document retains. A CLAIM, a
-//! secret's custody or a world key's pad, a bare document slot, a pending
-//! fork, and a revision of the record from before its document was born are
-//! refused as missing.
+//! live NOTE, MESSAGE or SUMMARY that owns a common document, at a version
+//! that document retains. Any other kind (a CLAIM, a secret's custody, a
+//! world key's pad), a bare document slot, a pending fork, and a revision of
+//! the record from before its document was born are refused as missing. A
+//! NOTE whose read is restricted beyond its scope position (owner-only,
+//! explicit-only or relationship-scoped: its author, importer, consent or
+//! relationship scope) is refused as unscoped: its review could not keep
+//! that restriction, and a review reader would learn the NOTE exists.
 //!
 //! Scope. A CLAIM revision's review stands in that revision's own scope
 //! fields, never its live head's. A document's review stands in its
@@ -38,7 +41,9 @@ use crate::claim::{ClaimReadStatus, RelationshipRead, ScopedRead, ScopedReadActo
 use crate::code_run::team_submit::OutputRevision;
 use crate::error::{Error, Result};
 use crate::federation::{ScopeAxis, ScopeId, SensitivityCeiling};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SUMMARY,
+};
 use crate::store::result_body_pins::ResultBodyPin;
 use crate::vault::{LiveEntityRow, ReadMode, RevisionRef};
 use crate::{EntityId, Vault};
@@ -137,9 +142,9 @@ pub(super) fn document_revision_scope_in_txn(
     else {
         return Ok(Err(OUTPUT_MISSING));
     };
-    if matches!(
+    if !matches!(
         entity_type,
-        ENTITY_TYPE_CLAIM | ENTITY_TYPE_SECRET_CUSTODY | ENTITY_TYPE_WORLD_KEY_PAD
+        ENTITY_TYPE_NOTE | ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY
     ) || !crate::vault::entity_revision::common_document_retains_in_txn(
         &vault.store,
         txn,
@@ -147,6 +152,11 @@ pub(super) fn document_revision_scope_in_txn(
         revision,
     )? {
         return Ok(Err(OUTPUT_MISSING));
+    }
+    if entity_type == ENTITY_TYPE_NOTE
+        && !crate::note::note_vault_readable_in_txn(&vault.store, txn, &entity, &body)?
+    {
+        return Ok(Err(OUTPUT_UNSCOPED));
     }
     match revision_in_txn(txn, lane, entity, revision)? {
         Some((kind, _)) if kind == entity_type => {}
