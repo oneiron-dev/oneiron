@@ -55076,8 +55076,8 @@
      "purpose": "What a served host hands its served sinks beyond the vault (OF-187): where each provider's API is, and the…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
-      "fn": 8,
+      "crate-vis": 5,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -64206,7 +64206,7 @@
       "crate-vis": 13,
       "enum": 2,
       "fn": 2,
-      "re-export": 3,
+      "re-export": 4,
       "static": 1,
       "struct": 3
      }
@@ -64224,6 +64224,23 @@
       "const": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrokerModelListingCall",
+      "BrokerModelListingHost",
+      "BrokerModelListingReply"
+     ],
+     "path": "src/secret_custody/use_handle/broker.rs",
+     "purpose": "The host's brokered model listing, using only this use's credential",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "struct": 1,
+      "trait": 2
      }
     },
     {
@@ -92105,7 +92122,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92499,7 +92516,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6462,
+   "source_files": 6463,
    "test_files": 895
   },
   "oneiron-android": {
@@ -124044,6 +124061,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_context/secret_use.rs",
+     "purpose": "A secret-free installed adapter for `self.use`'s broker model listing",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -128735,7 +128762,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 112,
+     "files": 113,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128891,7 +128918,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1551,
+   "source_files": 1552,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
