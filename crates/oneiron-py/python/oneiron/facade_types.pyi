@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1244 facade rows, 4510 declarations.
-Inputs: 1175 of 1244 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1079 of 1244 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1247 facade rows, 4520 declarations.
+Inputs: 1178 of 1247 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1082 of 1247 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -22488,6 +22488,45 @@ class MailSyncStatusView(TypedDict):
     deleted_at_provider: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
+class MailInboxRequest(TypedDict):
+    source_ref: NotRequired[str | None]
+    include_source_deleted: NotRequired[bool]
+    before: NotRequired[int | None]
+    limit: NotRequired[int | None]
+MailStage = Literal["headers", "body"]
+class MailPresenceSourceDeletedBody(TypedDict):
+    at: int
+class MailPresenceSourceDeleted(TypedDict):
+    source_deleted: MailPresenceSourceDeletedBody
+class MailPresenceForgottenBody(TypedDict):
+    at: int
+class MailPresenceForgotten(TypedDict):
+    forgotten: MailPresenceForgottenBody
+MailPresence = Literal["present"] | MailPresenceSourceDeleted | MailPresenceForgotten
+MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool})
+class MailInboxPage(TypedDict):
+    items: list[MailInboxItem]
+    next_before: NotRequired[int | None]
+class MailThreadRequest(TypedDict):
+    thread_ref: str
+class MailThreadView(TypedDict):
+    thread_ref: str
+    source_ref: str
+    messages: list[MailInboxItem]
+    shared_with: NotRequired[list[str]]
+class MailComplianceSearchRequest(TypedDict):
+    query: str
+    purpose: str
+    limit: NotRequired[int | None]
+class MailComplianceHit(TypedDict):
+    source_ref: str
+    thread_ref: str
+    message_ref: str
+    score: float
+    text: NotRequired[str | None]
+class MailComplianceSearchReply(TypedDict):
+    log_sequence: int
+    hits: list[MailComplianceHit]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

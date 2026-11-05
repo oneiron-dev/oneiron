@@ -92,6 +92,9 @@ pub(super) struct MailOccurrence {
     pub(super) presence: MailPresence,
     pub(super) labels: Vec<String>,
     pub(super) rfc_message_id: Option<String>,
+    /// The sender and subject, as the inbox lists the message.
+    pub(super) from: Option<String>,
+    pub(super) subject: Option<String>,
     pub(super) received_at: u64,
     /// Whether a search fetched it: kept whatever the copy setting.
     pub(super) searched: bool,

@@ -1212,3 +1212,6 @@ both bindings and their export-census tests in one change.
 - `vault.mail.compliance.set`
 - `vault.mail.compliance.log`
 - `vault.mail.sources.sync_status`
+- `vault.mail.inbox`
+- `vault.mail.threads.read`
+- `vault.mail.compliance.search`

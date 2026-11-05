@@ -11039,6 +11039,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_mail_inbox(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.inbox")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.inbox", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_mail_threads_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.threads.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.threads.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_mail_compliance_search(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.compliance.search")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.compliance.search", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn connector_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "connector.answer")?;
         let output = py

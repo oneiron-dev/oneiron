@@ -33,6 +33,7 @@
 mod compliance;
 mod doors;
 mod importer;
+mod inbox;
 mod landing;
 mod pack;
 mod provider_delete;
@@ -44,8 +45,8 @@ mod wire;
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
-    MailComplianceEventKind, MailComplianceEventView, MailComplianceSetRequest,
-    MailComplianceSettingView,
+    MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
+    MailComplianceSearchRequest, MailComplianceSetRequest, MailComplianceSettingView,
 };
 pub(crate) use doors::erase_source_actor_in_txn;
 pub use doors::{
@@ -53,6 +54,9 @@ pub use doors::{
     MailSourceSettingsRequest,
 };
 pub use importer::{MailSyncBudget, MailSyncReport};
+pub use inbox::{
+    MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
+};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };

@@ -3743,6 +3743,17 @@ impl OneironClient {
                 "vault.mail.sources.sync_status" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailSyncStatusView,
                 >(client, verb, &input),
+                "vault.mail.inbox" => {
+                    remote_agent_verb_output::<oneiron::mail_pack::MailInboxPage>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.mail.threads.read" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailThreadView,
+                >(client, verb, &input),
+                "vault.mail.compliance.search" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailComplianceSearchReply,
+                >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
                 >(client, verb, &input),
@@ -18712,6 +18723,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.sources.sync_status", value)
+    }
+    pub fn vault_mail_inbox(
+        &self,
+        input: &oneiron::mail_pack::MailInboxRequest,
+    ) -> Result<oneiron::mail_pack::MailInboxPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.inbox", value)
+    }
+    pub fn vault_mail_threads_read(
+        &self,
+        input: &oneiron::mail_pack::MailThreadRequest,
+    ) -> Result<oneiron::mail_pack::MailThreadView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.threads.read", value)
+    }
+    pub fn vault_mail_compliance_search(
+        &self,
+        input: &oneiron::mail_pack::MailComplianceSearchRequest,
+    ) -> Result<oneiron::mail_pack::MailComplianceSearchReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.compliance.search", value)
     }
     pub fn connector_answer(
         &self,

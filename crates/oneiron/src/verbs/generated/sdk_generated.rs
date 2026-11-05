@@ -6757,6 +6757,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
             ),
             (
+                "vault.mail.inbox",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailInboxRequest>(),
+            ),
+            (
+                "vault.mail.threads.read",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailThreadRequest>(
+                ),
+            ),
+            (
+                "vault.mail.compliance.search",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailComplianceSearchRequest,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -19164,6 +19179,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.inbox" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.threads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.compliance.search" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23504,6 +23540,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.sources.sync_status" => {
             let _input: crate::mail_pack::MailSourceRef = decode(value.clone())?;
         }
+        "vault.mail.inbox" => {
+            let _input: crate::mail_pack::MailInboxRequest = decode(value.clone())?;
+        }
+        "vault.mail.threads.read" => {
+            let _input: crate::mail_pack::MailThreadRequest = decode(value.clone())?;
+        }
+        "vault.mail.compliance.search" => {
+            let _input: crate::mail_pack::MailComplianceSearchRequest = decode(value.clone())?;
+        }
         "connector.answer" => {
             let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
         }
@@ -26075,6 +26120,11 @@ pub fn invoke(
         "vault.mail.compliance.log" => encode(vault_mail_compliance_log(memory, decode(value)?)?),
         "vault.mail.sources.sync_status" => {
             encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
+        }
+        "vault.mail.inbox" => encode(vault_mail_inbox(memory, decode(value)?)?),
+        "vault.mail.threads.read" => encode(vault_mail_threads_read(memory, decode(value)?)?),
+        "vault.mail.compliance.search" => {
+            encode(vault_mail_compliance_search(memory, decode(value)?)?)
         }
         "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
@@ -36600,6 +36650,24 @@ pub fn vault_mail_sources_sync_status(
     input: crate::mail_pack::MailSourceRef,
 ) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
     memory.mail_sources_sync_status(&input)
+}
+pub fn vault_mail_inbox(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailInboxRequest,
+) -> MemoryResult<crate::mail_pack::MailInboxPage> {
+    memory.mail_inbox(&input)
+}
+pub fn vault_mail_threads_read(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailThreadRequest,
+) -> MemoryResult<crate::mail_pack::MailThreadView> {
+    memory.mail_thread(&input)
+}
+pub fn vault_mail_compliance_search(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailComplianceSearchRequest,
+) -> MemoryResult<crate::mail_pack::MailComplianceSearchReply> {
+    memory.mail_compliance_search(&input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,

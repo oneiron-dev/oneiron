@@ -4174,6 +4174,8 @@ class Oneiron:
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
         @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
+        def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
+            """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
     class _VaultMailPackVerbs:
         def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
             """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
@@ -4201,6 +4203,8 @@ class Oneiron:
             """Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox."""
         def unshare(self, spec: Facade.MailThreadShareRequest) -> Facade.MailThreadShareReceipt:
             """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
+        def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
+            """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
     class _VaultMailComplianceVerbs:
         def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
             """Whether org compliance search across mailboxes is on; off by default."""
@@ -4208,6 +4212,8 @@ class Oneiron:
             """Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log."""
         def log(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailComplianceEventView]:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
+        def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
+            """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
