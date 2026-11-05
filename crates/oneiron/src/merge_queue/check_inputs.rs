@@ -112,6 +112,20 @@ pub struct QueueCheckInputs {
     /// The shared contract-output commands, by contract name.
     pub contract_outputs: BTreeMap<String, CodeBuildSpec>,
     pub environment: QueueCheckEnvironment,
+    /// BEFORE-hostexecute snapshot of the served CODE's read scope: the
+    /// repo row's actual raw bytes through `scope_for_blob`. `None` when
+    /// the row is absent. Frozen at the `new_receipt` producer, ORIGINAL
+    /// through finish; never re-read from CURRENT config. Skipped from
+    /// the digest wire so the candidate key stays byte-stable.
+    #[serde(skip)]
+    pub(super) input_scope: Option<crate::federation::Scope>,
+    /// BEFORE-hostexecute snapshot of the served CODE's forward taint
+    /// refs (`exhaust_taint_refs_in_txn`); empty is Clean. Frozen at the
+    /// `new_receipt` producer, ORIGINAL through finish. Refs only, never
+    /// a derived state (S7: state is derived on every read). Skipped from
+    /// the digest wire so the candidate key stays byte-stable.
+    #[serde(skip)]
+    pub(super) input_taint: Vec<crate::secret_lease::SecretTaintRef>,
 }
 
 impl QueueCheckInputs {

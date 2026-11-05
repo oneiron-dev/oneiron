@@ -169,6 +169,10 @@ impl MergeQueue<'_> {
             commands: plan.phase(phase).to_vec(),
             contract_outputs: plan.contract_outputs.clone(),
             environment: receipt.environment.clone(),
+            // Cleared: the rebuild compares digest wire bytes only, and the
+            // snapshot fields never hash.
+            input_scope: None,
+            input_taint: Vec::new(),
         };
         Ok(rebuilt.digest()? == digest && receipt.digest()? == digest)
     }
@@ -254,6 +258,7 @@ impl MergeQueue<'_> {
                 return self.finish_step(work, step, status, None, None, None);
             }
         };
+        let (input_scope, input_taint) = snapshot_input_scope_taint(self.vault, config.repo)?;
         let inputs = QueueCheckInputs {
             store: self.repo.identity().as_hex(),
             repo: config.repo,
@@ -269,6 +274,8 @@ impl MergeQueue<'_> {
             commands: plan.phase(step.phase).to_vec(),
             contract_outputs: plan.contract_outputs.clone(),
             environment,
+            input_scope,
+            input_taint,
         };
         let mut receipt = new_receipt(work, &config.approval, inputs)?;
         if !step.force_refresh
@@ -469,6 +476,33 @@ pub(super) fn new_receipt(
         tests_passed: None,
         verdict_ref: None,
     })
+}
+
+/// BEFORE-hostexecute snapshot of the served CODE's read scope and
+/// forward taint refs, in ONE read transaction: the repo row's actual
+/// raw bytes (an absent row stays `None`, never a refusal),
+/// `scope_for_blob` over present bytes, and the forward taint sidecar
+/// union. Called at the `new_receipt` producer (bound checks and the
+/// baseline init) BEFORE `host.execute`; the values freeze on the
+/// inputs and ride ORIGINAL through finish, where root closes them
+/// into the completion token.
+pub(super) fn snapshot_input_scope_taint(
+    vault: &Vault,
+    repo: crate::EntityId,
+) -> Result<(
+    Option<crate::federation::Scope>,
+    Vec<crate::secret_lease::SecretTaintRef>,
+)> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &repo)?;
+    let scope = match &raw {
+        Some(raw) => {
+            crate::federation::record_scope::scope_for_blob(&vault.store, &txn, repo, raw)?
+        }
+        None => None,
+    };
+    let taint = crate::secret_rotation::exhaust_taint_refs_in_txn(&vault.store, &txn, &repo)?;
+    Ok((scope, taint))
 }
 
 pub(super) fn held(reason: QueueCheckHoldReason, detail: String) -> QueueCheckStatus {

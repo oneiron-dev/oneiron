@@ -1,31 +1,10 @@
-//! Queue-check exhaust versions (FIX 7227): fresh artifact birth via
-//! trusted no-actor batch plus honest QueueCheck provenance/made_by.
-//! Called ONLY with `QueueCheckFieldToken` (unforgeable, minted in finish
-//! after SAME plus closed-approval validation). No arbitrary bytes/raw id
-//! params; the parent core derives actor/clock inside from the token.
+//! Stores queue-check output through the receipt-bound completion token.
+//! The token authorizes only its actual bytes and fresh artifact. Ordinary
+//! appends retain their actor authorization and share the same version core.
 //!
-//! Registration DONE (Root applied 17:12:15, A17:12:15+K17:15:20 YES):
-//! `mod queue_check;` + `pub(crate) use queue_check::{...};` in versions.rs,
-//! plus private `VersionAuthority::{Actor,QueueCheck(&token)}` with Actor
-//! derived AT TOP and the ONE algorithm (all old gates for Actor, trusted
-//! no-actor birth+claim for completion, NO live recheck). This child calls
-//! the parent private `append_body_with_authority` naturally via `super::`;
-//! it names the MQ token via the public parent alias, never the private
-//! child path. L02-safe lapse case (no Held+late loss on revoked grant).
-//!
-//! P2 privacy (qualified): the fresh birth keeps the default stamp (base
-//! world, own substrate facet, default project, Sensitive) via the store
-//! `stamp_put` hook; it does NOT copy the repo project (that would broaden
-//! the old owner-only exhaust read to Member where the repo project is
-//! Member-readable). `MadeByInput(repo)` is provenance (structural,
-//! births_row), NOT fresh-read authority; source IDs/proof grant nothing.
-//! `token.repo()` is the ORIGINAL repo (frozen BEFORE exec via the receipt
-//! inputs, NOT CURRENT work/config, via the TOKEN fix), so no CURRENT
-//! re-read broadens. Sensitivity Restricted narrowing (original Restricted
-//! vs fresh Sensitive default) needs an L02 positive pointer plus a port
-//! read (15th path, beyond STOP14): named remainder, NOT faked as PASS.
-//! Low-level trusted writer reads need no auth; the public Memory/facade
-//! consumer reads the stored refs through the existing owner door.
+//! Original input taint is attached at birth; the closed token settles the
+//! artifact's input placement in the same writer. MadeBy records provenance,
+//! not permission. WIP: public reads still need the current-Owner fence.
 
 use heed::RwTxn;
 
@@ -62,24 +41,19 @@ pub(crate) fn append_queue_check_output_in_txn(
 ) -> Result<QueueCheckOutputRef> {
     // Clock in-writer (same pattern as the version core).
     let learned_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    // ASSUMPTION A1 (Root to confirm 1-line): point TimeRange ctor shape.
     let occurred = crate::temporal::TimeRange {
         start: learned_at,
         end: learned_at,
     };
 
-    // Birth when missing: fixed generic body (NEVER work key/user filename),
-    // trusted no-actor batch (public put checks plus None-actor apply path
-    // plus claim checks; NO live-grant refold by construction, NO
-    // ACTIVE_ACTOR). The store `stamp_put` hook places the default stamp
-    // (base/default/Sensitive, own facet); NO explicit project/world set
-    // here, so the old owner-only exhaust read is NOT broadened to Member
-    // via a repo-project copy. Sensitivity remainder (see module docs).
+    // Native supporting birth under the closed completion token. The body
+    // name is fixed, never a work key or user-supplied output path.
     if vault
         .get_blob_artifact_in_txn(txn, &token.artifact_id())?
         .is_none()
     {
-        let body = BlobArtifactBody::new("queue-check-exhaust", "application/octet-stream");
+        let body = BlobArtifactBody::new("queue-check-exhaust", "application/octet-stream")
+            .with_secret_taint_refs(token.input_taint().to_vec());
         let data = encode_blob_artifact_body(&body)?;
         vault
             .batch_in()
@@ -114,14 +88,9 @@ pub(crate) fn append_queue_check_output_in_txn(
     };
     validate_version_made_by_in_txn(vault, txn, &made_by)?;
 
-    // Completion path (Root private authority, A+K YES): the parent core
-    // derives Actor AT TOP from the token (frozen original approver as
-    // Human), then reuses the ONE algorithm (validate/head/highwater/
-    // dedupe/record/refs/changelog/fingerprint) with trusted no-actor
-    // birth+claim (NO live auth, NO apply_actor). Same args as the made_by
-    // door (fork None, no calc engine, made_by Some, preserve false,
-    // reanchor true); only the authority differs. No raw-field enum, no new
-    // pub raw API; the child accesses the parent private core naturally.
+    // The completion token, not the recorded author, authorizes these
+    // supporting effects. Ordinary appends keep their actor gates in the
+    // same version algorithm.
     let version = vault.append_blob_artifact_version_body_with_authority_in_txn(
         txn,
         &token.artifact_id(),
@@ -136,6 +105,8 @@ pub(crate) fn append_queue_check_output_in_txn(
         false,
         true,
     )?;
+
+    crate::federation::record_scope::stamp_queue_check_exhaust_birth(&vault.store, txn, token)?;
 
     Ok(QueueCheckOutputRef {
         artifact_id: token.artifact_id(),

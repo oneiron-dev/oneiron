@@ -1,33 +1,16 @@
-//! Queue-check exhaust completion (FIX 7227 CLOSE): SAME fence plus
-//! ORIGINAL receipt/approval binding plus private per-field tokens borrowing
-//! actual bytes. Called ONLY from `finish_queue_check` after SAME
-//! work/lease/attempt checks, in the SAME writer as work/index. No new user
-//! refusal on config renew/move during execute; a stale binding is
-//! `ConcurrentWrite` (defense, finish already fenced). Legitimate old
-//! history (original plan/approval, SAME work/lease/attempt) attaches;
-//! CURRENT plan/approval is NEVER re-read for author/scope.
+//! Retains actual queue-check exhaust as immutable native artifact versions.
+//! The finish writer closes the original approval and returned receipt over
+//! the same work, lease, attempt and generation. Per-field tokens borrow
+//! the actual bytes and name only the fresh artifact for that receipt.
+//! Current approval renewal does not discard already-completed history.
 //!
-//! Registration DONE (Root applied, A17:12:15+K17:15:20 YES):
-//! `mod check_exhaust;` (PRIVATE) plus `pub(crate) use check_exhaust::Token;`
-//! at the merge-queue parent; this child imports the public parent aliases
-//! (`super::{...}`) plus the pub(crate) BLOB parent fns, never the private
-//! child paths. The versions authority names the token via the parent alias.
+//! The provenance reference uses canonical work/input identifiers and numeric
+//! ordinals, not command names or declared output paths.
 //!
-//! CHECK_REF (hardened): the provenance ref carries ONLY the canonical work
-//! ref plus inputs_digest plus generation/attempt plus a global numeric
-//! ordinal in walk order (phase Vec order, contract/declared BTreeMap sorted
-//! order, stdout/stderr/declared per command). No raw user field name (long
-//! or secret-looking LEGIT filenames would otherwise NEW-refuse via the
-//! 1024B plus secret_scan grammar); normal names stay as keys in the stored
-//! maps. Dedupe is the parent's (same head bytes keep the actual returned
-//! version/hash); no new append policy.
-//!
-//! P2 (qualified): the token carries the ORIGINAL repo/inputs_digest/author
-//! (frozen BEFORE exec in `new_receipt`, NOT CURRENT work/config), so the
-//! BLOB child materializes with ORIGINAL provenance (no CURRENT broadening).
-//! Scope stamps stay default (owner-only, no repo-project copy that could
-//! broaden to Member); sensitivity Restricted narrowing is an L02 remainder
-//! (see BLOB child docs), NOT faked here. No arbitrary caller id/bytes.
+//! Original input placement and secret taint are captured before execution,
+//! borrowed by the closed token, and attached by the native artifact writer.
+//! WIP: public reads still need the queue receipt's current-Owner fence.
+//! Completion authority is not read authority.
 
 use heed::RwTxn;
 
@@ -55,6 +38,8 @@ pub(crate) struct QueueCheckFieldToken<'b> {
     inputs_digest: String,
     repo: EntityId,
     recorded_actor: EntityId,
+    input_scope: Option<&'b oneiron_authority::federation::Scope>,
+    input_taint: &'b [crate::secret_lease::SecretTaintRef],
 }
 
 impl<'b> QueueCheckFieldToken<'b> {
@@ -67,6 +52,8 @@ impl<'b> QueueCheckFieldToken<'b> {
         inputs_digest: String,
         repo: EntityId,
         recorded_actor: EntityId,
+        input_scope: Option<&'b oneiron_authority::federation::Scope>,
+        input_taint: &'b [crate::secret_lease::SecretTaintRef],
     ) -> Self {
         Self {
             bytes,
@@ -75,6 +62,8 @@ impl<'b> QueueCheckFieldToken<'b> {
             inputs_digest,
             repo,
             recorded_actor,
+            input_scope,
+            input_taint,
         }
     }
 
@@ -96,6 +85,12 @@ impl<'b> QueueCheckFieldToken<'b> {
     pub(crate) fn recorded_actor(&self) -> EntityId {
         self.recorded_actor
     }
+    pub(crate) fn input_scope(&self) -> Option<&oneiron_authority::federation::Scope> {
+        self.input_scope
+    }
+    pub(crate) fn input_taint(&self) -> &[crate::secret_lease::SecretTaintRef] {
+        self.input_taint
+    }
 }
 
 /// Validated closed completion binding: SAME work fence (store/repo from
@@ -113,6 +108,8 @@ struct ClosedBinding<'a> {
     work_ref: &'a str,
     generation: u32,
     attempt: &'a AttemptId,
+    input_scope: Option<&'a oneiron_authority::federation::Scope>,
+    input_taint: &'a [crate::secret_lease::SecretTaintRef],
 }
 
 fn stale(message: &'static str) -> Error {
@@ -125,10 +122,8 @@ fn stale(message: &'static str) -> Error {
 /// republished (caller only passes NEW raw receipts; no output read for
 /// judge here — judge already ran over bytes before store).
 ///
-/// Required signature (told to Root): KEEP
-/// `(vault, txn, &current, raw_receipts)` — NO `&ran` needed (finish already
-/// fenced SAME status/attempt/lease; `current` IS the reread ran), NO clock
-/// params (native child derives clock in-writer).
+/// The caller has already re-read and fenced the running work in `txn`.
+/// The native artifact writer derives its clock in this same transaction.
 pub(crate) fn store_receipts_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -241,6 +236,8 @@ fn store_one_receipt_in_txn(
         work_ref: current.work_ref(),
         generation: raw.generation,
         attempt: &raw.attempt,
+        input_scope: raw.inputs.input_scope.as_ref(),
+        input_taint: &raw.inputs.input_taint,
     };
 
     // ONE fresh native artifact id for this receipt (native clock, NOT hash).
@@ -359,6 +356,8 @@ fn store_field_in_txn(
         binding.inputs_digest.to_owned(),
         binding.repo,
         binding.recorded_actor,
+        binding.input_scope,
+        binding.input_taint,
     );
     crate::blob_artifact::append_queue_check_output_in_txn(vault, txn, &token)
 }
