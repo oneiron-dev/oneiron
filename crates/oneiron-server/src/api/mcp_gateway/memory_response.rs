@@ -23,6 +23,14 @@ pub(super) async fn execute(
     actor: &McpResolvedActor,
 ) -> Result<(Value, Vec<CapabilityHit>, Vec<oneiron::EntityId>), McpGatewayError> {
     let media = memory_read_media(server, args, actor).await?;
+    let (mut media_memory, media) = (server.memory.empty_lease(), media);
+    media_memory.materialized(
+        0,
+        media.as_ref().map_or(0, |seeds| {
+            (seeds.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<EmbeddedMediaSeed>() as u64)
+        }),
+    );
     let mut produced = execute_read(server, args, actor, media.as_deref())?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
