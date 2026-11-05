@@ -4,7 +4,7 @@ use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::temporal::TimeRange;
 
-pub use oneiron_store::batch_op::BatchOp;
+pub use crate::batch_op::BatchOp;
 
 /// Builds the sync-replay put op — the SINGLE place where the replicated
 /// door's two admit flags are set (`allow_maintenance` AND
