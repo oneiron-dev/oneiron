@@ -11,6 +11,8 @@ side_tables! {
     /// first (FIX 12559). Key: id16(source) + u64be (u64::MAX less the receive time) + blake3
     /// (32) of the provider id.
     MAIL_PACK_BODY_QUEUE: VaultMeta b"mail_pack:body_queue:v1:" Named;
+    /// One pack calendar source's pull progress, by the source. Key: id16.
+    MAIL_PACK_CALENDAR_SYNC: VaultMeta b"mail_pack:calendar_sync:v1:" Named;
     /// The org compliance search log (FIX 12560): each change to the setting and each search made
     /// under it, recorded before the search answers. Key: u64be sequence.
     MAIL_PACK_COMPLIANCE_EVENT: VaultMeta b"mail_pack:compliance_event:v1:" Named Authored

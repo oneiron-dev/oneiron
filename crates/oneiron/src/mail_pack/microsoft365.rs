@@ -3,7 +3,7 @@
 //! Microsoft 365 mailbox source.
 //!
 //! Each provider call reads the source's own credential at its door
-//! ([`Vault::with_mail_source_token_at_door`]), effector
+//! ([`Vault::with_source_token_at_door`]), effector
 //! `connector:microsoft365`. HTTPS to Graph only, no redirects; a link Graph
 //! answers with is followed only on Graph's own origin. Before a source's
 //! first read the wire checks that the credential's user is the mailbox the
@@ -30,6 +30,7 @@ use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::credential::WireReads;
 use super::rest::{
     self, RestAnswer, array, bearer_header, header_value, html_text, refused, text_of, tidy_text,
 };
@@ -138,8 +139,9 @@ impl<'v> HttpGraphMailWire<'v> {
             return Err(refused("graph_mail_link_not_on_graph"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_mail_source_token_at_door(
+        let _receipt = self.vault.with_source_token_at_door(
             source,
+            WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
