@@ -22,6 +22,7 @@ use crate::side_table::{CodecName, SideTableDecl, authored_vault_meta};
 pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize) -> Result<Page> {
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };

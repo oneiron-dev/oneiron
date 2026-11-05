@@ -739,7 +739,7 @@ pub(crate) fn record_body_at(
 }
 
 /// A typed read projection of the body and metadata at one document version.
-pub(super) fn body_with_document(
+pub(crate) fn body_with_document(
     field: &TextField,
     body: &[u8],
     doc: &EntityDoc,

@@ -2,6 +2,8 @@
 //! dispatcher carries, the control row the engine keeps, and what a host
 //! reads and sends.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::authority::InvocationSlipBinding;
@@ -11,7 +13,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 2;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 4;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -157,9 +159,9 @@ pub(crate) struct CodeConsentRememberOffer {
 
 /// The question the wait's ask carries: who is asked, and the ids the
 /// opener witnesses it under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentQuestion {
-    pub(crate) owner: EntityId,
+    pub(crate) owners: BTreeSet<EntityId>,
     pub(crate) conversation: EntityId,
     pub(crate) turn: EntityId,
     pub(crate) message: EntityId,
@@ -244,6 +246,9 @@ pub(crate) struct CodeConsentSettlement {
     pub(crate) outcome: CodeConsentSettleOutcome,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) reply_digest: [u8; 32],
+    /// The actual delivered connector reply carried a foreign result or
+    /// questions, after the side-row wall. Delivery without a result is false.
+    pub(crate) external_reply: bool,
     pub(crate) settled_at_ms: u64,
 }
 
