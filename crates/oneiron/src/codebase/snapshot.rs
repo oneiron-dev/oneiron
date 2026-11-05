@@ -35,6 +35,12 @@ impl CodebaseSnapshotMount<'_> {
         &self.snapshot
     }
 
+    /// Whether this mount's custody report reads `path` as absent.
+    #[must_use]
+    pub(crate) fn is_withheld(&self, path: &str) -> bool {
+        self.withheld.contains(path)
+    }
+
     #[must_use]
     pub const fn is_read_only(&self) -> bool {
         true
