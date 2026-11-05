@@ -104,11 +104,34 @@ owner. Each owner's pins and text drop before its charge, including errors.
 
 These are charges after allocation, not before-growth admission. Existing
 filtered text, pinned identity/hash checks, destination admission, source and
-citation cohorts, usage and reduction progress are unchanged. Host raw read
-bodies and reference/revision/hash scratch, composition values and drafts,
+citation cohorts, usage and reduction progress are unchanged. Raw read storage
+has a separate owner described below. Reference/revision/hash scratch, composition values and drafts,
 model-request copies, provider storage and allocator overhead remain outside
 these owners. This is not full working-set admission or Q, and it adds no
 memory growth wait, refusal, cap, default or timer.
+
+## Host raw read storage
+
+The production host's rerank pins, composition pins and per-destination source
+checks use the same private raw-row owner as the evidence frame callback. Each
+actual scoped read supplies its own vector and body buffers. Immediately after
+that read returns, the owner records the actual vector backing and owned body
+capacities once on the same server memory line. Native read authority, pins,
+receipts, hash checks and filtered projections are unchanged.
+
+The host drains those rows through its existing validation, hashing and
+projection loop. Per-row bodies, decoded fields and the drain drop before the
+owner; remaining rows and vector backing drop before its lease on errors and
+unwind. The host explicitly drops this owner after the loop, before returning
+pins to a model call or starting the later session-scope check. Retained pin
+text is a distinct allocation charged by its existing owner, not a second
+charge of the raw body.
+
+This records storage after allocation; it adds no growth admission, memory
+wait or refusal. Reference and revision vectors, hashes, receipt storage,
+deletion metadata strings, decoded field maps, model-request and provider
+copies, and allocator overhead remain outside this owner. Full working-set
+admission and Q remain open; no compiler or runtime result is claimed here.
 
 ## Framed source projection
 

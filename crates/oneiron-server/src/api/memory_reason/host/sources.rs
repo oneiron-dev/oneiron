@@ -10,6 +10,7 @@ use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::{EntityId, LlmRequest};
 use serde_json::Value;
 
+use super::super::read_rows::ReadRows;
 use super::{Backend, invalid};
 use crate::models::{SourceAdmission, SourceOffer};
 
@@ -82,6 +83,7 @@ pub(super) fn rerank_pins(
         value: rows,
         receipt,
     } = read;
+    let mut rows = ReadRows::new(&backend.server.memory, rows);
     backend
         .reads
         .lock()
@@ -91,7 +93,7 @@ pub(super) fn rerank_pins(
         return Err(invalid("memory reason rerank pin is not readable"));
     }
     let mut pins = PinCohort::with_capacity(&backend.server.memory, candidates.len());
-    for ((candidate, revision), row) in candidates.iter().zip(revisions).zip(rows) {
+    for ((candidate, revision), row) in candidates.iter().zip(revisions).zip(rows.drain()) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
             learned_at,
@@ -149,6 +151,7 @@ pub(super) fn rerank_pins(
             text,
         });
     }
+    drop(rows);
     Ok(pins)
 }
 
@@ -170,6 +173,7 @@ pub(super) fn compose_pins(
         value: rows,
         receipt,
     } = read;
+    let mut rows = ReadRows::new(&backend.server.memory, rows);
     backend
         .reads
         .lock()
@@ -179,7 +183,7 @@ pub(super) fn compose_pins(
         return Err(invalid("memory reason compose pin is not readable"));
     }
     let mut pins = PinCohort::with_capacity(&backend.server.memory, evidence.len());
-    for (expected, row) in evidence.iter().zip(rows) {
+    for (expected, row) in evidence.iter().zip(rows.drain()) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
             learned_at,
@@ -210,6 +214,7 @@ pub(super) fn compose_pins(
             text,
         });
     }
+    drop(rows);
     Ok(pins)
 }
 
@@ -263,6 +268,7 @@ impl<'a> Sources<'a> {
             value: rows,
             receipt,
         } = read;
+        let mut rows = ReadRows::new(&self.backend.server.memory, rows);
         self.backend
             .reads
             .lock()
@@ -272,7 +278,7 @@ impl<'a> Sources<'a> {
             return Err(hold_reason(&self.backend.server.vault, &ids, destination));
         }
         let mut hashes = Vec::with_capacity(self.pins.len());
-        for (pin, row) in self.pins.iter().zip(rows) {
+        for (pin, row) in self.pins.iter().zip(rows.drain()) {
             let Some(oneiron::claim::ReadRow {
                 body: Some(body), ..
             }) = row
@@ -285,6 +291,7 @@ impl<'a> Sources<'a> {
             }
             hashes.push(hash);
         }
+        drop(rows);
         let hits: Vec<oneiron::ScoredEntity> = self
             .pins
             .iter()
