@@ -96,6 +96,7 @@ impl Vault {
             });
             record.hold = None;
             record.receipt = None;
+            record.retry_at = None;
             record.outcome = None;
             record.last_error = None;
             record.updated_at = self.now_recorded_at();
