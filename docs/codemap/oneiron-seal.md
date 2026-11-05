@@ -14,9 +14,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api.rs` | src | m | 15 struct · 11 enum · 4 trait · 2 fn · 1 type · 4 const · 1 mod · 2 re-export · 6 crate-vis | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +22 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
 | `src/api/report.rs` | src | m | 6 struct · 10 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind +8 | Evidence-oriented verification report |
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
+| `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
-| `src/lib.rs` | src | s | 2 mod · 6 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 2 struct · 1 enum · 1 trait · 4 fn · 1 type · 26 crate-vis | AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
+| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 21 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
@@ -28,17 +29,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/held_bytes.rs` | src | s | 7 crate-vis | — | What the seal's own copies and decodes allocate, for the holds that admit them to the operation's memory… |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
+| `src/native/pdf/admitted.rs` | src | s | 6 crate-vis | — | — |
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
-| `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
+| `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
-| `src/native/pdf/mod.rs` | src | s | 8 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
+| `src/native/pdf/mod.rs` | src | s | 9 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 16 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
 | `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared PDF revision discovery from the actual xref /Prev chain |
 | `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/pdf/walk.rs` | src | s | 7 crate-vis | — | Reference chains and the page tree, followed whole (Rule 5) |
-| `src/native/profile/assembly.rs` | src | m | 7 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
+| `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
 | `src/native/profile/material.rs` | src | s | 4 crate-vis | — | B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs |
 | `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |

@@ -221,7 +221,7 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         as_of: Option<u64>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of)?;
+        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -234,7 +234,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_vector_revisioned(query, limit, requested)?;
+        let result = self.search_vector_revisioned(query, limit, requested, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,

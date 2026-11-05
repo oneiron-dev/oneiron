@@ -326,7 +326,7 @@ fn type_feedback(settings: &CodeCheckSettings, vault: Arc<Vault>) -> TypeFeedbac
         BackendKind::Microsoft => "microsoft",
         BackendKind::Tsrs => "tsrs",
     };
-    let feedback = TypeFeedback::loading(configured, Some(vault));
+    let feedback = TypeFeedback::loading(configured, vault);
     let (loading, settings) = (feedback.clone(), settings.clone());
     tokio::spawn(async move {
         // Compiling the checker's module takes seconds.

@@ -355,7 +355,8 @@ impl OneironClient {
     /// ([`verify_read_credential`]) as the server's door verifies a served
     /// request's. Its reads then run under that slip's key, never a broader
     /// one; a read refuses when the slip's holder is not this handle's actor.
-    /// A handle without one reads as before; a rebind drops it.
+    /// A handle without one reads as before. Rebindings keep the same proof,
+    /// so every read still checks it against the bound actor.
     ///
     /// Connected handles fail typed `FORBIDDEN`: the credential they
     /// connected with binds their reads server-side already.

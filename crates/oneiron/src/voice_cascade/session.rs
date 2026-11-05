@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::conversation::OutputMark;
 use crate::error::{Error, Result};
 use crate::interlocutor::{InterlocutorResolutionInput, InterlocutorSet};
+use crate::memory::{Memory, MemoryResult, RecallScope};
 use crate::policy_model::PolicyClassifyRequest;
 use crate::speculative::SpeculativeSessionConfig;
 use crate::store::GateSystemNoticeRecord;
@@ -197,6 +198,19 @@ impl VoiceCascadeSession {
     ) -> Result<UtteranceHandle> {
         self.require_open()?;
         self.retrieval.open_utterance(utterance_id, config)
+    }
+
+    /// Opens speculative retrieval under a caller's actual credential-bound read.
+    pub fn open_scoped_utterance(
+        &mut self,
+        utterance_id: impl Into<String>,
+        config: SpeculativeSessionConfig,
+        memory: &Memory<'_>,
+        scope: &RecallScope,
+    ) -> MemoryResult<UtteranceHandle> {
+        self.require_open()?;
+        self.retrieval
+            .open_scoped_utterance(utterance_id, config, memory, scope)
     }
 
     /// Whether this exact utterance is still live, including after a failed final.

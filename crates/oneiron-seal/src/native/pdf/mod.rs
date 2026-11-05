@@ -4,6 +4,7 @@
 //! bytes are emitted by the writer here; every pre-existing input byte is
 //! preserved and all changes are appended revisions.
 
+pub(super) mod admitted;
 mod decode;
 mod incremental;
 mod lex;

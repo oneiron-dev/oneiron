@@ -542,6 +542,19 @@ pub(crate) fn removed_in_txn(
             },
     )
 }
+/// Whether an owner is gone in `txn`: row removal other than an archive,
+/// hard deletion, or identity soft deletion. Callers keep their own policy
+/// for a marker read error.
+pub(crate) fn owner_gone_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<bool> {
+    Ok(removed_in_txn(dbs, txn, owner)?
+        || dbs.port_deletion_marked(txn, DeletionMarker::HardDelete, owner)?
+        || dbs.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?)
+}
+
 impl TombstoneStoreRead for Vault {
     fn port_tombstone_records<'a>(
         &self,

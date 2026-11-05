@@ -1267,6 +1267,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   inOffRecordSession(sessionRef: string): NativeClient
+  withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null

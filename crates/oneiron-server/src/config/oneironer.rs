@@ -224,6 +224,11 @@ pub struct OneironerConfig {
     pub trace_history_per_turn: u32,
     /// Store-clock seconds a trace is kept. Defaults to seven days.
     pub trace_history_max_age_secs: u64,
+    /// The vault turns' configured processing language as a lowercase ISO
+    /// 639 code, when the host names one (`language = "ja"`, say). It is
+    /// sent as every vault turn's language; unset sends no configured
+    /// language. Leave it unset when the vault's language is unknown or mixed.
+    pub language: Option<String>,
 }
 
 impl Default for OneironerConfig {
@@ -252,6 +257,7 @@ impl Default for OneironerConfig {
             live_window_tokens: oneiron::tagging::DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history_per_turn: oneiron::tagging::DEFAULT_TRACES_PER_TURN,
             trace_history_max_age_secs: oneiron::tagging::DEFAULT_TRACE_MAX_AGE_SECS,
+            language: None,
         }
     }
 }
@@ -272,8 +278,8 @@ impl OneironerConfig {
     }
 
     /// The vault's marker configuration, when markers are on: the checkpoint
-    /// and pinned stack, the live window, the trace history, the mode and the
-    /// label table.
+    /// and pinned stack, the live window, the trace history, the mode, the
+    /// label table and the configured language.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
@@ -286,6 +292,7 @@ impl OneironerConfig {
                 OneironerMode::Shadow => oneiron::tagging::TaggingMode::Shadow,
             },
             labels: self.label_kinds(),
+            language: self.language.clone(),
         })
     }
 
@@ -368,6 +375,9 @@ impl OneironerConfig {
         }
         if let Some(value) = over.trace_history_max_age_secs {
             self.trace_history_max_age_secs = value;
+        }
+        if over.language.is_some() {
+            self.language = over.language;
         }
         // Last, so a layer that names a tier serves its row's bundle.
         let reselect = over.tier.is_some() || over.tiers.is_some();
@@ -546,6 +556,7 @@ pub struct OneironerConfigOverride {
     pub live_window_tokens: Option<u32>,
     pub trace_history_per_turn: Option<u32>,
     pub trace_history_max_age_secs: Option<u64>,
+    pub language: Option<String>,
 }
 
 impl OneironerConfigOverride {
@@ -671,6 +682,7 @@ pub(super) fn lookup_oneironer_override(
             lookup,
             "ONEIRON_ONEIRONER_TRACE_HISTORY_MAX_AGE_SECS",
         )?,
+        language: lookup("ONEIRON_ONEIRONER_LANGUAGE"),
     };
     Ok((!over.is_empty()).then_some(over))
 }

@@ -254,6 +254,7 @@ you want to act as instead.
 | `Oneiron.pair(link)` | `{ memory, credential, pin, comm }`: a remote handle, the credential to store, the checkpoint pin the link named (`null` when the vault has none) for a local replica to adopt by, and the credential's comm reach (`"parent"`, `"subtree"`, `"project"` or `"vault"`): whom an agent paired by it may address |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
+| `handle.withReadCredential(credential)` | a new handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle fails `FORBIDDEN` |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
 | `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, readReceipt }`, or a model round trip's `{ queued, callbackId }` |

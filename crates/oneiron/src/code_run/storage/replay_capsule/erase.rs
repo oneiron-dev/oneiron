@@ -21,7 +21,7 @@ use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepRe
 use super::super::response_erase::erase_actor_responses_in_txn;
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::EntityStoreRead;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
@@ -209,15 +209,7 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
 pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let gone = (|| -> Result<bool> {
-        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
-    })();
+    let gone = crate::ports::owner_gone_in_txn(&vault.store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),

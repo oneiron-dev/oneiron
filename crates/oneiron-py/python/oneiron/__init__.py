@@ -318,6 +318,19 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_off_record_session(session_ref)))
 
+    def with_read_credential(self, credential: str) -> "Oneiron":
+        """Returns a NEW handle whose every read runs under a delegated reader's credential.
+
+        ``credential`` is the paired credential ``pair`` returned, verified once
+        against this vault as the server's door verifies a served request's.
+        Reads refuse when the slip's holder is not this handle's actor;
+        rebindings keep the same proof, so every read still checks it against
+        the bound actor. A handle without one reads as before. On a connected
+        handle this raises ``FORBIDDEN``: it already reads under the credential
+        it connected with.
+        """
+        return Oneiron(_translate(lambda: self._client.with_read_credential(credential)))
+
     def last_receipt_ref(self) -> str | None:
         """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
 

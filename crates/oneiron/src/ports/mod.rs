@@ -97,7 +97,7 @@ pub(crate) use time::{
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
-pub(crate) use lmdb_visibility::removed_in_txn;
 pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
+pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

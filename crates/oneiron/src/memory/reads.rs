@@ -471,7 +471,7 @@ impl Memory<'_> {
         // The lane admits inside the posting scan, before the rank and the
         // cut, so a row it withholds takes no place a readable match could
         // fill (FIX 9955); each hit keeps the revision the index matched.
-        let found = lane.search_text_revisioned(query, limit, None)?;
+        let found = lane.search_text_revisioned(query, limit, None, None)?;
         let hits = ScopedReadResult {
             value: found.hits,
             receipt: found.receipt,

@@ -444,7 +444,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: self.host_open.clone(),
-            read_proof: None,
+            read_proof: self.read_proof.clone(),
         })
     }
 
@@ -502,7 +502,8 @@ impl EmbeddedClient {
     /// The same handle with every read run under the paired credential `key`
     /// its delegated reader presented (FIX 647), verified against this vault
     /// ([`verify_read_credential`]): the slip the server's door binds to a
-    /// served request's handle. A rebind to another actor drops it.
+    /// served request's handle. Actor rebindings keep the proof, so the read
+    /// lane still checks that the rebound actor is its holder.
     pub(crate) fn with_read_credential(&self, key: &str) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
         let proof = verify_read_credential(self.shared.vault(), key)?;

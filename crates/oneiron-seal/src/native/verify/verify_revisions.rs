@@ -9,7 +9,7 @@ use crate::api::{
     Anomaly, Counter, ModificationLevel, Modifications, RevisionKind, RevisionReport,
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
-use crate::memory::SealMemoryRefusal;
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 use lopdf::xref::XrefEntry;
 use lopdf::{Document, Object, ObjectId};
 
@@ -38,19 +38,30 @@ fn same_entry(before: Option<&XrefEntry>, after: Option<&XrefEntry>) -> bool {
     }
 }
 
-fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
+fn changed(
+    before: &Document,
+    after: &Document,
+    ledger: &MemoryLedger,
+) -> Result<Option<BTreeSet<ObjectId>>, SealMemoryRefusal> {
     if before
         .objects
         .keys()
         .any(|id| !after.objects.contains_key(id))
     {
-        return None;
+        return Ok(None);
     }
     let mut out = BTreeSet::new();
     for (id, old) in &before.objects {
-        let current = after.objects.get(id)?;
+        let Some(current) = after.objects.get(id) else {
+            return Ok(None);
+        };
+        let equal = current.eq_admitted(old, ledger).map_err(|error| {
+            ledger
+                .refusal_of(&lopdf::Error::DecodeAdmission(error))
+                .expect("a DecodeAdmission error always carries a memory refusal")
+        })?;
         // A redefinition with identical effective value is still a write.
-        if current != old
+        if !equal
             || !same_entry(
                 before.reference_table.get(id.0),
                 after.reference_table.get(id.0),
@@ -64,7 +75,7 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
             out.insert(*id);
         }
     }
-    Some(out)
+    Ok(Some(out))
 }
 /// Only the section's actual native xref STREAM is infrastructure. A new
 /// object declaring `/Type /XRef` elsewhere is still an unknown change.
@@ -335,14 +346,21 @@ pub(super) fn classify(
     let Some(facts) = facts else {
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
-    if facts.ends() != ends {
+    let Ok(computed) = facts.ends(limits) else {
+        return Ok((vec![], Modifications::NotRun, vec![]));
+    };
+    if computed != ends {
         return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
-    if facts.has_duplicates() {
+    let Ok(dup) = facts.has_duplicates(limits) else {
+        return Ok((vec![], Modifications::NotRun, vec![]));
+    };
+    if dup {
         anomalies.push(Anomaly::DuplicateObjectNumber);
     }
+    let ledger = limits.memory.ledger()?;
     let mut previous: Option<Document> = None;
     let mut first_signer = None;
     let mut modification = ModificationLevel::None;
@@ -375,7 +393,7 @@ pub(super) fn classify(
             RevisionKind::Other
         };
         if let Some(before) = &previous {
-            let Some(ids) = changed(before, &doc) else {
+            let Some(ids) = changed(before, &doc, &ledger)? else {
                 return Ok((revisions, Modifications::NotRun, anomalies));
             };
             if ids.is_empty() {
@@ -393,7 +411,7 @@ pub(super) fn classify(
                 anomalies.push(Anomaly::RetypedObject);
             }
             if first_signer.is_some() {
-                let allowed = facts.accounts_for(index, &ids)
+                let allowed = facts.accounts_for(limits, index, &ids).unwrap_or(false)
                     && match kind {
                         RevisionKind::Dss => dss_allowed(before, &doc, &ids),
                         RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {

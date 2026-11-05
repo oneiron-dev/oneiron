@@ -58,7 +58,6 @@ pub(super) use live_edit::{
 /// an artifact without a person's word.
 pub const OFFICE_BODY_EDIT_CLASS: &str = "entity.office.edit";
 const OFFICE_MERGE_OPERATION: &str = "office.body.merge";
-const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal by its id. The header's artifact is its home, not its key.
 pub(super) const PROPOSALS: SideTable<EntityId, OfficeBodyProposal, Named> =
@@ -508,8 +507,8 @@ pub(super) fn settle_in_txn(
         return Err(invalid("the proposal is settled"));
     }
     let reason = match request.reason.map(str::trim) {
-        Some(reason) if reason.is_empty() || reason.len() > MAX_REASON_BYTES => {
-            return Err(invalid("a settlement reason is 1 to 1024 bytes"));
+        Some(reason) if reason.is_empty() => {
+            return Err(invalid("a settlement reason is not empty"));
         }
         reason => reason.map(str::to_owned),
     };

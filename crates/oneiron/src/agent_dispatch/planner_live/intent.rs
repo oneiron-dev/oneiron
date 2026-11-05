@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -615,8 +615,24 @@ impl AgentDispatcher<'_> {
             LaunchStand::Planned(planned) if planned.row.pattern_launch.is_none() => planned,
             stand => return Ok(stand),
         };
+        let entry = crate::skill::pin_loaded_in_txn(
+            self.vault,
+            &mut txn,
+            &pack.entity,
+            &pack.record,
+            ManifestEntry::new(
+                ManifestKind::Skill,
+                &pack.record.skill_id,
+                &pack.record.version,
+                at,
+            ),
+        )?;
+        let frozen = FrozenPatternPack::of(pack);
         planned.row.pattern_launch = Some(spec);
-        planned.row.pattern_pack = Some(FrozenPatternPack::of(pack));
+        planned.row.pattern_pack = Some(match entry.revision {
+            Some((entity, revision)) => frozen.with_revision(entity, revision),
+            None => frozen,
+        });
         planned.row.updated_at = at;
         put_intent_in_txn(&self.vault.store, &mut txn, &planned.key, &mut planned.row)?;
         txn.commit()?;

@@ -275,6 +275,10 @@ impl AgentDispatcher<'_> {
             return Ok(false);
         };
         let entry = ManifestEntry::new(ManifestKind::Skill, pack.skill_id(), pack.version(), at);
+        let entry = match pack.revision() {
+            Some((entity, revision)) => entry.with_revision(entity, revision),
+            None => entry,
+        };
         if exposure.skill != pack.entity()
             || exposure.revision != entry.wire_form()
             || exposure.start > exposure.end

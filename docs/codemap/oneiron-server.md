@@ -1054,7 +1054,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/evidence.rs` | src | s | 8 crate-vis | — | Where vector evidence starts in a shipped model's space, and the profile its floors hold for |
 | `src/embedder/local/isq.rs` | src | s | 7 crate-vis | — | Quantise-at-load, in one function |
 | `src/embedder/local/mod.rs` | src | m | 24 crate-vis | — | The `local` provider: the model runs in this process, on candle |
-| `src/embedder/local/model_manager.rs` | src | L | 25 crate-vis | — | Where the local model's files live, and how they get there |
+| `src/embedder/local/model_manager.rs` | src | L | 26 crate-vis | — | Where the local model's files live, and how they get there |
 | `src/embedder/local/model_manager/revision.rs` | src | s | 12 crate-vis | — | One hub ref, one commit (FIX 9489) |
 | `src/embedder/local/model_manager/tests.rs` | test | s | 1 crate-vis | — | Servers sharing one models directory |
 | `src/embedder/local/prompts.rs` | src | s | 3 crate-vis | — | What a query and a document carry before their text, read from the checkpoint's own… |
@@ -1362,7 +1362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/stream_health.rs` | src | s | 1 crate-vis | — | A media stream's end, reported to its offer's health (FIX 1743, OF-305) |
 | `src/models/ladder/worker_lease.rs` | src | s | 3 crate-vis | — | A rung's managed worker (FIX 8315, DESIGN-V2 R2): the call waits for it and holds its lease from before… |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
-| `src/models/llama_identity.rs` | src | m | 11 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
+| `src/models/llama_identity.rs` | src | m | 12 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
 | `src/models/media.rs` | src | L | 3 struct · 1 fn · 8 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/asked_jobs.rs` | src | s | 2 crate-vis | — | The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208) |
 | `src/models/media/bindings.rs` | src | s | 7 fn · 10 crate-vis | — | Media voice bindings, clone queries and retry hints |
@@ -1407,7 +1407,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/soniox/quota.rs` | src | s | 5 crate-vis | — | A live hearing's rate and quota refusals (FIX 9515) |
 | `src/models/source_admission.rs` | src | s | 4 crate-vis | — | A caller's sources, admitted for each offer a call actually goes to (FIX 8714): an opt-in hook on the… |
 | `src/models/sse.rs` | src | s | 6 crate-vis | — | An incremental server-sent-events decoder (WHATWG event-stream parsing): LF, CRLF or lone CR line ends, a… |
-| `src/models/status.rs` | src | m | 16 struct · 2 enum · 1 fn · 8 crate-vis | DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus, DeviceStatus, DiscoveredStatus, HealthState, LimitHold +10 | What the model runtime built, for the owner-facing status route |
+| `src/models/status.rs` | src | m | 17 struct · 2 enum · 1 fn · 8 crate-vis | DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus, DeviceStatus, DiscoveredStatus, HealthState, LimitHold +11 | What the model runtime built, for the owner-facing status route |
 | `src/models/tests.rs` | test | L | 4 crate-vis | — | Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit… |
 | `src/models/token_ratio.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | TokenRatios | Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over… |
 | `src/models/training.rs` | src | s | 1 fn | — | The trainer connectors `[models.training]` names (FIX 7263), as the runtime keeps them for the host's… |
@@ -1595,7 +1595,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/owner_work_drain.rs` | src | s | 1 crate-vis | — | The served holder's owner work pickup |
 | `src/server/policy_doors.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | HostedPolicyRelay | Host bindings for the public content-policy doors |
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
-| `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 7 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520… |
+| `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 7 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against its byte row, and the OF-520 question a crossing… |
 | `src/server/reader_runner.rs` | src | m | 9 crate-vis | — | The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each… |
 | `src/server/reader_runner/child.rs` | src | m | 2 crate-vis | — | Execution and settlement of claimed reader children and summary jobs |
 | `src/server/reader_runner/scoped.rs` | src | s | 2 crate-vis | — | A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on… |

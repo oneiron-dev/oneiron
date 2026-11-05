@@ -177,6 +177,7 @@ impl Memory<'_> {
             && self.rewrite_admit.is_none();
         rebuilt.then(|| {
             crate::runtime_hooks::verb::PlainRowResume::of(
+                self.vault,
                 self.session_key,
                 self.room_turn.as_ref().map(|turn| turn.room),
                 self.locality,

@@ -316,12 +316,7 @@ pub(crate) fn owner_gone_in_txn(
     owners: &[EntityId],
 ) -> Result<bool> {
     for owner in owners {
-        if crate::ports::removed_in_txn(&vault.store, txn, owner)?
-            || owner_erased_in_txn(vault, txn, owner)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?
-        {
+        if crate::ports::owner_gone_in_txn(&vault.store, txn, owner)? {
             return Ok(true);
         }
     }
