@@ -589,6 +589,19 @@ impl Memory<'_> {
                         owner_answer.as_ref(),
                         now,
                     )?
+                } else if authorized.grant_ref.is_some()
+                    && action == GateConsentBundleAction::Approve
+                {
+                    self.vault.approve_proposed_claim_with_caller_in_txn(
+                        wtxn,
+                        id,
+                        self.claim_envelope(
+                            reviewed.body.source.unwrap_or(ClaimSource::Inferred),
+                            "vault.claims.settle",
+                            ClaimApprovalStatus::Approved,
+                        )?,
+                        now,
+                    )?
                 } else {
                     self.vault.settle_proposed_claim_in_txn(
                         wtxn,

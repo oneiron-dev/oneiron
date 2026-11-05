@@ -42,9 +42,13 @@ codes are `gate.claim.settle.holder_approved` and
 `gate.claim.settle.holder_declined`; owner reason codes stay unchanged.
 
 A Grant does not manufacture an owner answer to a critical owner obligation.
-The ordinary native Gate still decides; a held or refused action does not land.
-The existing typed `vault.claims.retract` revert and VAD post-commit warning
-behavior remain. `vault.claims.vet` and `.vetting` remain owner-only.
+Approval reaches the ordinary native Gate as the actual authorized holder,
+including its actor and agent-definition approval ceilings. The holder's Gate
+envelope is separate from the stored claim's original author, source, lineage,
+and provenance; approval does not replace those authorship fields. A held or
+refused action does not land. Owner approvals and generated-claim vetting keep
+their existing path. The typed `vault.claims.retract` revert and VAD post-commit
+warning behavior remain. `vault.claims.vet` and `.vetting` remain owner-only.
 
 Policy-row `Rule {row_id, version}` settlement authority is not implemented by
 this slice. No migration, compatibility reader, configuration change or new
