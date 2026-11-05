@@ -86,13 +86,14 @@ pub async fn read_cooperatively<T: Send + 'static>(
         resume: Mutex::new(resume_rx),
         cancelled: AtomicBool::new(false),
     }));
-    let worker = tokio::task::spawn_blocking(move || {
+    let work = crate::store::carry_idempotency_intent(move || {
         let value = read(pacing.clone());
         pacing
             .checkpoint(ReadProgress::Complete)
             .map_err(oneiron_store::batch::secret_scan::container::withheld)?;
         Ok(value)
     });
+    let worker = tokio::task::spawn_blocking(work);
     ReadContinuation {
         checkpoints: checkpoint_rx,
         resume: resume_tx,
