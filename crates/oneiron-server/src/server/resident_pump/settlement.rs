@@ -294,7 +294,22 @@ fn complete(
         tracing::warn!(%error, attempt = ?attempt.id, "an agent run's confession does not read; it seals none");
         None
     });
-    DreamerRunnerStore::new(vault).complete_with_confession(
+    let reported_context = if claimed.objectives.is_empty() {
+        None
+    } else {
+        match claimed.status.input.target.agent_definition_ref() {
+            Ok(subject) => Some(oneiron::task_verb::HostDoneConfessionContext {
+                subject,
+                type_ref: TypeRef::from(&claimed.status.input.type_ref),
+                objectives: claimed.objectives.clone(),
+            }),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "host Done confession context does not read");
+                None
+            }
+        }
+    };
+    DreamerRunnerStore::new(vault).complete_with_reported_confession(
         CompleteDreamerAttempt {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
@@ -303,6 +318,7 @@ fn complete(
         },
         judged,
         confession.as_ref(),
+        reported_context.as_ref(),
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
     Ok(())

@@ -973,8 +973,10 @@ export type ActAnswer<T> = DetailsOnDevice | NarrowedQuestions | T
 export type FanoutCheckChoice = "ack" | "ack_and_remember"
 /** `oneiron::verbs::fanout_launch::FanoutAckRequest` */
 export type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null }
+/** `oneiron::self_heal::audit::ObjectiveConfession` */
+export type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null }
 /** `oneiron::task_verb::highway_types::TaskReportBody` */
-export type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } }
+export type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null; confession_structured?: ObjectiveConfession[] | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } }
 /** `oneiron::task_verb::TaskUpdateRequest` */
 export type TaskUpdateRequest = { task_ref: string; resultRef?: string | null; report?: TaskReportBody | null; report_key?: string | null; attempt?: AttemptHandle | null }
 /** `oneiron::task_verb::route_receipts::TaskUpdateReceipt` */
@@ -4369,8 +4371,6 @@ export type LateCreditShare = { subject?: EntityId | null; origin_skill?: Entity
 export type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] }
 /** `oneiron::learning::doors::LearningProjectionView` */
 export type LearningProjectionView = { receipt?: LateCreditReceipt | null }
-/** `oneiron::self_heal::audit::ObjectiveConfession` */
-export type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null }
 /** `oneiron::self_heal::audit::AttemptConfession` */
 export type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: TaskTypeRefTypeRef; objectives: ObjectiveConfession[] }
 /** `oneiron::self_heal::audit::AuditDraw` */

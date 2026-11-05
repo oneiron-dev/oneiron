@@ -446,6 +446,7 @@ fn report_in(
         TaskReportBody::Done {
             result_ref: note,
             confession: None,
+            confession_structured: None,
         }
     } else {
         TaskReportBody::Failed {
