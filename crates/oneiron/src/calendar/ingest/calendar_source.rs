@@ -18,8 +18,10 @@ use crate::vault::Vault;
 /// What one pulled change did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CalendarSourceChange {
-    /// The resource's series landed or moved.
-    Applied,
+    /// The resource's series landed or moved; `starts_at` is its master's
+    /// start, Unix seconds (an all-day or floating one's civil start read as
+    /// UTC).
+    Applied { starts_at: Option<u64> },
     /// The provider deleted it: the source's passport is absent, and the
     /// EVENT cancelled once no live source reports it.
     Deleted,
@@ -39,10 +41,9 @@ pub(crate) fn apply_calendar_source_change(
     now: u64,
 ) -> Result<CalendarSourceChange, CalendarError> {
     match change {
-        RemoteCalendarChange::Upsert(object) => {
-            apply_upsert(vault, system, object, now)?;
-            Ok(CalendarSourceChange::Applied)
-        }
+        RemoteCalendarChange::Upsert(object) => Ok(CalendarSourceChange::Applied {
+            starts_at: apply_upsert(vault, system, object, now)?,
+        }),
         RemoteCalendarChange::Delete { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
             super::delete_connector_resource(vault, system, &record, uid, now)?;
@@ -86,15 +87,52 @@ pub(crate) fn apply_calendar_source_feed(
     Ok(feed.events.len())
 }
 
+/// Marks every UID in `uids` absent for a pack calendar source whose full
+/// listing finished without them, under its calendar `system`: each
+/// passport of the source for that UID, master and instances, is absent,
+/// and the EVENT cancelled once no live source reports it. The claims cite
+/// the omitted UIDs, archived bound to the source.
+///
+/// # Errors
+///
+/// The source is not an Active calendar of an installed pack, or the
+/// admission refuses.
+pub(crate) fn apply_calendar_source_omissions(
+    vault: &Vault,
+    system: &str,
+    uids: &[String],
+    now: u64,
+) -> Result<(), CalendarError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let mut omitted = String::from("listing finished without:\r\n");
+    for uid in uids {
+        omitted.push_str(uid);
+        omitted.push_str("\r\n");
+    }
+    let record =
+        archive_source_resource(vault, system, LISTING_ARCHIVE_KEY, omitted.as_bytes(), now)?
+            .record;
+    let none = ParsedIcsFeed { events: Vec::new() };
+    for uid in uids {
+        super::sweep_connector_resource(vault, system, &record, &none, uid, now)?;
+    }
+    Ok(())
+}
+
 /// The archive key of a whole feed, beside the per-UID resources.
 const FEED_ARCHIVE_KEY: &str = "#feed";
+/// The archive key of the UIDs a finished listing omitted.
+const LISTING_ARCHIVE_KEY: &str = "#listing";
 
+/// Lands one resource; answers its master's start.
 fn apply_upsert(
     vault: &Vault,
     system: &str,
     object: &RemoteCalendarObject,
     now: u64,
-) -> Result<(), CalendarError> {
+) -> Result<Option<u64>, CalendarError> {
     let feed = parse_resource(&object.ics)?;
     let uid = feed
         .events
@@ -115,7 +153,25 @@ fn apply_upsert(
     if is_series(&feed) || earlier_was_series(vault, &archived)? {
         super::sweep_connector_resource(vault, system, record, &feed, &uid, now)?;
     }
-    Ok(())
+    Ok(feed.events.first().and_then(starts_at))
+}
+
+/// An event's start, Unix seconds: its UTC start, else its civil start read
+/// as UTC.
+fn starts_at(event: &crate::calendar::ics::ParsedVEvent) -> Option<u64> {
+    if let Some(start) = event.starts_at_utc {
+        return Some(start);
+    }
+    let wall = event.properties.wall_time.as_ref()?;
+    let at = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
+        .and_hms_opt(
+            u32::from(wall.h),
+            u32::from(wall.mi),
+            u32::from(wall.s.min(59)),
+        )?
+        .and_utc()
+        .timestamp();
+    u64::try_from(at).ok()
 }
 
 /// Whether a resource carries a series: a master with a rule, or detached
