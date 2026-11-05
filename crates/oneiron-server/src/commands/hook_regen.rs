@@ -78,13 +78,13 @@ impl HookRegenWorker {
                     .regenerate_hook(runtime.as_ref(), &regenerator, binding)
                 {
                     Ok(HookRegenOutcome::RolledBack { failure }) => {
-                        tracing::warn!(%binding, phase = ?failure.phase, "hook regeneration kept its last good body");
+                        tracing::warn!(?binding, phase = ?failure.phase, "hook regeneration kept its last good body");
                     }
                     Ok(_) => {
-                        tracing::info!(%binding, "hook regeneration has a pending owner decision");
+                        tracing::info!(?binding, "hook regeneration has a pending owner decision");
                     }
                     Err(_) => {
-                        tracing::warn!(%binding, reason = "hook_regen_record_failed", "hook regeneration did not record a decision");
+                        tracing::warn!(?binding, reason = "hook_regen_record_failed", "hook regeneration did not record a decision");
                     }
                 }
             }
