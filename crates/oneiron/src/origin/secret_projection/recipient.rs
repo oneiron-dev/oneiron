@@ -6,7 +6,7 @@
     reason = "FIX 7608 2b-ii-A: inert until 2b-ii-B binds a proven recipient at the MCP and run hosts"
 )]
 
-pub use oneiron_store::origin::secret_projection::recipient::*;
+pub(crate) use oneiron_store::origin::secret_projection::recipient::*;
 
 pub(crate) use self::binding::RepoProjectionRevealBinding;
 use crate::entity_id::EntityId;

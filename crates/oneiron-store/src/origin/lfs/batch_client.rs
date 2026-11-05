@@ -62,21 +62,21 @@ pub struct BatchAnswer {
 
 #[derive(Deserialize)]
 struct BatchObject {
-    pub oid: String,
+    oid: String,
     #[serde(default)]
-    pub actions: Option<BatchActions>,
+    actions: Option<BatchActions>,
     #[serde(default)]
-    pub error: Option<serde_json::Value>,
+    error: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct BatchActions {
     #[serde(default)]
-    pub upload: Option<BatchAction>,
+    upload: Option<BatchAction>,
     #[serde(default)]
-    pub verify: Option<BatchAction>,
+    verify: Option<BatchAction>,
     #[serde(default)]
-    pub download: Option<BatchAction>,
+    download: Option<BatchAction>,
 }
 
 #[derive(Deserialize)]

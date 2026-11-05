@@ -12,7 +12,7 @@ use crate::git_wire::config::GIT_WIRE_POLL_INTERVAL;
 use crate::git_wire::config::GIT_WIRE_READ_CHUNK_BYTES;
 use oneiron_base::error::Result;
 
-type ReaderHandle = std::thread::JoinHandle<(Vec<u8>, bool)>;
+pub type ReaderHandle = std::thread::JoinHandle<(Vec<u8>, bool)>;
 
 pub fn spawn_stdin_writer(child: &mut Child, payload: &[u8]) -> std::thread::JoinHandle<()> {
     let mut sink = child.stdin.take();

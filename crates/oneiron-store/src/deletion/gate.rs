@@ -34,7 +34,7 @@ pub type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
 /// tombstone publication, or with nothing published its purge), given its
 /// request id: the claim on what authorized it, refused when that is already
 /// spent. The purge transaction calls it again with the delete's receipt.
-type DeletionClaimWrite<'a> =
+pub type DeletionClaimWrite<'a> =
     &'a dyn Fn(&mut heed::RwTxn<'_>, &[u8; 16], Option<&EntityId>) -> Result<()>;
 
 /// The original authority act beside its ordinary in-transaction claim. The

@@ -37,7 +37,7 @@ pub const NOTICE_SCOPE_TARGET: NoticeScopeTarget = NoticeScopeTarget::SigningDoc
 
 impl NoticeScopeTarget {
     /// The record judged for the notices of `document`.
-    pub const fn record(self, document: EntityId) -> EntityId {
+    const fn record(self, document: EntityId) -> EntityId {
         match self {
             Self::SigningDocument => document,
         }

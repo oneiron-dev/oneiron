@@ -1,7 +1,7 @@
 //! Core half of `store::code_revision_record::tree_inventory`: its store-layer items live in `oneiron_store::code_revision_record::tree_inventory` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::code_revision_record::tree_inventory::*;
+pub(crate) use oneiron_store::code_revision_record::tree_inventory::*;
 
 use super::CodeRevision;
 use crate::error::{ArtifactError, Error, Result};
