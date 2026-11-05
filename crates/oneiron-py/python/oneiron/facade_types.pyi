@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4489 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1233 facade rows, 4491 declarations.
+Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -16826,6 +16826,13 @@ class ModelStreamTerminal(TypedDict):
     failure: NotRequired[str | None]
 class ModelStreamTerminalRequest(TypedDict):
     stream_key: str
+class ModelStreamRelease(TypedDict):
+    stream_key: str
+class ModelStreamReleased(TypedDict):
+    stream_ref: str
+    stream_key: str
+    status: ModelStreamStatus
+    released: bool
 class AiReplyReader(TypedDict):
     definition: str
     task_family: NotRequired[str | None]

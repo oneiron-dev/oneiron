@@ -99,6 +99,22 @@ pub struct ModelStreamDetached {
     pub detached: bool,
 }
 
+/// Explicitly discards this credential's transient replay and outstanding
+/// subscription handles, without cancelling its producer or durable terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamRelease {
+    pub stream_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ModelStreamReleased {
+    pub stream_ref: String,
+    pub stream_key: String,
+    pub status: ModelStreamStatus,
+    pub released: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStreamAbort {

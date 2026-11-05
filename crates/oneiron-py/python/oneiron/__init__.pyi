@@ -3930,6 +3930,8 @@ class Oneiron:
             """Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."""
         def terminal(self, spec: Facade.ModelStreamTerminalRequest) -> Facade.ModelStreamTerminal:
             """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
+        def release(self, spec: Facade.ModelStreamRelease) -> Facade.ModelStreamReleased:
+            """Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."""
     class _AiVoiceVerbs:
         @property
         def asr(self) -> "Oneiron._AiVoiceAsrVerbs": ...

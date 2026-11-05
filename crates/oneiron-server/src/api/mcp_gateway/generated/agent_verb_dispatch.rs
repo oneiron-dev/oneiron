@@ -1159,6 +1159,7 @@ pub(crate) fn mcp_agent_verb_input(
         "ai.streams.detach" => a.spec.clone().ok_or_else(invalid),
         "ai.streams.abort" => a.spec.clone().ok_or_else(invalid),
         "ai.streams.terminal" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.release" => a.spec.clone().ok_or_else(invalid),
         "ai.reply" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.context" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.craft_reply_manifest" => a.spec.clone().ok_or_else(invalid),
@@ -4289,6 +4290,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.streams.terminal" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.reply" => {
@@ -20888,6 +20892,20 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::llm::model_stream::ModelStreamTerminalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = Box::pin(crate::api::facade::host_doors::ai_streams_terminal(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.release" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.release", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamRelease =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_release(
                 server, auth, input,
             ))
             .await

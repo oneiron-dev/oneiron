@@ -905,6 +905,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.detach`
 - `ai.streams.abort`
 - `ai.streams.terminal`
+- `ai.streams.release`
 - `ai.reply`
 - `vault.receipts.context`
 - `vault.receipts.craft_reply_manifest`

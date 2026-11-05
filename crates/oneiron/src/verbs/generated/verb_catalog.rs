@@ -903,6 +903,7 @@ pub enum AgentVerb {
     AiStreamsDetach,
     AiStreamsAbort,
     AiStreamsTerminal,
+    AiStreamsRelease,
     AiReply,
     VaultReceiptsContext,
     VaultReceiptsCraftReplyManifest,
@@ -2160,6 +2161,7 @@ impl AgentVerb {
         Self::AiStreamsDetach,
         Self::AiStreamsAbort,
         Self::AiStreamsTerminal,
+        Self::AiStreamsRelease,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::VaultReceiptsCraftReplyManifest,
@@ -3450,6 +3452,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => "ai.streams.detach",
             Self::AiStreamsAbort => "ai.streams.abort",
             Self::AiStreamsTerminal => "ai.streams.terminal",
+            Self::AiStreamsRelease => "ai.streams.release",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::VaultReceiptsCraftReplyManifest => "vault.receipts.craft_reply_manifest",
@@ -4713,6 +4716,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -5999,6 +6003,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -7398,6 +7403,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -8248,6 +8254,7 @@ impl AgentVerb {
                 | Self::AiStepsSubmit
                 | Self::AiStreamsOpen
                 | Self::AiStreamsAbort
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
@@ -9399,6 +9406,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -10657,6 +10665,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -13665,6 +13674,9 @@ impl AgentVerb {
             }
             Self::AiStreamsTerminal => {
                 "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."
+            }
+            Self::AiStreamsRelease => {
+                "Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."
             }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."

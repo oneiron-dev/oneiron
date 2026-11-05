@@ -6322,6 +6322,9 @@ class Oneiron:
         def terminal(self, spec):
             """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
             return json.loads(_translate(lambda: self._client.ai_streams_terminal(json.dumps(spec))))
+        def release(self, spec):
+            """Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."""
+            return json.loads(_translate(lambda: self._client.ai_streams_release(json.dumps(spec))))
     class _AiVoiceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -87,6 +87,7 @@
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`

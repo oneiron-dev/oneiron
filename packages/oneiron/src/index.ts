@@ -3524,6 +3524,8 @@ export class Oneiron {
       abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
       /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
       terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
+      /** Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged. */
+      release: (input: Facade.ModelStreamRelease): Facade.ModelStreamReleased => this.#call(() => this.#client.aiStreamsRelease(input) as Facade.ModelStreamReleased),
     },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),

@@ -4990,6 +4990,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.streams.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamRelease,
+                >(),
+            ),
+            (
                 "ai.reply",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
                 ),
@@ -7725,6 +7731,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.streams.detach",
     "ai.streams.abort",
     "ai.streams.terminal",
+    "ai.streams.release",
     "ai.reply",
     "vault.receipts.context",
     "vault.receipts.craft_reply_manifest",
@@ -9873,6 +9880,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "ai.streams.terminal" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_stream::ModelStreamTerminal,
+        >(),
+        "ai.streams.release" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamReleased,
         >(),
         "ai.reply" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
@@ -16961,6 +16971,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.streams.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.reply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22293,6 +22310,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::llm::model_stream::ModelStreamTerminalRequest =
                 decode(value.clone())?;
         }
+        "ai.streams.release" => {
+            let _input: crate::llm::model_stream::ModelStreamRelease = decode(value.clone())?;
+        }
         "ai.reply" => {
             let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
         }
@@ -25353,6 +25373,7 @@ pub fn invoke(
         "ai.streams.detach" => encode(ai_streams_detach(memory, decode(value)?)?),
         "ai.streams.abort" => encode(ai_streams_abort(memory, decode(value)?)?),
         "ai.streams.terminal" => encode(ai_streams_terminal(memory, decode(value)?)?),
+        "ai.streams.release" => encode(ai_streams_release(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "vault.receipts.craft_reply_manifest" => {
@@ -33650,6 +33671,12 @@ pub fn ai_streams_terminal(
     input: crate::llm::model_stream::ModelStreamTerminalRequest,
 ) -> MemoryResult<crate::llm::model_stream::ModelStreamTerminal> {
     crate::task_verb::sdk::host_only(memory, "ai.streams.terminal", &input)
+}
+pub fn ai_streams_release(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamRelease,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamReleased> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.release", &input)
 }
 pub fn ai_reply(
     memory: &Memory<'_>,

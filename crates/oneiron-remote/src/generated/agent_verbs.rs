@@ -2792,6 +2792,9 @@ impl OneironClient {
                 "ai.streams.terminal" => remote_agent_verb_output::<
                     oneiron::llm::model_stream::ModelStreamTerminal,
                 >(client, verb, &input),
+                "ai.streams.release" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamReleased,
+                >(client, verb, &input),
                 "ai.reply" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiReply>(
                     client, verb, &input,
                 ),
@@ -14865,6 +14868,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.streams.terminal", value)
+    }
+    pub fn ai_streams_release(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamRelease,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamReleased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.release", value)
     }
     pub fn ai_reply(
         &self,

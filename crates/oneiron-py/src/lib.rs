@@ -8406,6 +8406,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_streams_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_reply(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.reply")?;
         let output = py
