@@ -66,4 +66,3 @@ pub fn decode_previous_skill_record(
     }
 }
 
-pub mod request;
