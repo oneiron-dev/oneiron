@@ -107,6 +107,10 @@ pub enum BackendError {
     Rejected { code: BackendRejectCode },
     #[error("seal backend returned malformed signature bytes")]
     MalformedSignature,
+    /// The backend's retained memory could not be reserved.
+    #[cfg(feature = "native")]
+    #[error("seal backend memory: {0}")]
+    Memory(crate::memory::SealMemoryRefusal),
 }
 
 /// Signing backend seam. Carries signing identity and a prehashed signing

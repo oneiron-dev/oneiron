@@ -107,6 +107,7 @@ pub(crate) fn sub_operation_id(
 pub(crate) fn map_backend_error(err: crate::api::BackendError) -> SealError {
     use crate::api::BackendError as Be;
     match err {
+        Be::Memory(refusal) => refusal.seal_error(SealStage::BackendSign),
         Be::Unavailable { retry_after_ms } => SealError::BackendUnavailable { retry_after_ms },
         Be::RateLimited { retry_after_ms } => SealError::Retryable {
             stage: SealStage::BackendSign,
