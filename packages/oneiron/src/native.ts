@@ -1244,6 +1244,7 @@ vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailSourcesSync(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
+vaultMailAttachmentsOpen(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown

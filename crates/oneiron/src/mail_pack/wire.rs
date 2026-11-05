@@ -66,7 +66,7 @@ pub struct MailIdPage {
 
 /// One attachment a message carries, as described, not its bytes: bytes
 /// load only when someone opens it (MAIL-GOOGLE = A).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MailAttachmentRef {
     /// The MIME part id within the message.
     pub part_id: String,
@@ -182,4 +182,13 @@ pub trait MailProviderWire {
         anchor: &str,
         page: Option<&str>,
     ) -> Result<MailHistoryRead>;
+
+    /// One attachment's bytes, as a reader opened it; `None` when the
+    /// provider no longer has the message or the attachment.
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>>;
 }

@@ -13,6 +13,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // logged search or turns a switched-off search on again (FIX 12560).
     // An import's queue, occurrences and progress stand with the rows they
     // landed, as the image holds them (FIX 12559).
+    (&t::MAIL_PACK_ATTACHMENT, CONTENT),
     (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
     (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),

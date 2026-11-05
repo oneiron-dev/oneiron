@@ -209,6 +209,11 @@ pub(super) struct Landing<'v> {
 }
 
 impl<'v> Landing<'v> {
+    /// The actor the landings are written as.
+    pub(super) const fn actor(&self) -> EntityId {
+        self.actor
+    }
+
     pub(super) fn new(
         vault: &'v Vault,
         owner: &'v AuthenticatedOwner,
@@ -367,6 +372,7 @@ impl<'v> Landing<'v> {
                 subject: None,
                 received_at: headers.received_at,
                 searched,
+                attachments: Vec::new(),
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -388,6 +394,9 @@ impl<'v> Landing<'v> {
                     .clone_from(&headers.rfc_message_id);
             }
             occurrence.searched |= searched;
+            if let Some(full) = full {
+                occurrence.attachments.clone_from(&full.attachments);
+            }
             occurrence.updated_at = self.imported_at;
             let queued = body_queue_key(source, occurrence.received_at, &headers.provider_id);
             if occurrence.stage == MailStage::Headers {

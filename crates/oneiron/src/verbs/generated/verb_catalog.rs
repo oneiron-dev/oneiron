@@ -1235,6 +1235,7 @@ pub enum AgentVerb {
     VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
+    VaultMailAttachmentsOpen,
     VaultMailComplianceSearch,
     ConnectorAnswer,
     SelfBrowserOpen,
@@ -2508,6 +2509,7 @@ impl AgentVerb {
         Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
+        Self::VaultMailAttachmentsOpen,
         Self::VaultMailComplianceSearch,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
@@ -3818,6 +3820,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
+            Self::VaultMailAttachmentsOpen => "vault.mail.attachments.open",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -5071,6 +5074,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -6373,6 +6377,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -7767,6 +7772,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -8526,6 +8532,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -9839,6 +9846,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -11113,6 +11121,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -14765,6 +14774,9 @@ impl AgentVerb {
             }
             Self::VaultMailThreadsRead => {
                 "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."
+            }
+            Self::VaultMailAttachmentsOpen => {
+                "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."

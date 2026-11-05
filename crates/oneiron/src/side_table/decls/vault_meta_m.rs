@@ -7,6 +7,10 @@ side_tables! {
     /// Conservative marker that a zero-head split has ever been recorded, gating an expensive ledger
     /// fold. Key: ().
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
+    /// The attachments readers opened (FIX 12559): each one's fetch, waiting or stored in its
+    /// artifact bound to its thread. Key: id16(source) + blake3 (32) of the provider id and
+    /// part id.
+    MAIL_PACK_ATTACHMENT: VaultMeta b"mail_pack:attachment:v1:" Named;
     /// The mail messages that landed with their headers only and wait for their bodies, newest
     /// first (FIX 12559). Key: id16(source) + u64be (u64::MAX less the receive time) + blake3
     /// (32) of the provider id.

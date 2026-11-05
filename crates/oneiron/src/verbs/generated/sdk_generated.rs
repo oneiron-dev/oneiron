@@ -6772,6 +6772,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.mail.attachments.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailAttachmentOpenRequest,
+                >(),
+            ),
+            (
                 "vault.mail.compliance.search",
                 crate::code_run::vault_read::request_schema::<
                     crate::mail_pack::MailComplianceSearchRequest,
@@ -19206,6 +19212,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.attachments.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.compliance.search" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23562,6 +23575,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.threads.read" => {
             let _input: crate::mail_pack::MailThreadRequest = decode(value.clone())?;
         }
+        "vault.mail.attachments.open" => {
+            let _input: crate::mail_pack::MailAttachmentOpenRequest = decode(value.clone())?;
+        }
         "vault.mail.compliance.search" => {
             let _input: crate::mail_pack::MailComplianceSearchRequest = decode(value.clone())?;
         }
@@ -26140,6 +26156,9 @@ pub fn invoke(
         "vault.mail.sources.sync" => encode(vault_mail_sources_sync(memory, decode(value)?)?),
         "vault.mail.inbox" => encode(vault_mail_inbox(memory, decode(value)?)?),
         "vault.mail.threads.read" => encode(vault_mail_threads_read(memory, decode(value)?)?),
+        "vault.mail.attachments.open" => {
+            encode(vault_mail_attachments_open(memory, decode(value)?)?)
+        }
         "vault.mail.compliance.search" => {
             encode(vault_mail_compliance_search(memory, decode(value)?)?)
         }
@@ -36685,6 +36704,12 @@ pub fn vault_mail_threads_read(
     input: crate::mail_pack::MailThreadRequest,
 ) -> MemoryResult<crate::mail_pack::MailThreadView> {
     memory.mail_thread(&input)
+}
+pub fn vault_mail_attachments_open(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailAttachmentOpenRequest,
+) -> MemoryResult<crate::mail_pack::MailAttachmentView> {
+    memory.mail_attachments_open(&input)
 }
 pub fn vault_mail_compliance_search(
     memory: &Memory<'_>,

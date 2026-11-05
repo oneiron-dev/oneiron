@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -98,6 +99,10 @@ pub(super) struct MailOccurrence {
     pub(super) received_at: u64,
     /// Whether a search fetched it: kept whatever the copy setting.
     pub(super) searched: bool,
+    /// Its attachments, as its whole message described them; empty until
+    /// its body lands.
+    #[serde(default)]
+    pub(super) attachments: Vec<MailAttachmentRef>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }

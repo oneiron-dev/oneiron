@@ -205,6 +205,10 @@ pub const MAIL_TURN: &[u8] = b"oneiron.mail_pack.turn.v1";
 /// (hex), the provider's message id, the revision's content hash.
 pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
 
+/// An attachment a reader opened, stored once (`mail_pack`). Parts: mail
+/// source id, the provider's message id, the attachment's MIME part id.
+pub const MAIL_ATTACHMENT: &[u8] = b"oneiron.mail_pack.attachment.v1";
+
 /// A pack calendar source's EVENT (`mail_pack`): one per source and
 /// provider UID, so two people's copies of one meeting never share a row.
 /// Parts: calendar source id, the event's UID.
@@ -321,7 +325,7 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 62] = [
+pub(crate) const ALL: [&[u8]; 63] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -367,6 +371,7 @@ pub(crate) const ALL: [&[u8]; 62] = [
     MAIL_CONVERSATION,
     MAIL_TURN,
     MAIL_MESSAGE,
+    MAIL_ATTACHMENT,
     MAIL_CALENDAR_EVENT,
     MAIL_CALENDAR_SOURCE_BLOB,
     IMPORTED_NOTE,
