@@ -77,12 +77,7 @@ impl DeferredBornTouches {
             {
                 continue;
             }
-            let birth_bytes = rmp_serde::to_vec_named(&touch.birth)
-                .map_err(|_| Error::InvariantViolation("comm touch birth encoding failed"))?;
-            let id = EntityId::derive(
-                COMM_BORN_TOUCH_EVENT,
-                &[touch.id.as_bytes(), &row.encode(), &birth_bytes],
-            )?;
+            let id = born_touch_event_id(touch.id, &row.encode(), &touch.birth)?;
             let mut event = touch.event;
             event.channel_class = event
                 .channel_class
@@ -143,6 +138,7 @@ impl DeferredBornTouches {
 pub(super) fn adopt_born_touch_head_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    source_event_id: EntityId,
     id: EntityId,
     value: &CommClaimValue,
 ) -> CommResult<Option<EntityId>> {
@@ -152,10 +148,11 @@ pub(super) fn adopt_born_touch_head_in_txn(
         .ok_or(CommError::Engine(Error::EntityNotFound))?;
     if crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.live_type()
         != Some(ENTITY_TYPE_CLAIM)
-        || crate::store::birth_record::row_birth_in_txn(&vault.store, txn, &id)?.is_none()
     {
         return Err(CommError::Engine(Error::EntityNotFound));
     }
+    let birth = crate::store::birth_record::row_birth_in_txn(&vault.store, txn, &id)?
+        .ok_or(CommError::Engine(Error::EntityNotFound))?;
     let body = crate::claim::decode_claim_body(&row.body, false)?;
     let claim = CommClaim::from_claim_body(&body)?;
     let (
@@ -183,6 +180,11 @@ pub(super) fn adopt_born_touch_head_in_txn(
     if !claim.is_standing() {
         return Ok(None);
     }
+    // A pending source must not adopt a later scope/envelope/header revision
+    // merely because that revision still states the same touch value.
+    if born_touch_event_id(id, &row.encode(), &birth)? != source_event_id {
+        return Err(CommError::InvalidRecord);
+    }
     if !vault
         .claims_for_subject_in_txn(txn, party_ref)?
         .contains(&id)
@@ -193,4 +195,10 @@ pub(super) fn adopt_born_touch_head_in_txn(
     // This is the original Put the batch already admitted, not a new write.
     // The projector admits every subsequent supersession of another head.
     Ok(Some(id))
+}
+
+fn born_touch_event_id(id: EntityId, row: &[u8], birth: &RowBirth) -> Result<EntityId> {
+    let birth_bytes = rmp_serde::to_vec_named(birth)
+        .map_err(|_| Error::InvariantViolation("comm touch birth encoding failed"))?;
+    EntityId::derive(COMM_BORN_TOUCH_EVENT, &[id.as_bytes(), row, &birth_bytes])
 }
