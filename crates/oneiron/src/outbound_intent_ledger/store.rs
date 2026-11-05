@@ -8,6 +8,7 @@ use super::types::{
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::BudgetBlock;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 
@@ -577,8 +578,12 @@ pub(crate) fn record_definite_non_delivery(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |_, _| Ok(()),
+        |wtxn, record| {
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)?;
+            Ok(BudgetBlock::Open)
+        },
     )
+    .map(|(record, _)| record)
 }
 
 /// A provider's rate or quota refusal (FIX 8818): the send certainly did not
@@ -596,8 +601,13 @@ pub(crate) fn record_provider_refusal(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |wtxn, _| super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive),
+        |wtxn, record| {
+            super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive)?;
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)?;
+            Ok(BudgetBlock::Open)
+        },
     )
+    .map(|(record, _)| record)
 }
 
 /// Renews a Pending retry's admission at `now_ms`, in the caller's
@@ -617,18 +627,20 @@ pub(crate) fn begin_definite_non_delivery_retry(
     vault: &Vault,
     id: [u8; 32],
     now_ms: u64,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<(IntentLedgerRecord, BudgetBlock)> {
     update_pending_recorded_outcome(
         vault,
         id,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         None,
         now_ms,
-        // The retry this claim opens ends the provider's wait (FIX 8818); a
-        // takeover's abandon gives its reserved budget back (FIX 7964).
         |wtxn, record| {
-            super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
-            super::settlement::settle_reservation_in_txn(vault, wtxn, record)
+            let block = super::settlement::restore_retry_reservation_in_txn(vault, wtxn, record)?;
+            if block == BudgetBlock::Open {
+                super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
+                super::settlement::settle_reservation_in_txn(vault, wtxn, record)?;
+            }
+            Ok(block)
         },
     )
 }
@@ -639,8 +651,8 @@ fn update_pending_recorded_outcome(
     expected: Option<RecordedOutboundOutcome>,
     next: Option<RecordedOutboundOutcome>,
     now_ms: u64,
-    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord) -> IntentLedgerResult<()>,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord) -> IntentLedgerResult<BudgetBlock>,
+) -> IntentLedgerResult<(IntentLedgerRecord, BudgetBlock)> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("pending outcome target is missing"),
@@ -663,20 +675,28 @@ fn update_pending_recorded_outcome(
     } else {
         record.recorded_outcome = next;
     }
-    record.updated_ms = now_ms.max(record.created_ms);
-    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
-    also(&mut wtxn, &record)?;
+    // The callback preflights every retry debit before any permit change.
+    // On exhaustion it may apply the owner's suspend policy, but leaves the
+    // released reservation, usage and provider wait untouched.
+    let block = also(&mut wtxn, &record)?;
+    if block == BudgetBlock::Open {
+        record.updated_ms = now_ms.max(record.created_ms);
+        LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    } else {
+        record.recorded_outcome = expected;
+    }
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
-    // A takeover may have abandoned the row: the owner's waiting shed looks
-    // again, as at a terminal transition (FIX 10688).
-    vault.wake_owner_shed();
+    if block == BudgetBlock::Open {
+        // A takeover may have abandoned the row (FIX 10688).
+        vault.wake_owner_shed();
+    }
     // Open only after the state write is durable (FIX 10959), as in
     // `record_possible_delivery`.
     let rtxn = vault.store.custody_snapshot()?;
     open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
-    Ok(record)
+    Ok((record, block))
 }
 
 fn transition_record_with_outcome(
