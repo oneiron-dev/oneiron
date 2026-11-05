@@ -240,6 +240,9 @@ pub enum DrafterUnknownReason {
     PolicyMoved,
     /// The vault locked while the evaluation ran.
     VaultLocked,
+    /// An erase reached the version or the incumbent it is compared with,
+    /// or the version moved, while the evaluation ran: replay stopped.
+    VersionMoved,
 }
 
 /// Why an evaluation failed: the version is rejected.
@@ -1412,6 +1415,47 @@ impl Vault {
             )?;
             Ok(Some(evaluation))
         })
+    }
+
+    /// Whether `plan`'s evaluation may replay another case: `None` while it
+    /// may. [`DrafterUnknownReason::VersionMoved`] once its version is
+    /// erased or no longer returned at the plan's generation, or its
+    /// incumbent version is erased; [`DrafterUnknownReason::PolicyMoved`]
+    /// once the policy is off or excludes a world the version's or the
+    /// incumbent's ancestry read. The host reads it before every case, so no
+    /// erased head and no held-out case of an erased source is replayed once
+    /// the erase landed.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn drafter_evaluation_watch(
+        &self,
+        plan: &DrafterEvaluationPlan,
+    ) -> Result<Option<DrafterUnknownReason>> {
+        let txn = self.store.env.read_txn()?;
+        let versions = versions_by_id(&self.store, &txn)?;
+        let Some(row) = versions.get(&plan.version) else {
+            return Ok(Some(DrafterUnknownReason::VersionMoved));
+        };
+        if row.state != DrafterVersionState::Returned || row.generation != plan.version_generation {
+            return Ok(Some(DrafterUnknownReason::VersionMoved));
+        }
+        let incumbent = match plan.incumbent {
+            DrafterServing::Stock => None,
+            DrafterServing::Version(id) => match versions.get(&id) {
+                Some(found) if found.state != DrafterVersionState::Erased => Some(found),
+                _ => return Ok(Some(DrafterUnknownReason::VersionMoved)),
+            },
+        };
+        let policy = policy_in_txn(&self.store, &txn)?;
+        if !policy.enabled
+            || std::iter::once(row)
+                .chain(incumbent)
+                .any(|head| ancestry_names_world(&versions, head, &policy.excluded_worlds))
+        {
+            return Ok(Some(DrafterUnknownReason::PolicyMoved));
+        }
+        Ok(None)
     }
 
     /// The evaluation `id`; `None` when there is none.

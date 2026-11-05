@@ -30,7 +30,8 @@ use heed::{RoTxn, RwTxn};
 use super::{
     DrafterArtifactFile, DrafterCorpusFile, DrafterHoldReason, DrafterRecipe,
     DrafterRetrainOutcome, DrafterServing, DrafterTarget, DrafterTraining, DrafterTrainingFailure,
-    DrafterVersion, DrafterVersionState, VERSIONS, invalid, policy_in_txn, versions_by_id,
+    DrafterVersion, DrafterVersionState, VERSIONS, ancestry_names_world, invalid, policy_in_txn,
+    versions_by_id,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -277,6 +278,14 @@ impl Vault {
                     "the drafter policy moved since the version was prepared",
                 ));
             }
+            // A world the owner excluded since the night prepared it fences
+            // the version, its ancestry included: its corpus never reaches
+            // a trainer.
+            if ancestry_names_world(&versions_by_id(store, txn)?, &row, &policy.excluded_worlds) {
+                return Err(invalid(
+                    "the drafter version read a world the policy now excludes",
+                ));
+            }
             if target_training_in(store, txn, &row.target, Some(row.id))? {
                 return Err(invalid("another version of the drafter target trains"));
             }
@@ -305,8 +314,9 @@ impl Vault {
     /// Whether version `version`'s trainer, dispatched at `generation`, may
     /// go on: `None` while it may; otherwise why the host stops it. An
     /// erase reached it (`erased`), or it is no longer training at that
-    /// generation, the policy is off or its recipe is no longer the
-    /// version's (`cancelled`).
+    /// generation, the policy is off, its recipe is no longer the version's,
+    /// or the policy now excludes a world it or its ancestry read
+    /// (`cancelled`).
     ///
     /// # Errors
     /// Storage faults.
@@ -327,6 +337,13 @@ impl Vault {
         }
         let policy = policy_in_txn(&self.store, &txn)?;
         if !policy.enabled || policy.recipe.as_ref() != Some(&row.recipe) {
+            return Ok(Some(DrafterTrainingFailure::Cancelled));
+        }
+        if ancestry_names_world(
+            &versions_by_id(&self.store, &txn)?,
+            &row,
+            &policy.excluded_worlds,
+        ) {
             return Ok(Some(DrafterTrainingFailure::Cancelled));
         }
         Ok(None)

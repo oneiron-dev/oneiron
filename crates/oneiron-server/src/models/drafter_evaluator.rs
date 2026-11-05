@@ -615,6 +615,24 @@ impl Evaluation {
             .is_ok_and(|status| status == VaultKeyStatus::Locked)
     }
 
+    /// Why replay must stop before the next case, if it must: the vault
+    /// locked, or an erase or a policy change reached the version or its
+    /// incumbent ([`Vault::drafter_evaluation_watch`]). The arm's
+    /// incarnation is then retired and the evaluation's plaintext removed
+    /// as the evaluation ends, before any further case runs.
+    fn halted(&self) -> Option<DrafterUnknownReason> {
+        if self.locked() {
+            return Some(DrafterUnknownReason::VaultLocked);
+        }
+        match self.vault.drafter_evaluation_watch(&self.plan) {
+            Ok(reason) => reason,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "a drafter evaluation's watch did not read; replay stops");
+                Some(DrafterUnknownReason::WorkerError)
+            }
+        }
+    }
+
     fn error(&mut self, code: &str) {
         *self.evidence.errors.entry(code.to_owned()).or_default() += 1;
     }
@@ -756,8 +774,8 @@ impl Evaluation {
             usize::try_from(rule.schedule.warmup_cases).unwrap_or(usize::MAX)
         });
         for case in self.cases.iter().take(warmup) {
-            if self.locked() {
-                return Err(DrafterUnknownReason::VaultLocked);
+            if let Some(reason) = self.halted() {
+                return Err(reason);
             }
             let _ = run_case(endpoint, case, None, false, false).await;
         }
@@ -767,8 +785,8 @@ impl Evaluation {
             failed: BTreeMap::new(),
         };
         for case in &self.cases {
-            if self.locked() {
-                return Err(DrafterUnknownReason::VaultLocked);
+            if let Some(reason) = self.halted() {
+                return Err(reason);
             }
             match run_case(endpoint, case, None, evidence, false).await {
                 Ok(mut answered) => {
@@ -920,8 +938,8 @@ impl Evaluation {
             .iter()
             .filter(|case| judged.contains(&case.index))
         {
-            if self.locked() {
-                return Err(DrafterUnknownReason::VaultLocked);
+            if let Some(reason) = self.halted() {
+                return Err(reason);
             }
             let Some(target) = reference.runs.get(&case.index) else {
                 continue;
