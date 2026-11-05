@@ -1801,6 +1801,11 @@ export_facade! {
     let output = client.vault_federation_burst_policy_set(&input)?;
     crate::codec::lift_record("vault.federation.burst.policy.set", &output)
 };
+"vault.sync.quarantine.held_edits" => fn vault_sync_quarantine_held_edits(&self) -> Vec<TupleU64QuarantineRecord> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.sync.quarantine.held_edits")?;
+    let output = client.vault_sync_quarantine_held_edits(&input)?;
+    crate::codec::lift_record("vault.sync.quarantine.held_edits", &output)
+};
 "vault.sync.retained_work.wait.set" => fn vault_sync_retained_work_wait_set(&self, input: RetainedWorkWaitSetRequest) -> u64 = |client| {
     let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest = crate::codec::lower_record("vault.sync.retained_work.wait.set", input)?;
     let output = client.vault_sync_retained_work_wait_set(&input)?;

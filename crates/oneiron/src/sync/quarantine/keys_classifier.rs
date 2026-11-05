@@ -49,7 +49,7 @@ pub(super) const RECENT_REASON_CODES: usize = 8;
 const ERR_QUARANTINE_ROW: &str = "sync quarantine row";
 
 /// Which CRDT window-doc map the rejected op targeted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QuarantineContainer {
     Entities,
@@ -75,7 +75,7 @@ impl QuarantineContainer {
 
 /// A persisted quarantine record. Hash + metadata ONLY — GDPR-inert, never
 /// the rejected bytes themselves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuarantineRecord {
     /// Window key (YYYY-MM) of the doc whose replay rejected the op.
     pub window_key: String,

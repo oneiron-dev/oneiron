@@ -1523,6 +1523,10 @@ export class Oneiron {
       },
     },
     sync: {
+      quarantine: {
+        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status. */
+        held_edits: (input: Facade.EmptyRequest): [number, Facade.QuarantineRecord][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.QuarantineRecord][]),
+      },
       retained_work: {
         wait: {
           /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */

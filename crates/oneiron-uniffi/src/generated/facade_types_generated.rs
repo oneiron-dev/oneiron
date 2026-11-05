@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1228 facade rows, 4473 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1180.
+// UniFFI census: 1229 facade rows, 4476 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1181.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -22595,6 +22595,55 @@ pub struct FederationBurstPolicySetRequest {
     pub peer: FederationBurstPeerRequest,
     #[serde(rename = "policy")]
     pub policy: FederationBurstPolicy,
+}
+
+/// `oneiron::sync::quarantine::keys_classifier::QuarantineContainer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QuarantineContainer {
+    #[serde(rename = "entities")]
+    Entities,
+    #[serde(rename = "edges")]
+    Edges,
+    #[serde(rename = "tombstones")]
+    Tombstones,
+    #[serde(rename = "leases")]
+    Leases,
+}
+
+/// `oneiron::sync::quarantine::keys_classifier::QuarantineRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QuarantineRecord {
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "container")]
+    pub container: QuarantineContainer,
+    #[serde(rename = "crdt_key_hash")]
+    pub crdt_key_hash: u64,
+    #[serde(rename = "crdt_key_len")]
+    pub crdt_key_len: u32,
+    #[serde(rename = "reason_code")]
+    pub reason_code: String,
+    #[serde(rename = "payload_hash")]
+    pub payload_hash: u64,
+    #[serde(rename = "quarantined_at")]
+    pub quarantined_at: u64,
+}
+
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleU64QuarantineRecord {
+    pub item0: u64,
+    pub item1: QuarantineRecord,
+}
+impl serde::Serialize for TupleU64QuarantineRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleU64QuarantineRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
 }
 
 /// `oneiron::sync::federation_burst::schedule::RetainedWorkQueue`.

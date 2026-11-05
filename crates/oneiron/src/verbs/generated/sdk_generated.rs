@@ -1868,6 +1868,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             #[cfg(feature = "sync")]
             (
+                "vault.sync.quarantine.held_edits",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            #[cfg(feature = "sync")]
+            (
                 "vault.sync.retained_work.wait.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -7330,6 +7336,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.baseline",
     "vault.federation.burst.policy",
     "vault.federation.burst.policy.set",
+    "vault.sync.quarantine.held_edits",
     "vault.sync.retained_work.wait.set",
     "vault.federation.burst.ingress",
     "vault.federation.burst.disposition",
@@ -8695,6 +8702,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstPolicy,
+        >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => crate::code_run::vault_read::request_schema::<
+            Vec<(u64, crate::sync::QuarantineRecord)>,
         >(),
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
@@ -13172,6 +13183,14 @@ pub fn mcp_arguments_schema_from_input(
         }
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20409,6 +20428,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 decode(value.clone())?;
         }
         #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             let _input: crate::task_verb::sdk::RetainedWorkWaitSetRequest = decode(value.clone())?;
         }
@@ -24192,6 +24215,10 @@ pub fn invoke(
         #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
             encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.quarantine.held_edits" => {
+            encode(vault_sync_quarantine_held_edits(memory, decode(value)?)?)
         }
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
@@ -29153,6 +29180,17 @@ pub fn vault_federation_burst_policy_set(
     crate::task_verb::sdk::set_federation_burst_policy_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.federation.burst.policy.set")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_quarantine_held_edits(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<(u64, crate::sync::QuarantineRecord)>> {
+    crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.quarantine.held_edits")?,
         input,
     )
 }

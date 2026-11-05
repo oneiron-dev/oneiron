@@ -3114,6 +3114,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sync_quarantine_held_edits(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.quarantine.held_edits", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_sync_retained_work_wait_set(
         &self,
         input: serde_json::Value,

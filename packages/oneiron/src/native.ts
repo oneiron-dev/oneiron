@@ -394,6 +394,7 @@ vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
+vaultSyncQuarantineHeldEdits(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
