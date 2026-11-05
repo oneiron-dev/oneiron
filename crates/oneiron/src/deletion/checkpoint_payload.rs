@@ -3,7 +3,8 @@
 //! reason does to them.
 //!
 //! An entity owns its own tree's compartment and the compartment of every
-//! attachment occurrence it holds (owner: its id, then the occurrence's). An
+//! attachment occurrence it holds (owner: its id, then the occurrence's),
+//! and its content-free audience operation. An
 //! outbound call's compartment belongs to the call, not to an entity, and
 //! goes with its payload's erase in the intent ledger. A code document has
 //! no owner erase door yet, so its compartments stay until one exists
@@ -22,7 +23,11 @@ use crate::store::checkpoint_payload::retirement::{PayloadDisposition, settle_ow
 
 /// The compartment kinds an entity owns, each found by the entity's id at
 /// the start of its owner bytes.
-const ENTITY_OWNED: [Subtype; 2] = [Subtype::EntityTree, Subtype::AttachmentOccurrence];
+const ENTITY_OWNED: [Subtype; 3] = [
+    Subtype::EntityTree,
+    Subtype::AttachmentOccurrence,
+    Subtype::AudienceOperation,
+];
 
 /// What a delete under `reason` does to its owner's compartments. A reason
 /// that did not decode (a legacy, reserved or unknown wire byte) keeps them:

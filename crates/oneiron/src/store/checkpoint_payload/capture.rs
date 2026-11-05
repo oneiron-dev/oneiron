@@ -56,6 +56,17 @@ impl Store {
     ) -> Result<Vec<CaptureCompartment>> {
         let mut instances = Vec::with_capacity(owners.len());
         for owner in owners {
+            if owner.subtype == super::Subtype::AudienceOperation
+                && !crate::workspace_roster::checkpoint_audience_operation_live_in_txn(
+                    self,
+                    wtxn,
+                    &crate::entity_id::EntityId::from_bytes(
+                        owner.owner32[..16].try_into().expect("owner width"),
+                    )?,
+                )?
+            {
+                continue;
+            }
             if let Some(found) =
                 instance::active_or_mint_in_txn(self, wtxn, owner.subtype, &owner.owner32)?
             {

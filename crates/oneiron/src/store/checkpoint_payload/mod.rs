@@ -106,6 +106,10 @@ pub(crate) enum Subtype {
     /// One outbound call's frozen input. Owner: the attempt id (16), then the
     /// call sequence (u64be), zero-padded; never the intent or payload hash.
     OutboundCall,
+    /// One audience edit's content-free operation, independent of its
+    /// authored history's generation. Owner: the edit id (16), zero-padded.
+    /// A whole-owner erase retires it; a history purge does not.
+    AudienceOperation,
 }
 
 impl Subtype {
@@ -115,6 +119,7 @@ impl Subtype {
             Self::AttachmentOccurrence => 2,
             Self::CodeDocument => 3,
             Self::OutboundCall => 4,
+            Self::AudienceOperation => 5,
         }
     }
 
@@ -124,6 +129,7 @@ impl Subtype {
             2 => Some(Self::AttachmentOccurrence),
             3 => Some(Self::CodeDocument),
             4 => Some(Self::OutboundCall),
+            5 => Some(Self::AudienceOperation),
             _ => None,
         }
     }
@@ -132,7 +138,7 @@ impl Subtype {
     /// it are zero.
     pub(crate) const fn owner_len(self) -> usize {
         match self {
-            Self::EntityTree => 16,
+            Self::EntityTree | Self::AudienceOperation => 16,
             Self::AttachmentOccurrence | Self::CodeDocument => 32,
             Self::OutboundCall => 24,
         }
