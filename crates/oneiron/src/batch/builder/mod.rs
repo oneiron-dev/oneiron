@@ -12,6 +12,8 @@ mod ops;
 mod preflight;
 mod puts;
 mod reference_read;
+#[cfg(feature = "sync")]
+mod record_document;
 
 use crate::Vault;
 use crate::entity_id::EntityId;

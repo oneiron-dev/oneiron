@@ -331,6 +331,39 @@ pub(super) fn validate_put_carriers(
     data: &[u8],
     context: PutCarrierContext<'_>,
 ) -> Result<()> {
+    validate_put_carriers_with_storage_body(store, txn, id, data, data, context)
+}
+
+/// Runs the same guards over a scratch record/document candidate: semantic
+/// guards read its logical body, while storage ownership reads its pointer.
+/// This validates data only; it does not admit or persist the native document.
+#[cfg(feature = "sync")]
+pub(super) fn validate_record_document_put_carriers(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    context: PutCarrierContext<'_>,
+    candidate: &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+) -> Result<()> {
+    validate_put_carriers_with_storage_body(
+        store,
+        txn,
+        id,
+        data,
+        &candidate.physical_raw()[ENTITY_METADATA_HEADER_LEN..],
+        context,
+    )
+}
+
+fn validate_put_carriers_with_storage_body(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    storage_data: &[u8],
+    context: PutCarrierContext<'_>,
+) -> Result<()> {
     validate_scope_carriers(store, txn, id, data, &context)?;
     super::connector_key_guard::validate_connector_manifest_put(
         store,
@@ -345,7 +378,7 @@ pub(super) fn validate_put_carriers(
         txn,
         &id,
         (context.entity_type, context.occurred, context.learned_at),
-        data,
+        storage_data,
         context.replicated,
         #[cfg(feature = "sync")]
         context.skill_state_write,

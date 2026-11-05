@@ -37,6 +37,10 @@ pub(super) struct Head {
     pub entity: String,
     pub incarnation: String,
     pub document: String,
+    /// Local physical storage when it differs from the logical document id.
+    pub storage_document: Option<String>,
+    /// Independent pre-existing sequence text, not the native record field.
+    pub sequence_document: Option<String>,
     pub field: TextField,
     pub generation: u64,
     pub pending: u64,
@@ -50,6 +54,83 @@ pub(super) struct Head {
 /// counters.
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
+
+/// Physical rows are local; pointer, fork and source identities are logical.
+pub(super) fn document_slot(head: &Head) -> Result<DocumentSlot> {
+    DocumentSlot::from_hex(head.storage_document.as_deref().unwrap_or(&head.document))
+}
+
+/// Keep an independent unheaded BODY on its original sync route. It never
+/// becomes the native field merely because a native head was installed.
+pub(super) fn has_sequence_text(head: &Head) -> Result<bool> {
+    match head.sequence_document.as_deref() {
+        None => Ok(false),
+        Some(slot) if slot == head.entity => {
+            if DocumentSlot::from_hex(slot)? == document_slot(head)? {
+                return Err(Error::CorruptedIndex(
+                    "independent document shares native slot",
+                ));
+            }
+            Ok(true)
+        }
+        Some(_) => Err(Error::CorruptedIndex("independent document sequence slot")),
+    }
+}
+
+/// The physical basis of the current sync text route, with no authority or
+/// source admission implied by its location. A missing head keeps the
+/// original entity slot, including an unborn document's captured rows.
+pub(crate) fn sync_document_slot_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<DocumentSlot> {
+    let Some(head) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(DocumentSlot::of(*entity));
+    };
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("document head entity mismatch"));
+    }
+    if has_sequence_text(&head)? {
+        Ok(DocumentSlot::of(*entity))
+    } else {
+        document_slot(&head)
+    }
+}
+
+fn document_slot_occupied(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    slot: DocumentSlot,
+) -> Result<bool> {
+    if store.port_document_present(txn, slot)? {
+        return Ok(true);
+    }
+    for row in DocumentRow::ALL {
+        if store.port_document_row(txn, slot, row)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Select free local storage without adopting or replacing another slot's
+/// rows. This selects a location only; it grants no permission to write it.
+pub(super) fn free_document_storage(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    document: &str,
+) -> Result<Option<String>> {
+    if !document_slot_occupied(store, txn, DocumentSlot::from_hex(document)?)? {
+        return Ok(None);
+    }
+    loop {
+        let fresh = EntityId::now();
+        if !document_slot_occupied(store, txn, DocumentSlot::of(fresh))? {
+            return Ok(Some(fresh.to_hex()));
+        }
+    }
+}
 
 pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let mut reader = std::io::Cursor::new(bytes);
@@ -96,7 +177,7 @@ pub(super) fn load(
     txn: &RoTxn<'_>,
     h: &Head,
 ) -> Result<EntityDoc> {
-    let slot = DocumentSlot::from_hex(&h.document)?;
+    let slot = document_slot(h)?;
     let bytes = store
         .port_document_row(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
@@ -297,7 +378,7 @@ fn persist_scanned_inner(
         .generation
         .checked_add(1)
         .ok_or(invalid("document generation overflow"))?;
-    let slot = DocumentSlot::from_hex(&h.document)?;
+    let slot = document_slot(h)?;
     if let Some(before) = before.filter(|_| h.pending < 31) {
         let bytes = doc
             .doc
@@ -523,10 +604,23 @@ impl Vault {
                 "entity_doc.migrate_text",
             )?;
 
+            let (storage_document, sequence_document) =
+                if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                    (
+                        free_document_storage(&self.store, txn, &entity.to_hex())?,
+                        self.store
+                            .port_document_present(txn, DocumentSlot::of(*entity))?
+                            .then(|| entity.to_hex()),
+                    )
+                } else {
+                    (None, None)
+                };
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),
                 document: entity.to_hex(),
+                storage_document,
+                sequence_document,
                 field: field.clone(),
                 generation: 0,
                 pending: 0,
@@ -677,8 +771,14 @@ pub(crate) fn guard_record_put(
 /// citing record.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
-        for doc in [entity.to_hex(), h.document] {
-            drop_document(store, txn, &doc)?;
+        let native = document_slot(&h)?.to_hex();
+        let mut documents = std::collections::BTreeSet::from([native]);
+        if h.storage_document.is_none() {
+            documents.insert(entity.to_hex());
+        }
+        documents.extend(h.sequence_document);
+        for document in documents {
+            drop_document(store, txn, &document)?;
         }
     }
     super::forks::erase_forks(store, txn, entity)?;
@@ -737,12 +837,7 @@ pub(super) fn move_pointer(
 /// Removes a document's snapshot, state vectors and pending updates.
 pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) -> Result<()> {
     let slot = DocumentSlot::from_hex(document)?;
-    let rows = [
-        DocumentRow::Snapshot,
-        DocumentRow::StateVector,
-        DocumentRow::ShallowSince,
-    ];
-    store.port_document_rows_delete(txn, slot, &rows)?;
+    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
     store.port_document_updates_delete(txn, slot)
 }
 

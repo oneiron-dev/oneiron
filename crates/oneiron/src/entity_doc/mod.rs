@@ -29,6 +29,8 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+mod record_carried;
 mod recovery;
 mod registry;
 mod summary;
@@ -82,6 +84,11 @@ pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use record_carried::{
+    CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation,
+    export_skill_record_document_in_txn,
+};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
@@ -89,6 +96,7 @@ pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
     record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    sync_document_slot_in,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
