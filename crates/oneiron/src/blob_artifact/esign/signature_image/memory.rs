@@ -4,19 +4,21 @@ pub(super) fn native_admission(
     super::SignatureImagePlan,
     u64,
 ) -> std::result::Result<(), crate::host_memory::MemoryRefusal> {
-    let mut lease = crate::host_memory::MachineMemory::process().empty_lease();
+    let memory = crate::host_memory::MachineMemory::process();
+    let mut lease = memory.empty_lease();
     move |plan: super::SignatureImagePlan, header_allocated: u64| {
         if header_allocated != 0 {
             lease.materialized(header_allocated, header_allocated);
+            return Ok(());
         }
         let target = plan
             .peak_bytes(input)
             .unwrap_or(u64::MAX)
             .saturating_sub(input);
-        let more = target.saturating_sub(lease.bytes());
-        if more > 0 {
-            lease.grow_pending_untimed(more, &|| false)?;
-        }
+        // The decoder has been dropped before a full-plan callback. Release
+        // its reservation too before joining the shared FIFO line again.
+        drop(std::mem::replace(&mut lease, memory.empty_lease()));
+        lease = memory.lease_untimed(target, &|| false)?;
         Ok(())
     }
 }
