@@ -16779,7 +16779,7 @@
      "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -39497,7 +39497,7 @@
      "purpose": "Lease-bound worktree remotes",
      "surface": {
       "crate-vis": 4,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -39625,7 +39625,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
       "crate-vis": 8,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -48660,7 +48660,7 @@
      "purpose": "`self.code.checkout.bind` and `self.code.export` (FIX 6867, G1 PR3b): a leased run binds its own checkout…",
      "surface": {
       "const": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -119039,7 +119039,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ServeArgs"
@@ -122611,7 +122611,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 7,
       "struct": 4,
@@ -126236,7 +126236,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -127948,7 +127948,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1582,
    "test_files": 182
