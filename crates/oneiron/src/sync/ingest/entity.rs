@@ -110,8 +110,9 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
-    /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
-    /// written, and nothing its landing discharges is discharged, until the body comes.
+    /// The carrier's row is not ready to land, including a missing referenced
+    /// body or an unmerged native document. Nothing its landing discharges is
+    /// discharged while it remains pending.
     Pending,
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
     /// poison is neutralized and every tombstone naming it is refused into `x:` in the same
@@ -653,11 +654,25 @@ fn admit(
         return asset_ref::land(ctx, wtxn, id, header, body);
     }
     let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
-    if let Err(err) = applied {
-        if let Some(quota_debit) = quota_debit {
-            quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+    match applied {
+        Ok(None) => {}
+        Ok(Some(stand)) => {
+            if let Some(quota_debit) = quota_debit {
+                quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+            }
+            return match stand {
+                crate::entity_doc::RecordDocumentStand::Conflict => Ok(EntityStep::Pending),
+                crate::entity_doc::RecordDocumentStand::Refused(reason) => Err(Error::Artifact(
+                    crate::error::ArtifactError::InvalidSkillBody(reason),
+                )),
+            };
         }
-        return Err(err);
+        Err(err) => {
+            if let Some(quota_debit) = quota_debit {
+                quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+            }
+            return Err(err);
+        }
     }
     if delete_protected {
         refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;

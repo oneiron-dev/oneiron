@@ -353,7 +353,9 @@ pub(super) fn apply_actor_ops_collecting(
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
-    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
 ) -> Result<(super::base_apply::PendingNativeSkillBatch, ContentWriteSet)> {
     let admitted = match origin {
         BaseWriteOrigin::Ordinary => true,
@@ -368,7 +370,10 @@ pub(super) fn apply_actor_ops_collecting(
     let native_target = gate_mode
         .skill_state_write
         .as_ref()
-        .map(|write| write.entity());
+        .map(|write| write.entity())
+        .or(record_document
+            .map(|candidate| candidate.entity())
+            .transpose()?);
     #[cfg(not(feature = "sync"))]
     let native_target = None;
     let mut effects = ContentWriteSet::before(vault, txn, actor, &ops, native_target)?;

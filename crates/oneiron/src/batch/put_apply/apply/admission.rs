@@ -22,7 +22,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     pub(super) pending_prompt: Option<&'a [EntityId]>,
     #[cfg(feature = "sync")]
-    pub(super) record_document: Option<&'a crate::sync::SelectedRecordDocument<'a>>,
+    pub(super) record_document: Option<&'a crate::entity_doc::RecordDocumentCandidate<'a, 'a>>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
@@ -38,12 +38,21 @@ pub(super) struct FixedPut<'a> {
 }
 
 impl FixedPut<'_> {
-    /// The physical row stays immutable for a headed native state operation.
+    /// Native state and selected replay keep their original physical row.
     /// All semantic gates and effects continue to receive the logical body.
     pub(super) fn storage_body_and_metadata<'row>(
         &'row self,
         data: &'row [u8],
     ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8], Option<u64>)> {
+        #[cfg(feature = "sync")]
+        if let Some(candidate) = self.record_document {
+            return Ok((
+                self.occurred,
+                self.learned_at,
+                &candidate.physical_raw()[ENTITY_METADATA_HEADER_LEN..],
+                self.row_version,
+            ));
+        }
         #[cfg(feature = "sync")]
         if let Some(request) = self.skill_state_write {
             let (occurred, learned_at, row_version) = request.snapshot().physical_metadata()?;
@@ -171,6 +180,23 @@ pub(super) fn admit_put<'a>(
         #[cfg(feature = "sync")]
         skill_state_write,
     );
+    #[cfg(feature = "sync")]
+    if let Some(candidate) = record_document {
+        if candidate.entity()? != id
+            || candidate.logical_body() != data
+            || !candidate.recheck_in_txn(wtxn)?
+        {
+            return Err(Error::InvariantViolation(
+                "record document candidate changed before admission",
+            ));
+        }
+        super::super::put_staging::validate_record_document_put_carriers(
+            store, wtxn, id, data, carriers, candidate,
+        )?;
+    } else {
+        validate_put_carriers(store, wtxn, id, data, carriers)?;
+    }
+    #[cfg(not(feature = "sync"))]
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
         store

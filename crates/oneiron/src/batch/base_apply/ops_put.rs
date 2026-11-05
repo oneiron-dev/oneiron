@@ -32,7 +32,9 @@ pub(super) fn apply_put_arm(
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
     native_publication: Option<NativePublicationContext<'_>>,
-    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
