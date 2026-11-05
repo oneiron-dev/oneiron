@@ -75,6 +75,7 @@ pub use crate::in_process::{
 };
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
+pub use crate::remote::HttpsSharedInvitationAcceptance;
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
