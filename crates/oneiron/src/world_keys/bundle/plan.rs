@@ -2,7 +2,9 @@
 //! over it. The entry point is `Vault::seal_plan`.
 //! `super` owns the frame codec and the carrier.
 
-use super::publication_grant::{PublicationGrantee, publication_grantees, seal_slots_granting};
+use super::publication_grant::{
+    PublicationGrantee, own_publication_grantee, publication_grantees, seal_slots_granting,
+};
 use super::*;
 
 /// What one seal reads from the vault, in one snapshot.
@@ -96,11 +98,16 @@ impl Vault {
             return Err(refused("no machine and no kit could open the bundle"));
         }
         // A publisher mine here grants each asked executor not mine here
-        // the generation's outer keys, for its request (FIX 4785).
+        // the generation's outer keys. An asked creator grants only its own
+        // request, so it can reread this fresh generation (FIX 4785).
         let grantees = if mine {
             publication_grantees(&fold, holder)
         } else {
-            Vec::new()
+            carry
+                .request
+                .and_then(|request| own_publication_grantee(&fold, holder, request, secret.machine))
+                .into_iter()
+                .collect()
         };
         let mut pads = Vec::new();
         for key in fold.all_world_keys() {

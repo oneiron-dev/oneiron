@@ -52,6 +52,9 @@ pub enum OffRecordBackendClass {
 pub struct OffRecordSessionRecord {
     pub version: u8,
     pub session_ref: String,
+    /// This live instance's existing overlay-shell identity, distinct when
+    /// the same session ref is entered again after close. Not authority.
+    pub instance_ref: crate::EntityId,
     pub mode: OffRecordMode,
     pub backend: OffRecordBackendClass,
     pub entered_at: u64,
@@ -100,6 +103,8 @@ pub enum OffRecordNoticeAct {
     SavedTalk,
     /// Saved one turn into their own vault.
     SavedTurn,
+    /// Saved a selected scratch artifact and its document into this vault.
+    SavedArtifact,
     /// Put the stretch on record: later turns are saved as they land.
     SavingFromHere,
     /// Saving stopped: the person who put the stretch on record left its
