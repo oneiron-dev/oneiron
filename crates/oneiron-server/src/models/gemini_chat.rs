@@ -9,13 +9,13 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use oneiron::llm::SingleRouteBackend;
-use oneiron::{BudgetLease, FatalLlmError, LlmCatalogEntry, LlmResult};
+use oneiron::{BudgetLease, FatalLlmError, LlmCatalogEntry, LlmError, LlmResult};
 use oneiron_llm_gemini::{
     GeminiBackend, GeminiFrame, GeminiFuture, GeminiHttpRequest, GeminiHttpResponse,
     GeminiProviderStream, GeminiTransport,
 };
 
-use super::http::{KeyStyle, ProviderHttp, SseItem};
+use super::http::{HttpReleaseError, KeyStyle, ProviderHttp, SseItem};
 use super::output_cap::OutputCap;
 use super::rerank::transport;
 use crate::config::models::ProviderConfig;
@@ -30,11 +30,18 @@ pub(super) struct GeminiHttp {
 /// and never resends: a run's gate may wrap this transport's adapter.
 impl oneiron::llm::SingleSend for GeminiHttp {}
 
+fn released_transport(error: HttpReleaseError) -> LlmError {
+    match error {
+        HttpReleaseError::Transport(error) => transport(error),
+        HttpReleaseError::Release(error) => error,
+    }
+}
+
 impl GeminiTransport for GeminiHttp {
     fn execute<'a>(
         &'a self,
         mut request: GeminiHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> GeminiFuture<'a> {
         Box::pin(async move {
             if let Some(generation) = request.body.get_mut("generationConfig") {
@@ -42,9 +49,9 @@ impl GeminiTransport for GeminiHttp {
             }
             let reply = self
                 .http
-                .post_json(&request.path, &BTreeMap::new(), &request.body)
+                .post_json_leased(&request.path, &BTreeMap::new(), &request.body, lease)
                 .await
-                .map_err(transport)?;
+                .map_err(released_transport)?;
             Ok(GeminiHttpResponse {
                 status: reply.status,
                 body: reply.body,
@@ -55,16 +62,16 @@ impl GeminiTransport for GeminiHttp {
     fn stream<'a>(
         &'a self,
         mut request: GeminiHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> LlmResult<GeminiProviderStream<'a>> {
         if let Some(generation) = request.body.get_mut("generationConfig") {
             self.cap.apply(generation);
         }
-        let events = self
-            .http
-            .post_sse(&request.path, &BTreeMap::new(), &request.body);
+        let events =
+            self.http
+                .post_sse_leased(&request.path, &BTreeMap::new(), &request.body, lease);
         let frames = events.map(|item| -> LlmResult<GeminiFrame> {
-            match item.map_err(transport)? {
+            match item.map_err(released_transport)? {
                 SseItem::Status(reply) => Ok(GeminiFrame::Status(GeminiHttpResponse {
                     status: reply.status,
                     body: reply.body,
