@@ -12,6 +12,7 @@ mod prepare;
 mod project;
 mod register;
 mod request;
+mod settlement;
 
 #[cfg(feature = "sync")]
 pub(super) use admission::LocalSkillStateAdmission;
@@ -25,6 +26,7 @@ pub(super) use inspect::{NativeMapInventory, inspect as inspect_inventory};
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
 pub(crate) use request::SkillStateSnapshot;
+pub(super) use settlement::reconcile_settlement;
 
 /// The local native publisher records no invented caller when none exists.
 pub(super) const ANONYMOUS_COMMIT: &str = "native_skill_state";
