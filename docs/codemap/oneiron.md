@@ -752,7 +752,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/body.rs` | src | s | 1 struct · 4 fn · 4 const · 2 crate-vis | BlobArtifactBody | Blob artifact body: pinned body keys, body type, MessagePack codec, and validators |
 | `src/blob_artifact/body_tags.rs` | src | s | 1 const | — | Reference tags for filed outbound step bodies |
 | `src/blob_artifact/born_from.rs` | src | s | 1 struct · 1 enum · 4 fn · 5 crate-vis | BornFromArtifact, BornFromSource | Born-from (ARCH-0078 section 4): every artifact answers "born from what" the same way |
-| `src/blob_artifact/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of blob artifact versions (KS7-2): each artifact's head record and version records… |
+| `src/blob_artifact/checkpoint.rs` | src | m | 5 crate-vis | — | The checkpoint getter of blob artifact versions (KS7-2): each artifact's head record and version records… |
 | `src/blob_artifact/create.rs` | src | s | 1 struct · 1 fn | ArtifactCreateRequest | `vault.artifacts.create` (OF-181): one artifact with its first version, the composite `POST… |
 | `src/blob_artifact/deck_context.rs` | src | s | 2 struct · 1 enum | DeckEditContext, DeckRender, DeckRenderSide | Deck edit attribution, answered thread and rendered review evidence |
 | `src/blob_artifact/deck_creation/mod.rs` | src | s | 10 struct · 3 enum · 3 mod | DeckDesignRequest, DeckDesignView, DeckEmissionNames, DeckEmissionOutcome, DeckEmissionRequest, DeckKeepBinding, DeckOutlineDeclined, DeckOutlineProposeRequest +5 | Typed outline approval, design and emission doors over the native deck engine |
