@@ -366,6 +366,7 @@ impl SyncServer {
             feedback_triage: crate::config::FeedbackTriageConfig::default(),
             feedback_flood,
             artifact_port: None,
+            api_addr: None,
             artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,

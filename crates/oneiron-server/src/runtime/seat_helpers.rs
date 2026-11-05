@@ -32,6 +32,29 @@ use zeroize::Zeroizing;
 /// The prefix of a helper destination's name, `helper:<name>`.
 pub const HELPER_DESTINATION_PREFIX: &str = "helper:";
 
+/// The variable a seat CLI's credential helper reads the run's seat-child
+/// slip from. Its own name, not `ONEIRON_SECRET`: a CLI's own Oneiron bridge
+/// keeps the credential it was given.
+pub const SEAT_SLIP_ENV: &str = "ONEIRON_SEAT_SLIP";
+/// The variable it reads the slip's 64-hex binding seed from.
+pub const SEAT_BINDING_KEY_ENV: &str = "ONEIRON_SEAT_BINDING_KEY";
+/// The variable it reads the loopback origin it calls back on from.
+pub const SEAT_URL_ENV: &str = "ONEIRON_SEAT_URL";
+
+/// The subcommand of this binary git runs as the seat's credential helper.
+pub const CREDENTIAL_HELPER_SUBCOMMAND: &str = "credential-helper";
+
+/// Whether `name` may name a helper destination: it rides a git config
+/// value and a request, so ASCII letters, digits, `.`, `_` and `-` alone.
+#[must_use]
+pub fn is_helper_destination_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// One helper destination the operator binds, by its name in
 /// `[runtime.helper_destinations]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +79,32 @@ pub struct HelperDestination {
 }
 
 impl HelperDestination {
+    /// The URL git matches this destination's `credential.<url>.*` keys on.
+    #[must_use]
+    pub fn credential_url(&self) -> String {
+        match &self.path {
+            Some(path) => format!("{}://{}/{}", self.protocol, self.host, path),
+            None => format!("{}://{}", self.protocol, self.host),
+        }
+    }
+
+    /// Whether its context can ride a git config key: a plain protocol and
+    /// host, and a path, with no space, quote, control or config syntax.
+    #[must_use]
+    pub fn is_plain_context(&self) -> bool {
+        let plain = |text: &str, extra: &[u8]| {
+            !text.is_empty()
+                && text.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric()
+                        || matches!(byte, b'.' | b'-')
+                        || extra.contains(&byte)
+                })
+        };
+        plain(&self.protocol, b"")
+            && plain(&self.host, b":[]")
+            && self.path.as_deref().is_none_or(|path| plain(path, b"/_~"))
+    }
+
     /// Whether a helper asking for `protocol`, `host` and `path` asks for
     /// this destination's own context.
     #[must_use]
@@ -325,4 +374,93 @@ fn refused(destination: &str, reason: &'static str) -> Error {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The environment a seat CLI's credential helper needs (FIX 10624 step 2):
+/// the run's seat-child slip, its binding seed and the loopback origin, and
+/// the git configuration that makes git call the helper, and only it, for
+/// each bound context. Set on the CLI's process as it is built; a running
+/// process's environment never changes.
+#[derive(Clone)]
+pub struct SeatHelperEnv {
+    slip: Zeroizing<String>,
+    binding_seed: Zeroizing<String>,
+    origin: String,
+    git_config: Vec<(String, String)>,
+}
+
+impl fmt::Debug for SeatHelperEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SeatHelperEnv")
+            .field("origin", &self.origin)
+            .field("git_config", &self.git_config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SeatHelperEnv {
+    /// The environment for a run whose slip is `slip`, held by `binding_seed`
+    /// (64 hex), calling back on `origin`, with `program` (this binary) as
+    /// the helper for each of `destinations`, by their names.
+    #[must_use]
+    pub fn new(
+        slip: Zeroizing<String>,
+        binding_seed: Zeroizing<String>,
+        origin: String,
+        program: &std::path::Path,
+        destinations: &BTreeMap<String, HelperDestination>,
+    ) -> Self {
+        let program = shell_quoted(&program.to_string_lossy());
+        let mut git_config = Vec::new();
+        for (name, destination) in destinations {
+            let url = destination.credential_url();
+            // An empty helper first clears every helper configured before for
+            // this context, so no other helper is asked or handed the value
+            // to store; then this binary alone answers it.
+            git_config.push((format!("credential.{url}.helper"), String::new()));
+            git_config.push((
+                format!("credential.{url}.helper"),
+                format!("{program} {CREDENTIAL_HELPER_SUBCOMMAND} --destination {name}"),
+            ));
+            if destination.path.is_some() {
+                git_config.push((format!("credential.{url}.useHttpPath"), "true".to_owned()));
+            }
+        }
+        Self {
+            slip,
+            binding_seed,
+            origin,
+            git_config,
+        }
+    }
+
+    /// Sets the helper's variables and appends its git configuration after
+    /// any the host process already passes on through `GIT_CONFIG_COUNT`.
+    pub fn apply(&self, command: &mut std::process::Command) {
+        command
+            .env(SEAT_SLIP_ENV, self.slip.as_str())
+            .env(SEAT_BINDING_KEY_ENV, self.binding_seed.as_str())
+            .env(SEAT_URL_ENV, &self.origin);
+        let inherited = std::env::var("GIT_CONFIG_COUNT")
+            .ok()
+            .and_then(|count| count.parse::<usize>().ok())
+            .filter(|count| *count <= 1024)
+            .unwrap_or(0);
+        for (offset, (key, value)) in self.git_config.iter().enumerate() {
+            let index = inherited + offset;
+            command
+                .env(format!("GIT_CONFIG_KEY_{index}"), key)
+                .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+        }
+        command.env(
+            "GIT_CONFIG_COUNT",
+            (inherited + self.git_config.len()).to_string(),
+        );
+    }
+}
+
+/// `text` as one single-quoted POSIX shell word: git runs a helper given by
+/// an absolute path through the shell.
+fn shell_quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }

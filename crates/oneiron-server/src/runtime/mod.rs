@@ -23,8 +23,9 @@ pub mod seat_login;
 mod secret_destinations;
 pub mod staged_input;
 pub use self::seat_helpers::{
-    HELPER_DESTINATION_PREFIX, HelperDestination, HelperReplyDelivery, HelperRunEnd, SeatHelperRun,
-    SeatHelperRuns,
+    CREDENTIAL_HELPER_SUBCOMMAND, HELPER_DESTINATION_PREFIX, HelperDestination,
+    HelperReplyDelivery, HelperRunEnd, SEAT_BINDING_KEY_ENV, SEAT_SLIP_ENV, SEAT_URL_ENV,
+    SeatHelperEnv, SeatHelperRun, SeatHelperRuns, is_helper_destination_name,
 };
 pub use self::secret_destinations::{
     OwnSecretDelivery, RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination,
