@@ -240,6 +240,18 @@ These are engine flags; the supervisor must supply paths reachable by the child.
 They do not add a vault VM broker transport. Plain serve keeps its file-based
 `[models.broker]` configuration.
 
+The supervisor can name the vault's explicit host allocation on managed argv
+with `--host-memory-bytes <bytes>` and `--host-cpu-millis <millis>`. Each flag
+is optional and managed-only; absent is unbounded for that field, and no
+capacity is inferred from the machine. The values are the operator's explicit
+per-vault allocation, carried as `HostLimits` and reported through the managed
+host; they are not an OS quota, they do not route through the embedded memory
+clamp, and they add no capacity refusal. A vault VM's constructor takes no
+allocation from this carrier: its guest limits come from its existing separate
+source, and these flags add no VM transport. An engine from before these flags
+refuses them, so a supervisor passes them only to engines at or after the merge
+that added them.
+
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
 names the field and never its value:
@@ -590,7 +602,7 @@ call whose socket will not open, or that carries audio, goes out over
 `responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
-`key_secret` provider stays on HTTP: the credential broker runs no socket yet.
+`key_secret` OpenAI or xAI provider uses the credential broker's per-call Responses socket: the broker upgrades `/v1/responses`, relays the checked create frame and strips every event, and holds no key between calls. The whole turn is bound at admission; a chained turn the provider no longer holds goes whole once on the same socket. Stored-chain resume works as above, with no broker-socket pool. Chat HTTP is the fallback when an upgrade or initial create is not accepted; a 4xx other than 408 or 429 latches that provider to chat until restart. Idle pooling above remains `key_env`-only. Broker Responses sockets use WebPKI roots; a private-CA origin falls back to chat.
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
