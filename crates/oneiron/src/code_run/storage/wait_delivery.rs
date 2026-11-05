@@ -326,7 +326,7 @@ fn put_if_absent_routed<K: SideKey, V, C: SideCodec<V>>(
 
 /// The vault's canonical store under a routed transaction's `dbs`: whose
 /// answer whether an actor is gone is, on either route.
-fn canonical_store<'a>(dbs: &RoutedDbs<'a>) -> &'a Store {
+pub(super) fn canonical_store<'a>(dbs: &RoutedDbs<'a>) -> &'a Store {
     match *dbs {
         RoutedDbs::Base(vault) => &vault.store,
         RoutedDbs::Session(view) => view.read().base(),
