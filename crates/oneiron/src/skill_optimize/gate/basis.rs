@@ -115,6 +115,43 @@ pub(super) fn held_out_outcome_results_in_txn(
     )
 }
 
+/// Held-out evidence beside the complete native bodies consulted by its fold.
+/// Unlike the attempt links in `held_out_receipts_sourced_in_txn`, these sources
+/// include rows consumed before the held-out filter and native exclusions.
+pub(super) fn held_out_evidence_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
+    let (outcomes, sources) =
+        crate::skill_reliability::attributed_outcome_results_sourced(vault, rtxn, skill)?;
+    Ok((
+        outcomes
+            .into_iter()
+            .map(|(receipt, _)| receipt)
+            .filter(|receipt| receipt_is_held_out(skill, receipt))
+            .collect(),
+        sources,
+    ))
+}
+
+/// World labels beside the same native read-body sources, before subset filtering.
+pub(super) fn held_out_outcome_results_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(Vec<(String, bool)>, Option<Vec<EntityId>>)> {
+    let (outcomes, sources) =
+        crate::skill_reliability::attributed_outcome_results_sourced(vault, rtxn, skill)?;
+    Ok((
+        outcomes
+            .into_iter()
+            .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
+            .collect(),
+        sources,
+    ))
+}
+
 /// The optimize job's view: everything the gate did NOT reserve.
 ///
 /// The exact complement of [`held_out_receipts`] over the same ledger, so the
