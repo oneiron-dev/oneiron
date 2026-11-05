@@ -52,12 +52,14 @@ impl HookContractText {
 }
 
 /// A line's leading identifier: `name` of `name: {`, `name(`, `declare const
-/// name:`, `declare namespace name {` or `declare function name(`.
+/// name:`, `declare namespace name {`, `declare function name(` or a
+/// namespace member's `const name:`.
 fn leading_name(line: &str) -> Option<&str> {
     let line = line
         .strip_prefix("declare const ")
         .or_else(|| line.strip_prefix("declare namespace "))
         .or_else(|| line.strip_prefix("declare function "))
+        .or_else(|| line.strip_prefix("const "))
         .unwrap_or(line);
     let end = line
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -109,9 +111,15 @@ fn verb_declarations(globs: &[String]) -> (String, bool) {
             doc = None;
             continue;
         };
-        if line.ends_with('{') {
-            path.push(name);
-        } else if line.contains('(') && line.ends_with(';') {
+        // A verb is a method `name(`, a callable `const name: (...) =>`, or
+        // a callable namespace `const name: ((...) => ...) & {`, whose
+        // members follow it.
+        let callable = if line.ends_with('{') {
+            line.contains("=>")
+        } else {
+            line.contains('(') && line.ends_with(';')
+        };
+        if callable {
             let verb = path
                 .iter()
                 .copied()
@@ -121,6 +129,9 @@ fn verb_declarations(globs: &[String]) -> (String, bool) {
             if globs.iter().any(|glob| glob_match(glob, &verb)) {
                 methods.push((verb, doc, line));
             }
+        }
+        if line.ends_with('{') {
+            path.push(name);
         }
         doc = None;
     }
