@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 
 use super::{BY_CODE, MANIFESTS, MINTED, RepoPortableId};
 use crate::Vault;
+use crate::authority::OriginCutStanding;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName, GitWire};
@@ -62,9 +63,31 @@ impl Vault {
         // The writer standing is read here and the write lands below: an
         // authority change in between lets one stale-epoch write through,
         // which the next mirror pass corrects.
-        let epoch = match self.origin_host_authority(&origin_name)? {
-            OriginHostAuthority::Held(lease) => lease.epoch(),
-            OriginHostAuthority::Unconfigured if minted => 0,
+        let held = match self.origin_host_authority(&origin_name)? {
+            OriginHostAuthority::Held(lease) => Some(lease.epoch()),
+            OriginHostAuthority::Unconfigured if minted => None,
+            _ => return Ok(()),
+        };
+        // The epoch every device can prove (FIX 15740): the owner's cut in
+        // force, where it names this machine and this host holds the repo at
+        // that very epoch; before any cut, the bootstrap 0. A host the cut
+        // does not name, or one whose cuts are unresolved here, leaves the
+        // manifest as it stands.
+        let (standing, machine) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                self.authority_view_readonly_in_txn(&txn)?
+                    .origin_cut_standing(portable.as_bytes())?,
+                crate::store::install_identity::read_machine_id_in_txn(self, &txn)?,
+            )
+        };
+        let epoch = match standing {
+            OriginCutStanding::InForce(cut)
+                if held == Some(cut.epoch) && machine == Some(cut.writer) =>
+            {
+                cut.epoch
+            }
+            OriginCutStanding::NoCut => 0,
             _ => return Ok(()),
         };
         let wire = GitWire::new(self)?;
@@ -185,6 +208,50 @@ impl Vault {
             return Ok(None);
         }
         self.served_repo_id(&dir).map(Some)
+    }
+
+    /// The portable ids served repo `origin_name` stands under here, each
+    /// with its CODE anchor (FIX 15740): every standing manifest that names
+    /// that served name and whose CODE anchor's stored path is the served
+    /// store `dir` (`code_serves_dir`, as refresh judges it). The owner's cut
+    /// of the repo is signed once for each.
+    pub(in crate::origin) fn served_repo_portable_ids(
+        &self,
+        origin_name: &str,
+        dir: &std::path::Path,
+    ) -> Result<Vec<(EntityId, RepoPortableId)>> {
+        let mut bound = Vec::new();
+        for manifest in self.standing_repo_manifests(|_| true)? {
+            if manifest.origin_name.as_deref() == Some(origin_name)
+                && self.code_serves_dir(manifest.code, dir)?
+            {
+                bound.push((manifest.code, manifest.portable));
+            }
+        }
+        Ok(bound)
+    }
+
+    /// Whether each of `bound` ([`Self::served_repo_portable_ids`]) still
+    /// stands in `txn` as it was resolved: its CODE's standing id, naming
+    /// served repo `origin_name`.
+    pub(in crate::origin) fn served_repo_portable_ids_stand_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        origin_name: &str,
+        bound: &[(EntityId, RepoPortableId)],
+    ) -> Result<bool> {
+        for (code, portable) in bound {
+            if BY_CODE.get(&self.store, txn, code)?.as_ref() != Some(&portable.0) {
+                return Ok(false);
+            }
+            let Some(manifest) = MANIFESTS.get(&self.store, txn, &portable.0)? else {
+                return Ok(false);
+            };
+            if manifest.code != *code || manifest.origin_name.as_deref() != Some(origin_name) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Refreshes each standing manifest that names served repo
