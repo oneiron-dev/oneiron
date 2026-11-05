@@ -800,6 +800,20 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     }
 }
 
+impl<K: SideKey> SideTable<K, Vec<u8>, Raw> {
+    /// Stores a byte value through its declared row wall without first cloning
+    /// it through `RawValue::to_raw`.
+    pub(crate) fn put_bytes(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        bytes: &[u8],
+    ) -> Result<()> {
+        self.put_raw(dbs, txn, &self.key_bytes(key), bytes)
+    }
+}
+
 // ─── Generic host doors ────────────────────────────────────────────────
 //
 // `Vault::sync_state_get`/`put`/`put_in_write_txn`/`delete`/

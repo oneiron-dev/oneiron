@@ -128,6 +128,15 @@ pub fn read_cost<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> {
     Ok(measure.len.saturating_add(measure.shape.decoded()))
 }
 
+/// The allocation bound for decoding one already-encoded value, excluding
+/// its input bytes. Walks the encoding without allocating.
+///
+/// # Errors
+/// The bytes are not one encoded value.
+pub fn decode_cost(bytes: &[u8]) -> Result<u64, CodecError> {
+    Ok(shape(bytes)?.decoded())
+}
+
 /// Where an encoder writes.
 pub(crate) trait Sink {
     fn put(&mut self, bytes: &[u8]);
