@@ -15795,6 +15795,88 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ClipboardErase",
+      "ClipboardEraseReport"
+     ],
+     "path": "src/clipboard/erase.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClipboardEntry"
+     ],
+     "path": "src/clipboard/intake.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/clipboard/mod.rs",
+     "purpose": "A vault's Clipboard world and its masked text records",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/clipboard/purpose.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClipboardCleanupReport",
+      "ClipboardRetention"
+     ],
+     "path": "src/clipboard/retention.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClipboardWorld"
+     ],
+     "path": "src/clipboard/world.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/cluster.rs",
      "purpose": "Deterministic claim clustering is defined in the Dreamer layer",
@@ -24861,7 +24943,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CarrierActorMerge",
@@ -29771,6 +29853,16 @@
       "crate-vis": 13,
       "fn": 8,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/digest/urgent/intent.rs",
+     "purpose": "The urgent digest's stated-intent read: the Approved, Active, non-stale UserStated `profile.intent` about…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -42930,7 +43022,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 203,
+      "mod": 204,
       "re-export": 103
      }
     },
@@ -47154,7 +47246,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DiaryAgentRead",
@@ -47178,10 +47270,21 @@
      "purpose": "The reason-logged door to an agent's diary (OF-490, owner AGM-1+8)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 5,
-      "fn": 14,
+      "fn": 5,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/diary_read/doors.rs",
+     "purpose": "Diary read, review, grant, and reader-list doors",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 9
      }
     },
     {
@@ -58132,13 +58235,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -63834,7 +63937,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1,
       "re-export": 4,
       "struct": 2
@@ -63869,6 +63972,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/found_keys/purpose.rs",
+     "purpose": "Purpose questions derive from the existing found-key row, not a second queue",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SecretHandleLabelSet"
      ],
@@ -63879,6 +63992,20 @@
       "fn": 3,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretHandlePurposeSet",
+      "SecretPurposeQuestion"
+     ],
+     "path": "src/secret_custody/handle_purpose.rs",
+     "purpose": "An owner's purpose answer is authored content, not a label or a grant",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -63991,8 +64118,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 25,
-      "re-export": 16
+      "crate-vis": 26,
+      "re-export": 17
      }
     },
     {
@@ -72339,6 +72466,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/gate_decision/ledger/actor_append.rs",
+     "purpose": "An actor erased before a decision's append, under the same writer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/gate_decision/ledger/custody.rs",
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
@@ -72362,7 +72499,7 @@
      "path": "src/store/gate_decision/ledger/held_scrubs.rs",
      "purpose": "What an erase owes a Gate decision a legal hold keeps (FIX 7993, 7994)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -73574,7 +73711,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 157,
+      "crate-vis": 158,
       "mod": 123,
       "re-export": 31
      }
@@ -75167,6 +75304,16 @@
      "surface": {
       "crate-vis": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/secret_handle_purpose.rs",
+     "purpose": "Owner-authored purpose text on a custody handle",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -91418,6 +91565,13 @@
      "layout": "file",
      "purpose": "Claim auto-check candidates and normalized verdict values"
     },
+    "clipboard": {
+     "files": 6,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "A vault's Clipboard world and its masked text records"
+    },
     "cluster": {
      "files": 2,
      "impl_vault": false,
@@ -91713,7 +91867,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 196,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92063,7 +92217,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 360,
+     "files": 361,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92371,7 +92525,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 81,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92525,7 +92679,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 494,
+     "files": 496,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92763,9 +92917,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 148,
+   "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6485,
+   "source_files": 6497,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99031,7 +99185,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 68,
+      "const": 69,
       "crate-vis": 1
      }
     },
