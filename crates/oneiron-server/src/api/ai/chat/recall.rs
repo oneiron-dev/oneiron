@@ -1,7 +1,9 @@
 //! The vault's memory a live chat turn reads (FIX 6794): the context board
 //! `ai.reply` assembles (ARCH-0067: the board owns assembly), hydrated for
-//! the turn's own text and placed after the stable history, right before the
-//! newest User (the board rides the dynamic tail; FIX 6676's layout).
+//! the turn's own text and placed after the stable history, in two parts
+//! (I1 = C turn order): its state part right before the newest User, and its
+//! query part, what that message read, right after it, the turn's opener
+//! closing the call (the board rides the dynamic tail; FIX 6676's layout).
 //! Reading it never fails the turn: a refusal, a hold, or a role that does
 //! not admit the call with it leaves the turn as it was, and the turn's
 //! caller and its model are told why, typed (FIX 8136). The witness and the
@@ -15,7 +17,7 @@ use serde::Serialize;
 
 use super::{assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
-use crate::api::context_board::{ChatBoard, ChatContextCapture, PromptBoard};
+use crate::api::context_board::{BoardQueryPart, ChatBoard, ChatContextCapture, PromptBoard};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -91,7 +93,7 @@ pub(super) async fn turn_board(
     } else {
         CallerLocality::OffDevice
     };
-    let board = match crate::api::context_board::chat_board(
+    let board = match crate::api::context_board::chat_turn_board(
         server,
         auth.clone().at(reads_at),
         conversation,
@@ -131,12 +133,26 @@ pub(super) struct AdmittedTurn {
     pub(super) noted: bool,
 }
 
-/// The turn's call admitted through its role, with `board` as one User
-/// message right before the newest User, or last when there is none. A role
-/// that does not admit the call with the board admits it without, and so
-/// does a call admitted where the board may not go for `auth`, the caller
-/// (FIX 7257), never sent with it; a board the turn read and goes without
-/// leaves its omission's note in its place instead (FIX 8136).
+/// The text of the User message that closes a turn whose board rides
+/// (I1 = C): the board's query part, then `opener`, the turn's now-time
+/// line; `None` when there is neither.
+pub(super) fn turn_tail(query: Option<&BoardQueryPart>, opener: Option<&str>) -> Option<String> {
+    match (query, opener) {
+        (Some(query), Some(opener)) => Some(format!("{}\n{opener}", query.block)),
+        (Some(query), None) => Some(query.block.clone()),
+        (None, Some(opener)) => Some(opener.to_owned()),
+        (None, None) => None,
+    }
+}
+
+/// The turn's call admitted through its role, with `board`'s state part as
+/// one User message right before the newest User, or last when there is
+/// none, and its [`turn_tail`] with `opener` as one User message right after
+/// it. A role that does not admit the call with the board admits it
+/// without, and so does a call admitted where the board may not go for
+/// `auth`, the caller (FIX 7257), never sent with it; a board the turn read
+/// and goes without leaves its omission's note in its place instead (FIX
+/// 8136), and no tail.
 pub(super) fn admit(
     ai: &AiHandle,
     vault: &Vault,
@@ -144,6 +160,7 @@ pub(super) fn admit(
     auth: &CoreAuth,
     mut messages: Vec<LlmMessage>,
     board: Result<Option<ChatBoard>, BoardOmission>,
+    opener: Option<&str>,
 ) -> AdmittedTurn {
     let at = messages
         .iter()
@@ -164,6 +181,11 @@ pub(super) fn admit(
     };
     let baseline = messages.clone();
     messages.insert(at, text_message(LlmMessageRole::User, board.block.clone()));
+    if let Some(tail) = turn_tail(board.query.as_ref(), opener) {
+        // Right after the newest User, which the state part moved on one.
+        let after = (at + 2).min(messages.len());
+        messages.insert(after, text_message(LlmMessageRole::User, tail));
+    }
     let board = PromptBoard::new(board, auth.destination());
     match ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages)) {
         Ok(admitted) if board.rides(vault, &admitted) => AdmittedTurn {
