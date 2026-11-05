@@ -37,7 +37,14 @@ borrow the seed buffers; those buffers and the pipeline's owned copies stay
 with their separate owners. The view drops before its local lease on both
 success and error, including unwinding. An unbound adapter remains usable.
 
-Other pipeline buffers, trace serialization, provider storage, construction
-and return gaps, pre-growth admission and a full working-set bound remain
-open.
+Opt-in replay capture also records the actual backing capacities of its
+temporary media-list and kind-override `Vec<Value>` buffers. Each temporary
+stays alive through its existing JSON serialization and drops before its local
+lease. These charges use the same supplied line and leave an unbound capture
+usable. They cover vector slots only, not the temporary objects' inner storage
+or the retained replay JSON.
+
+Other pipeline buffers, remaining trace serialization storage, provider
+storage, construction and return gaps, pre-growth admission and a full
+working-set bound remain open.
 No runtime, compiler or performance result is implied by these source changes.
