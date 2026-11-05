@@ -1520,7 +1520,7 @@
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -1544,7 +1544,7 @@
      "purpose": "The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed shape vocabulary the planner…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 2
      }
@@ -67145,7 +67145,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 12,
       "re-export": 1,
       "struct": 2
@@ -102295,7 +102295,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
