@@ -1,7 +1,7 @@
 //! Scope of the projector's original-head-bound scoped touch source.
 
 use super::{MachineHistoryScope, SCOPE_RECORD, Scope, ScopeAxis, SensitivityCeiling};
-use crate::claim::{ClaimBody, ClaimRecordScope};
+use crate::claim::{ClaimBody, ClaimRecordScope, RelationshipScope};
 use crate::comm::ScopedTouchRecord;
 use crate::ports::EntityStoreRead;
 use crate::store::ManifestDbs;
@@ -14,6 +14,7 @@ pub(crate) enum ScopedCommRead {
         original: EntityId,
         raw: Vec<u8>,
         body: ClaimBody,
+        frozen_rel: RelationshipScope,
         record: Scope,
     },
 }
@@ -71,6 +72,7 @@ pub(crate) fn read_scoped_comm_in_txn(
         original,
         raw: row.encode(),
         body,
+        frozen_rel: source.relationship_scope().clone(),
         record,
     })
 }

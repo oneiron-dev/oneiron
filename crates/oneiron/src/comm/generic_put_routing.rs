@@ -298,7 +298,10 @@ fn take_batch_puts_in_txn(
             continue;
         };
         let birth = bound_births.and_then(|births| {
-            births.iter().find(|(row, _)| row == id).map(|(_, birth)| birth)
+            births
+                .iter()
+                .find(|(row, _)| row == id)
+                .map(|(_, birth)| birth)
         });
         if mentions.get(id) != Some(&1)
             || (birth.is_some() && predicate != PREDICATE_COMM_LAST_TOUCH)
@@ -329,8 +332,13 @@ fn take_batch_puts_in_txn(
                     else {
                         continue;
                     };
-                    super::scoped_touch::touch_scope_body(&value, scope_form, sensitivity)
-                        .map_err(source_event_error)?
+                    super::scoped_touch::touch_scope_body(
+                        &value,
+                        scope_form,
+                        sensitivity,
+                        &body.rel,
+                    )
+                    .map_err(source_event_error)?
                 } else {
                     value.claim_body()?
                 };

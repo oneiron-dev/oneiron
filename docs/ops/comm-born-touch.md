@@ -3,7 +3,7 @@
 A reader-bound or actor-bound batch can project a canonical `comm.last_touch`
 Put with an explicit `RowBirth` without replacing its original claim id. It can
 also project one whose position differs in world, facet or project, with a native
-sensitivity band from 0 through 3, using the scoped source described in
+sensitivity band from 0 through 3 or a native relationship scope, using the scoped source described in
 `comm-scoped-touch-source.md`.
 
 The batch keeps that Put, its `ClaimOf` edges, and its birth in the ordinary
@@ -32,14 +32,14 @@ still reconciles its current live head even if the source already projected;
 
 This applies only to explicit-born touches whose remaining context matches
 the canonical constructor, admitted through these bound batch paths. World,
-facet, project and native sensitivity can differ; their native position and
-exact scope form are frozen in the source. Supported scope forms are the
+facet, project, native sensitivity and relationship scope can differ; their native
+position, exact scope form and relationship set are frozen in the source. Supported scope forms are the
 single numeric sensitivity map, its native named spellings (`public`, `private`,
 `internal`, `sensitive`, `restricted`), an absent scope, or an empty map. These
 forms are not normalized into each other: each selects only heads with the
 same raw context. Duplicate stamps, extra opaque keys, other explicit births,
-STOPs, thread events, noncanonical relationship or session context, and other
-unsupported cases retain the fully gated raw path. Ordinary no-birth source
+STOPs, thread events, noncanonical session context, and other unsupported cases
+retain the fully gated raw path. Ordinary no-birth source
 creation and the public constructor's sensitivity default of 2 are unchanged.
 LastTouch slot selection compares the full context for every source, so a
 base event and a world-bearing head cannot supersede each other.
@@ -47,8 +47,9 @@ base event and a world-bearing head cannot supersede each other.
 `COMM_RECORD` has the required `original_head` key: an entity id for this
 TouchAsserted case, `nil` otherwise. Every original-head source also requires
 its typed `source_position`, including canonical base-world sources. They
-retain the original CLAIM disclosure band and audience requirements; they are
-not readable through a COMM_RECORD-only selector. The strict format and
+retain the original CLAIM disclosure band and audience requirements, and the
+reader must satisfy both the frozen and current original relationship scopes.
+They are not readable through a COMM_RECORD-only selector. The strict format and
 unified born-source id binding are described in `comm-scoped-touch-source.md`.
 When a batch has an eligible born touch, its ordinary routed touches join the
 same post-native assertion schedule in original Put order. Later unprocessed

@@ -2,7 +2,7 @@
 
 use super::claims::{CommClaim, CommClaimValue};
 use super::records::{CommEventKind, CommRecord, decode_comm_record};
-use crate::claim::{ClaimBody, record_scope_at};
+use crate::claim::{ClaimBody, RelationshipScope, record_scope_at, relationship_scope_transcript};
 use crate::entity_id::derived_domains::COMM_BORN_TOUCH_EVENT;
 use crate::federation::Scope;
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
@@ -67,6 +67,10 @@ impl ScopedTouchRecord {
 
     pub(crate) fn world(&self) -> EntityId {
         self.source.world
+    }
+
+    pub(crate) fn relationship_scope(&self) -> &RelationshipScope {
+        &self.source.rel
     }
 
     pub(crate) fn position(&self) -> Scope {
@@ -136,7 +140,7 @@ pub(super) fn capture_scoped_touch_source(
     let scope_form = ScopedTouchScopeForm::from_scope(body.scope.as_ref()).ok_or(
         Error::InvalidClaimBody("unsupported scoped comm source context"),
     )?;
-    let canonical = touch_scope_body(&claim.value, scope_form, sensitivity)
+    let canonical = touch_scope_body(&claim.value, scope_form, sensitivity, &body.rel)
         .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
         || !same_touch_context_except_position(body, &canonical)
@@ -158,6 +162,7 @@ pub(super) fn capture_scoped_touch_source(
         project: body.scope_project,
         sensitivity,
         scope_form,
+        rel: body.rel.clone(),
         origin_digest: *digest.finalize().as_bytes(),
     })
 }
@@ -170,6 +175,7 @@ pub(super) fn scoped_touch_event_id(
     occurred_at: u64,
 ) -> Result<EntityId> {
     let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    let rel = relationship_scope_transcript(source.rel.as_ref());
     EntityId::derive(
         COMM_BORN_TOUCH_EVENT,
         &[
@@ -180,6 +186,7 @@ pub(super) fn scoped_touch_event_id(
             source.project.as_bytes(),
             &[source.sensitivity],
             &[source.scope_form as u8],
+            &rel,
             party_ref.as_bytes(),
             channel.as_bytes(),
             &occurred_at.to_le_bytes(),
@@ -220,9 +227,11 @@ pub(super) fn touch_scope_body(
     value: &CommClaimValue,
     scope_form: ScopedTouchScopeForm,
     sensitivity: u8,
+    rel: &RelationshipScope,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = value.claim_body_with_sensitivity(sensitivity)?;
     body.scope = scope_form.scope(sensitivity)?;
+    body.rel = rel.clone();
     Ok(body)
 }
 
@@ -231,7 +240,7 @@ pub(super) fn touch_slot_body(
     source: Option<&ScopedTouchSource>,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = if let Some(source) = source {
-        touch_scope_body(value, source.scope_form, source.sensitivity)?
+        touch_scope_body(value, source.scope_form, source.sensitivity, &source.rel)?
     } else {
         value.claim_body()?
     };

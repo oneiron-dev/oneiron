@@ -3,6 +3,9 @@
 use oneiron_contracts::entity_id::EntityId;
 use rmpv::Value;
 
+use super::super::claim_body::{
+    RelationshipScope, decode_relationship_scope, encode_relationship_scope,
+};
 use super::{CommError, CommResult};
 
 /// The exact native scope shape frozen for a born touch comparison.
@@ -96,6 +99,7 @@ pub struct ScopedTouchSource {
     pub project: EntityId,
     pub sensitivity: u8,
     pub scope_form: ScopedTouchScopeForm,
+    pub rel: RelationshipScope,
     pub origin_digest: [u8; 32],
 }
 
@@ -108,6 +112,7 @@ pub(super) fn encode_source_position(source: Option<&ScopedTouchSource>) -> Valu
             Value::from(source.sensitivity),
             Value::Binary(source.origin_digest.to_vec()),
             Value::from(source.scope_form as u8),
+            encode_relationship_scope(source.rel.as_ref()),
         ])
     })
 }
@@ -119,7 +124,7 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
     let Value::Array(fields) = value else {
         return Err(CommError::InvalidRecord);
     };
-    let [world, facet, project, sensitivity, digest, scope_form] = fields.as_slice() else {
+    let [world, facet, project, sensitivity, digest, scope_form, rel] = fields.as_slice() else {
         return Err(CommError::InvalidRecord);
     };
     let id = |value: &Value| {
@@ -141,12 +146,14 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
         .map_err(|_| CommError::InvalidRecord)?;
     let scope_form = ScopedTouchScopeForm::from_wire(scope_form)?;
     let _ = scope_form.scope(sensitivity)?;
+    let rel = decode_relationship_scope(rel).map_err(|_| CommError::InvalidRecord)?;
     Ok(Some(ScopedTouchSource {
         world: id(world)?,
         facet: id(facet)?,
         project: id(project)?,
         sensitivity,
         scope_form,
+        rel,
         origin_digest,
     }))
 }
