@@ -224,6 +224,26 @@ pub(crate) fn active_or_mint_in_txn(
     }
 }
 
+/// Records an erased entity that no capture has reached yet. Its fresh
+/// incarnation has no custody leaf: the row only stops an older snapshot
+/// from minting the owner's first leaf after the erase committed. Existing
+/// incarnations are settled by the deletion's ordinary retirement path.
+pub(crate) fn erase_entity_before_first_capture_in_txn(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(());
+    }
+    let owner = OwnerRef::entity(entity);
+    if instances_in_txn(dbs, wtxn, owner.subtype, &owner.owner32)?.is_empty() {
+        let found = mint_in_txn(dbs, wtxn, owner.subtype, &owner.owner32)?;
+        erase_in_txn(dbs, wtxn, &found.item)?;
+    }
+    Ok(())
+}
+
 /// Marks `item` retained: an ordinary delete released its owner, and keeps
 /// backup recovery (ARCH-0038). Its leaf stays for the checkpoints holding
 /// it; a retained or erased incarnation is left as it is. Returns the
