@@ -144,6 +144,10 @@ impl SelectedRecordDocument<'_> {
         )?)
     }
 
+    pub(crate) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
     pub(crate) fn machine(&self) -> EntityId {
         self.machine
     }

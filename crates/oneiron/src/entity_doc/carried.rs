@@ -406,7 +406,7 @@ impl Vault {
 /// the head does instead: a floor its snapshot does not start at is refused,
 /// and one this vault cannot reach exactly waits
 /// ([`MESSAGE_DOC_PURGE_CONFLICT_POLICY`]).
-fn purged_at_carried_floor(
+pub(super) fn purged_at_carried_floor(
     vault: &Vault,
     txn: &RoTxn<'_>,
     message: &EntityId,
