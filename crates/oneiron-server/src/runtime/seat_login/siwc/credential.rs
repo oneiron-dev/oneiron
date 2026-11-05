@@ -1,7 +1,7 @@
 //! One selected local registration, reopened before each physical send.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::header::HeaderValue;
 use zeroize::Zeroizing;
@@ -16,6 +16,7 @@ pub(crate) struct CredentialSource {
     subject: String,
     client_id: String,
     host_id: String,
+    timeout: Duration,
     refresh: tokio::sync::Mutex<()>,
 }
 
@@ -25,7 +26,7 @@ pub(crate) struct ActiveCredential {
 }
 
 impl CredentialSource {
-    pub(crate) fn select(path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn select(path: &Path, timeout_secs: u64) -> anyhow::Result<Self> {
         let path = std::path::absolute(path)?;
         let record = read(&path)?;
         Ok(Self {
@@ -34,6 +35,7 @@ impl CredentialSource {
             subject: record.subject.clone(),
             client_id: record.client_id.clone(),
             host_id: record.ext_agent_host_id.clone(),
+            timeout: Duration::from_secs(timeout_secs),
             refresh: tokio::sync::Mutex::new(()),
         })
     }
@@ -80,7 +82,7 @@ impl CredentialSource {
                 self.check_registration(&current)?;
                 record = current;
                 if expired(&record)? {
-                    let refreshed = super::refresh::rotate(record.clone()).await?;
+                    let refreshed = super::refresh::rotate(record.clone(), self.timeout).await?;
                     // A removed or replaced record must not be resurrected
                     // after the network or verification await.
                     anyhow::ensure!(
