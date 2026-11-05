@@ -50,6 +50,7 @@ use crate::authority::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::store::Store;
 
 /// The latest transition this vault holds of each portable credential, signed
 /// here or taken from a window, by record id. The sync layer mirrors each into
@@ -291,7 +292,7 @@ pub(crate) fn write_custody_transition_in_txn(
         signed_at,
         leaf.as_ref(),
     )?;
-    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, id)?;
+    carrier_leaf::retire_held_carrier_in_txn(&vault.store, wtxn, id)?;
     TRANSITIONS.put(&vault.store, wtxn, &HexId(id), &pieces.encode())?;
     Ok(pieces)
 }
@@ -329,7 +330,7 @@ pub(crate) fn remember_custody_transition_in_txn(
         _ => CustodyPieces::single(transition.clone()),
     };
     if replaces {
-        carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, transition.id)?;
+        carrier_leaf::retire_held_carrier_in_txn(&vault.store, wtxn, transition.id)?;
     }
     TRANSITIONS.put(&vault.store, wtxn, &key, &kept.encode())?;
     Ok(true)
@@ -355,8 +356,16 @@ pub(crate) fn holds_sealed_carrier_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    holds_sealed_carrier_for_store_in_txn(&vault.store, txn, id)
+}
+
+fn holds_sealed_carrier_for_store_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
     Ok(TRANSITIONS
-        .get(&vault.store, txn, &HexId(*id))?
+        .get(store, txn, &HexId(*id))?
         .is_some_and(|held| {
             !CustodyPieces::decode(&held)
                 .is_some_and(|held| held.lead().status == SecretCustodyStatus::Revoked)
@@ -372,11 +381,19 @@ pub(crate) fn drop_sealed_carrier_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    if !holds_sealed_carrier_in_txn(vault, wtxn, id)? {
+    drop_sealed_carrier_for_store_in_txn(&vault.store, wtxn, id)
+}
+
+pub(super) fn drop_sealed_carrier_for_store_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !holds_sealed_carrier_for_store_in_txn(store, wtxn, id)? {
         return Ok(false);
     }
-    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, *id)?;
-    TRANSITIONS.delete(&vault.store, wtxn, &HexId(*id))
+    carrier_leaf::retire_held_carrier_in_txn(store, wtxn, *id)?;
+    TRANSITIONS.delete(store, wtxn, &HexId(*id))
 }
 
 /// Whether this vault holds `transition`, byte for byte, as its record's
