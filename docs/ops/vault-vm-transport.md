@@ -94,7 +94,11 @@ credential.
   first boot of an image with guest runtime bindings, whose bootstrap imports
   both guest images before the engine starts; later boots import nothing.
   The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
-- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+- The outbox carrier (FIX 6683, FIX 11073): `Ping`'s `vm_outbox_revision`
+  is read live, and `vm_outbox_companion` names the last completed probe's
+  answer: `up` with the revision it reported, `down` when it answered
+  nothing. A `null` means no probe has completed yet, never that the
+  companion is healthy; `down` is not proof its process ended.
   The engine looks at the outbox companion every 5 s, with at most one
   status question in flight. A question that fails (the companion ended, or
   its socket errs) clears the revision, as a VM without one reads; a
