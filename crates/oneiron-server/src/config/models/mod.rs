@@ -152,6 +152,7 @@ struct DreamerFile {
 struct ChatFile {
     history_turns: Option<usize>,
     turn_budget_units: Option<u64>,
+    turn_opener: Option<TurnOpener>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -321,6 +322,21 @@ pub struct ChatSettings {
     /// Earlier turns of the conversation sent with each chat turn.
     pub history_turns: usize,
     pub turn_budget_units: u64,
+    /// What closes a chat turn whose board rides (I1 = C turn order).
+    pub turn_opener: TurnOpener,
+}
+
+/// `[models.chat] turn_opener`: what closes a chat turn whose context board
+/// rides, after its query part (ARCH-0067 §2: the log closes with a
+/// now-time turn opener the model completes; I1 = C turn order).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnOpener {
+    /// The engine's now-time line, sampled once as the turn is admitted.
+    #[default]
+    Clock,
+    /// None: the turn ends at its board's query part.
+    Off,
 }
 
 /// `[models.recall]`: what recall at high, xhigh and max may spend on the
@@ -492,6 +508,7 @@ impl ModelsFile {
                 .chat
                 .turn_budget_units
                 .unwrap_or(DEFAULT_TURN_BUDGET_UNITS),
+            turn_opener: self.chat.turn_opener.unwrap_or_default(),
         };
         let workflows = WorkflowSettings {
             enabled: self.workflows.enabled.unwrap_or(true),
