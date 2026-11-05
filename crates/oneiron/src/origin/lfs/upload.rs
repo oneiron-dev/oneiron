@@ -288,6 +288,29 @@ impl Vault {
                                 marked,
                             )?;
                         }
+                    } else if let Some((reason, marked_at)) = mark {
+                        // The chunk's bytes were scanned above with the
+                        // object's: a detection is its mark, which the
+                        // batch door does not read again (FIX 9034). The
+                        // chunk keeps that mark itself, so no generic reader
+                        // takes it, published or not
+                        // (`unpublished_lfs_chunk_in_txn`); the object's own
+                        // door judges its readers.
+                        self.batch_in()
+                            .put_marked_carrier(&id, occurred, learned_at, &bytes)
+                            .apply(txn)?;
+                        crate::secret_record::put_carrier_mark_in_txn(
+                            &self.store,
+                            txn,
+                            &crate::side_table::ORIGIN_LFS_CHUNK_MARK,
+                            id.as_bytes(),
+                            &crate::secret_record::CarrierMark {
+                                version: chunk.hash,
+                                reason: reason.to_owned(),
+                                withheld: Vec::new(),
+                                marked_at,
+                            },
+                        )?;
                     } else {
                         self.batch_in()
                             .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)

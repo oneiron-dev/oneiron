@@ -589,7 +589,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/edges.rs` | src | m | 14 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 7 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/preflight.rs` | src | s | 2 crate-vis | — | Claim-gate preflight loop including CommitmentGapDecay arms |
-| `src/batch/builder/puts.rs` | src | m | 2 fn · 13 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
+| `src/batch/builder/puts.rs` | src | m | 2 fn · 14 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
 | `src/batch/builder/reference_read.rs` | src | m | 7 crate-vis | — | A bound writer's read through the committing terminal (OF-063, FIX 1223, 6068) |
 | `src/batch/child_of_overlay.rs` | src | m | 15 crate-vis | — | — |
 | `src/batch/claim_candidate_apply.rs` | src | m | 4 crate-vis | — | — |
@@ -643,11 +643,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 2 crate-vis | — | FACET write checks: the local identity-body refusal, immutable substrate identity and retired privacy axes |
 | `src/batch/facet_validation.rs` | src | s | 6 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 20 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 21 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/lexical_query_hints.rs` | src | m | 22 crate-vis | — | — |
-| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 41 crate-vis | — | — |
+| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 42 crate-vis | — | — |
 | `src/batch/ops_derived_copies.rs` | src | s | 1 crate-vis | — | The raw ops door with the derived-text step (FIX 10886): a door that holds the vault and applies ops without… |
 | `src/batch/ops_pipeline.rs` | src | m | 14 crate-vis | — | — |
 | `src/batch/person_substrate.rs` | src | s | 3 crate-vis | — | Atomic deterministic PERSON substrate masks, including replay and open-time repair |
@@ -740,7 +740,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/vectors_embeddings.rs` | test | s | — | — | Pending-embedding markers, vector fill and vector row codec |
 | `src/batch/thread_claim_index.rs` | src | s | 1 crate-vis | — | Thread claims reuse the existing ClaimOf index at every storage door |
 | `src/batch/types.rs` | src | s | 9 crate-vis | — | — |
-| `src/batch/vad_postcommit.rs` | src | m | 22 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
+| `src/batch/vad_postcommit.rs` | src | m | 23 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/verified_claim_transition.rs` | src | m | 20 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/bin/deck-gate-engine.rs` | src | s | — | — | `deck-gate-engine`: the OF-510 deck gate's engine half with the engine's own Loro body |
@@ -1012,7 +1012,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/transcript.rs` | src | m | 4 struct · 2 enum · 6 fn · 2 re-export · 1 crate-vis | FileDropTranscriptSource, ParsedTranscript, ParsedTranscriptTurn, TranscriptFileDropRequest, TranscriptIngestOutcome, TranscriptParse | Calendar transcript normalization and ingest |
 | `src/calendar/transcript/door.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TranscriptFileDropInput | Caller-bound file-drop ingestion over the calendar transcript landing |
 | `src/calendar/transcript/pending.rs` | src | s | 1 struct · 1 fn · 2 const · 1 crate-vis | PendingTranscriptPass | A transcript upload that met its caller's open local session (FIX 9654) |
-| `src/calendar/tz.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | WallTime | IANA time-zone border (CAL-01) |
+| `src/calendar/tz.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | WallTime | IANA time-zone border (CAL-01) |
 | `src/campaign.rs` | src | s | 1 struct · 2 fn · 10 mod · 2 re-export | CrmPackRegistration | CRM pack engine-side registration home |
 | `src/campaign/claims/codec.rs` | src | s | 7 re-export · 36 crate-vis | — | Cohort claim codecs are defined below the pack |
 | `src/campaign/claims/member_replacement.rs` | src | s | 1 crate-vis | — | The successor body for a live `campaign.member` head |
@@ -1426,7 +1426,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/world_privacy_wait.rs` | src | s | 1 crate-vis | — | `tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor… |
 | `src/code_run/fold_api.rs` | src | s | 7 struct · 1 fn | FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest, RunAttachRequest, RunAttached | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 10 fn · 2 const | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
-| `src/code_run/mod.rs` | src | m | 8 mod · 32 re-export · 48 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | m | 8 mod · 32 re-export · 49 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/model_call.rs` | src | m | 4 struct · 5 enum · 10 fn · 1 const · 3 crate-vis | ModelCallDigests, ModelCallInputPart, ModelCallKind, ModelCallPartRef, ModelCallReasoningPart, ModelCallRecord, NativeReadDigests, NativeReadFailure +1 | Per-model-call evidence and replay records (FIX 12516) |
 | `src/code_run/model_call/signed_reasoning.rs` | src | s | 1 crate-vis | — | Whole signed reasoning parts use existing custody, never text masking |
 | `src/code_run/payload.rs` | src | m | 13 crate-vis | — | Code-run request and outcome replay values |
@@ -1470,7 +1470,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/continuation.rs` | src | s | 5 crate-vis | — | A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the… |
 | `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
 | `src/code_run/storage/lift.rs` | src | s | 2 crate-vis | — | The S7 backfill (OF-067, Engine ruling D = a) |
-| `src/code_run/storage/mod.rs` | src | s | 6 re-export · 34 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
+| `src/code_run/storage/mod.rs` | src | s | 6 re-export · 35 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
 | `src/code_run/storage/model_seat.rs` | src | s | 2 crate-vis | — | A run's model-seat pin on the route its run captured (FIX 2594): the read and the write the seat birth makes… |
 | `src/code_run/storage/program_resume.rs` | src | m | 15 crate-vis | — | A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned… |
 | `src/code_run/storage/read_worlds.rs` | src | m | 1 enum · 9 crate-vis | ReadWorldUnknown | The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's… |
@@ -1484,10 +1484,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records/bodies/host_occurrence.rs` | src | s | 2 crate-vis | — | A host parent run's record and whose it is (FIX 9019) |
 | `src/code_run/storage/records/bodies/reader.rs` | src | s | 2 crate-vis | — | A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
-| `src/code_run/storage/replay_capsule.rs` | src | m | 1 fn · 20 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
+| `src/code_run/storage/replay_capsule.rs` | src | m | 1 fn · 21 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
 | `src/code_run/storage/replay_capsule/admit.rs` | src | m | 2 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 5 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/replay_capsule/fork_erase.rs` | src | s | 5 crate-vis | — | Contribution-fork erase ownership (FIX 10754, 11358) |
+| `src/code_run/storage/replay_capsule/restore.rs` | src | s | 1 crate-vis | — | Marks restored capsule references only when their body custody retired |
 | `src/code_run/storage/replay_capsule/spawn_erase.rs` | src | s | 4 crate-vis | — | An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2) |
 | `src/code_run/storage/replay_capsule/start_parts.rs` | src | m | 11 crate-vis | — | The step starts a checkpoint carries as parts (FIX 9180, coord-b slice d): each read by its capsule's typed… |
 | `src/code_run/storage/response_erase.rs` | src | s | 6 crate-vis | — | An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay… |
@@ -1762,6 +1763,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/tool_effect.rs` | src | s | 4 crate-vis | — | The budget effect of one dispatched scoped tool call (FIX 8688): the tool's own approved declaration first… |
 | `src/connector_key/txn.rs` | src | m | 1 struct · 14 crate-vis | ConnectorKeyGeneration | Connector key index keys and transaction primitives |
 | `src/consent/adapters.rs` | src | s | 4 fn · 2 crate-vis | — | — |
+| `src/consent/answer_wake.rs` | src | s | 1 fn · 1 crate-vis | — | A committed consent answer wakes the connector-call settler |
 | `src/consent/approval_proof.rs` | src | s | 8 crate-vis | — | Gate-attested owner approval carriers and retained proof families |
 | `src/consent/ask_holders.rs` | src | s | 1 crate-vis | — | Scope ask recipients resolved from live, owner-stamped action grants |
 | `src/consent/bound.rs` | src | s | 1 re-export · 3 crate-vis | — | — |
@@ -2084,12 +2086,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/topology_delete_intent.rs` | src | L | 10 crate-vis | — | Durable, request-bound interlock between tombstone publication and purge |
 | `src/deletion/withdrawn.rs` | src | s | 3 crate-vis | — | A withdrawn record's Shell generation (FIX 931) |
 | `src/delivery_window/claims.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | DeliveryWindowPolicyClaim | Policy claim parsing and per-claim restriction gating |
-| `src/delivery_window/context.rs` | src | s | 1 struct · 8 fn | DeliveryWindowEvaluationContext | Frozen execute-time evaluation context and its builder |
+| `src/delivery_window/context.rs` | src | s | 1 struct · 9 fn | DeliveryWindowEvaluationContext | Frozen execute-time evaluation context and its builder |
 | `src/delivery_window/evaluate.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | DeliveryWindowEvaluator | Ladder resolve/evaluate_with_evidence plus restriction ranking helpers |
 | `src/delivery_window/mod.rs` | src | s | 7 re-export · 1 crate-vis | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `src/delivery_window/tests.rs` | test | s | — | — | — |
 | `src/delivery_window/validate.rs` | src | s | 1 fn · 8 crate-vis | — | Claim-body structural validation and map-extraction helpers |
-| `src/delivery_window/window.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | DeliveryWindowTimeWindow | Quiet-window time arithmetic and time-window decoding |
+| `src/delivery_window/window.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | DeliveryWindowTimeWindow | Quiet-window time arithmetic and time-window decoding |
 | `src/disclosure/attendee_ask.rs` | src | m | 2 struct · 1 enum · 6 fn · 1 const · 6 crate-vis | AttendeeIdentityChoice, AttendeeIdentityResolution, UnknownAttendeeAsk | The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises "who is this?" to the… |
 | `src/disclosure/clearance_use.rs` | src | s | 1 fn | — | The quiet receipt of a disclosure under standing clearance (OF-365, DEC-0006: "the owner sees a post-hoc… |
 | `src/disclosure/disclosable_set.rs` | src | s | 1 struct · 5 fn · 1 re-export · 2 crate-vis | DisclosableSet | The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all… |
@@ -2406,7 +2408,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/code_fix/engine.rs` | src | m | 2 crate-vis | — | A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on… |
 | `src/dreamer_runner/maintenance/code_fix/instruction.rs` | src | m | 9 crate-vis | — | The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the… |
 | `src/dreamer_runner/maintenance/code_fix/publisher.rs` | src | m | 2 struct · 7 enum · 1 trait · 3 fn · 5 crate-vis | CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary, EngineCallUsage, EngineCandidateRun, EngineNotRun +2 | A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over… |
-| `src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` | src | s | 1 struct · 1 enum · 1 crate-vis | PublisherCandidateInput, PublisherCandidateRef | Local references to occurrences in the host's actual publisher inputs |
+| `src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` | src | s | 1 struct · 1 enum · 2 fn | PublisherCandidateInput, PublisherCandidateRef | Local references to occurrences in the host's actual publisher inputs |
 | `src/dreamer_runner/maintenance/code_fix/work.rs` | src | m | 10 crate-vis | — | A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal… |
 | `src/dreamer_runner/maintenance/compaction_check.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 1 re-export · 4 crate-vis | CompactionCheckDeclaration, CompactionCheckModel, CompactionCheckVerdict | The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer "checks the agent's… |
 | `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | m | 5 crate-vis | — | The Dreamer's check of a conversation's self-written summary (FIX 4465 D), on the same maintenance queue and… |
@@ -5675,7 +5677,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/agent_refusal.rs` | src | s | 1 struct · 2 enum · 7 fn · 1 const | RefusalDial, RefusalDomain, RefusalLevel | The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's… |
 | `src/store/agent_scope.rs` | src | s | 1 enum · 1 crate-vis | AgentScope | The run scope persisted with an agent definition: every world, base reality only, or one world plus base… |
 | `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
-| `src/store/asset_body/mod.rs` | src | m | 22 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
+| `src/store/asset_body/mod.rs` | src | m | 24 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
 | `src/store/asset_body/read.rs` | src | s | 6 crate-vis | — | Reading ASSET bodies whatever plane holds them (FIX 3677): a logical reader that streams a body file… |
 | `src/store/asset_body/spool.rs` | src | s | 7 crate-vis | — | The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one… |
 | `src/store/asset_body/stage.rs` | src | m | 13 crate-vis | — | Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into… |
