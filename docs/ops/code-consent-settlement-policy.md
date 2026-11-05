@@ -55,11 +55,18 @@ This supplier is not the complete non-Owner answer route. The actual immutable
 code-wait binding must carry and hash the exact frozen value. Connector minting
 must freeze at the native HOLD-TIME producer; browser minting must use its
 closed native facts. The question, word and answer hooks must use that binding.
-The final typed holder act must keep target, opener lineage, original authority,
-first-answer, admission, once consumption and settlement in the same existing
-writer and ledger. A holder denial must not impersonate the Owner-denial signal
-that self-heal consumes. Stop-asking still requires its separate setting power.
-Do not expose an Owner/System shim or treat this evidence reader as that act.
+The native holder receipt projector now writes the real human actor to the
+existing Gate ledger without an Owner stamp. It retains actual grant, policy
+citations and frontier. Its holder-denied reason differs from the Owner-denial
+signal that self-heal consumes. Historical settlement attribution does not
+revalidate or gate an already completed effect. Attribution is data, not a
+credential and not authority to claim an approve-once marker.
+
+The final typed holder act must still keep target, opener lineage, original
+authority, first-answer, admission, once consumption and settlement in the same
+existing writer and ledger. Stop-asking still requires its separate setting
+power. Do not expose an Owner/System shim or treat this evidence reader or
+receipt projector as that act.
 
 No new runtime timeout, count cap or default duration is introduced. The one
 new numeric constant is the shipped row's citation version `1`. No migration
