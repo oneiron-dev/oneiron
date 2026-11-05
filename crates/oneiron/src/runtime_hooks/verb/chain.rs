@@ -380,6 +380,9 @@ struct Chain<'c> {
     /// The newest receipts, as JSON: each hook reads them only as its own
     /// input shows them ([`projection`], FIX 10084).
     tail: Value,
+    /// The source rows of each room Hook receipt in the tail, by its ref: a
+    /// hook reads one only while its own view shows them all (FIX 5429).
+    room_sources: Vec<(String, Vec<EntityId>)>,
     runs: Vec<RunRecord<'c>>,
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
     /// Queued outcomes, each with the proposal it lands, if any.
@@ -415,15 +418,21 @@ impl<'c> Chain<'c> {
             .receipts_of_kinds(RECEIPT_TAIL, &kinds)
             .ok();
         // A chain in a room also reads the room's own Hook receipts, which
-        // base's family does not hold (FIX 5429).
-        let room = match &storage {
+        // base's family does not hold, each with its source rows (FIX 5429).
+        let (records, sources): (Vec<_>, Vec<_>) = match &storage {
             VerbHookStorage::Session(hooks) => hooks
                 .room_hook_receipts(vault, call.reader.as_ref(), RECEIPT_TAIL)
-                .ok()
-                .map(crate::memory::Memory::room_tail_receipts)
-                .unwrap_or_default(),
-            VerbHookStorage::Canonical => Vec::new(),
+                .unwrap_or_default()
+                .into_iter()
+                .unzip(),
+            VerbHookStorage::Canonical => (Vec::new(), Vec::new()),
         };
+        let room = crate::memory::Memory::room_tail_receipts(records);
+        let room_sources = room
+            .iter()
+            .map(|receipt| receipt.receipt_ref.clone())
+            .zip(sources)
+            .collect();
         let tail = base
             .map(|base| merged_tail(base, room))
             .and_then(|receipts| serde_json::to_value(receipts).ok())
@@ -436,6 +445,7 @@ impl<'c> Chain<'c> {
             runtime,
             now,
             tail,
+            room_sources,
             runs: Vec::new(),
             blocks: Vec::new(),
             intents: Vec::new(),

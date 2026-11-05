@@ -24,10 +24,12 @@
 //! - it runs inside its row's verb hooks, in the room (FIX 5426), as a
 //!   forwarded read does: the pre chain on the call's own input before it is
 //!   prepared, the write prepared on the args every rewrite left, and the
-//!   post chain over the staged answer. A kept write answers its kept
-//!   receipt and runs no hook again. What each hook did rides the answer
-//!   (FIX 5425); the run's record keeps the staged answer, never a hook's
-//!   changed view, as for every hooked call.
+//!   post chain over the staged answer. A kept write is never made again:
+//!   its kept answer passes through the row's hooks again, as a canonical
+//!   kept write's does, so a post hook's view of it holds on a resumed
+//!   step. What each hook did rides the answer (FIX 5425); the run's record
+//!   keeps the staged answer, never a hook's changed view, as for every
+//!   hooked call.
 //!
 //! Its rows ride no turn of the room (`SESSION_WRITES_RIDE_NO_TURN`, CALLS-7,
 //! unchanged). Nothing here asks where the caller or the vault runs.
@@ -75,7 +77,7 @@ impl HostSelfDispatcher<'_> {
         let receipt = match site {
             Some(site) => match self.session_write_identity(site)? {
                 (_, KeptWrite::Ran(kept)) => {
-                    return self.kept_write_answer(self.agent_verbs.as_deref(), *kept, call);
+                    return self.kept_session_write_answer(*kept, call, site);
                 }
                 (id, KeptWrite::Fresh(stopped)) => Some((
                     CodeRunReplayRecord::new(id, CodeRunDeterminism::new(0, [0; 32])),
@@ -165,6 +167,43 @@ impl HostSelfDispatcher<'_> {
         // reads its view, and the run's record keeps the staged answer.
         let (view, post) =
             self.session_write_post(call.verb.as_str(), pre, answer.output.clone())?;
+        hooks.extend(post);
+        answer.hooks = hooks;
+        if view != answer.output {
+            let mut shown = answer.clone();
+            shown.output = view;
+            *self.hook_view.borrow_mut() = Some(shown.guest_reply());
+        }
+        Ok(SelfDispatchOutcome::AgentVerb(answer))
+    }
+
+    /// A room write the step already made: its kept answer, read again as
+    /// the door rules, inside the row's verb hooks, as a canonical kept
+    /// write's is (`dispatch_hooked`). The write is never made again. A post
+    /// hook's change to the staged answer lives only in the call's view, so
+    /// the kept answer is shown through the post chain again, never bare. A
+    /// caller the door no longer admits gets its refusal.
+    fn kept_session_write_answer(
+        &self,
+        kept: CodeRunReplayRecord,
+        call: SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
+    ) -> Result<SelfDispatchOutcome> {
+        let key = match self.session_write_admission(call.verb) {
+            Ok(admission) => admission
+                .as_ref()
+                .and_then(SessionWriteAdmission::key)
+                .cloned(),
+            Err(refused) => return Ok(answered(Err(refused))),
+        };
+        let (pre, mut hooks) = self.session_write_pre(&call, key, Some(site))?;
+        let verb = call.verb;
+        let outcome = self.kept_write_answer(self.agent_verbs.as_deref(), kept, call)?;
+        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
+            self.session_write_keep(verb.as_str(), pre)?;
+            return Ok(outcome);
+        };
+        let (view, post) = self.session_write_post(verb.as_str(), pre, answer.output.clone())?;
         hooks.extend(post);
         answer.hooks = hooks;
         if view != answer.output {

@@ -594,9 +594,8 @@ pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
-/// the Hook receipts a room keeps (WILL L11-01 S01-2c; a room chain's receipt
-/// tail, FIX 5429).
-pub(super) fn hook_run_read_rows_in(
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
+fn hook_run_read_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
     run_key: &str,
@@ -621,6 +620,33 @@ pub(super) fn hook_run_read_rows_in(
             .chain(evidence)
             .collect(),
     ))
+}
+
+/// The source rows of a room Hook receipt's run (FIX 5429): the rows its
+/// verb run read and the rows its input showed, sorted. `None` when the run
+/// is not a saved verb run, or its input also showed content no host names
+/// rows for: that receipt's provenance is unknown, so a room tail withholds
+/// it.
+pub(super) fn hook_verb_run_source_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
+        return Ok(None);
+    };
+    if run.unattributed {
+        return Ok(None);
+    }
+    let mut rows: Vec<EntityId> = run
+        .reads
+        .into_iter()
+        .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+        .chain(run.dependencies)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(rows))
 }
 
 /// The Hook receipt projector: runs, newest first within the query's bound,
