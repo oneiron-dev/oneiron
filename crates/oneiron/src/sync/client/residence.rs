@@ -5,6 +5,8 @@
 mod authority;
 mod bundle;
 mod checkpoint_roots;
+mod claim_vectors;
+pub(crate) use claim_vectors::default_claim_vector;
 pub(crate) mod custody;
 pub(crate) mod home_handoff;
 mod index;
