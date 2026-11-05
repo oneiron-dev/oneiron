@@ -59,6 +59,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
 - [Proposal birth attribution](proposal-birth-attribution.md) — captured draft attempts,
   snapshot/finalize retention, and the evidence-door fallback order.
+- [Coach code-fix candidate provenance](coach-code-fix-provenance.md) — native Coach/publisher origin records, separate from model verdicts and independent learning evidence.
 - [Coach pilot answer release](coach-pilot-release.md) — frozen source rows for pilot
   replies, device-local details and invocation replay.
 - [Frozen pattern revision witnesses](planned-spawn-revisions.md) — hard-erase scrubs,
