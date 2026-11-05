@@ -367,7 +367,7 @@ pub(crate) fn analyze(
     let mut work = 0usize;
     let mut revisions: Vec<RevisionFact> =
         admitted::vec(limits, ends.len()).map_err(RevisionAnalysisError::Memory)?;
-    for end in ends {
+    for end in ends.iter().copied() {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
         let _revision_pass = limits.memory.pass();

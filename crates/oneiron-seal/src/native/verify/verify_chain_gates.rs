@@ -327,7 +327,7 @@ pub(crate) fn verify_document(
                 bytes,
                 entry,
                 index,
-                revision_ends.as_deref(),
+                revision_ends.as_deref().map(Vec::as_slice),
                 ctx,
                 &anchors,
                 index + 1 == sigs.len(),
@@ -492,7 +492,7 @@ pub(crate) fn verify_document(
     let (revisions, modifications, anomalies) = verify_revisions::classify(
         bytes,
         &envelopes,
-        revision_ends.as_deref(),
+        revision_ends.as_deref().map(Vec::as_slice),
         facts.as_ref(),
         limits,
     )

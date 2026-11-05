@@ -194,7 +194,11 @@ fn scan_catalog_mode(
     if root.has(b"AF") {
         return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
     }
-    for page_id in walk::pages(doc, limits).map_err(|refusal| refusal.seal_error(stage))? {
+    for page_id in walk::pages(doc, limits)
+        .map_err(|refusal| refusal.seal_error(stage))?
+        .iter()
+        .copied()
+    {
         if let Some(page_dict) = walk::dictionary(doc, page_id)
             && page_dict.has(b"AF")
         {

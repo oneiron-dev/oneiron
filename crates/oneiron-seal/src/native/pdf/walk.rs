@@ -13,7 +13,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use super::admitted;
 use crate::api::{Counter, SealResourceLimits, note_current};
-use crate::memory::SealMemoryRefusal;
+use crate::memory::{Held, SealMemoryRefusal};
 
 /// The object `object` names, with the id of its chain's last link: itself
 /// and `from` when it is not a reference. `None` for a dangling or cyclic
@@ -96,29 +96,43 @@ fn kids(doc: &Document, id: ObjectId) -> Option<&[Object]> {
     kids.as_array().ok().map(Vec::as_slice)
 }
 
+/// Net bytes one `open`-level push charged (FIX 14217): the shared growth
+/// formula for the stack's element type. A slice iterator's layout does not
+/// depend on its lifetime, so `'static` names the type exactly.
+fn open_charge(len: usize, capacity: usize) -> usize {
+    admitted::growth_charge::<std::slice::Iter<'static, Object>>(len, capacity, 1)
+}
+
 /// The page objects of the document's page tree, in document order, as
 /// lopdf's `get_pages` lists them: every `/Page` a `/Kids` entry names by
 /// reference, however deep its `/Pages` node sits. A `/Pages` node met
 /// again is walked once, so a cycle ends; a page named twice is listed
 /// twice, as lopdf lists it. The output, the open levels, and the walked
 /// set grow under the operation's ledger first (FIX 14203); a refusal ends
-/// the walk as itself, never as a shorter page list.
+/// the walk as itself, never as a shorter page list. The output stays held
+/// on the ledger until the caller drops it; the open levels and walked set
+/// return their bytes on the success path (FIX 14217).
 pub(crate) fn pages(
     doc: &Document,
     limits: &SealResourceLimits,
-) -> Result<Vec<ObjectId>, SealMemoryRefusal> {
+) -> Result<Held<Vec<ObjectId>>, SealMemoryRefusal> {
     let mut out = Vec::new();
+    let mut out_charged = 0usize;
+    let mut open_charged = 0usize;
     let Some(root) = catalog(doc)
         .and_then(|catalog| catalog.get(b"Pages").ok())
         .and_then(|pages| pages.as_reference().ok())
     else {
-        return Ok(out);
+        let ledger = limits.memory.ledger()?;
+        return Ok(Held::new(Vec::new(), ledger.adopt_charged(0)));
     };
     let mut walked = BTreeSet::new();
     admitted::btree_insert(limits, &mut walked, root)?;
     let mut open: Vec<std::slice::Iter<'_, Object>> = Vec::new();
     if let Some(top) = kids(doc, root) {
+        let (len, capacity) = (open.len(), open.capacity());
         admitted::push(limits, &mut open, top.iter())?;
+        open_charged = open_charged.saturating_add(open_charge(len, capacity));
     }
     while let Some(level) = open.last_mut() {
         let Some(kid) = level.next() else {
@@ -132,16 +146,30 @@ pub(crate) fn pages(
             continue;
         };
         match kind {
-            b"Page" => admitted::push(limits, &mut out, id)?,
+            b"Page" => {
+                let (len, capacity) = (out.len(), out.capacity());
+                admitted::push(limits, &mut out, id)?;
+                let charge = admitted::growth_charge::<ObjectId>(len, capacity, 1);
+                out_charged = out_charged.saturating_add(charge);
+            }
             b"Pages" => {
                 if admitted::btree_insert(limits, &mut walked, id)? {
                     if let Some(next) = kids(doc, id) {
+                        let (len, capacity) = (open.len(), open.capacity());
                         admitted::push(limits, &mut open, next.iter())?;
+                        open_charged = open_charged.saturating_add(open_charge(len, capacity));
                     }
                 }
             }
             _ => {}
         }
     }
-    Ok(out)
+    let ledger = limits.memory.ledger()?;
+    let walked_n = walked.len();
+    drop(open);
+    drop(walked);
+    let walked_bytes = admitted::btree_charged::<ObjectId, ()>(walked_n);
+    ledger.release_admitted(u64::try_from(open_charged).unwrap_or(u64::MAX));
+    ledger.release_admitted(u64::try_from(walked_bytes).unwrap_or(u64::MAX));
+    Ok(Held::new(out, ledger.adopt_charged(out_charged)))
 }

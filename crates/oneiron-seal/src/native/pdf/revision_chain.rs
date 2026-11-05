@@ -9,7 +9,7 @@
 use super::admitted;
 use super::decode::{self, LoadError};
 use crate::api::{Counter, SealResourceLimits};
-use crate::memory::SealMemoryRefusal;
+use crate::memory::{Held, SealMemoryRefusal};
 use lopdf::{Document, Object};
 
 fn eol(b: u8) -> bool {
@@ -192,12 +192,15 @@ fn section_prev(
 /// malicious or unsupported xref chain never becomes an empty/clean change
 /// list, and memory a snapshot was refused never becomes no proof. The
 /// ends themselves grow under the operation's ledger first (FIX 14203).
+/// The ends stay held on the ledger while the caller keeps them; ordinary
+/// no-proof exits return their bytes first (FIX 14217).
 pub(crate) fn revision_ends(
     bytes: &[u8],
     doc: &Document,
     limits: &SealResourceLimits,
-) -> Result<Option<Vec<usize>>, SealMemoryRefusal> {
+) -> Result<Option<Held<Vec<usize>>>, SealMemoryRefusal> {
     let mut ends = Vec::new();
+    let mut charged = 0usize;
     let mut xref = doc.xref_start;
     let mut stop = bytes.len();
     let mut final_section = true;
@@ -205,19 +208,37 @@ pub(crate) fn revision_ends(
     loop {
         let Some((end, marker, parsed)) = find_end(bytes, xref, stop, limits, final_section)?
         else {
+            drop(ends);
+            limits
+                .memory
+                .ledger()?
+                .release_admitted(u64::try_from(charged).unwrap_or(u64::MAX));
             return Ok(None);
         };
         work = work.saturating_add(end);
+        let (len, capacity) = (ends.len(), ends.capacity());
         admitted::push(limits, &mut ends, end)?;
+        let charge = admitted::growth_charge::<usize>(len, capacity, 1);
+        charged = charged.saturating_add(charge);
         limits.observed.note(Counter::Revisions, ends.len());
         limits.observed.note(Counter::PrefixBytes, work);
         let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits) else {
+            drop(ends);
+            limits
+                .memory
+                .ledger()?
+                .release_admitted(u64::try_from(charged).unwrap_or(u64::MAX));
             return Ok(None);
         };
         let Some(prev) = prev else {
             break;
         };
         if prev >= xref || end <= prev {
+            drop(ends);
+            limits
+                .memory
+                .ledger()?
+                .release_admitted(u64::try_from(charged).unwrap_or(u64::MAX));
             return Ok(None);
         }
         stop = xref;
@@ -225,5 +246,6 @@ pub(crate) fn revision_ends(
         final_section = false;
     }
     ends.reverse();
-    Ok(Some(ends))
+    let hold = limits.memory.ledger()?.adopt_charged(charged);
+    Ok(Some(Held::new(ends, hold)))
 }
