@@ -17,9 +17,9 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, CapturedDecision, DecisionAnswer, DecisionCall, DecisionCallContext,
-    DecisionModel, DecisionQuestion, DecisionRung, ProviderCapability, ProviderDecision,
-    ProviderPin,
+    AnswerContract, CapturedDecision, CapturedDecisionPack, DecisionAnswer, DecisionCall,
+    DecisionCallContext, DecisionModel, DecisionPack, DecisionQuestion, DecisionRung,
+    ProviderCapability, ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
@@ -463,10 +463,28 @@ impl DecisionModel for BigModel {
         if call.run.is_some() {
             return None;
         }
-        let (result, receipts) = oneiron::llm::run_admission::capture_settlements(|| {
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
             self.decide_with_context(call, Some(context))
         });
         Some(CapturedDecision { result, receipts })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        if pack.run.is_some() {
+            return None;
+        }
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_pack_with_context(pack, Some(context))
+        });
+        Some(CapturedDecisionPack { result, receipts })
+    }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        self.decide_pack_with_context(pack, None)
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
