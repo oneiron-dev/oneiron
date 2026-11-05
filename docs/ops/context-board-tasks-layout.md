@@ -1,8 +1,8 @@
 # ROOT TASKS layout for HTTP and native chat (FIX 12570)
 
 Status: parent 12570 PART. Supports ROOT raw HTTP, live chat `start_turn`,
-admitted queued Continue/Retry boards, and new native attenuated-fork TASKS
-snapshots, not full BOARD-LAYOUT.
+admitted queued Continue/Retry boards, native attenuated-fork TASKS snapshots,
+and live-only run-board sizing, not full BOARD-LAYOUT.
 
 ## Partial scope
 
@@ -36,6 +36,9 @@ Covered:
   definition actor's TASKS state in its creation transaction. It uses the
   requested source, which need not be the delegation parent's target.
   Retried registration of an existing fork never recopies the row.
+- Native run-board refreshes and keyed describes read their actual run actor's
+  live TASKS budget. They never project or activate pending. Section projection
+  and the run's final keyframe share the same existing harness-cap request.
 - Explicit per-request `tasks_budget_tok` still wins for that render and
   never consumes pending.
 - Existing 5426 renderer (`render_with_token_budget`), metadata
@@ -44,10 +47,11 @@ Covered:
 
 Explicitly OPEN (full 12570 PART):
 
-- MCP/run/program next-turn application of the staged layout.
-- Eager copies for other fork families, and fork-model consumers beyond
-  the HTTP/native chat paths described here. An inherited row alone does
-  not prove that a pumped run projected it.
+- MCP connector layout projection and run/program next-turn application of
+  pending layouts. The supported run-board read is live-only.
+- Eager copies for other fork families, and fork pending-layout application
+  beyond the supported HTTP/native chat paths. An inherited row alone does
+  not prove that a particular pumped run projected it.
 - Full shares summed across all sections, folds, filters, keep/note rows,
   owner defaults/settings, prefix epoch handling, or full-board layout.
 - Any new numeric cap, default, timeout, row/byte/count cap, or speed/GPU/
@@ -142,6 +146,27 @@ rows ride outside the allotment.
 - Chat keeps NO idempotency cache (a fresh answer TURN per turn; once-only
   per TURN holds). A refused/unanswered/unboarded turn commits nothing;
   pending stays pending.
+
+## Live-only run boards
+
+- The run host's actual agent `WriteActor` selects its own live TASKS budget
+  before the existing renderer. No payer, session label or caller-supplied
+  actor becomes the layout actor.
+- The native run board has no caller budget or explicit override. Projection
+  resolves the exact same request as its final keyframe: the existing
+  `MCP_BOARD_BUDGET_TOK` harness cap, with both optional limits absent.
+  One shared request constructor keeps these two uses aligned. Refreshes
+  keep their existing final SHED behavior; keyed expands use the same
+  budgeted TASKS section. Connector setup's separate budget options are unchanged.
+- Stored live `None` keeps the original 100-row renderer; `Some(0)` is literal
+  zero; positive values use the existing token-budget renderer clamped to
+  that harness cap. Hook pins and their receipts keep their original order.
+- This path has no qualified accepted TURN/history writer. It selects with
+  `has_turn=false`, returns no candidate and never consumes pending. A staged
+  write waits for a supported accepted TURN; a board refresh or subscription
+  is not fabricated into that proof. Program pending activation remains open.
+- Actor read lanes, source-row tracking, hook delivery, stream state and
+  the existing rendered-state epoch calculation are unchanged.
 
 ## Fork snapshots
 

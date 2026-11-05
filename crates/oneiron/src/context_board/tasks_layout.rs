@@ -38,7 +38,7 @@ pub(crate) struct TasksBudgetRow {
     /// Staged write awaiting TURN activation: `None` is no pending;
     /// `Some` with `value: None` is a staged reset.
     pub(crate) pending: Option<TasksBudgetPending>,
-    /// Internal row identity (`EntityId::now` bytes at genuine stage).
+    /// Fresh row identity at staging or native fork creation (`EntityId::now` bytes).
     pub(crate) incarnation: [u8; 16],
 }
 
