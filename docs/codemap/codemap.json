@@ -70239,7 +70239,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 34
      }
     },
     {
@@ -70250,6 +70250,16 @@
      "purpose": "A body finished under its reader's pin (FIX 5399b)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/finish_scanned.rs",
+     "purpose": "Scans a completed sink using its existing inline bytes or finished spill",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -91845,7 +91855,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 487,
+     "files": 488,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92085,7 +92095,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6427,
+   "source_files": 6428,
    "test_files": 895
   },
   "oneiron-android": {
