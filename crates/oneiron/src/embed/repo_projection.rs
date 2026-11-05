@@ -51,19 +51,15 @@ use crate::store::ManifestDbs;
 /// nothing.
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode.
+/// A store or file-body failure, or a mark that does not decode.
 pub(super) fn asset_payload_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-    let Some(text) = super::media::asset_text(body, |blob| {
-        Ok(vault
-            .store
-            .port_entity_record(txn, blob)?
-            .map(|blob| blob.body))
-    })?
+    let Some(text) =
+        super::media::asset_text(body, |blob| repo_blob_body_in_txn(vault, txn, blob))?
     else {
         return Ok(None);
     };
