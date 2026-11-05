@@ -565,6 +565,7 @@ pub(super) fn held_back(
         &mut held_back,
     );
     super::owner_choice::held_owner_choices(state, &state.home_pick, pin, counted, &mut held_back);
+    super::owner_choice::held_owner_choices(state, &state.origin_cut, pin, counted, &mut held_back);
     super::owner_choice::held_owner_choices(
         state,
         &state.conversation_training_vault,
