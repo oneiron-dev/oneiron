@@ -9,7 +9,8 @@
 //! their own, and any one of them makes a digest due. Nights that trained
 //! nothing (held or skipped) are only counted, by reason, and ride a digest
 //! that is due anyway. The owner's own policy changes are not reported back
-//! to him.
+//! to him, nor the host's record of what a worker serves after an event the
+//! line reports.
 use std::collections::BTreeMap;
 
 use heed::RoTxn;
@@ -171,7 +172,9 @@ pub(crate) fn unseen_drafter_line_in_txn(
                 through = through.max(Some(event.id));
                 continue;
             }
-            DrafterEventKind::Policy { .. } => {
+            // The owner's own policy changes, and the host's record of what
+            // a worker serves after an event this line already reports.
+            DrafterEventKind::Policy { .. } | DrafterEventKind::Served { .. } => {
                 through = through.max(Some(event.id));
                 continue;
             }
