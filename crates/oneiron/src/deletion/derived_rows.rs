@@ -78,6 +78,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     erase_skipped_send_receipt_in_txn,
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     erase_inbox_cards_in_txn,
+    // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
+    crate::mail_pack::erase_occurrence_rows_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
