@@ -40,11 +40,12 @@ pub(super) async fn execute(
 pub(super) async fn execute_stamped(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
-    extensions: Extensions,
+    mut extensions: Extensions,
     bound: ActionBound,
     credential: Option<CoreAuth>,
     call: AgentActionCall,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
+    let pre_hooked_fold = extensions.remove::<oneiron::code_run::actions::PreHookedFold>();
     let ActionBound {
         actor, class, key, ..
     } = &bound;
@@ -69,8 +70,11 @@ pub(super) async fn execute_stamped(
         extensions,
         bound,
         credential,
-        move |executor, vault, writer, binding| {
-            executor.execute_call(vault, writer, &principal, &call, binding)
+        move |executor, vault, writer, binding| match pre_hooked_fold {
+            Some(pre) => {
+                executor.execute_pre_hooked_fold(vault, writer, &principal, &call, binding, pre)
+            }
+            None => executor.execute_call(vault, writer, &principal, &call, binding),
         },
     )
     .await

@@ -29,6 +29,8 @@ impl ScopedRead<'_> {
         suppressed_count: usize,
     ) -> ScopedReadReceipt {
         let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        let grant_scope = floor.has_grant_scope_bound(self.actor_key.authority_scope())
+            || policy.scoped_read_grants_have_nonretrieval_bound(&self.actor_key);
         let actor_ceiling = ReadScope {
             entity_types: floor.allowed_entity_types,
             max_sensitivity_band: floor.max_sensitivity_band,
@@ -69,6 +71,9 @@ impl ScopedRead<'_> {
             },
         };
         receipt.record_axes();
+        if grant_scope {
+            receipt.record_grant_scope();
+        }
         receipt
     }
 
