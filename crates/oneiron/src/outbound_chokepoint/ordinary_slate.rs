@@ -11,13 +11,15 @@ use crate::llm::decision::{
 
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentId, IntentLedgerError, IntentLedgerRecord, IntentState,
-    admitting_actor_in_txn, hash_frozen_payload, pinned_retry_approval, read_intent_record_in_txn,
+    PinnedApprovalFamily, admitting_actor_in_txn, hash_frozen_payload, pinned_retry_approval,
+    read_intent_record_in_txn,
 };
 
 pub(super) struct OrdinaryCandidate {
     pub(super) gate: ExternalEffectGateInput,
     pub(super) digest: EffectDigest,
     pub(super) actor: Option<EntityId>,
+    pub(super) family: PinnedApprovalFamily,
 }
 
 /// Only the common adapter's positively reconstructed ordinary targets enter
@@ -42,6 +44,14 @@ pub(super) fn candidate_in_txn(
     ) else {
         return Ok(None);
     };
+    let Some(family) = gate
+        .provenance
+        .approval_target
+        .as_ref()
+        .and_then(|target| target.pinned_family())
+    else {
+        return Ok(None);
+    };
     let actor = admitting_actor_in_txn(vault, txn, &record.id)?;
     if actor != gate.provenance.actor_entity_ref {
         return Ok(None);
@@ -53,6 +63,7 @@ pub(super) fn candidate_in_txn(
         gate,
         digest,
         actor,
+        family,
     }))
 }
 

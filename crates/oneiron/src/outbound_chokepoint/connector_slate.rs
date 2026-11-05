@@ -78,7 +78,7 @@ fn candidate_in_txn(
             gate: candidate.gate,
             digest: candidate.digest,
             actor: candidate.actor,
-            family: PinnedApprovalFamily::ConnectorSlate,
+            family: candidate.family,
         }),
     )
 }
@@ -189,7 +189,10 @@ fn always_ask(
                 Ok(Release::Spent)
             }
             Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => {
-                if candidate.family == PinnedApprovalFamily::ConnectorSlate {
+                if matches!(
+                    candidate.family,
+                    PinnedApprovalFamily::ConnectorSlate | PinnedApprovalFamily::LinearDispatch
+                ) {
                     super::ordinary_slate::queue_owner_ask_in_txn(vault, wtxn, &current)?;
                 }
                 Ok(Release::Ask)

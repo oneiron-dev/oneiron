@@ -647,9 +647,22 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
-    let ordinary_press = pinned_approval.filter(|approval| {
-        approval.family == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate
-    });
+    let ordinary_press = match pinned_approval {
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
+        {
+            Some(approval)
+        }
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
+        {
+            Some(approval)
+        }
+        _ => None,
+    };
     crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
@@ -677,9 +690,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     super::types::keep_spent_presses(
         vault,
         pending.id,
-        pinned_approval.filter(|approval| {
-            approval.family != crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate
-        }),
+        pinned_approval.filter(|_| ordinary_press.is_none()),
         co_spent,
     )?;
 

@@ -262,13 +262,17 @@ fn send_pending_with_gate<T: OutboundTransport>(
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         // FIX 6424 part 2a: or the press a pinned family kept for this row.
-        let ordinary_target = prepared
+        let family = prepared
             .gate
             .provenance
             .approval_target
             .as_ref()
-            .and_then(gate::ApprovalTarget::pinned_family)
-            == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate);
+            .and_then(gate::ApprovalTarget::pinned_family);
+        let ordinary_target = family
+            == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate)
+            || (family
+                == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch)
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
         let retry = if ordinary_target {
             super::ordinary_slate::retry_approval_in_txn(vault, &wtxn, &record, &prepared.gate)?
         } else {

@@ -53,6 +53,10 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// failure-signal batch, or a communication, calendar or HTTP-bundle target.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) approval_send_ref: Option<&'a str>,
+    /// The native stable identity of an ordinary, non-mirror Linear send.
+    /// Mirror requests retain their own target and approval path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) linear_approval_send_ref: Option<&'a str>,
     pub(super) has_opted_in: bool,
     pub(super) has_permission: bool,
     // Preserve the caller's dial too: a manifest can map both values to the
