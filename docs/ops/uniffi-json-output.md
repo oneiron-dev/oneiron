@@ -77,6 +77,11 @@ values. Optional lookup absence and search order remain unchanged.
 returns; null stays present. Skill identity, version, description, reference,
 card order and the native catalog's read checks stay unchanged.
 
+`ai.options` consumes every model-option JSON value before propagating an
+encoding error. The same public `AiOptions` record retains required option
+order, present empty lists and the optional media-unit count, including zero.
+Its typed client call and native host-door checks remain unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
