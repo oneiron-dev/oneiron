@@ -5,8 +5,10 @@
 //! record admission before installing either view in its parent writer.
 
 mod candidate;
+mod refinement;
 mod retained;
 pub(crate) use candidate::{RecordDocumentCandidate, RecordDocumentPreparation};
+pub(crate) use refinement::RefinementOriginSource;
 
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
@@ -19,8 +21,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
-use crate::store::Store;
-use crate::{EntityId, registry::ENTITY_TYPE_SKILL};
+use crate::{EntityId, Vault, registry::ENTITY_TYPE_SKILL};
 
 /// A native document's source identity, bound to the exact stored record.
 /// Sender-local generation/update counters are deliberately not carried.
@@ -134,11 +135,18 @@ impl CarriedRecordDocument {
 /// source snapshot. A window with another row must mirror that row first.
 /// The returned source birth remains historical evidence on another device.
 pub(crate) fn export_skill_record_document_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &RoTxn<'_>,
     entity: &EntityId,
     selected_raw: &[u8],
-) -> Result<Option<(CarriedRecordDocument, Vec<u8>)>> {
+) -> Result<
+    Option<(
+        CarriedRecordDocument,
+        Vec<u8>,
+        Option<RefinementOriginSource>,
+    )>,
+> {
+    let store = &vault.store;
     if EntityMetadataHeader::parse(selected_raw)
         .is_none_or(|header| header.entity_type != ENTITY_TYPE_SKILL)
     {
@@ -186,5 +194,7 @@ pub(crate) fn export_skill_record_document_in_txn(
     };
     let snapshot = doc.export_snapshot()?;
     carried.document(selected_raw, &snapshot)?;
-    Ok(Some((carried, snapshot)))
+    let refinement =
+        RefinementOriginSource::capture_in_txn(vault, txn, entity, carried.refinement_origin())?;
+    Ok(Some((carried, snapshot, refinement)))
 }
