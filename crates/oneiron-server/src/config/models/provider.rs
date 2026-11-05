@@ -33,10 +33,10 @@ pub enum ProviderKind {
     /// carries, so it is reached over loopback HTTP only. A
     /// `[models.media.speech]` rung only.
     Voxcpm2,
-    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: a
-    /// `[models.media.image]` rung (`models/{model}:generateContent`, asked
-    /// for image output) or a `[models.media.video]` rung (a Veo
-    /// `predictLongRunning` job) only.
+    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: chat
+    /// rungs (`models/{model}:generateContent`), a `[models.media.image]`
+    /// rung (asked for image output) or a `[models.media.video]` rung (a Veo
+    /// `predictLongRunning` job).
     Gemini,
     /// Soniox's real-time speech-to-text WebSocket
     /// (`wss://stt-rt.soniox.com/transcribe-websocket`, the key as a bearer
@@ -61,7 +61,7 @@ impl ProviderKind {
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
-        self.speech_only() || matches!(self, Self::Gemini | Self::Soniox)
+        self.speech_only() || matches!(self, Self::Soniox)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
