@@ -675,3 +675,29 @@ pub(crate) fn revoke_side_row_custody_with_context_in_txn(
     }
     Ok(())
 }
+
+/// Revokes lifted custody for every row the caller's prefix delete takes,
+/// including keys that no longer decode. The caller performs the delete.
+pub(crate) fn revoke_side_row_prefix_custody_in_txn<K, V, C>(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    table: &crate::side_table::SideTable<K, V, C>,
+    key_prefix: &[u8],
+) -> Result<()>
+where
+    K: crate::side_table::SideKey,
+    C: crate::side_table::SideCodec<V>,
+{
+    let keys = table
+        .iter_raw_from(write.store, wtxn, key_prefix)?
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    let place = format!("side:{}", table.decl().name);
+    for raw in keys {
+        let mut key = table.decl().prefix.to_vec();
+        key.extend_from_slice(&raw);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &key)?;
+        revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
+    }
+    Ok(())
+}
