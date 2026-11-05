@@ -3633,6 +3633,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_off_record_artifacts_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.artifacts.save", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_off_record_claims_upsert(
         &self,
         input: serde_json::Value,
