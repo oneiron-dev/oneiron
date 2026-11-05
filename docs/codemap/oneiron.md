@@ -384,7 +384,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 12 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
 | `src/authority/machine_profile/owner_answers.rs` | src | m | 2 fn · 11 crate-vis | — | The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by… |
 | `src/authority/machine_standing.rs` | src | m | 23 crate-vis | — | A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its… |
-| `src/authority/machine_write.rs` | src | m | 4 fn · 11 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
+| `src/authority/machine_write.rs` | src | m | 4 fn · 12 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/after_mask.rs` | src | s | 1 crate-vis | — | Renewing a MACHINE claim's proof after the write door's secret mask rewrote it in the same transaction (FIX… |
 | `src/authority/machine_write/history_anchor.rs` | src | s | 1 crate-vis | — | The host history handoff's causal anchor (FIX 11241, ported from the bel build: 9f46db33fa, then… |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
@@ -951,13 +951,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/build_cache/tests.rs` | test | m | — | — | — |
 | `src/build_cache/tests/hit_metadata.rs` | test | m | — | — | — |
 | `src/calendar/caldav.rs` | src | s | 2 struct · 1 trait · 4 fn · 1 const | CalDavConnector, CalDavDiscovery, CalDavWire | CalDAV provider adapter (CAL-05, ONE-1787) |
-| `src/calendar/claims/codec.rs` | src | m | 2 fn · 43 crate-vis | — | Calendar claim validation dispatch plus MessagePack encode/decode and field helpers |
+| `src/calendar/claims/codec.rs` | src | m | 2 fn · 44 crate-vis | — | Calendar claim validation dispatch plus MessagePack encode/decode and field helpers |
 | `src/calendar/claims/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | The `calendar.*` claim family (CAL-00) |
 | `src/calendar/claims/predicates.rs` | src | s | 1 struct · 2 fn · 16 const · 3 crate-vis | ClaimClassDescriptorRow | Calendar claim predicates, descriptor rows, and shared limits |
 | `src/calendar/claims/tests.rs` | test | m | — | — | Accept/reject fixtures and per-type contract tests for the calendar claim family |
 | `src/calendar/claims/values.rs` | src | m | 8 struct · 7 enum · 16 fn | CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue +7 | Calendar claim value types with their wire-token impls |
 | `src/calendar/connectors/door.rs` | src | m | 7 struct · 12 fn · 2 crate-vis | CalendarConnectorConfigureRequest, CalendarConnectorKillRequest, CalendarConnectorOperation, CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest, CalendarImipTransportConfig | Owner-installed calendar seats and host iMIP submission, with custody names only |
-| `src/calendar/connectors/inbound.rs` | src | m | 1 fn · 3 crate-vis | — | Pull orchestration: apply, admit, enqueue, and reconcile |
+| `src/calendar/connectors/inbound.rs` | src | m | 1 fn · 4 crate-vis | — | Pull orchestration: apply, admit, enqueue, and reconcile |
 | `src/calendar/connectors/literal.rs` | src | s | 12 crate-vis | — | Exact row-owned calendar preconditions, retained independently of the readable projection |
 | `src/calendar/connectors/mod.rs` | src | s | 1 mod · 4 re-export · 3 crate-vis | — | Shared calendar connector kernel (CAL-05, ONE-1787) |
 | `src/calendar/connectors/outbound.rs` | src | L | 2 struct · 2 enum · 5 fn · 14 crate-vis | CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState | Conditional writes plus durable outbox and remote-object cursor store |
@@ -976,7 +976,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/inbox_card.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 3 crate-vis | CalendarCardCopy, CalendarCardKind, CalendarCardPass, CalendarInboxCard, CheckInReAsk | Meeting cards in the owners' INBOX (FIX 12004): the prep pack a meeting earns at T-45, the check-in that… |
 | `src/calendar/ingest/admission.rs` | src | m | 2 re-export · 14 crate-vis | — | Diff-to-claim admission path and its test module |
 | `src/calendar/ingest/admission/continuation.rs` | src | s | 1 struct · 1 fn · 1 const · 4 crate-vis | IcsPropertyContinuationPayload | The queued continuation of one event's property admissions (FIX 11997) |
-| `src/calendar/ingest/admission/import_claim.rs` | src | s | 1 fn · 4 crate-vis | — | Imported-claim admission through the Gate-backed imported-evidence door, and the adapter's own write actor |
+| `src/calendar/ingest/admission/import_claim.rs` | src | s | 1 fn · 5 crate-vis | — | Imported-claim admission through the Gate-backed imported-evidence door, and the adapter's own write actor |
 | `src/calendar/ingest/admission/preflight.rs` | src | s | 2 crate-vis | — | Value-only admission checks shared by feed polls and connector imports |
 | `src/calendar/ingest/admission/recurrence.rs` | src | s | 5 crate-vis | — | Detached recurrence admission: UID still resolves the master, never the exception |
 | `src/calendar/ingest/admission/tests.rs` | test | m | — | — | — |
@@ -1002,7 +1002,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/origin/tests.rs` | test | m | — | — | — |
 | `src/calendar/outcome.rs` | src | m | 6 struct · 5 enum · 19 fn · 2 const · 1 re-export · 5 crate-vis | CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue +3 | CAL-07 event outcome: evidence ladder, outcome head, post-end check-in |
 | `src/calendar/outcome/conditional.rs` | src | s | 1 fn · 3 crate-vis | — | Conditional calendar event outcome writes |
-| `src/calendar/passport.rs` | src | m | 1 enum · 7 fn · 8 crate-vis | PassportDecision | UID-first passport index and feed diff (CAL-02, ONE-1784) |
+| `src/calendar/passport.rs` | src | m | 1 enum · 7 fn · 11 crate-vis | PassportDecision | UID-first passport index and feed diff (CAL-02, ONE-1784) |
 | `src/calendar/prep/home_node.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | PrepHomeNodeJob | Closed-vault due execution of prep jobs |
 | `src/calendar/prep/lens.rs` | src | s | 1 struct · 2 fn | PrepLensCopy | Pure pack-to-lens rendering |
 | `src/calendar/prep/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | CAL-06 prep pack: the render-time context pack a meeting earns at T-45 |
@@ -3362,7 +3362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inference_snapshot/retention.rs` | src | m | 5 struct · 11 fn · 1 const · 1 crate-vis | SnapshotBudget, SnapshotCandidate, SnapshotLedger, SnapshotReservation, SnapshotUsage | Each vault's sealed-snapshot budget (DESIGN-V2 §7 quotas, V2-R3): the bytes its sealed bodies hold on disk… |
 | `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 3 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
 | `src/inference_snapshot/store.rs` | src | m | 2 struct · 8 fn · 2 crate-vis | SnapshotPublish, SnapshotReconcile | The sealed snapshot store (DESIGN-V2 §7, V2-R3): each snapshot's body sealed under its own data key in a… |
-| `src/ingest/admission.rs` | src | m | 3 struct · 8 fn · 6 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
+| `src/ingest/admission.rs` | src | m | 3 struct · 8 fn · 7 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
 | `src/ingest/audience.rs` | src | m | 2 struct · 2 enum · 5 fn · 3 const · 2 crate-vis | ImportAudience, ImportAudienceCluster, ImportAudienceOption, ImportAudienceState | Import audience topics (OF-492) |
 | `src/ingest/bulk_review.rs` | src | m | 3 struct · 4 fn | ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt | One import-time human act for the exact set of imported claim candidates |
 | `src/ingest/bulk_review_tests.rs` | test | s | — | — | — |
@@ -3450,6 +3450,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/learning_setting/scope_erase.rs` | src | s | 2 crate-vis | — | An erased scope's owner rows and fits go with it (FIX 6038, FIX 11533): its erase deletes every seed and pin… |
 | `src/learning_setting/sourced.rs` | src | s | 1 crate-vis | — | A setting's value beside the rows it stands on (FIX 7101): what a producer that cites its inputs reads in… |
 | `src/learning_setting/subject.rs` | src | s | 2 crate-vis | — | The entity a vault-wide knob's fit is learned on (FIX 8079): an engine-owned ASSET at the knob's… |
+| `src/learning_setting/witness.rs` | src | s | 2 crate-vis | — | Native records of the owner PUT acts behind numeric seed and pin rows |
 | `src/learning_setting_choice.rs` | src | m | 2 struct · 2 enum · 6 fn · 1 const · 5 crate-vis | ChoiceRow, ChoiceValue, SpawnChoice, SpawnChoiceSource | The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's… |
 | `src/learning_setting_doors.rs` | src | m | 8 struct · 3 enum · 3 fn | LearnedChoiceValueView, LearnedChoiceView, LearningChoiceValue, LearningSettingClear, LearningSettingMode, LearningSettingPut, LearningSettingRowView, LearningSettingScope +3 | The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a… |
 | `src/lens/activation.rs` | src | s | 2 struct · 5 fn | LensActivateRequest, LensDeactivateRequest | The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250) |
@@ -4113,7 +4114,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/checkpoint/bundle.rs` | src | m | 2 crate-vis | — | A NOTE review bundle (KS7-2), under the NOTEs its waiting forks and landings name |
 | `src/note/checkpoint/loro.rs` | src | m | 8 crate-vis | — | A NOTE document's actor carriers in its Loro history (FIX 6072): every engine stamp's actor and every… |
 | `src/note/checkpoint/pins.rs` | src | s | 3 crate-vis | — | The NOTE citation-pin index rows (KS7-2), each under its citing document and holding while the document or… |
-| `src/note/citation_erase.rs` | src | s | 9 crate-vis | — | Hard-erase dependency fences |
+| `src/note/citation_erase.rs` | src | s | 10 crate-vis | — | Hard-erase dependency fences |
 | `src/note/citation_scrub.rs` | src | s | 2 crate-vis | — | Pin-only live-state rebuild |
 | `src/note/coreference/access.rs` | src | s | 7 crate-vis | — | One transaction-bound answer for node and exact-relation diary access |
 | `src/note/coreference/commands.rs` | src | s | 3 fn | — | Resident submissions and revocation |
