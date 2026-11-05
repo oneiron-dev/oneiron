@@ -47,7 +47,7 @@ const UNUSABLE: &str = "BAD_REQUEST";
 const RENEW_PATH: &str = "/v1/core/slips/renew";
 
 /// The header the renewal's holder proof crosses in.
-const BINDING_HEADER: &str = "x-oneiron-binding";
+use oneiron_vault_contract::BINDING_HEADER;
 
 /// How long a direct renewal waits to reach the home's origin: the SDK's own
 /// connect timeout, kept when the request moved here.
