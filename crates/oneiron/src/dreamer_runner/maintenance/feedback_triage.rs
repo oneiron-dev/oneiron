@@ -12,7 +12,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::feedback::{
     COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE, FeedbackTriageOutput,
     FeedbackTriageResult, acknowledge_feedback_triage_in_txn, check_feedback_triage_findings,
-    job_handoff_in_txn,
+    job_handoff_in_txn, refuse_erased_in_txn,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
@@ -94,7 +94,8 @@ pub(crate) fn record_feedback_triage_findings_in_txn(
         EngineLimit::MaintenanceRowItems,
         output.findings.len() as u64,
     );
-    let own = &handoff.source_ref;
+    refuse_erased_in_txn(vault, txn, &handoff)?;
+    let (own, evidence) = handoff.retained()?;
     check_feedback_triage_findings(output, own)?;
     let mut findings = Vec::new();
     for finding in &output.findings {
@@ -115,10 +116,10 @@ pub(crate) fn record_feedback_triage_findings_in_txn(
         let id = proposals::emit_in_txn(
             vault,
             txn,
-            handoff.evidence,
+            evidence,
             FEEDBACK_TRIAGE_FINDING_PREDICATE,
             &value,
-            &[handoff.evidence],
+            &[evidence],
             envelope,
             now,
         )?;
