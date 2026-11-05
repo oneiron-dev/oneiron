@@ -35,9 +35,14 @@ mod audit;
 mod authority;
 mod claim;
 mod dispatch;
+#[cfg(feature = "sync")]
+mod native_skill;
 mod old_record;
 mod projections;
 mod rewrite;
+
+#[cfg(feature = "sync")]
+pub(crate) use native_skill::NativeSkillPostGate;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(

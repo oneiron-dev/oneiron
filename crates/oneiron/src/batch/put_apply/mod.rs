@@ -31,6 +31,8 @@ use super::{
     validate_replicated_authority_log_for_local_vault,
 };
 
+#[cfg(feature = "sync")]
+pub(crate) use self::apply::NativeSkillPostGate;
 pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
