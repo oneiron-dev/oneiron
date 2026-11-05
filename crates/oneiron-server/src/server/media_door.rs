@@ -287,9 +287,9 @@ impl SyncServer {
     pub(crate) fn phone_media_door(
         &self,
         read: Arc<PhoneCallRead>,
-        models: Arc<[oneiron::agent_def::AgentModel]>,
         payer: Option<PayerPerson>,
     ) -> Arc<MediaDoor> {
+        let models = read.media_models();
         Arc::new(MediaDoor {
             vault: Arc::clone(&self.vault),
             runtime: Arc::clone(self.ai.models()),

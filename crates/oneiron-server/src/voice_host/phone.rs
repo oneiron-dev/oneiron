@@ -18,6 +18,7 @@ pub struct PhoneCallRead {
     auth: CoreAuth,
     key: ScopedReadActorKey,
     agent: EntityId,
+    definition: oneiron::agent_def::AgentDefinition,
     prepared: Mutex<Option<PreparedPhoneOutput>>,
 }
 
@@ -49,6 +50,10 @@ impl PhoneCallRead {
         if auth.principal_entity() != Some(agent) {
             return Err(HostError::InvalidRequest);
         }
+        // Freeze instructions and the model list from the same admitted body.
+        let definition = vault
+            .scoped_read(key.clone())
+            .phone_line_agent_definition()?;
         // The native factory proved this principal is the line's live
         // AGENT_DEF, not a class inferred from provider or caller text.
         let read = Arc::new(Self {
@@ -56,9 +61,9 @@ impl PhoneCallRead {
             auth: auth.clone(),
             key,
             agent,
+            definition,
             prepared: Mutex::new(None),
         });
-        read.definition()?;
         Ok(read)
     }
 
@@ -78,8 +83,16 @@ impl PhoneCallRead {
         self.vault.scoped_read(self.key.clone())
     }
 
-    pub(super) fn definition(&self) -> Result<oneiron::agent_def::AgentDefinition, HostError> {
-        Ok(self.read().phone_line_agent_definition()?)
+    pub(super) fn definition(&self) -> &oneiron::agent_def::AgentDefinition {
+        &self.definition
+    }
+
+    pub(super) fn models(&self) -> &[oneiron::agent_def::AgentModel] {
+        &self.definition.models
+    }
+
+    pub(crate) fn media_models(&self) -> Arc<[oneiron::agent_def::AgentModel]> {
+        Arc::from(self.models())
     }
 
     pub(super) fn memory(&self) -> Result<oneiron::memory::Memory<'_>, HostError> {
