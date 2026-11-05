@@ -250,10 +250,14 @@ fn escalate_once_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, attempt: Atte
         Ok(true)
     })();
     match raised {
-        Ok(true) => tracing::info!(
-            attempt = %bytes_to_hex_lower(attempt.as_bytes()),
-            "the owner was told a stopped turn program try's abandon is still owed"
-        ),
+        Ok(true) => {
+            // The notice's savepoint is not the parent's post-commit scope.
+            crate::batch::queue_notification_change(vault, wtxn);
+            tracing::info!(
+                attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+                "the owner was told a stopped turn program try's abandon is still owed"
+            );
+        }
         Ok(false) => {}
         Err(error) => tracing::warn!(
             kind = ?error.kind(),

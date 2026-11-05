@@ -15,9 +15,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::store::Store;
 
-use super::act_admission::SealAuthority;
-use super::admission_disposition::AdmissionDisposition;
-use super::stored_event::StoredIdentityOpAction;
+use super::act_admission::{SealAuthority, SealStanding};
+use super::admission_disposition::{AdmissionDisposition, SealTrust, core_digest};
+use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
 /// Every decision seal this vault holds, in fact-row order. A stored row
 /// verified its signature as it decoded.
@@ -74,7 +74,10 @@ pub(super) fn decision_seal_acts_in_txn(
 /// Each decision seal of `seals` as the standing digest hashes it (FIX
 /// 5248): its token, whether every head it signed is held in `fold`, and how
 /// its act stands here ([`standing_tag`]), judged on `txn`'s stored log by one
-/// causal fold for every seal ([`crate::authority::CausalPoints::standing`]).
+/// causal fold for every seal ([`crate::authority::CausalPoints::standing`]),
+/// plus the exact bound seal's positive historical Grant-proof result. That
+/// result changes when signed revokes or original-at-heads proof arrive,
+/// even if the current Grant row was already deleted.
 /// That judgment runs the full removal race, every revision of the carrier's
 /// chains and each one's acknowledged tokens, so a losing concurrent removal
 /// that never saw a seal moves its tag while every chain's picked head stays
@@ -87,7 +90,7 @@ pub(super) fn decision_seal_standings_in_txn(
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     seals: &[AdmissionDisposition],
-) -> Result<BTreeSet<(AuthorityEntryHash, bool, u8)>> {
+) -> Result<BTreeSet<(AuthorityEntryHash, bool, u8, bool)>> {
     let acts = seals
         .iter()
         .filter_map(|fact| match &fact.authority {
@@ -119,9 +122,98 @@ pub(super) fn decision_seal_standings_in_txn(
                 Error::InvariantViolation("identity topology seal standing digest"),
             )
         })?;
-        standings.insert((act.token, held, standing_tag(standing)));
+        let grant_preserved = if standing == ExternalActStanding::Stands {
+            match super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+                store,
+                txn,
+                &fact.target,
+            ) {
+                Ok(Some(core)) => grant_preserves_seal_in_txn(store, txn, fold, fact, &core),
+                // This is positive proof only. Missing or unreadable new proof
+                // cannot add a history gate to the original digest.
+                _ => false,
+            }
+        } else {
+            false
+        };
+        standings.insert((act.token, held, standing_tag(standing), grant_preserved));
     }
     Ok(standings)
+}
+
+/// Whether this exact signed seal binds the actual core and carries a
+/// positive historical Grant proof. It never substitutes for the caller's
+/// carrier/owner/removal judgment. The same result enters the native digest.
+pub(super) fn grant_preserves_seal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    fact: &AdmissionDisposition,
+    core: &StoredIdentityOpEvent,
+) -> bool {
+    let SealAuthority::Decision(act) = &fact.authority else {
+        return false;
+    };
+    if !matches!(act.by, ActBy::Agent { .. })
+        || !core_digest(core).is_ok_and(|digest| digest == fact.core_digest)
+        || fact.verify().is_err()
+    {
+        return false;
+    }
+    let Ok(external) = external_act(fact, act) else {
+        return false;
+    };
+    crate::authority::preserved_topology_act_in_txn(store, txn, fold, &external, act, core.at)
+}
+
+/// What this owner revoke actually observed while its Grant still stands,
+/// before the SAME writer signs the revoke and withdraws/deletes the row.
+/// All admitted verdict kinds count, each exact token once; no cap or
+/// truncation. A signature without its actual target core binds nothing.
+pub(crate) fn acknowledged_grant_seals_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let mut tokens = BTreeSet::new();
+    let mut trust = SealTrust::default();
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        store,
+        txn,
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        None,
+    )? {
+        let id = id?;
+        let row =
+            super::store_entity_helpers::identity_topology_event_for_store_in_txn(store, txn, &id)?
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        let StoredIdentityOpAction::AdmissionDisposition(fact) = row.action else {
+            continue;
+        };
+        if !matches!(fact.authority,
+            SealAuthority::Decision(OwnerAct { by: ActBy::Agent { grant: named, .. }, .. })
+                if named == grant)
+        {
+            continue;
+        }
+        let Some(core) = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+            store,
+            txn,
+            &fact.target,
+        )?
+        else {
+            continue;
+        };
+        if !core_digest(&core).is_ok_and(|digest| digest == fact.core_digest) {
+            continue;
+        }
+        fact.verify()
+            .map_err(|_| Error::CorruptedIndex("identity topology admission signature"))?;
+        if trust.standing(store, txn, &id, &fact, &core)? == SealStanding::Admitted {
+            tokens.insert(fact.act_token()?);
+        }
+    }
+    Ok(tokens)
 }
 
 /// The typed fault a standing digest propagates (FIX 5248): `seal` the

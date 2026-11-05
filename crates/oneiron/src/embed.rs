@@ -1,3 +1,6 @@
+//! Embedding pipeline root: attach, decide, and reconcile under one budget dial.
+//! Entry [`PendingEmbeddingReconciler`]; driven from `pipeline::builder::terminal`.
+//! Children own each stage (`binding_move`, `device`, `media`); the root only declares and re-exports.
 mod binding_move;
 mod cold_attach;
 mod device;
@@ -843,7 +846,7 @@ fn pending_input_in_txn(
     // lexical hint, a text with nothing in it — is `None`, which the caller
     // retires as stale rather than failing the whole leased batch on it.
     let Some(payload) =
-        repo_projection::pending_payload_in_txn(vault, wtxn, raw.entity_type, &raw.body)?
+        repo_projection::pending_payload_in_txn(vault, wtxn, id, raw.entity_type, &raw.body)?
     else {
         return Ok(None);
     };

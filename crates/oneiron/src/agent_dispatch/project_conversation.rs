@@ -123,6 +123,46 @@ impl AgentDispatcher<'_> {
         executor: &str,
         at: u64,
     ) -> Result<Option<LoadedSkillPack>> {
+        self.prepare_project_conversation_run_with(
+            leased,
+            skills,
+            || {
+                skills.draft.ok_or_else(|| {
+                    Error::InvalidConfig("project-proposal drafting skill is not configured".into())
+                })
+            },
+            executor,
+            at,
+        )
+    }
+
+    /// Loads the shipped defaults, resolving the configured hub's drafting
+    /// workflow only after the live run's stored drafting verdict matches.
+    /// Other runs and goal-intake interviews do not read the hub default.
+    pub fn prepare_default_project_conversation_run(
+        &self,
+        leased: &AttemptRecord,
+        executor: &str,
+        at: u64,
+    ) -> Result<Option<LoadedSkillPack>> {
+        let skills = ProjectConversationSkills::shipped(None)?;
+        self.prepare_project_conversation_run_with(
+            leased,
+            &skills,
+            || super::skill_default::workflow_default(self.vault, PROJECT_PROPOSAL_SKILL),
+            executor,
+            at,
+        )
+    }
+
+    fn prepare_project_conversation_run_with(
+        &self,
+        leased: &AttemptRecord,
+        skills: &ProjectConversationSkills,
+        draft: impl FnOnce() -> Result<EntityId>,
+        executor: &str,
+        at: u64,
+    ) -> Result<Option<LoadedSkillPack>> {
         let run = self.live_project_run(leased)?;
         // Both project runs are roots, so the briefing their dispatch froze is
         // the one they run with. Any other run's briefing is not read here.
@@ -139,9 +179,7 @@ impl AgentDispatcher<'_> {
         let skill = match briefing {
             ProjectRunBriefing::ProjectProposal(brief) => {
                 self.check_drafting_run(&run, &brief)?;
-                skills.draft.ok_or_else(|| {
-                    Error::InvalidConfig("project-proposal drafting skill is not configured".into())
-                })?
+                draft()?
             }
             ProjectRunBriefing::GoalIntake(brief) => {
                 self.check_goal_intake_run(&run, &brief)?;
