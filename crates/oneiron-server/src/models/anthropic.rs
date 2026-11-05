@@ -175,6 +175,7 @@ struct InferenceUsage {
     cache_read: Option<u64>,
     cache_creation: Option<u64>,
     output: Option<u64>,
+    native_slots: BTreeMap<usize, usize>,
     saw_native_key: bool,
 }
 
@@ -196,6 +197,7 @@ impl InferenceUsage {
             cache_read: None,
             cache_creation: None,
             output: None,
+            native_slots: BTreeMap::new(),
             saw_native_key: false,
         }
     }
@@ -221,7 +223,7 @@ impl InferenceUsage {
             let Some(records) = records.as_array_mut() else {
                 return;
             };
-            for (index, record) in records.iter_mut().enumerate() {
+            for (native_index, record) in records.iter_mut().enumerate() {
                 let Ok(mut receipt) =
                     serde_json::from_value::<InferenceCallReceipt>(record.clone())
                 else {
@@ -242,7 +244,20 @@ impl InferenceUsage {
                     }
                 }
                 receipt.model.clone_from(&self.model);
-                self.publish(index, receipt);
+                // The first valid native member replaces the synthetic fallback.
+                // Native positions retain their assigned slots on later updates.
+                let slot = if let Some(&slot) = self.native_slots.get(&native_index) {
+                    slot
+                } else {
+                    let slot = if self.native_slots.is_empty() {
+                        0
+                    } else {
+                        self.calls.len()
+                    };
+                    self.native_slots.insert(native_index, slot);
+                    slot
+                };
+                self.publish(slot, receipt);
             }
             return;
         }
@@ -284,16 +299,14 @@ impl InferenceUsage {
         }
     }
 
-    fn publish(&mut self, index: usize, receipt: InferenceCallReceipt) {
-        // Native receipt lists are in physical-request order. Keep their raw
-        // positions, including invalid entries, stable across usage updates.
-        while self.calls.len() <= index {
+    fn publish(&mut self, slot: usize, receipt: InferenceCallReceipt) {
+        while self.calls.len() <= slot {
             self.calls.push(ObservedCall {
                 publisher: InferencePublisher::begin(&self.lease),
                 measured: None,
             });
         }
-        let call = &mut self.calls[index];
+        let call = &mut self.calls[slot];
         call.publisher.partial(receipt.clone());
         call.measured = Some(receipt);
     }
