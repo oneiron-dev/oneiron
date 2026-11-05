@@ -212,3 +212,23 @@ text framing, bindings, present empty children and scalar widths. Native
 notification readers, action selection, meeting cards, owner/scope checks,
 client calls and inputs are unchanged. The finite lens tree still has arbitrary
 child depth; this does not claim end-to-end depth, heap or runtime closure.
+
+
+`vault.weave.lens` and `vault.lenses.default` consume component properties
+from both the flat render and the authored lens tree before converting finite
+card metadata. The default-lens result keeps its exact narrowing receipt.
+`vault.weave.digest` first consumes every claim value and optional scope across
+all sections, then both representations of its optional lens card, before any
+finite conversion can fail. Required claim null remains present; optional null
+scope and component properties remain absent. All sections, finite item
+variants, refusals and card metadata keep the shared record codec.
+
+`vault.lenses.list` drains every optional compiled lens across the entire page
+before converting finite row metadata. Missing compiled lenses stay missing;
+row order, cursor and all proposal fields stay intact. These paths reuse the
+opened-inbox tree walk and preserve the original lens version pair without
+restamping or revalidating. Empty native children and binding vectors still
+read as present empty vectors in the generated records. Native reads, owner
+and scope checks, input conversion, clients and hooks remain unchanged. This
+is selected output conversion only, not end-to-end depth, heap or runtime
+closure.

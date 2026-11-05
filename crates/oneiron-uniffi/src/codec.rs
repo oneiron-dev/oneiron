@@ -44,6 +44,7 @@ mod claims;
 mod core_write;
 mod diagnostics;
 mod feedback;
+mod generated_lenses;
 mod identity_act_now;
 mod key_value;
 mod lens_actions;
