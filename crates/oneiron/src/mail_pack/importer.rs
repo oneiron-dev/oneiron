@@ -48,6 +48,8 @@ pub struct MailSyncBudget {
     pub list_pages: u32,
     /// Bodies filled in.
     pub bodies: u32,
+    /// Opened attachments fetched.
+    pub attachments: u32,
 }
 
 impl Default for MailSyncBudget {
@@ -56,6 +58,7 @@ impl Default for MailSyncBudget {
             history_pages: 10,
             list_pages: 2,
             bodies: 50,
+            attachments: 10,
         }
     }
 }
@@ -82,6 +85,9 @@ pub struct MailSyncReport {
     pub anchor_expired: bool,
     /// Whether the newest-first copy has reached the oldest message it keeps.
     pub copy_done: bool,
+    /// Opened attachments fetched into their artifacts.
+    #[serde(default)]
+    pub attachments_stored: u64,
 }
 
 impl MailSyncReport {
@@ -401,6 +407,15 @@ impl Vault {
             step.history(budget.history_pages)?;
             step.backfill(budget.list_pages)?;
             step.bodies(budget.bodies)?;
+            let stored = super::attachments::fetch_waiting_attachments(
+                step.vault,
+                step.source,
+                &step.wire_source,
+                step.wire,
+                step.landing.actor(),
+                budget.attachments,
+            )?;
+            step.report.attachments_stored += stored;
             Ok(())
         })();
         let error = outcome.as_ref().err().map(|error| error.message.clone());

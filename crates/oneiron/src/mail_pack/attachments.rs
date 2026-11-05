@@ -1,0 +1,281 @@
+//! Attachments on open (FIX 12559; MAIL-GOOGLE = A): a message's
+//! attachments land described, never fetched; a reader of its thread opens
+//! one (`vault.mail.attachments.open`), and the source's next import step
+//! fetches its bytes once into an artifact bound to the thread's audience in
+//! its birth commit, so the bytes read only to the thread's readers.
+
+use serde::{Deserialize, Serialize};
+
+use super::pack::require_pack_active_in;
+use super::source::SOURCES;
+use super::state::OCCURRENCES;
+use super::wire::{MailAttachmentRef, MailProviderWire, MailSyncSource};
+use crate::entity_id::derived_domains::MAIL_ATTACHMENT;
+use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::side_table::{self, Named, SideTable};
+use crate::{EntityId, Result, Vault, source_audience};
+
+/// The attachments readers opened, by source and the BLAKE3 of the
+/// provider's message id and the part id.
+const ATTACHMENTS: SideTable<(EntityId, [u8; 32]), MailAttachmentRow, Named> =
+    SideTable::new(&side_table::MAIL_PACK_ATTACHMENT);
+
+/// The largest attachment fetched.
+const MAX_ATTACHMENT_BYTES: usize = 32 * 1024 * 1024;
+
+/// One opened attachment's fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MailAttachmentRow {
+    provider_id: String,
+    attachment: MailAttachmentRef,
+    /// The thread's audience policy the stored artifact is bound to.
+    thread: EntityId,
+    state: MailAttachmentState,
+    artifact: Option<EntityId>,
+    version: Option<u64>,
+    reason: Option<String>,
+    opened_at: u64,
+    updated_at: u64,
+}
+
+/// Where an opened attachment stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MailAttachmentState {
+    /// The source's next import step fetches it.
+    Waiting,
+    /// Its bytes are in its artifact.
+    Stored,
+    /// The provider no longer had it, or it could not be read.
+    Failed,
+}
+
+/// `vault.mail.attachments.open`'s input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentOpenRequest {
+    /// The message's source, 32-hex.
+    pub source_ref: String,
+    /// The message's TURN, 32-hex (an inbox item's `turn_ref`).
+    pub turn_ref: String,
+    /// The attachment's MIME part id.
+    pub part_id: String,
+}
+
+/// An opened attachment, as its reader sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentView {
+    pub state: MailAttachmentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    pub media_type: String,
+    pub size_bytes: u64,
+    /// The artifact its bytes are in, 32-hex, once stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+fn attachment_key(source: EntityId, provider_id: &str, part_id: &str) -> (EntityId, [u8; 32]) {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(provider_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(part_id.as_bytes());
+    (source, *hasher.finalize().as_bytes())
+}
+
+fn view(row: &MailAttachmentRow) -> MailAttachmentView {
+    MailAttachmentView {
+        state: row.state,
+        filename: row.attachment.filename.clone(),
+        media_type: row.attachment.media_type.clone(),
+        size_bytes: row.attachment.size_bytes,
+        artifact_ref: row.artifact.map(|artifact| artifact.to_hex()),
+        version: row.version,
+        reason: row.reason.clone(),
+    }
+}
+
+impl Memory<'_> {
+    /// Opens one attachment of a message to a reader of its thread: its
+    /// fetch is queued for the source's next import step, or its stored
+    /// artifact answered. A message whose body has not landed has no
+    /// attachments described yet.
+    pub fn mail_attachments_open(
+        &self,
+        input: &MailAttachmentOpenRequest,
+    ) -> MemoryResult<MailAttachmentView> {
+        let source = EntityId::from_hex(&input.source_ref)?;
+        let turn = EntityId::from_hex(&input.turn_ref)?;
+        let vault = self.vault();
+        let actor = self.actor();
+        let unknown = || MemoryError::not_found("no attachment by that ref");
+        let (provider_id, attachment, thread) = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            require_pack_active_in(vault, &txn)?;
+            if !SOURCES
+                .get(&vault.store, &txn, &source)?
+                .is_some_and(|row| row.kind.is_mailbox())
+            {
+                return Err(unknown());
+            }
+            let mut found = None;
+            for occurrence in OCCURRENCES.iter_from(&vault.store, &txn, source.as_bytes())? {
+                let (_, occurrence) = occurrence?;
+                if occurrence.turn == turn {
+                    found = Some(occurrence);
+                    break;
+                }
+            }
+            let occurrence = found.ok_or_else(unknown)?;
+            let thread = source_audience::binding_in(vault, &txn, &occurrence.conversation)?
+                .ok_or_else(unknown)?;
+            if !source_audience::actor_reads_in(vault, &txn, &thread, actor)? {
+                return Err(unknown());
+            }
+            let attachment = occurrence
+                .attachments
+                .iter()
+                .find(|attachment| attachment.part_id == input.part_id)
+                .cloned()
+                .ok_or_else(|| {
+                    MemoryError::bad_request_with(
+                        "the message has no such attachment, or its body has not landed yet",
+                        &["List the thread again once its message has landed whole."],
+                    )
+                })?;
+            (occurrence.provider_id, attachment, thread)
+        };
+        let key = attachment_key(source, &provider_id, &attachment.part_id);
+        let at = crate::unix_seconds_now();
+        let row = vault.with_write_txn_grouped(|txn| {
+            if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
+                return Ok(row);
+            }
+            let row = MailAttachmentRow {
+                provider_id: provider_id.clone(),
+                attachment: attachment.clone(),
+                thread,
+                state: MailAttachmentState::Waiting,
+                artifact: None,
+                version: None,
+                reason: None,
+                opened_at: at,
+                updated_at: at,
+            };
+            ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
+            Ok(row)
+        })?;
+        Ok(view(&row))
+    }
+}
+
+/// Fetches up to `limit` of `source`'s waiting attachments through `wire`,
+/// each into its artifact bound to its thread's audience at birth, written
+/// as `actor`. Answers how many were stored.
+pub(super) fn fetch_waiting_attachments(
+    vault: &Vault,
+    source: EntityId,
+    wire_source: &MailSyncSource,
+    wire: &dyn MailProviderWire,
+    actor: EntityId,
+    limit: u32,
+) -> Result<u64> {
+    let waiting = {
+        let txn = vault.store.env.read_txn()?;
+        let mut waiting = Vec::new();
+        for row in ATTACHMENTS.iter_from(&vault.store, &txn, source.as_bytes())? {
+            let (key, row) = row?;
+            if row.state == MailAttachmentState::Waiting {
+                waiting.push((key, row));
+                if waiting.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        waiting
+    };
+    let mut stored = 0;
+    for (key, mut row) in waiting {
+        let at = crate::unix_seconds_now();
+        match wire.attachment(wire_source, &row.provider_id, &row.attachment) {
+            Ok(Some(bytes)) if bytes.len() <= MAX_ATTACHMENT_BYTES => {
+                let (artifact, version) = store_attachment(vault, source, &row, &bytes, actor, at)?;
+                row.state = MailAttachmentState::Stored;
+                row.artifact = Some(artifact);
+                row.version = Some(version);
+                row.reason = None;
+                stored += 1;
+            }
+            Ok(Some(_)) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some("the attachment is larger than this host fetches".to_owned());
+            }
+            Ok(None) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some("the provider no longer has it".to_owned());
+            }
+            Err(error) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some(error.to_string());
+            }
+        }
+        row.updated_at = at;
+        vault.with_write_txn_grouped(|txn| ATTACHMENTS.put(&vault.store, txn, &key, &row))?;
+    }
+    Ok(stored)
+}
+
+/// One attachment's bytes in its artifact: the artifact born bound to the
+/// thread's audience, then one version.
+fn store_attachment(
+    vault: &Vault,
+    source: EntityId,
+    row: &MailAttachmentRow,
+    bytes: &[u8],
+    actor: EntityId,
+    at: u64,
+) -> Result<(EntityId, u64)> {
+    let artifact = EntityId::derive(
+        MAIL_ATTACHMENT,
+        &[
+            source.as_bytes(),
+            row.provider_id.as_bytes(),
+            row.attachment.part_id.as_bytes(),
+        ],
+    )?;
+    let occurred = crate::TimeRange { start: at, end: at };
+    if vault.get_blob_artifact(&artifact)?.is_none() {
+        let name = row
+            .attachment
+            .filename
+            .clone()
+            .unwrap_or_else(|| "attachment".to_owned());
+        let data = crate::blob_artifact::encode_blob_artifact_body(
+            &crate::blob_artifact::BlobArtifactBody::new(name, row.attachment.media_type.as_str()),
+        )?;
+        vault.with_write_txn_grouped(|txn| {
+            vault
+                .batch_in()
+                .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, &data)
+                .apply(txn)?;
+            source_audience::bind_record_in_txn(vault, txn, &artifact, &row.thread)
+        })?;
+    }
+    let version = vault.append_blob_artifact_version(
+        &artifact,
+        bytes,
+        &crate::blob_artifact::BlobVersionProvenance::AgentRun {
+            run_ref: format!("mail-attachment:{}", artifact.to_hex()),
+        },
+        crate::WriteActor::new(actor, crate::edge::EdgeActorClass::Human),
+        occurred,
+        at,
+    )?;
+    Ok((artifact, version.version))
+}

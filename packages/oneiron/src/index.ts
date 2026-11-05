@@ -3264,6 +3264,10 @@ export class Oneiron {
       },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+      attachments: {
+        /** A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers. */
+        open: (input: Facade.MailAttachmentOpenRequest): Facade.MailAttachmentView => this.#call(() => this.#client.vaultMailAttachmentsOpen(input) as Facade.MailAttachmentView),
+      },
     },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */

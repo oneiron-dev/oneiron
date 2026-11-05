@@ -35,6 +35,7 @@
 //! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
 //! The owner runs a step on this device through [`local_sync`].
 
+mod attachments;
 mod calendar;
 mod compliance;
 mod credential;
@@ -57,6 +58,7 @@ mod state;
 mod wire;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
+pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
 pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,

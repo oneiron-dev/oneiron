@@ -26,6 +26,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use base64::Engine as _;
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -524,6 +525,33 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             next_page: Some(encode(&cursor)?),
             anchor: anchor.to_owned(),
         }))
+    }
+
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>> {
+        self.verify(source)?;
+        let id = attachment
+            .provider_attachment_id
+            .as_deref()
+            .unwrap_or(attachment.part_id.as_str());
+        require_graph_id(id)?;
+        let url = format!("{}/attachments/{}", message_url(provider_id)?, path_segment(id));
+        let Some(answer) = self.found(source, &url, &[], PREFER_IMMUTABLE_IDS)? else {
+            return Ok(None);
+        };
+        // A file attachment carries its bytes; an item or reference
+        // attachment carries none.
+        let Some(bytes) = answer.get("contentBytes").and_then(Value::as_str) else {
+            return Err(refused("graph_mail_attachment_carries_no_bytes"));
+        };
+        base64::engine::general_purpose::STANDARD
+            .decode(bytes.trim())
+            .map(Some)
+            .map_err(|_| refused("graph_mail_attachment_bytes_unreadable"))
     }
 }
 

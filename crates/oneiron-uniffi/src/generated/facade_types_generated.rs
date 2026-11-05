@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1248 facade rows, 4521 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1200.
+// UniFFI census: 1249 facade rows, 4525 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1201.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -69806,6 +69806,12 @@ pub struct MailSyncReport {
     pub anchor_expired: bool,
     #[serde(rename = "copy_done")]
     pub copy_done: bool,
+    #[serde(
+        rename = "attachments_stored",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments_stored: Option<u64>,
 }
 
 /// `oneiron::mail_pack::inbox::MailInboxRequest`.
@@ -69856,6 +69862,25 @@ pub enum MailPresence {
     },
 }
 
+/// `oneiron::mail_pack::wire::MailAttachmentRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MailAttachmentRef {
+    #[serde(rename = "part_id")]
+    pub part_id: String,
+    #[serde(
+        rename = "provider_attachment_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_attachment_id: Option<String>,
+    #[serde(rename = "filename", default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+}
+
 /// `oneiron::mail_pack::inbox::MailInboxItem`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -69882,6 +69907,12 @@ pub struct MailInboxItem {
     pub presence: MailPresence,
     #[serde(rename = "shared_with_reader")]
     pub shared_with_reader: bool,
+    #[serde(
+        rename = "attachments",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments: Option<Vec<MailAttachmentRef>>,
 }
 
 /// `oneiron::mail_pack::inbox::MailInboxPage`.
@@ -69922,6 +69953,53 @@ pub struct MailThreadView {
         skip_serializing_if = "Option::is_none"
     )]
     pub shared_with: Option<Vec<String>>,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentOpenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentOpenRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "part_id")]
+    pub part_id: String,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailAttachmentState {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "stored")]
+    Stored,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentView {
+    #[serde(rename = "state")]
+    pub state: MailAttachmentState,
+    #[serde(rename = "filename", default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(
+        rename = "artifact_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_ref: Option<String>,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceSearchRequest`.
