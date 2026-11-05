@@ -9916,7 +9916,10 @@ fn overlay_unique_text_status(
         for inline in segment.inlines {
             let InlineNode::Text(text) = inline else {
                 // Match the placeholder widths used by extract_inlines_text.
-                if matches!(inline, InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)) {
+                if matches!(
+                    inline,
+                    InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)
+                ) {
                     cursor += 1;
                 }
                 push(&mut rebuilt, inline, segment.status.clone());
