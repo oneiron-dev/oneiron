@@ -20,9 +20,8 @@ impl BodySpool {
     /// Admits a spool reader on the transfer worker, before returning a spool
     /// to any native writer or allocating its reader buffer.
     pub(in crate::api) fn admit_reader(&self) -> Result<MemoryLease, MemoryRefusal> {
-        MachineMemory::process().lease_untimed(SPOOL_PIECE as u64, &|| {
-            self.stopped.load(Ordering::Relaxed)
-        })
+        MachineMemory::process()
+            .lease_untimed(SPOOL_PIECE as u64, &|| self.stopped.load(Ordering::Relaxed))
     }
 
     /// Admits one text sink and one JSON reader before either allocates.
