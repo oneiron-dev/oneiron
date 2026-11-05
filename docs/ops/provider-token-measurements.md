@@ -134,3 +134,35 @@ The real native publisher must run at the physical send. The pending Anthropic
 transport producer in #5613 provides one such source; it is not assumed to be
 merged by this consumer change. A second publisher on a retrying decoder wrapper
 would duplicate those observations and is not added.
+
+## Scoped code-mode call captures
+
+A code-mode model call carrying a native `LiveLeaseState` scope now records
+its actual run meter's observation when that call's run is constructed. This
+happens inside `CodeModeBackend::generate_on`, not when a backend or a
+`ScopeMeter` is opened. The affordability probe therefore records no source.
+The first capture means the scoped host entered its model-call path. It does
+not mean a permit was admitted or that a provider received any bytes. An empty
+meter still reports unknown input and output, not measured zeros.
+
+The scoped receipt sink forwards the original receipt first and takes another
+capture on `Dispatched` and on `Settled` when its lease was dispatched. The
+existing dispatch receipt is emitted when the call ends or is dropped, not at
+its first send. A settled capture includes the native answered or failed-call
+reports recorded before that receipt. The sink forwards budget-hit hooks too.
+The unscoped path still uses its original funded run and receipt sink.
+
+Every capture uses the actual run's guard and the native lease's scope, with
+an owned handle to that same vault. The guard lock is released before the
+separate observation write. A write failure only logs a warning; it does not
+change the original receipt, model answer, caller error, money booking or
+budget watermark. The sink performs no drop-time finalization and uses no
+background queue. Existing entry-end financial booking remains unchanged.
+
+These rows make this executed code-mode source visible before entry-end
+booking, and retain its later reports even if money booking later fails.
+They are still partial historical captures. A failed initial write, a crash
+before a later receipt, other guards, child scopes and unbound or unsupported
+suppliers remain uncovered. Receipt completion is not whole-guard or
+whole-scope finality. Scope, generation and capture order do not attribute
+usage to one native run or decision call, and do not settle RSI reservations.
