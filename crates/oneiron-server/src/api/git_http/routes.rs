@@ -88,8 +88,8 @@ pub(crate) async fn git_info_refs(
     };
     let name = repo_name(&repo).to_owned();
     let request = advertisement_request(&name, service, remote_user(&auth));
-    let read = match git_read_context_for(&auth, &parts.headers) {
-        Ok(read) => read,
+    let (read, push_selection) = match git_read_context_for(&auth, &parts.headers) {
+        Ok(pair) => pair,
         Err(response) => return response,
     };
     run_serve(
@@ -99,6 +99,7 @@ pub(crate) async fn git_info_refs(
         Body::empty(),
         push_caller(&auth),
         read,
+        push_selection,
     )
     .await
 }
@@ -191,11 +192,20 @@ async fn serve_rpc(
         remote_user: remote_user(&auth),
         remote_addr: None,
     };
-    let read = match git_read_context_for(&auth, &parts.headers) {
-        Ok(read) => read,
+    let (read, push_selection) = match git_read_context_for(&auth, &parts.headers) {
+        Ok(pair) => pair,
         Err(response) => return response,
     };
-    run_serve(server, name, request, body, push_caller(&auth), read).await
+    run_serve(
+        server,
+        name,
+        request,
+        body,
+        push_caller(&auth),
+        read,
+        push_selection,
+    )
+    .await
 }
 
 /// Lease endpoints keep the registered-principal bearer gate. The lease is a
@@ -222,8 +232,8 @@ async fn lease_info_refs(
     request
         .query_string
         .push_str(&format!("&checkout-lease={lease}"));
-    let read = match git_read_context_for(&auth, &parts.headers) {
-        Ok(read) => read,
+    let (read, push_selection) = match git_read_context_for(&auth, &parts.headers) {
+        Ok(pair) => pair,
         Err(response) => return response,
     };
     run_serve(
@@ -233,6 +243,7 @@ async fn lease_info_refs(
         Body::empty(),
         push_caller(&auth),
         read,
+        push_selection,
     )
     .await
 }

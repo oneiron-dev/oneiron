@@ -111,6 +111,19 @@ impl Vault {
         self.admit_repo_in_txn(txn, actor, class, repo, None)
     }
 
+    /// The same membership decision for a requested project. The project
+    /// is selection data: the one admitting Grant must itself name it.
+    pub(crate) fn admit_repo_member_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: EntityId,
+    ) -> Result<RepoAdmission> {
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, Some(project), None)
+    }
+
     /// Admits `actor` to the repo handle `repo` as
     /// [`Self::admit_repo_member_in_txn`] does, then judges `target` for a
     /// read under that Grant's bounds: `WrongRepo` when the target names
@@ -173,6 +186,18 @@ impl Vault {
         repo: EntityId,
         ask: Option<(&RepoTarget, RepoAccessIntent)>,
     ) -> Result<RepoAdmission> {
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, None, ask)
+    }
+
+    fn admit_repo_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: Option<EntityId>,
+        ask: Option<(&RepoTarget, RepoAccessIntent)>,
+    ) -> Result<RepoAdmission> {
         let verb = ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb());
         if principal_standing_in_txn(self, txn, actor, class, verb)?.is_none() {
             return Ok(Err(RepoAccessRefusal::NoMembership));
@@ -189,6 +214,7 @@ impl Vault {
                 continue;
             };
             if bounds.repo != repo
+                || project.is_some_and(|project| bounds.project != project)
                 || grant.member_ref != actor
                 || !grant.confers_at(now)
                 || !owners.contains(&standing.delegated_by)
