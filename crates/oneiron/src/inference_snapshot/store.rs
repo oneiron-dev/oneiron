@@ -128,6 +128,34 @@ fn same_session(a: &SnapshotManifest, b: &SnapshotManifest) -> bool {
         && a.compatibility == b.compatibility
 }
 
+/// Reads a canonical-sized body, rejecting a short file or an extra byte.
+fn read_body(path: &Path, expected: u64) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if metadata.is_file() && metadata.len() != expected {
+        return Ok(None);
+    }
+    let bytes = usize::try_from(expected).map_err(|_| ErrorKind::OutOfMemory)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(bytes)?;
+    body.resize(bytes, 0u8);
+    if let Err(error) = file.read_exact(&mut body) {
+        return if error.kind() == ErrorKind::UnexpectedEof {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    let mut extra = [0u8; 1];
+    match file.read_exact(&mut extra) {
+        Ok(()) => Ok(None),
+        Err(error) if error.kind() == ErrorKind::UnexpectedEof => Ok(Some(body)),
+        Err(error) => Err(error),
+    }
+}
+
 /// Writes `sealed` as `id`'s body file in `dir`: beside its name, synced,
 /// renamed in, and the directory synced.
 fn write_body(dir: &Path, id: &SnapshotId, sealed: &SealedSnapshot<'_>) -> Result<()> {
@@ -363,7 +391,7 @@ impl Vault {
             .store
             .inference_snapshot_dir()
             .join(body_name(&record.id));
-        let body = match fs::read(path) {
+        let body = match read_body(&path, record.sealed_bytes) {
             Ok(body) => body,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Some(None)),
             Err(error) => return Err(error.into()),
@@ -372,6 +400,9 @@ impl Vault {
             return Ok(None);
         };
         let aad = associated_data(&record.id, &record.manifest)?;
+        let Some(body) = body else {
+            return Ok(Some(None));
+        };
         let plaintext = SealedSnapshot::parse(&body)
             .ok()
             .filter(|sealed| {
