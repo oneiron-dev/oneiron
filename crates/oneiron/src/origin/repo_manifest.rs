@@ -460,11 +460,15 @@ impl Vault {
         if held.as_ref() == Some(carried) {
             return Ok(RepoManifestMerge::Held);
         }
-        // Where this host serves the repo, its origin authority row names
-        // the one writer and epoch; read outside the writer, as refresh does,
-        // and from the copy held here, never from what the carried one says.
-        let origin = match &held {
-            Some(held) => self.served_origin_writer(held)?,
+        // Which repo this host serves for the copy held here (never what the
+        // carried one says) is resolved outside the writer: it reads the
+        // object store. Its origin authority row is read inside the writer,
+        // so an owner cutover is never judged from a stale row.
+        let resolved_for = held
+            .as_ref()
+            .map(|held| (held.origin_name.clone(), held.code));
+        let served = match &held {
+            Some(held) => self.served_origin_repo_id(held)?,
             None => None,
         };
         self.with_write_txn_grouped(|txn| {
@@ -479,6 +483,20 @@ impl Vault {
                 if !carried.replaces(&held)? {
                     return Ok(RepoManifestMerge::Held);
                 }
+                // The held copy moved since the repo was resolved: wait for
+                // the next pass to resolve it again.
+                if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
+                    return Ok(RepoManifestMerge::Unproven);
+                }
+                // Where this host serves the repo, a copy keeps the served
+                // name, so refresh and later merges still judge it here.
+                if served.is_some() && carried.origin_name != held.origin_name {
+                    return Ok(RepoManifestMerge::Unproven);
+                }
+                let origin = match served {
+                    Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
+                    None => None,
+                };
                 if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
                     return Ok(RepoManifestMerge::Unproven);
                 }
@@ -526,7 +544,7 @@ impl Vault {
     /// Whether `manifest`'s writer is proven here (FIX 12765, Engine 02:54
     /// A3): its signature verifies under the key of a machine this vault's
     /// own authority fold trusts now, and, where this host serves the repo
-    /// (`origin`, its row's writer and epoch), that machine is the row's
+    /// (`origin`, its authority row in `txn`), that machine is the row's
     /// writer at exactly the manifest's epoch. A foreign or unsigned writer
     /// is not proven, and its copy waits.
     #[cfg(feature = "sync")]
@@ -534,7 +552,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         manifest: &RepoManifest,
-        origin: Option<&(String, u64)>,
+        origin: Option<&crate::origin::residence::OriginAuthority>,
     ) -> Result<bool> {
         let Some(writer) = &manifest.writer else {
             return Ok(false);
@@ -562,9 +580,8 @@ impl Vault {
         {
             return Ok(false);
         }
-        Ok(origin.is_none_or(|(row_writer, row_epoch)| {
-            *row_writer == writer.machine.to_hex() && *row_epoch == manifest.epoch
-        }))
+        Ok(origin
+            .is_none_or(|row| row.writer == writer.machine.to_hex() && row.epoch == manifest.epoch))
     }
 
     /// The raw manifest held under `portable` when it actually conflicts with

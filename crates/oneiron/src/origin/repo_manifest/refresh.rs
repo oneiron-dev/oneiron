@@ -165,15 +165,16 @@ impl Vault {
             .is_ok_and(|stored| stored == dir))
     }
 
-    /// The writer and epoch this host's origin authority row names for the
-    /// repo `manifest` names, where this host serves that repo for its CODE
-    /// anchor (FIX 12765): the one refs writer a carried copy must come
-    /// from here. `None` where this host serves no such repo or has no row.
+    /// The authority key of the repo `manifest` names, where this host
+    /// serves that repo for its CODE anchor (FIX 12765): its origin
+    /// authority row, read in the transaction that would replace the
+    /// manifest, names the one refs writer a carried copy must come from
+    /// here. `None` where this host serves no such repo.
     #[cfg(feature = "sync")]
-    pub(super) fn served_origin_writer(
+    pub(super) fn served_origin_repo_id(
         &self,
         manifest: &super::RepoManifest,
-    ) -> Result<Option<(String, u64)>> {
+    ) -> Result<Option<EntityId>> {
         let Some(name) = manifest.origin_name.as_deref() else {
             return Ok(None);
         };
@@ -183,13 +184,7 @@ impl Vault {
         if !dir.exists() || !self.code_serves_dir(manifest.code, &dir)? {
             return Ok(None);
         }
-        Ok(match self.origin_host_authority(name)? {
-            OriginHostAuthority::Held(lease) => Some((lease.writer().to_owned(), lease.epoch())),
-            OriginHostAuthority::Elsewhere(row)
-            | OriginHostAuthority::Mirror(row)
-            | OriginHostAuthority::WriterErased(row) => Some((row.writer, row.epoch)),
-            OriginHostAuthority::Unconfigured => None,
-        })
+        self.served_repo_id(&dir).map(Some)
     }
 
     /// Refreshes each standing manifest that names served repo
