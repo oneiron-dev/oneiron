@@ -69,6 +69,11 @@ impl HostLegalConnection {
         };
         let request_digest = request.digest()?;
         let mut transcript = blake3::Hasher::new();
+        // Custody BEFORE source snapshot/writer. Keep exact bytes pinned and
+        // linearize with destructive source writers until durable HOST ack.
+        let _custody = vault.store.gate_custody_read_guard()?;
+        let txn = vault.store.env.write_txn()?;
+        check()?;
         frame(
             &mut self.stream,
             &mut transcript,
@@ -77,10 +82,6 @@ impl HostLegalConnection {
             0,
             &request_digest,
         )?;
-        // Custody BEFORE source snapshot/writer. Keep exact bytes pinned and
-        // linearize with destructive source writers until durable HOST ack.
-        let _custody = vault.store.gate_custody_read_guard()?;
-        let txn = vault.store.env.write_txn()?;
         let mut components = 0_u64;
         let mut plaintext_bytes = 0_u64;
         let mut descriptors = blake3::Hasher::new();

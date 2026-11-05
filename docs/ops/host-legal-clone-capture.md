@@ -32,8 +32,11 @@ permission to copy another family. Ordinary claim keys stay in native custody;
 only the opened source bytes are re-encrypted to the independent host key.
 
 The collector takes the native custody guard before its source writer snapshot.
-It keeps both until the same host acknowledges the exact request and ciphertext
-transcript after durable publication. The source transaction writes nothing and
+Only after it holds that writer and rechecks stop and the actual order term does
+it send `Accepted`. This pins that source snapshot; it is not a complete clone
+or independent legal-order authority. The collector keeps both guards until
+the same host acknowledges the exact request and ciphertext transcript after
+durable publication. The source transaction writes nothing and
 aborts after the acknowledgement. Stop and the actual order term are checked
 throughout capture. Managed shutdown must close every accepted socket, then
 join its blocking worker before closing the vault.
