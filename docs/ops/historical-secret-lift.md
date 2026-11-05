@@ -36,6 +36,14 @@ A repo-mutation proposal's source is its own same-writer admitted journal CLAIM 
 its native writer admits that CLAIM in the same transaction before storing the proposal
 row keyed by that claim id, and landing requires the same claim id, predicate and producer.
 No source is assigned to repo-mutation oplog or snapshot hash keys.
+An LFS object's source is the manifest ASSET in its actual live native object record,
+read in the same transaction as the census, outcome, retry or proposal projection.
+The native writer admits that ASSET and binds the object record to it in one transaction.
+The OID is a content hash, not an entity id; chunk ASSETs are not substituted for the
+manifest-defined object's source. Missing, deleted or undecodable object records remain
+unknown. Booked contribution sources survive the object's deletion, but a proposal has no
+stored source: once its object record is gone, even a closed proposal passes as unknown.
+No historical source is reconstructed from a hash, attachment owner or aggregate count.
 The same verified mapping projects pending retry counts and newly booked
 contribution rows. Existing unmapped contributions are not reattributed. Other attempt, side-row and carrier
 sources remain unmapped and pass unchanged; this is not a complete source

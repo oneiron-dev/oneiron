@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::{LiftCounts, LiftFamily, carriers, records};
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -26,12 +27,17 @@ struct Contribution {
     counts: LiftCounts,
 }
 
-/// Only keys whose producer contract names the source entity are mapped.
-pub(super) fn source(family: LiftFamily, key: &[u8]) -> Option<EntityId> {
+/// The source named by the native key or its same-snapshot object binding.
+pub(super) fn source_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    family: LiftFamily,
+    key: &[u8],
+) -> Result<Option<EntityId>> {
     match family {
-        LiftFamily::Records => records::record_id(key),
-        LiftFamily::Carriers => carriers::source(key),
-        LiftFamily::Attempts | LiftFamily::SideRows => None,
+        LiftFamily::Records => Ok(records::record_id(key)),
+        LiftFamily::Carriers => carriers::source_in_txn(vault, txn, key),
+        LiftFamily::Attempts | LiftFamily::SideRows => Ok(None),
     }
 }
 
