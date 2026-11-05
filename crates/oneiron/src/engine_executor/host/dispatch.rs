@@ -130,6 +130,7 @@ impl RecordingJsHost<'_, '_> {
                     effect: SelfEffect::SkillsCall,
                     error,
                     code: None,
+                    disk_floor: None,
                 }),
                 None,
             )
@@ -228,16 +229,24 @@ impl RecordingJsHost<'_, '_> {
             Err(Error::Code(CodeError::CodeStepCancelled)) => {
                 failed(CodeError::CodeStepCancelled.to_string()).0
             }
-            Err(error @ Error::Code(CodeError::SandboxProposalDiskFloor { .. })) => {
-                SelfDispatchOutcome::Failed(SelfFailedResult {
-                    effect: SelfEffect::SkillsCall,
-                    error: error.to_string(),
-                    code: Some(
-                        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
-                            .to_owned(),
-                    ),
-                })
-            }
+            Err(
+                error @ Error::Code(CodeError::SandboxProposalDiskFloor {
+                    needed,
+                    available,
+                    reserve,
+                }),
+            ) => SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::SkillsCall,
+                error: error.to_string(),
+                code: Some(
+                    oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR.to_owned(),
+                ),
+                disk_floor: Some(crate::code_run::SelfSandboxProposalDiskFloor {
+                    needed,
+                    available,
+                    reserve,
+                }),
+            }),
             Err(error) => failed(error.to_string()).0,
         };
         // The post chain reads the answer as the guest gets it: a large one
@@ -292,6 +301,7 @@ impl RecordingJsHost<'_, '_> {
                         effect: call.effect(),
                         error: PROGRAM_RESUME_HELD.to_owned(),
                         code: None,
+                        disk_floor: None,
                     });
                     return Ok(self.respond(outcome, None));
                 }
@@ -343,6 +353,7 @@ impl RecordingJsHost<'_, '_> {
                 effect: call.effect(),
                 error: error.to_owned(),
                 code: None,
+                disk_floor: None,
             });
             let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
@@ -474,18 +485,21 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
             effect: call.effect(),
             error: err.to_string(),
             code: None,
+            disk_floor: None,
         })),
         // A refusal names its bound: the guest reads what it can act on.
         Error::Refused(_) => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: call.effect(),
             error: err.to_string(),
             code: None,
+            disk_floor: None,
         })),
         _ if records_failed_effect(call.effect()) => {
             Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: err.to_string(),
                 code: None,
+                disk_floor: None,
             }))
         }
         _ => None,

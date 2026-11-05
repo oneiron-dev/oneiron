@@ -120,7 +120,14 @@ impl DeviceSyncHost {
     /// says, or `None` with the one line that says why.
     fn dial(server: &SyncServer, config: &ServeConfig, source: EnrolmentSource) -> Option<Dial> {
         match Dial::resolve(server, config, source) {
-            Ok(Some(dial)) => Some(dial),
+            Ok(Some(dial)) => {
+                if let Err(error) = server.vault.record_configured_device_residence(
+                    oneiron::sync::SyncClientConfig::default().residence_mode,
+                ) {
+                    tracing::warn!(%error, "device sync residence could not be recorded");
+                }
+                Some(dial)
+            }
             Ok(None) => {
                 server
                     .vault
