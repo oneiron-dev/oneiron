@@ -953,6 +953,16 @@ impl SealBackend for AskedBackend {
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
+        let decode_cost = read_cost(&reply.value).map_err(|_| BackendError::Rejected {
+            code: BackendRejectCode::InvalidResponse,
+        })?;
+        let memory = AskedMemory {
+            asks: Arc::clone(&self.asks),
+        };
+        match memory.grow(decode_cost) {
+            Ok(()) | Err(SealMemoryRefusal::Unavailable) => {}
+            Err(refusal) => return Err(BackendError::Memory(refusal)),
+        }
         let answer: IdentityAnswer =
             from_value(&reply.value, "identity").map_err(|_| BackendError::Rejected {
                 code: BackendRejectCode::InvalidResponse,

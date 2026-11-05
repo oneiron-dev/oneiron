@@ -38,3 +38,23 @@ DER owner and copy. It is not a whole-heap or pre-admitted-reply claim.
 Identity bytes, algorithm, production identity-ask count, signing requests,
 certificate validation and the moving call clock are unchanged. No size bound,
 timeout, configuration option, protocol change or migration is added.
+
+## Initial identity reply decoding
+
+Before decoding the initial identity answer, the process backend reserves the
+protocol codec's `read_cost` for its encoded byte vector and typed decoded
+identity through the same call's `AskedMemory` service. This is before signing
+starts. It creates no new provider, operation ledger or retained DER cache.
+The existing argument-decoding leniency for an unavailable service is retained;
+other resource refusals take the existing typed `BackendError::Memory` route at
+`BackendSign`, not invalid identity, backend rejection or profile downgrade.
+Ordinary codec errors still report an invalid response.
+
+The reservation follows the process host's existing conservative lifetime:
+granted bytes stay reserved until call end, even after temporary buffers drop.
+The decoded identity still moves to native assembly, where its existing retained
+hold remains. This does not establish peak-exact accounting or replace that hold.
+The codec's own `Value` measurement/encoding traversal stack, possible chain
+conversion allocation, allocator capacity slack, the original reply envelope and
+other backend replies remain outside this slice. In particular it adds no
+memory wait or refusal after `seal.sign` may have issued a signature.
