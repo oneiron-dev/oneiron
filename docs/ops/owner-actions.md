@@ -76,12 +76,16 @@ An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps th
 canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
 use a separate automatic selection. When an entity's known world dependencies are all resolved
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
-and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
-known Off worlds' window snapshots and durable window updates. Shared document proposals keep
-their other owners' fragments. Authority-log rows and non-payload links stay intact.
+and the document rows the native checkpoint getter assigns wholly to it. Attachment occurrence
+rows whose native body getter binds every part to that record are also left out, including
+their body descriptors and digest-holder rows, before body files are counted. A shared body
+file still travels when another included row names it; its digest is never a world identity.
+The selection also leaves out known Off worlds' window snapshots and durable window updates.
+Shared document proposals keep their other owners' fragments. Authority-log rows and
+non-payload links stay intact.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
-Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
+Unknown or mixed world placement keeps its existing behavior. Other body or response references,
 queued or mixed carriers and exterior custody publication still need their own world
 projection. The read setting **One machine** alone does not exclude a sealed backup.
 

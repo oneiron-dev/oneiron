@@ -62,7 +62,23 @@ impl Selection {
             // Reuse the native head/NOTE marker/birth/fork associations and its
             // shared-owner verdict. A document slot is never an entity guess.
             let documents = crate::entity_doc::checkpoint::capture(&vault.store, txn)?;
-            out.document_rows(&documents);
+            out.captured_rows(&documents);
+
+            // The native body getter binds each occurrence part to the
+            // record that actually holds it, not to its shared digest.
+            let bodies = crate::provenance::body::checkpoint::capture(&vault.store, txn)?;
+            for owner in bodies.owners() {
+                if !owner.rows.is_empty()
+                    && owner.rows.iter().all(|part| {
+                        owner.dependencies.iter().any(|dependency| {
+                            dependency.at == *part.at() && !out.keeps_owner(dependency.on)
+                        })
+                    })
+                {
+                    out.owners.insert(owner.owner());
+                }
+            }
+            out.captured_rows(&bodies);
         }
         Ok(out)
     }
@@ -107,9 +123,9 @@ impl Selection {
         true
     }
 
-    /// A whole native document row leaves only when every part belongs to an
-    /// excluded entity. A shared proposal retains its other owners' fragments.
-    fn document_rows(&mut self, captured: &Captured) {
+    /// A whole native row leaves only when every part belongs to an excluded
+    /// owner. A shared row retains its other owners' fragments.
+    fn captured_rows(&mut self, captured: &Captured) {
         let mut excluded = BTreeMap::<(RowDb, Vec<u8>), bool>::new();
         let mut note = |at: &RowLocator, off: bool| {
             excluded
@@ -124,8 +140,8 @@ impl Selection {
             }
         }
         for row in &captured.unclassified {
-            // This getter's hint comes from the same native slot/fork join,
-            // including a known owner's shallow, unsplittable document group.
+            // Only the getter's native owner hint can exclude an unsplittable
+            // row. An unknown owner leaves the raw row in the image.
             note(
                 &row.at,
                 row.owner.is_some_and(|owner| !self.keeps_owner(owner)),
