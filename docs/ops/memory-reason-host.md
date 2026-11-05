@@ -92,6 +92,24 @@ composition frames and pins, provider scratch and allocator overhead are not
 covered by this owner. Full working-set admission and Q remain open; no runtime,
 peak-memory or no-hang result is claimed.
 
+## Retained host pins
+
+The production host keeps its rerank and composition pins in a private owner
+through their actual model calls. Its lease uses the same server memory line
+and records the actual pin-vector backing and owned text-string capacities
+once. The original composition cohort stays owned through all whole, map and
+reduction passes. Reduction producer cohorts keep their existing ordered pin
+clones; those distinct vector and string allocations have their own per-pass
+owner. Each owner's pins and text drop before its charge, including errors.
+
+These are charges after allocation, not before-growth admission. Existing
+filtered text, pinned identity/hash checks, destination admission, source and
+citation cohorts, usage and reduction progress are unchanged. Host raw read
+bodies and reference/revision/hash scratch, composition values and drafts,
+model-request copies, provider storage and allocator overhead remain outside
+these owners. This is not full working-set admission or Q, and it adds no
+memory growth wait, refusal, cap, default or timer.
+
 ## Framed source projection
 
 Evidence collection uses the existing native row-frame geometry under one
