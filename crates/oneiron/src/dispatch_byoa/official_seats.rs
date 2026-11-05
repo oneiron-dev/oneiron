@@ -47,11 +47,18 @@ use super::error::{
 };
 use super::seat::{SeatIdentity, hosted_seat_bound};
 
-/// Sign in with ChatGPT authorize endpoint (OpenAI's public OAuth host).
-pub const SIWC_AUTHORIZE_ENDPOINT: &str = "https://auth.openai.com/oauth/authorize";
+/// Sign in with ChatGPT authorize endpoint for open-source clients.
+pub const SIWC_AUTHORIZE_ENDPOINT: &str = "https://auth.openai.com/api/accounts/authorize";
 
-/// Responses API base a Sign in with ChatGPT seat calls.
+/// Responses API base a Sign in with ChatGPT seat calls and requests access to.
 pub const SIWC_RESPONSES_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// OpenAI's first-time registration entrypoint, not an issued exchange client id.
+pub const SIWC_DYNAMIC_AGENT_CLIENT: &str = "dynamic_agent_client";
+
+/// OpenAI's direct-token sign-in scope, unless the caller supplies its own.
+pub const SIWC_DEFAULT_SCOPE: &str =
+    "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 
 /// Anthropic API base behind an approved Agent-SDK seat.
 pub const ANTHROPIC_API_BASE_URL: &str = "https://api.anthropic.com";
@@ -760,9 +767,10 @@ pub fn pkce_s256_challenge(verifier: &str) -> ByoaResult<String> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest))
 }
 
-/// One Sign in with ChatGPT authorize request. Our own client registration
-/// (open dynamic registration for local apps); no client secret exists in a
-/// PKCE public-client flow, and no token is requested by this type.
+/// One Sign in with ChatGPT authorize request. Initial registration uses
+/// [`SIWC_DYNAMIC_AGENT_CLIENT`]; later sign-ins reuse the issued client id.
+/// The caller retains its fresh state, nonce and verifier, its exact loopback
+/// URI, and the stable host id. This type neither exchanges nor stores tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiwcAuthorizeRequest {
     pub client_id: String,
@@ -770,6 +778,13 @@ pub struct SiwcAuthorizeRequest {
     /// From [`pkce_s256_challenge`]; the verifier stays with the person.
     pub code_challenge: String,
     pub state: String,
+    /// A fresh OIDC nonce, kept for later ID-token validation.
+    pub nonce: String,
+    /// The same host's stable identifier, reused across its sign-ins.
+    pub ext_agent_host_id: String,
+    /// The app's actual name, required and sent only for initial registration.
+    pub agent_name_hint: Option<String>,
+    /// An explicit scope override, or [`SIWC_DEFAULT_SCOPE`] when absent.
     pub scope: Option<String>,
 }
 
@@ -789,34 +804,47 @@ fn percent_encode(value: &str) -> String {
 /// Builds the browser URL the person opens to consent. The code-for-token
 /// exchange that follows is the local runtime's: tokens persist only there,
 /// under the person's control, and the seat afterwards names that store by
-/// custody handle.
+/// custody handle. A URL alone is not a completed or validated login.
 ///
 /// # Errors
-/// Refuses empty or unprintable request fields.
+/// Refuses empty or unprintable request fields, or initial registration
+/// without the app's name hint.
 pub fn siwc_authorize_url(request: &SiwcAuthorizeRequest) -> ByoaResult<String> {
     for field in [
         &request.client_id,
         &request.redirect_uri,
         &request.code_challenge,
         &request.state,
+        &request.nonce,
+        &request.ext_agent_host_id,
     ] {
         if !check_ref(field, 2048) {
             return Err(invalid(ERR_SEAT_SPEC));
         }
     }
+    let scope = request.scope.as_deref().unwrap_or(SIWC_DEFAULT_SCOPE);
+    if !check_ref(scope, 512) {
+        return Err(invalid(ERR_SEAT_SPEC));
+    }
     let mut url = format!(
-        "{SIWC_AUTHORIZE_ENDPOINT}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
+        "{SIWC_AUTHORIZE_ENDPOINT}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}&nonce={}&ext_agent_host_id={}&resource={}&scope={}",
         percent_encode(&request.client_id),
         percent_encode(&request.redirect_uri),
         percent_encode(&request.code_challenge),
         percent_encode(&request.state),
+        percent_encode(&request.nonce),
+        percent_encode(&request.ext_agent_host_id),
+        percent_encode(SIWC_RESPONSES_BASE_URL),
+        percent_encode(scope),
     );
-    if let Some(scope) = &request.scope {
-        if !check_ref(scope, 512) {
-            return Err(invalid(ERR_SEAT_SPEC));
-        }
-        url.push_str("&scope=");
-        url.push_str(&percent_encode(scope));
+    if request.client_id == SIWC_DYNAMIC_AGENT_CLIENT {
+        let name = request
+            .agent_name_hint
+            .as_deref()
+            .filter(|name| check_ref(name, 2048))
+            .ok_or_else(|| invalid(ERR_SEAT_SPEC))?;
+        url.push_str("&agent_name_hint=");
+        url.push_str(&percent_encode(name));
     }
     Ok(url)
 }
