@@ -29,7 +29,8 @@ editable whitelist, push permission or delegated run access. Committed-only
 checkout and mutation calls still require their actual commit witness.
 
 Capture file buffers use the process memory admission line and keep their lease
-through the snapshot writer. The door adds no fixed file-count, file-byte or total
-byte limit and no new wait timeout. This is not a claim that all pre-existing
+through the snapshot writer. Incremental growth never waits while retaining
+earlier buffers: pressure returns a memory refusal and drops this capture.
+The door adds no fixed file-count, file-byte or total byte limit and no timed wait. This is not a claim that all pre-existing
 indexing, parser or response allocations are covered by that lease. The separate
 repo-mutation recovery capture retains its existing bounds and encoding.

@@ -13,7 +13,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, GateError, Result};
-use crate::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
+use crate::host_memory::{MachineMemory, MemoryLease};
 use crate::temporal::TimeRange;
 
 impl Vault {
@@ -49,10 +49,7 @@ impl Vault {
         crate::repo_mutation::visit_code_capture_files(self, &root, |path, relative, metadata| {
             let (data, mode) = if metadata.file_type().is_symlink() {
                 let reserved = metadata.len();
-                capture
-                    .memory
-                    .grow_untimed(reserved, &|| false)
-                    .map_err(memory_refused)?;
+                grow_memory(&mut capture.memory, reserved)?;
                 let target = fs::read_link(path)?
                     .into_os_string()
                     .into_string()
@@ -121,10 +118,15 @@ struct CapturedFiles {
     memory: MemoryLease,
 }
 
-fn memory_refused(refusal: MemoryRefusal) -> Error {
-    Error::Code(CodeError::CodebaseCaptureMemoryRefused {
-        detail: format!("{refusal:?}"),
-    })
+/// Never wait behind another request while retaining buffers it may need.
+fn grow_memory(memory: &mut MemoryLease, more: u64) -> Result<()> {
+    memory
+        .grow(more, std::time::Instant::now(), &|| false)
+        .map_err(|refusal| {
+            Error::Code(CodeError::CodebaseCaptureMemoryRefused {
+                detail: format!("{refusal:?}"),
+            })
+        })
 }
 
 /// Reads a growing file without allocating its next buffer before admission.
@@ -170,9 +172,7 @@ fn read_file(path: &Path, expected: u64, memory: &mut MemoryLease) -> Result<Vec
 
 fn grow_buffer(bytes: &mut Vec<u8>, more: usize, memory: &mut MemoryLease) -> Result<()> {
     let old = bytes.capacity();
-    memory
-        .grow_untimed(more as u64, &|| false)
-        .map_err(memory_refused)?;
+    grow_memory(memory, more as u64)?;
     bytes.try_reserve_exact(more).map_err(|_| {
         Error::Code(CodeError::CodebaseCaptureMemoryRefused {
             detail: "allocation failed".to_owned(),
