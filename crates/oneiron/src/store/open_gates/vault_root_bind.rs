@@ -34,6 +34,7 @@ use super::manifest_storage_gates::vault_root_open_guard;
 use super::manifest_storage_gates::{OwnedEnv, RegisteredPath};
 #[cfg(target_os = "linux")]
 use super::open_version_keys::MAX_DBS;
+use super::open_version_keys::OpenStorePath;
 use crate::error::StoreError;
 
 #[derive(Clone, Debug)]
@@ -747,13 +748,14 @@ pub(super) fn preflight_rejected_aliased_root(error: &Error) -> bool {
 }
 
 pub(super) fn duplicate_open_root(
-    open_paths: &HashMap<PathBuf, Option<VaultRootIdentity>>,
+    open_paths: &HashMap<PathBuf, OpenStorePath>,
     path: &Path,
     identity: &VaultRootIdentity,
 ) -> Option<PathBuf> {
-    open_paths.iter().find_map(|(open_path, open_identity)| {
+    open_paths.iter().find_map(|(open_path, open)| {
         (open_path != path
-            && open_identity
+            && open
+                .identity
                 .as_ref()
                 .is_some_and(|open| open.overlaps(identity)))
         .then(|| open_path.clone())

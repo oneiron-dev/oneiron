@@ -214,7 +214,14 @@ pub(super) static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) static VAULT_ROOT_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
-pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentity>>>> =
+/// One open store's place in [`OPEN_STORE_PATHS`]: the root identity it
+/// holds, and the vault handles its leader holds (FIX 12316).
+pub(super) struct OpenStorePath {
+    pub(super) identity: Option<VaultRootIdentity>,
+    pub(super) holds: crate::store::LeaderHolds,
+}
+
+pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, OpenStorePath>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] =
