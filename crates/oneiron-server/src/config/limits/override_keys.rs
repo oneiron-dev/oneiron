@@ -168,6 +168,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) community_cache_bytes: Option<u64>,
     pub(in crate::config) connector_manifest_entries: Option<u64>,
     pub(in crate::config) requested_result_rows: Option<u64>,
+    pub(in crate::config) embedding_dimensions: Option<u64>,
     pub(in crate::config) context_edge_hops: Option<u64>,
     pub(in crate::config) context_neighbors: Option<u64>,
     pub(in crate::config) context_selected_edges: Option<u64>,

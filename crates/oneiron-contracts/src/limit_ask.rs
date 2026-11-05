@@ -527,6 +527,10 @@ pub enum EngineLimit {
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Embedding vector dimensions one vault opened with, measured once
+    /// where its host serves it. Past it the row asks whether everything
+    /// is okay and the vault serves as opened.
+    EmbeddingDimensions,
     /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
     /// Past it the row asks whether everything is okay and the pack is
     /// still served whole; nothing is refused or clamped.

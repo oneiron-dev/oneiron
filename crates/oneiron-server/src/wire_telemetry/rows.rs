@@ -235,6 +235,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ConnectorManifestEntries),
         Self::Engine(EngineLimit::SharedMergeEvidenceRows),
         Self::Engine(EngineLimit::RequestedResultRows),
+        Self::Engine(EngineLimit::EmbeddingDimensions),
         Self::Engine(EngineLimit::ContextEdgeHops),
         Self::Engine(EngineLimit::ContextNeighbors),
         Self::Engine(EngineLimit::ContextSelectedEdges),
