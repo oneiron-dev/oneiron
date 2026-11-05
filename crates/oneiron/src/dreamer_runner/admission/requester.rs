@@ -11,7 +11,8 @@ impl DreamerRunnerStore<'_> {
     /// withdrawn for, as `lease_owner`: the TASK runner's queued turn taken
     /// first (Rule 5), then in a writer of its own the try is judged again,
     /// claimed and taken, its TASK fails not to be retried, the try fails
-    /// for good with the typed reason, and its step receipts go. Other
+    /// for good with the typed reason, its retained budget is settled and
+    /// its step receipts go. Other
     /// kinds never reach here; a row that is no withdrawn queued
     /// realization is left as it is.
     pub(super) fn end_withdrawn_task_realize(
@@ -81,6 +82,28 @@ impl DreamerRunnerStore<'_> {
                     reason: reason.to_owned(),
                     now,
                 },
+            )?;
+            let budget_lines = BUDGET_RESERVATION
+                .scan(&self.vault.store, &*txn)?
+                .into_iter()
+                .filter(|(key, _)| key.attempt_id == attempt.id)
+                .map(|(key, reservation)| {
+                    if key.budget_id != reservation.budget_id
+                        || reservation.attempt_id != attempt.id
+                    {
+                        return Err(invalid_dreamer_runner(
+                            "dreamer budget reservation key/body mismatch",
+                        ));
+                    }
+                    Ok(key.budget_id)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            crate::dreamer_wake::owed::reconcile_ended_attempt_in_txn(
+                self.vault,
+                txn,
+                attempt.id,
+                &budget_lines,
+                now,
             )?;
             self.cleanup_step_receipts_in_txn(txn, attempt.id)?;
             Ok(Some(attempt))
