@@ -223,12 +223,12 @@ impl StalwartClient {
     }
 
     /// What the server's own record says became of the send whose draft
-    /// carries `message_id` in `mailbox` (FIX 8814 follow-up). A submission
-    /// of the draft, or a draft its submission moved to Sent (`$draft`
-    /// cleared), is a delivery; a draft still marked `$draft` in no
-    /// submission was never sent. No draft at all proves nothing (a sent
-    /// message can be deleted), nor does an ambiguous Message-ID or a failed
-    /// read: `Unknown`.
+    /// carries `message_id` in `mailbox` (FIX 8814 follow-up). Only a
+    /// submission of the draft, one not cancelled, proves the send:
+    /// `Delivered`. Nothing here proves a send never went, since an
+    /// unanswered submission may still be landing and Sent membership or a
+    /// cleared `$draft` can be set by any client: every other answer, an
+    /// ambiguous Message-ID and a failed read are `Unknown` (REVIEW-5934).
     fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str) -> DeliveryReadBack {
         self.read_back_checked(mailbox, message_id)
             .unwrap_or(DeliveryReadBack::Unknown)
@@ -256,42 +256,23 @@ impl StalwartClient {
         let submissions = self.call(
             "EmailSubmission/query",
             json!({
-                "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}, "limit": 1
+                "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}
             }),
         )?;
-        if !array(&submissions, "ids")?.is_empty() {
-            return Ok(DeliveryReadBack::Delivered);
-        }
-        let emails = self.call(
-            "Email/get",
-            json!({
-                "accountId": &mailbox.account_id, "ids": [&email_id],
-                "properties": ["keywords", "mailboxIds"]
-            }),
-        )?;
-        let [email] = array(&emails, "list")?.as_slice() else {
+        let ids = array(&submissions, "ids")?;
+        if ids.is_empty() {
             return Ok(DeliveryReadBack::Unknown);
-        };
-        let boxes = self.mailboxes(mailbox)?;
-        let role_id = |role: &str| -> Option<String> {
-            boxes
-                .iter()
-                .find(|row| row.get("role").and_then(Value::as_str) == Some(role))
-                .and_then(|row| row.get("id").and_then(Value::as_str))
-                .map(str::to_owned)
-        };
-        let held_in = |role: &str| {
-            role_id(role).is_some_and(|id| {
-                email
-                    .pointer(&format!("/mailboxIds/{id}"))
-                    .and_then(Value::as_bool)
-                    == Some(true)
-            })
-        };
-        let draft = email.pointer("/keywords/$draft").and_then(Value::as_bool) == Some(true);
-        Ok(if draft && held_in("drafts") {
-            DeliveryReadBack::NotDelivered
-        } else if !draft && held_in("sent") {
+        }
+        let held = self.call(
+            "EmailSubmission/get",
+            json!({
+                "accountId": &mailbox.account_id, "ids": ids, "properties": ["undoStatus"]
+            }),
+        )?;
+        let sent = array(&held, "list")?.iter().any(|submission| {
+            submission.get("undoStatus").and_then(Value::as_str) != Some("canceled")
+        });
+        Ok(if sent {
             DeliveryReadBack::Delivered
         } else {
             DeliveryReadBack::Unknown
