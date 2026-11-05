@@ -124,6 +124,9 @@ impl SyncConnection {
         while let Some(update) = updates.first() {
             match client.update_verdict(&update.window_key, &update.update_bytes) {
                 UpdateVerdict::Withheld => {
+                    // A home that may not read the world takes it sealed,
+                    // when the world syncs sealed (DEC-0005 fix 8).
+                    client.relay_withheld_update(&update.window_key, &update.update_bytes);
                     updates.remove(0);
                     continue;
                 }
