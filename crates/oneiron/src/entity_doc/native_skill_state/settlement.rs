@@ -7,8 +7,10 @@ use super::inspect::NativeMapInventory;
 use super::register::{CURRENT, ROOT, read_fact};
 use crate::error::{Error, Result};
 
-/// Called only by the fixed authorized fork-settlement producer with its own
-/// two source inventories. These inventories alone grant no native admission.
+/// Used by the fixed fork-settlement producer and the selected record's scratch
+/// projection with their own two source inventories. The scratch projection is
+/// data until the original record phases admit its whole source. These
+/// inventories alone grant no native admission.
 /// A floor or hidden historical insert is never another selected candidate.
 pub(in crate::entity_doc) fn reconcile_settlement(
     document: &EntityDoc,
