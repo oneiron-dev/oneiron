@@ -465,6 +465,7 @@ impl EngineNativeExecutor<'_> {
             ids,
             handles,
             execution: None,
+            marked_at: mark.marked_at,
         }))
     }
 
@@ -507,6 +508,7 @@ impl EngineNativeExecutor<'_> {
                         kind: None,
                         note: None,
                         outputs: Vec::new(),
+                        marked_at: job.marked_at,
                     }),
                     Err(why) => failed.push((job.fold, why)),
                 },
