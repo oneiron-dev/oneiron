@@ -32,7 +32,7 @@ pub(super) fn guard_storage_owned_body(
                 ));
             }
             request.recheck_final(store, wtxn, id, data)?;
-            let (occurred, learned_at) = request.snapshot().physical_times()?;
+            let (occurred, learned_at, _) = request.snapshot().physical_metadata()?;
             (
                 (entity_type, occurred, learned_at),
                 request.snapshot().physical_body(),

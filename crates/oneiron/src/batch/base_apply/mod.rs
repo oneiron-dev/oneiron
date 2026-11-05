@@ -348,7 +348,9 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
         wtxn,
         &mut ops.ops,
         text_index_trusted,
-        !replay,
+        !replay
+            || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
+                if grant.selected_saver().is_some()),
         mutation_recorded_at,
     )?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
@@ -484,6 +486,7 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
                 entity_type,
                 occurred,
                 learned_at,
+                row_version,
                 data,
                 allow_maintenance,
                 allow_reserved_predicate,
@@ -500,6 +503,7 @@ pub(super) fn apply_ops_with_authority_beside_collecting(
                     entity_type,
                     occurred,
                     learned_at,
+                    row_version,
                     data,
                     allow_maintenance,
                     allow_reserved_predicate,
