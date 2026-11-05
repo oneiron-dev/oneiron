@@ -6,7 +6,7 @@ use crate::error::SealError;
 use crate::memory::{Held, LedgerHold, MemoryLedger, SealMemoryRefusal};
 
 use super::cms_err;
-use super::der::{DerReader, Tlv, tlv};
+use super::der::{DerReader, Tlv};
 use super::oids::{OID_ATTR_SIGNING_CERT_V2, OID_CT_TST_INFO, OID_DATA, OID_SIGNED_DATA};
 use super::policy::{ess_cert_id_v2, parse_attribute};
 
@@ -338,6 +338,37 @@ pub(crate) fn chain_copy(
 
 /// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:
 /// the same content octets under the universal `SET OF` tag.
-pub(crate) fn signed_attrs_signature_input(signer: &ParsedSignerInfo) -> Vec<u8> {
-    tlv(0x31, &signer.signed_attrs_content)
+pub(crate) fn signed_attrs_signature_input(
+    signer: &ParsedSignerInfo,
+    memory: &MemoryLedger,
+) -> Result<Held<Vec<u8>>, SealMemoryRefusal> {
+    let content = &signer.signed_attrs_content;
+    let be = content.len().to_be_bytes();
+    let start = be.iter().position(|b| *b != 0).unwrap_or(be.len() - 1);
+    let significant = &be[start..];
+    let short = content.len() < 0x80;
+    let header = if short { 2 } else { 2 + significant.len() };
+    let total = content
+        .len()
+        .checked_add(header)
+        .ok_or(SealMemoryRefusal::Floor {
+            needed: u64::MAX,
+            available: 0,
+        })?;
+    let hold = memory.hold(total)?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(total)
+        .map_err(|_| SealMemoryRefusal::Floor {
+            needed: u64::try_from(total).unwrap_or(u64::MAX),
+            available: 0,
+        })?;
+    out.push(0x31);
+    if short {
+        out.push(content.len() as u8);
+    } else {
+        out.push(0x80 | significant.len() as u8);
+        out.extend_from_slice(significant);
+    }
+    out.extend_from_slice(content);
+    Ok(Held::new(out, hold))
 }

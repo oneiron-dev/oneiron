@@ -606,7 +606,7 @@ fn verify_signer(
                 && cms::verify_signature_value(
                     a,
                     cert_der,
-                    &cms::signed_attrs_signature_input(signer),
+                    &cms::signed_attrs_signature_input(signer, memory)?,
                     &signer.signature,
                 )
                 .is_ok()

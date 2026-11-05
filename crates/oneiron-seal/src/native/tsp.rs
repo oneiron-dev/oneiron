@@ -203,7 +203,7 @@ pub(crate) fn validate_response(
     if !cms::sig_alg_permitted(tsa_alg, &signer.signature_alg_oid) {
         return Err(ts_err().into());
     }
-    let signing_input = cms::signed_attrs_signature_input(signer);
+    let signing_input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, tsa_idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
@@ -362,7 +362,7 @@ pub(crate) fn validate_token_for_verify(
     if !cms::sig_alg_permitted(alg, &signer.signature_alg_oid) {
         return Err(ts_err().into());
     }
-    let input = cms::signed_attrs_signature_input(signer);
+    let input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);

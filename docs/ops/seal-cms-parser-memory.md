@@ -39,12 +39,25 @@ as before, but returns a parser memory refusal directly instead of converting
 it to an invalid-envelope verdict. Timestamp failover must not consume a
 resource failure as an invalid response.
 
+## Signature input
+
+`signed_attrs_signature_input` rebuilds the same universal SET tag and content
+with the existing canonical short/long DER length formula. Length bytes use only
+the native word's stack representation. The function holds the exact complete
+output length before one fallible vector allocation, then returns the bytes with
+their hold. It allocates no separate length buffer or intermediate content copy.
+
+Both timestamp callers keep this output held through their signature checks.
+CAdES verification builds it only inside the existing permitted-algorithm
+short-circuit. A memory refusal returns before the crypto-result `is_ok()`; it
+never becomes an invalid-signature verdict or a timestamp failover.
+
 ## Scope
 
 This covers retained owned buffers built directly by `parse_cms` and its private
 SignerInfo parser. It does not claim all native or third-party heaps are admitted.
-Policy-field copies, certificate backend decodes, chain copies, and fresh DER
-from `signed_attrs_signature_input` have their own accounting or follow-up work.
+Policy-field copies, certificate backend decodes and chain-copy internals have
+their own accounting or follow-up work.
 The separate borrowed-policy-field change does not need to be imported to use
 this parser change. DER checks, field order, version rules, signature algorithms
 and ordinary invalid-input behavior remain unchanged.
