@@ -429,6 +429,7 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.discard`
 - `vault.off_record.recall`
 - `vault.off_record.notes.create`
+- `vault.off_record.artifacts.save`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
 - `self.off_record.results.list`
