@@ -16,6 +16,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
+mod byte_comparison;
 mod contact_verdict_index;
 mod offers;
 mod row_reuse;
@@ -99,6 +100,16 @@ enum WidenDelta {
 }
 
 pub fn canonical_widen_delta(kind: WidenKind, bound: &GrantBound) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_widen_delta(&mut bytes, kind, bound)?;
+    Ok(bytes)
+}
+
+fn write_widen_delta(
+    writer: &mut impl std::io::Write,
+    kind: WidenKind,
+    bound: &GrantBound,
+) -> Result<()> {
     if (kind == WidenKind::Disclosure) != (bound.domain() == ConsentDomain::Disclosure) {
         return Err(Error::Gate(GateError::InvalidConsentBound(
             "widen kind crosses bound domain",
@@ -109,23 +120,30 @@ pub fn canonical_widen_delta(kind: WidenKind, bound: &GrantBound) -> Result<Vec<
         Value::from(kind.label()),
         encode_bound_value(bound)?,
     ]);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value).map_err(|_| invalid_row())?;
-    Ok(bytes)
+    rmpv::encode::write_value(writer, &value).map_err(|_| invalid_row())
 }
+
 /// The canonical delta of one frozen contact-disclosure offer.
 pub(super) fn contact_disclosure_widen_delta(
     proposal: &ContactDisclosureProposal,
 ) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_contact_disclosure_delta(&mut bytes, proposal)?;
+    Ok(bytes)
+}
+
+fn write_contact_disclosure_delta(
+    writer: &mut impl std::io::Write,
+    proposal: &ContactDisclosureProposal,
+) -> Result<()> {
     let value = Value::Array(vec![
         Value::from(1),
         Value::from(CONTACT_DISCLOSURE_WIDEN_KIND),
         proposal.to_value()?,
     ]);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value).map_err(|_| invalid_row())?;
-    Ok(bytes)
+    rmpv::encode::write_value(writer, &value).map_err(|_| invalid_row())
 }
+
 fn decode_delta(bytes: &[u8]) -> Result<WidenDelta> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_row())?;
@@ -143,7 +161,10 @@ fn decode_delta(bytes: &[u8]) -> Result<WidenDelta> {
     }
     if kind.as_str() == Some(CONTACT_DISCLOSURE_WIDEN_KIND) {
         let proposal = ContactDisclosureProposal::from_value(bound)?;
-        if contact_disclosure_widen_delta(&proposal)? != bytes {
+        drop(parts);
+        let mut comparison = byte_comparison::ByteComparison::new(bytes);
+        write_contact_disclosure_delta(&mut comparison, &proposal)?;
+        if !comparison.is_equal() {
             return Err(invalid_row());
         }
         return Ok(WidenDelta::ContactDisclosure(proposal));
@@ -153,7 +174,10 @@ fn decode_delta(bytes: &[u8]) -> Result<WidenDelta> {
         .and_then(WidenKind::parse)
         .ok_or_else(invalid_row)?;
     let bound = decode_bound_value(bound)?;
-    if canonical_widen_delta(kind, &bound)? != bytes {
+    drop(parts);
+    let mut comparison = byte_comparison::ByteComparison::new(bytes);
+    write_widen_delta(&mut comparison, kind, &bound)?;
+    if !comparison.is_equal() {
         return Err(invalid_row());
     }
     Ok(WidenDelta::Bound(bound))
