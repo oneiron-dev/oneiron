@@ -97,16 +97,23 @@ impl ModelStreams {
                 Err(missing())
             };
         }
+        let terminal =
+            model_stream::retained_terminal_status_as_owner(&server.vault, &owner, stream_key)?;
         let sink = model_stream::sink(Arc::clone(&server.vault), owner, stream_key)?;
+        let stream_ref = sink.stream_ref();
+        let mut bus = LlmEventBus::new(Box::new(sink));
+        if terminal.is_some() {
+            bus.close_without_terminal();
+        }
         let entry = Arc::new(Entry {
             auth: auth.clone(),
             stream_key: stream_key.to_owned(),
-            stream_ref: sink.stream_ref(),
+            stream_ref,
             registry: Arc::downgrade(&self.entries),
             state: Mutex::new(StreamState {
-                status: ModelStreamStatus::Pending,
+                status: terminal.unwrap_or(ModelStreamStatus::Pending),
                 opening: false,
-                bus: LlmEventBus::new(Box::new(sink)),
+                bus,
                 subs: HashMap::new(),
             }),
             stop: Notify::new(),

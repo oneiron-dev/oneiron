@@ -230,6 +230,29 @@ pub fn open_as_owner(
     Ok((opened(id, &row), created))
 }
 
+/// The current durable terminal state for a newly attached transient bus.
+/// A live row says nothing about whether this process still has its producer.
+pub fn retained_terminal_status_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    stream_key: &str,
+) -> MemoryResult<Option<ModelStreamStatus>> {
+    validate_key(stream_key)?;
+    let actor = owner.revalidate(vault)?;
+    let id = identity(actor, stream_key)?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(STREAMS
+        .get(&vault.store, &txn, &id)?
+        .filter(|row| row.actor == actor)
+        .map(|row| status(&row))
+        .filter(|status| {
+            matches!(
+                status,
+                ModelStreamStatus::Finished | ModelStreamStatus::Failed
+            )
+        }))
+}
+
 /// Read this owner's durable terminal without touching a live producer.
 pub fn terminal_as_owner(
     vault: &Vault,
