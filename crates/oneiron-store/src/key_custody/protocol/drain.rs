@@ -79,4 +79,3 @@ pub fn drain_placement(spec: &TargetSpec) -> [u8; 32] {
     }
     *hasher.finalize().as_bytes()
 }
-
