@@ -1,5 +1,5 @@
 //! Whole semantic request bytes, admitted before the raw buffer is allocated.
-//! The decoded query and the transport's small spool buffers are separate owners.
+//! The decoded text is adopted after the parse; transport spool buffers stay separate.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
 use axum::http::{HeaderMap, header};
+use oneiron::host_memory::MemoryLease;
 use serde::de::IgnoredAny;
 
 use super::SemanticSearchRequest;
@@ -25,15 +26,25 @@ impl Drop for CancelOnDrop {
     }
 }
 
+/// The decoded semantic request with the lease that still holds its text.
+///
+/// `params` is declared first so the query `String` frees before the guard
+/// on every drop path.
+pub(super) struct DecodedSemanticBody {
+    pub(super) params: SemanticSearchRequest,
+    pub(super) memory: MemoryLease,
+}
+
 /// Called after the semantic route has admitted the caller. No row ceiling
 /// truncates the body, and no request retains a partial raw buffer while
-/// waiting for the rest of its memory. The complete spool names the one
-/// allocation, not an untrusted Content-Length.
+/// waiting for the rest of its memory. The complete spool names the raw
+/// allocation, not an untrusted Content-Length; the decoded text is adopted
+/// after the parse, not preadmitted.
 pub(super) async fn read(
     server: &SyncServer,
     headers: &HeaderMap,
     body: Body,
-) -> Result<SemanticSearchRequest, ApiError> {
+) -> Result<DecodedSemanticBody, ApiError> {
     let mut probe = Request::new(Body::empty());
     if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
         probe
@@ -73,12 +84,17 @@ pub(super) async fn read(
             raw.resize(length, 0);
             lease.materialized(bytes, raw.capacity() as u64);
             reader.read_exact(&mut raw).map_err(|_| unread())?;
-            let parsed = Json::<SemanticSearchRequest>::from_bytes(&raw)
+            let params = Json::<SemanticSearchRequest>::from_bytes(&raw)
                 .map(|Json(params)| params)
-                .map_err(invalid);
+                .map_err(invalid)?;
+            lease.materialized(0, params.text.capacity() as u64);
+            let raw_actual = raw.capacity() as u64;
             drop(raw);
-            drop(lease);
-            parsed
+            lease.shrink(raw_actual);
+            Ok(DecodedSemanticBody {
+                params,
+                memory: lease,
+            })
         },
     )
     .await

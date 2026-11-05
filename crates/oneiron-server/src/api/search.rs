@@ -860,7 +860,9 @@ pub(crate) async fn search_semantic(
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
-    let params = semantic_body::read(&server, &parts.headers, body).await?;
+    let decoded = semantic_body::read(&server, &parts.headers, body).await?;
+    let _decoded_memory = decoded.memory;
+    let params = decoded.params;
     server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
