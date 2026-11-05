@@ -2282,7 +2282,7 @@ class AttemptLanding(TypedDict):
     status: NotRequired[str | None]
 AttemptCancelReceiptKind = Literal["soft_requested", "landing_accepted", "soft_rejected", "resume_point_recorded", "reserve_spent", "landed", "force_cancelled"]
 CancelStanding = Literal["peer_agent", "healer", "automation", "authority", "none"]
-ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality"]
+ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality", "erased_payload"]
 class AttemptResumePoint(TypedDict):
     marker: str
     artifact_ref: NotRequired[str | None]
@@ -16764,6 +16764,7 @@ class LlmStreamEventReasoningDelta(TypedDict):
 class LlmStreamEventReasoningEnd(TypedDict):
     event: Literal["reasoning_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventToolCallStart(TypedDict):
     event: Literal["tool_call_start"]
     part_id: str
