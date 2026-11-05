@@ -5,6 +5,7 @@
 //! files land as proposals waiting for Keep, as if it had run at once.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use oneiron::edit_settle::{OrganWait, OrganWaitRef, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
@@ -172,14 +173,26 @@ impl Serialize for HeldBody<'_> {
 }
 
 struct WaitEncoding {
-    room: Option<Box<dyn crate::resource_memory::FloorLease>>,
+    room: Option<Arc<dyn crate::resource_memory::SharedFloorLease>>,
     refused: Option<crate::resource_memory::FloorRefusal>,
+    encoded_bytes: u64,
+}
+
+impl Drop for WaitEncoding {
+    fn drop(&mut self) {
+        // submit declares the encoded buffer after this guard; on every exit
+        // the buffer frees first, even when routing moves it into OrganWait.
+        // Cached native buffers may retain the shared lease beyond this job.
+        if let Some(room) = &self.room {
+            room.release_allocated(self.encoded_bytes);
+        }
+    }
 }
 
 impl EncodeScratch for WaitEncoding {
     fn grow(&mut self, bytes: u64) -> Result<(), CodecError> {
         if let Some(room) = &mut self.room
-            && let Err(refused) = room.grow_untimed(bytes, &shutdown::stopping)
+            && let Err(refused) = room.grow_pending_untimed(bytes, &shutdown::stopping)
         {
             self.refused = Some(refused);
             return Err(CodecError::Invalid("held-call encoding admission failed"));
@@ -389,8 +402,9 @@ impl OrganRouter {
             submitter,
         } = job;
         let encoding = RefCell::new(WaitEncoding {
-            room: self.hold_wait_encoding(0)?,
+            room: self.hold_wait_encoding(0)?.map(|room| room.into_shared()),
             refused: None,
+            encoded_bytes: 0,
         });
         let snapshot = HeldCallRef::of(&call, &lent, &encoding);
         let encoded = oneiron_organ_protocol::encoded_len(&snapshot)
@@ -407,6 +421,7 @@ impl OrganRouter {
         encoding
             .borrow_mut()
             .materialized(encoded, held.capacity() as u64);
+        encoding.borrow_mut().encoded_bytes = held.capacity() as u64;
         oneiron_organ_protocol::codec::write_into(&mut held, &snapshot)
             .map_err(|err| encoding.borrow_mut().error(err))?;
         match self.call_with(vault, call, lent, asks)? {
