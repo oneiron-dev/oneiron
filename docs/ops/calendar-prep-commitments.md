@@ -12,12 +12,13 @@ real ledger/storage errors still propagate.
 
 The scoped builder keeps its current PPR run, then uses the native terminal pack
 filter for the serving cut. The existing filter algorithm and cleanup have one
-implementation. A same-transaction projection reads the contact and identity's
-four selected label heads plus each obligation through the actual caller's native
-read lane. A kept PPR candidate is not permission to read these additional rows.
-Withheld labels or commitments do not become raw text. The rendered commitment
-text is decoded from the caller's projected row, not copied from the raw ledger.
-The new items cite their actual commitment and deciding label heads.
+implementation. A same-transaction projection resolves the ledger and admits its
+four deciding CLAIM heads (two contact heads, identity channel and address) through
+the actual caller's native read lane. A kept PPR candidate is not permission to
+read these additional rows. A withheld or future label head drops that attendee's
+ledger slice; a withheld or future commitment drops that entry. Existing PPR items
+remain. The rendered commitment text is decoded from the caller's projected row,
+not copied from the raw ledger. New items cite their commitment and deciding heads.
 
 All new evidence must have been learned by the supplied fire instant. The existing
 eligibility, EVENT/attendee PPR seeds, three-hop walk, 64-candidate PPR limit, nine
@@ -28,5 +29,5 @@ No extra contact-active or send-consent gate is imposed on reading obligations.
 
 This is a direct-contact attendee slice. General attendee-to-contact resolution,
 complete off-record overlay coverage and runtime proof are not claimed. The raw
-builder retains its unrestricted API. No migration, feature flag, configuration or
-special deployment step is needed beyond the engine/server rollout.
+builder retains its unrestricted API. This change adds no migration, feature flag,
+configuration or special deployment step. Deploy the ordinary engine/server update.
