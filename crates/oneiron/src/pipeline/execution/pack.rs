@@ -201,16 +201,20 @@ impl PipelineBuilder<'_> {
         let _ = self
             .vault
             .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
-        let hyde_expansion = match (self.hyde.as_ref(), hyde_query) {
+        // FIX 4451 (L05 YES 11:05): capture the expander id from the SAME
+        // expander whose expansion actually ran, in the arm that ran it. A
+        // configured-but-unused expander (deadline-skipped, unvalidated, or
+        // errored) leaves None: never inferred from configuration.
+        let (hyde_expansion, query_expander_id) = match (self.hyde.as_ref(), hyde_query) {
             (Some((expander, _, _)), Some(query)) => {
                 let expansion = expander.expand(&HydeRequest {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
                 })?;
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
-                Some(expansion)
+                (Some(expansion), Some(expander.id().to_owned()))
             }
-            _ => None,
+            _ => (None, None),
         };
 
         if self.text_search.is_some() {
@@ -521,7 +525,8 @@ impl PipelineBuilder<'_> {
             )
             .with_context(self.retrieval_state.clone(), self.retrieval_turn)
             .with_trace(retrieval_trace)
-            .with_quality(&retrieval_quality);
+            .with_quality(&retrieval_quality)
+            .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;

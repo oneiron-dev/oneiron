@@ -533,6 +533,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// at the engine revision it merged in, with no `Ping` field: a supervisor and
 /// vault use streamed transcripts only with installed engines at or after the
 /// floor. Whole-body signing and verification stay, and this version stays 3.
+///
+/// Published artifact origins (FIX 11004): wake-ledger reports require
+/// `artifact_origins_total` on their head and pages, and paged logical
+/// `artifact_origins` (`vault` or `app` with `artifact_id`). Entries and origins
+/// share the existing page-row bound, digest and complete-report assembly.
+/// The standalone VM wake schedule retains those origins with the acknowledged
+/// report. The vault reports publication facts, never public DNS or Access
+/// authority; the supervisor joins its own public slug and domains. This
+/// carries a build floor at the engine revision it merges in, with no `Ping`
+/// field: engine, supervisor and vault-VM readers use this shape together at
+/// or after that floor. New fields are required, no reader without them is
+/// kept, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
