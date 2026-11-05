@@ -21,6 +21,31 @@ impl ScopedRead<'_> {
         self.phone_line_scope_in(&txn)
     }
 
+    /// Reads the actual receiving agent's admitted live definition. The
+    /// credential, current line consent, row and native dispatchability are
+    /// checked in one snapshot before instructions or models leave this lane.
+    pub fn phone_line_agent_definition(&self) -> Result<crate::agent_def::AgentDefinition> {
+        if self.actor_key.phone_lines.is_empty() {
+            return Err(crate::phone_line::invalid());
+        }
+        self.persist_grant_clock()?;
+        let txn = self.vault.store.env.read_txn()?;
+        let _policy = self.live_policy_manifest_in(&txn)?;
+        if !self.proof_live_in(&txn)? || self.phone_line_scope_in(&txn)?.is_none() {
+            return Err(crate::phone_line::invalid());
+        }
+        let id = EntityId::from_hex(self.actor_key.actor_ref())?;
+        let Some((kind, _, body)) = self.graph_ask_parts_in_txn(&txn, &id)? else {
+            return Err(crate::phone_line::invalid());
+        };
+        if kind != crate::registry::ENTITY_TYPE_AGENT_DEF {
+            return Err(crate::phone_line::invalid());
+        }
+        let definition = crate::agent_def::decode_agent_definition(&body)?;
+        crate::agent_dispatch::AgentDispatcher::ensure_dispatchable_definition(id, &definition)?;
+        Ok(definition)
+    }
+
     /// The actual anonymous phone audience under this reader's current
     /// line consent. Ordinary readers cannot supply a phone disclosure.
     pub fn phone_line_disclosure(

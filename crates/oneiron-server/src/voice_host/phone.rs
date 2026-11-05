@@ -58,7 +58,7 @@ impl PhoneCallRead {
             agent,
             prepared: Mutex::new(None),
         });
-        read.current_scope()?;
+        read.definition()?;
         Ok(read)
     }
 
@@ -68,6 +68,10 @@ impl PhoneCallRead {
 
     pub(super) fn read(&self) -> ScopedRead<'_> {
         self.vault.scoped_read(self.key.clone())
+    }
+
+    pub(super) fn definition(&self) -> Result<oneiron::agent_def::AgentDefinition, HostError> {
+        Ok(self.read().phone_line_agent_definition()?)
     }
 
     pub(super) fn memory(&self) -> Result<oneiron::memory::Memory<'_>, HostError> {

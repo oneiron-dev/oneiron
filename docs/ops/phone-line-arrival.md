@@ -104,6 +104,13 @@ both the turn's sources and the additional row named by the notice. Ordinary ses
 still deliver their notices as before. This is the immediate notice-body send check,
 not a claim that every control event or saved journal page is phone-bound.
 
+`ScopedRead::phone_line_agent_definition` admits the actual receiving agent's live
+AGENT_DEF body under that same phone key. The current credential, line consent, row
+scope and facets share one read transaction. The admitted body is decoded and checked
+with the native lifecycle, approval and enabled predicate before its instructions or
+actual model list leave the read lane. There is no default-agent or empty-list substitute.
+This getter does not activate an answering session.
+
 Complete tool/control and saved-notice replay source accounting, explicit no-recognition
 execution and the actual answering lifecycle remain open. These native read and output-check ports are not a
 claim that a phone call can be answered.
