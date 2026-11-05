@@ -65,7 +65,7 @@ metadata is CONTENT, never a grant or a credential. There is no migration or old
 - `DELETE /v1/owner/phone-lines/{identity_ref}/arrivals/{arrival_ref}` erases that
   metadata and keeps a retry marker. An absent arrival returns 404.
 
-All these responses carry `Cache-Control: no-store`. Owner doors use the vault's current
+All successful responses carry `Cache-Control: no-store`. Owner doors use the vault's current
 owner proof and revalidate it in the native read or writer. Request JSON uses the existing
 deferred body reader after authentication; larger bodies use its existing spool path.
 No new SDK verb, shared secret, number/provider provisioning or audio route is added.
@@ -78,7 +78,6 @@ the line's share ceiling during answering, and the final toggle/inbox UI remain 
 No recording, transcript, delivery, answered-call, current-health or runtime proof is
 claimed from an arrival receipt.
 
-Identity deletion calls phone cleanup in the same native writer. No runtime or provider
-proof is claimed by these source changes. A passing compiled Engine train is required
-before merge. No tests are part of this work. No deployment or provider configuration
-was performed.
+Identity deletion calls phone cleanup in the same native writer. Arrival receipts are
+not runtime or provider-delivery proof. The engine exposes the intake and review doors;
+a host must supply and operate its actual authenticated telephony bridge separately.

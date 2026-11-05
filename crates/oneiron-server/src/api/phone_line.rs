@@ -183,9 +183,9 @@ impl From<PhoneLineArrivalReceipt> for PhoneLineArrivalAck {
     request_body(content = Value, description = "Arrival metadata JSON: call_id (nonempty string) and caller (optional opaque string or null). No audio or transcript field."),
     responses(
         (status = 202, description = "Arrival metadata and inbox event committed. Exact call retries return the original opaque refs.", body = PhoneLineArrivalAck),
-        (status = 400, description = "Invalid metadata, line setting or identity", body = ApiErrorEnvelope),
+        (status = 400, description = "Invalid metadata or absent, disabled, mismatched or unreadable line", body = ApiErrorEnvelope),
         (status = 401, description = "Missing or invalid verified slip", body = ApiErrorEnvelope),
-        (status = 403, description = "Credential cannot read and submit for this line's actual channel actor", body = ApiErrorEnvelope),
+        (status = 403, description = "Credential lacks required read/write scope or registered principal", body = ApiErrorEnvelope),
         (status = 500, description = "Arrival admission failed", body = ApiErrorEnvelope)
     )
 )]
