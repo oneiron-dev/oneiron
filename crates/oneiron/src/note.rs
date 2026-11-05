@@ -11,6 +11,7 @@ pub use crate::store::note_body::{
 pub(crate) use crate::store::note_body::{decode_note_body_using, validate_markdown};
 
 mod reads;
+pub(crate) use reads::PreparedNoteRead;
 pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
     NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
