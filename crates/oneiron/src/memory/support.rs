@@ -92,6 +92,9 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
+    /// The current request's actual peer and user agent, for signing audit
+    /// records only; never identity or authority.
+    pub(super) signing_request_transport: Option<SigningRequestTransport>,
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
     pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
@@ -143,6 +146,27 @@ pub struct Memory<'v> {
     /// credential rides it, with the actual recipient when the host proved
     /// one (FIX 7608 2b-ii). Off on every other handle.
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
+}
+
+/// The actual transport metadata a host observed on one signing request.
+/// This is audit context, never signer identity or authority. It is not
+/// serialized or saved for a later request; an absent peer stays absent.
+#[derive(Clone)]
+pub struct SigningRequestTransport {
+    peer_ip: Option<std::net::IpAddr>,
+    user_agent: Option<String>,
+}
+
+impl SigningRequestTransport {
+    /// Binds only the transport peer and the actual User-Agent header,
+    /// never forwarded headers or verb arguments.
+    #[must_use]
+    pub fn new(peer_ip: Option<std::net::IpAddr>, user_agent: Option<String>) -> Self {
+        Self {
+            peer_ip,
+            user_agent,
+        }
+    }
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name
