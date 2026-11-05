@@ -148,8 +148,8 @@ pub(crate) fn start_drafter_evaluations(_vault: &Arc<oneiron::Vault>) {}
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, turn_admitted,
 };
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
