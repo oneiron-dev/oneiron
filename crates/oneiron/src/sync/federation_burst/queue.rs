@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::time::Instant;
 
-use super::payload::DeferredPayload;
+use super::payload::FederationPayloadBytes;
 
 use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
@@ -31,7 +31,7 @@ pub(in crate::sync) enum WorkKind {
 /// The review evidence an isolated update keeps: each part its admission
 /// lands as, the window that part imports into and its admitted bytes, in
 /// import order (FIX 3662).
-pub(super) type IsolatedParts = Vec<(String, Vec<u8>)>;
+pub(super) type IsolatedParts = Vec<(String, FederationPayloadBytes)>;
 
 #[derive(Debug, Clone)]
 pub(in crate::sync) struct DeferredWork {
@@ -40,7 +40,7 @@ pub(in crate::sync) struct DeferredWork {
     /// The window the original request names: its replay address.
     pub(in crate::sync) window: String,
     pub(in crate::sync) kind: WorkKind,
-    pub(in crate::sync) payload: DeferredPayload,
+    pub(in crate::sync) payload: FederationPayloadBytes,
     pub(super) inputs: NormalizedBurstInputs,
     pub(super) peer: [u8; 32],
     pub(super) isolated_update: Option<IsolatedParts>,
@@ -68,7 +68,7 @@ struct StoredWork<'a> {
     rate_ratio: f32,
     streak: u32,
     streak_ratio: f32,
-    isolated_update: Option<Cow<'a, [(String, Vec<u8>)]>>,
+    isolated_update: Option<Vec<(&'a str, &'a [u8])>>,
     arrival: [u8; 16],
     deadline: u64,
     carried: Cow<'a, [EntityId]>,
@@ -103,7 +103,7 @@ impl DeferredWork {
             selector,
             window: key.as_str().to_owned(),
             kind,
-            payload: DeferredPayload::copy_from_slice(payload)?,
+            payload: FederationPayloadBytes::copy_from_slice(payload)?,
             isolated_update: None,
             streak_ratio: 0.0,
             inputs: NormalizedBurstInputs {
@@ -233,7 +233,12 @@ impl DeferredWork {
             rate_ratio: self.inputs.rate_ratio,
             streak: self.inputs.streak,
             streak_ratio: self.streak_ratio,
-            isolated_update: self.isolated_update.as_deref().map(Cow::Borrowed),
+            isolated_update: self.isolated_update.as_ref().map(|parts| {
+                parts
+                    .iter()
+                    .map(|(window, bytes)| (window.as_str(), bytes.as_slice()))
+                    .collect()
+            }),
             arrival: self.arrival,
             deadline: self.deadline,
             carried: Cow::Borrowed(&self.carried),
@@ -325,8 +330,21 @@ impl DeferredWork {
             selector: row.selector.into_owned(),
             window: row.window.into_owned(),
             kind: row.kind,
-            payload: DeferredPayload::copy_from_slice(row.payload)?,
-            isolated_update: row.isolated_update.map(Cow::into_owned),
+            payload: FederationPayloadBytes::copy_from_slice(row.payload)?,
+            isolated_update: row
+                .isolated_update
+                .map(|parts| {
+                    parts
+                        .into_iter()
+                        .map(|(window, bytes)| {
+                            Ok((
+                                window.to_owned(),
+                                FederationPayloadBytes::copy_from_slice(bytes)?,
+                            ))
+                        })
+                        .collect::<Result<IsolatedParts>>()
+                })
+                .transpose()?,
             streak_ratio: row.streak_ratio,
             inputs: NormalizedBurstInputs {
                 rate_ratio: row.rate_ratio,
