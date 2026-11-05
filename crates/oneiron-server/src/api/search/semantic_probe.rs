@@ -2,8 +2,9 @@
 //!
 //! The trimmed question `String` and the embedded `Vec<f32>` are adopted after
 //! they allocate, on the process memory line's empty lease, with
-//! `materialized(0, actual)`. Nothing here preadmits, waits, refuses, grows a
-//! reservation, or caps the probe; the byte counts name physical capacity only.
+//! `materialized(0, actual)`. Nothing here preadmits, waits for memory admission,
+//! refuses, grows a reservation, or caps the probe; the byte counts name physical
+//! capacity only. The native accounting mutex can still contend.
 
 use std::mem::size_of;
 use std::sync::Arc;
