@@ -96,10 +96,9 @@ impl Vault {
         rematerialize_contact_cache_in_txn(self, &mut wtxn, id, recorded_at)?;
         // The head just written carries NO channel class, so it covers every
         // contact this party has — and every one of their cache rows has to say
-        // so in this same transaction. Re-deriving only `id` would leave a
-        // sibling contact on another channel identity reading not-opted-out,
-        // and the gate, which folds type-132 rows rather than `comm.opt_out`
-        // heads, would allow a send the party's own opt-out forbids.
+        // so in this same transaction. The gate also reads standing
+        // `comm.opt_out` heads; re-deriving every sibling keeps row-based
+        // readers consistent with the party's opt-out.
         rematerialize_party_contact_cache_in_txn(
             self,
             &mut wtxn,
