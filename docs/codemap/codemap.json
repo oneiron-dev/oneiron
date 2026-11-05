@@ -7748,6 +7748,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/lift_history/accounting.rs",
+     "purpose": "Canonical per-source counters for historical lift runs (FIX 10493)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/attempts.rs",
      "purpose": "The attempt records (`job_records`), with the intake events their rows carry",
      "surface": {
@@ -7771,7 +7781,7 @@
      "path": "src/batch/secret_scan/lift_history/carriers.rs",
      "purpose": "Carriers no door rewrites",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -19578,7 +19588,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -24415,7 +24425,7 @@
      "purpose": "Counterparty contact domain vocabulary: schema version, body and predicate keys, record types",
      "surface": {
       "const": 12,
-      "crate-vis": 19,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 22,
       "re-export": 1,
@@ -90734,7 +90744,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92213,7 +92223,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6438,
+   "source_files": 6439,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100226,7 +100236,7 @@
      "purpose": "In-memory multi-revision DOCX projection and its shared op builder",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -111951,7 +111961,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 22
      }
     },
     {
