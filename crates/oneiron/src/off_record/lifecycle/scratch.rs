@@ -244,14 +244,25 @@ impl Selection<'_, '_> {
         {
             let edge = edge?;
             dependencies.push(edge.target);
-            edges.push(BatchOp::PublicEdgeWithCreatedAt {
-                src: id,
-                kind: edge.kind,
-                tgt: edge.target,
-                weight: edge.weight,
-                created_at: edge.created_at,
-                vad: edge.vad.unwrap_or(oneiron_contracts::affect::Vad::NEUTRAL),
-                provenance: edge.provenance,
+            let vad = edge.vad.unwrap_or(oneiron_contracts::affect::Vad::NEUTRAL);
+            edges.push(match edge.provenance {
+                Some(provenance) => BatchOp::EdgeWithCreatedAt {
+                    src: id,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    weight: edge.weight,
+                    created_at: edge.created_at,
+                    vad,
+                    provenance: Some(provenance),
+                },
+                None => BatchOp::PublicEdgeWithCreatedAt {
+                    src: id,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    weight: edge.weight,
+                    created_at: edge.created_at,
+                    vad,
+                },
             });
         }
         let artifact = match header.entity_type {
@@ -278,7 +289,10 @@ impl Selection<'_, '_> {
                     BatchOp::Put { id: source, entity_type: ENTITY_TYPE_CLAIM, data, .. } if *source == id && *data == body
                 )) { return Err(Error::EntityNotFound); }
                 let body = crate::claim::validate_claim_body_and_decode_in_txn(
-                    self.view, txn, &body, false,
+                    &vault.store,
+                    txn,
+                    &body,
+                    false,
                 )?;
                 if let ClaimSubject::Entity(subject) = body.subject {
                     dependencies.push(subject);
@@ -431,7 +445,7 @@ impl OffRecordSession<'_> {
                         .get(txn, &key)?
                         .ok_or(Error::EntityNotFound)?;
                     EntityId::from_bytes(
-                        raw.as_slice()
+                        (&raw[..])
                             .try_into()
                             .map_err(|_| Error::CorruptedIndex("room short id"))?,
                     )?
