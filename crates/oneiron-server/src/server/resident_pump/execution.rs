@@ -119,13 +119,18 @@ pub(super) fn run_bound(
             project: status.input.project_ref,
             agent,
             type_ref: type_ref.clone(),
-            call_model_pin: status
+            call_model_choice: status
                 .input
                 .direct_spawn
                 .as_ref()
                 .and_then(|receipt| receipt.ask.model.as_ref())
-                .filter(|model| model.is_pin())
-                .map(|model| model.value().clone()),
+                .map(|model| {
+                    if model.is_pin() {
+                        oneiron::learning_setting::SettingMode::Pin
+                    } else {
+                        oneiron::learning_setting::SettingMode::Seed
+                    }
+                }),
         });
     let model_seat = if continues {
         continued_seat(

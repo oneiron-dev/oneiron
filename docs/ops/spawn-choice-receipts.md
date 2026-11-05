@@ -51,6 +51,28 @@ identity. Planned and continued seats keep their explicit model. The old
 seatless path is unchanged.
 
 The native model-seat receipt records the model that actually runs. It is
-not a spawn plan receipt and gains no `owner_choices` metadata. Owner model
-seeds, width and pattern defaults, and reader-spawn choice transport are not
-added by this native pin path.
+not a spawn plan receipt and gains no `owner_choices` metadata.
+
+## Native dispatch model seeds
+
+When no explicit or owner pin stands, a fresh native model pick can read an
+owner model seed in the same scoped read. It takes the first seed whose model
+passes all the original candidate gates, in the existing narrowest-scope
+order. A seed for an unavailable model does not force a model or reject the
+birth. Warm reuse and continued seats keep their existing behavior.
+
+The actual model-choice question receives `owner_seed_prior` beside that
+candidate's measured `learned` evidence. It carries the real model, weight in
+runs, and selected row's source. This is owner-authored selection data, not
+a measurement or fixed choice. It does not synthesize a
+measured rate, apply the planner's scoring constants, change the offered
+models, or change the effort question's state.
+
+A direct call's model seed prevents an owner seed from being applied, while
+an owner pin may still outrank it, as in planning. This does not implement the
+unsupported direct-call seed or change its receipt's unapplied status. The
+selection context carries only the actual call's choice mode for precedence;
+it does not claim a chosen model or change durable task identity.
+
+Width and pattern defaults, and reader-spawn choice transport, remain outside
+this native model path. No policy, configuration or SDK change is required.
