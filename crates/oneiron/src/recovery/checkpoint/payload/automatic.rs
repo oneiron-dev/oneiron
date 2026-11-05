@@ -70,6 +70,17 @@ impl Selection {
                 }
             }
         }
+        #[cfg(feature = "sync")]
+        for (world, keys) in
+            crate::sync::residence::checkpoint_world_read_cache_keys(&vault.store, txn)?
+        {
+            if fold.world_privacy(world).sealed == SealedCopies::Off {
+                out.rows
+                    .entry(RowDb::SyncState)
+                    .or_default()
+                    .extend(keys.into_iter().map(String::into_bytes));
+            }
+        }
         if !out.owners.is_empty() {
             // Reuse the native head/NOTE marker/birth/fork associations and its
             // shared-owner verdict. A document slot is never an entity guess.
