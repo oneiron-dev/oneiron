@@ -4,6 +4,7 @@ pub mod agent_knowledge_format;
 pub mod archive_types;
 pub mod bundle_types;
 pub mod export_manifest;
+#[cfg(feature = "sync")]
 pub mod foreign_stage;
 pub mod home_room_project;
 pub mod secret_supplement_record;
