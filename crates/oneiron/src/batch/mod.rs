@@ -32,6 +32,8 @@ pub(crate) use oneiron_store::batch::phonetic_codes;
 pub(crate) use phonetic_apply::checkpoint;
 mod prepared_index;
 mod put_apply;
+#[cfg(feature = "sync")]
+pub(crate) use put_apply::AdmittedRecordDocumentPut;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;

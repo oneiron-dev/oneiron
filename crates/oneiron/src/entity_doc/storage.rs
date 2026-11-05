@@ -338,6 +338,28 @@ pub(super) fn persist_settled_document(
     )
 }
 
+/// The selected own-device source passed the actual record phases in this
+/// writer. Its current text already ran the sync scan and remark before P1;
+/// this terminal cannot accept a caller's raw snapshot or a skip-scan flag.
+#[cfg(feature = "sync")]
+pub(super) fn persist_admitted_record_document(
+    txn: &mut RwTxn<'_>,
+    h: &mut Head,
+    admitted: &super::record_carried::AdmittedRecordDocument<'_>,
+) -> Result<()> {
+    let native_tokens = admitted.require_document(txn, h)?;
+    persist_scanned_inner(
+        admitted.vault(),
+        txn,
+        &admitted.entity()?,
+        h,
+        admitted.document(),
+        admitted.before(),
+        native_tokens,
+        |_, _, _, _, _| Ok(false),
+    )
+}
+
 fn persist_scanned_inner(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
