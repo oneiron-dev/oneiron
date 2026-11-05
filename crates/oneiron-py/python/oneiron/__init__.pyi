@@ -787,6 +787,13 @@ class Oneiron:
             """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
         def supersede(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
             """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
+        @property
+        def reminder_route(self) -> "Oneiron._VaultCommitmentsReminderRouteVerbs": ...
+    class _VaultCommitmentsReminderRouteVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CommitmentReminderRouteReply:
+            """Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing."""
+        def set(self, spec: Facade.CommitmentReminderRouteSetRequest) -> Facade.CommitmentReminderRouteReply:
+            """Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""

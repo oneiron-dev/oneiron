@@ -35,6 +35,16 @@ export_facade! {
     let output = client.vault_commitments_supersede(&input)?;
     crate::codec::lift_record("vault.commitments.supersede", &output)
 };
+"vault.commitments.reminder_route.get" => fn vault_commitments_reminder_route_get(&self) -> CommitmentReminderRouteReply = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.commitments.reminder_route.get")?;
+    let output = client.vault_commitments_reminder_route_get(&input)?;
+    crate::codec::lift_record("vault.commitments.reminder_route.get", &output)
+};
+"vault.commitments.reminder_route.set" => fn vault_commitments_reminder_route_set(&self, input: CommitmentReminderRouteSetRequest) -> CommitmentReminderRouteReply = |client| {
+    let input: oneiron::memory::commitment_doors::CommitmentReminderRouteSetRequest = crate::codec::lower_record("vault.commitments.reminder_route.set", input)?;
+    let output = client.vault_commitments_reminder_route_set(&input)?;
+    crate::codec::lift_record("vault.commitments.reminder_route.set", &output)
+};
 "fetch" => fn fetch(&self, input: WebFetchRequest) -> FetchResult = |client| {
     let input: oneiron::web_fetch::WebFetchRequest = crate::codec::lower_record("fetch", input)?;
     let output = client.fetch(&input)?;
