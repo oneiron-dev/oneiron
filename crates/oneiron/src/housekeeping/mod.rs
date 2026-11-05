@@ -75,7 +75,9 @@ impl Vault {
     /// logged and never fails a sweep.
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         if !budget.deadline().stopped() {
-            crate::comm::run_comm_projector_housekeeping_step(self);
+            self.store
+                .record_hooks
+                .run_comm_projector_housekeeping_step(self);
         }
         self.housekeeping_pass(Selection::Due, budget)
     }

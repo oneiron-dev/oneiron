@@ -93,6 +93,8 @@ pub use shared_creation::{
 };
 // A courtesy ask's recipient copies, read in the caller's writer (FIX 2927).
 pub(crate) mod courtesy_scope;
+pub(crate) mod delivery_record;
+pub use delivery_record::FederationDeliveryRecord;
 mod foreign_world;
 pub use foreign_world::pact_foreign_world;
 pub(crate) use foreign_world::{PactDelivery, foreign_world_for};

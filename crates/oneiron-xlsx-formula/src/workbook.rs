@@ -134,8 +134,25 @@ impl FormualizerEngine {
             }
             (None, None) => None,
         };
-        let result = recalculate_xlsx_bytes(bytes, options(limits, clock, location))
-            .map_err(retained_writer_error)?;
+        let mut options = options(limits, clock, location);
+        let checkpoint_resources = resources.clone();
+        options.cancel = Some(
+            formualizer_eval::engine::CancelToken::new()
+                .with_checkpoint(move || checkpoint_resources.checkpoint().is_err()),
+        );
+        let result = match recalculate_xlsx_bytes(bytes, options) {
+            Ok(result) => result,
+            Err(error) => {
+                if matches!(
+                    &error,
+                    IoError::Engine(error)
+                        if error.kind == formualizer_common::ExcelErrorKind::Cancelled
+                ) {
+                    resources.checkpoint()?;
+                }
+                return Err(retained_writer_error(error));
+            }
+        };
         if result.bytes != bytes {
             keep_gated_bytes(&package, &result.bytes, &formulas)?;
         }

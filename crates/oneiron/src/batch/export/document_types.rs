@@ -147,7 +147,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Eleven sections. Entities occur once. Derived evidence is an index into
+/// Twelve sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
 /// setup is descriptors only (OF-370): no vector travels. Epoch floors carry a
@@ -175,6 +175,11 @@ pub struct WholeVaultDocument {
     /// (blob versions, LFS objects, codebase snapshots, code revisions and
     /// code-document history); empty outside a whole-vault export.
     pub side_tables: Vec<super::ArchiveSideRow>,
+    /// FIX 1178: the birth envelope of each carried row that has one,
+    /// masked to the rows this document carries; empty in an archive an
+    /// older engine wrote.
+    #[serde(default)]
+    pub row_births: Vec<ExportRowBirth>,
 }
 
 /// Where one session's highest removed epoch summary left the count (OF-013):
@@ -187,6 +192,18 @@ pub struct ExportEpochFloor {
     pub session: String,
     pub epoch: u64,
     pub turn_end: u64,
+}
+
+/// One carried row's birth envelope (FIX 1178): the row it belongs to and
+/// its birth as the source vault stamped it, masked to the rows the archive
+/// carries ([`crate::provenance::birth::RowBirth::masked`]). An import
+/// stamps it beside the landed row; it grants nothing on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRowBirth {
+    /// The born row's id, hex.
+    pub id: String,
+    pub birth: crate::provenance::birth::RowBirth,
 }
 
 /// The code runs' results (OF-190 B++): each run's result manifests, and

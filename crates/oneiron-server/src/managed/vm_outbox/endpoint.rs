@@ -8,7 +8,9 @@
 //! ([`super::diverged`], FIX 11074);
 //! `park` and `resume` bracket an idle report, so no commit is in flight when
 //! the host snapshots the VM; `register_backup` names the engine's actual
-//! backup plan, its directory and label.
+//! backup plan, its directory and label. Their authenticated park state and
+//! validated registration are recorded in this root-owned runtime directory
+//! before acknowledgement, and restored before a replacement carries work.
 //!
 //! None of them is a root operation on the engine's say-so but one: the
 //! owner's answer `remove` to a diverged copy, which removes only a copy the
@@ -19,6 +21,9 @@
 //! by part without following a link, owned by the vault's UID, with its
 //! label's handoff policy installed; the companion then writes there only the
 //! host's stage acks, as that UID's 0600 files.
+
+mod runtime;
+pub(super) use runtime::Runtime;
 
 use super::Gate;
 use super::diverged::{Board, DivergedOwnerAnswer, VmOutboxMemberStatus};
@@ -112,13 +117,14 @@ pub(super) fn serve(
     gate: Arc<Gate>,
     registry: Registry,
     board: Board,
+    mut runtime: Runtime,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("vm-outbox-endpoint".into())
         .spawn(move || {
             for stream in listener.incoming() {
-                let answered =
-                    stream.and_then(|stream| answer(stream, uid, &gate, &registry, &board));
+                let answered = stream
+                    .and_then(|stream| answer(stream, uid, &gate, &registry, &board, &mut runtime));
                 if let Err(error) = answered {
                     tracing::warn!(
                         reason = "vm_outbox_endpoint_failed",
@@ -137,6 +143,7 @@ fn answer(
     gate: &Gate,
     registry: &Registry,
     board: &Board,
+    runtime: &mut Runtime,
 ) -> std::io::Result<()> {
     let peer = peer_uid(&stream)?;
     let mut line = String::new();
@@ -153,15 +160,28 @@ fn answer(
                 revision: VM_OUTBOX_WIRE_REVISION,
             },
             Ok(Request::Park) => {
-                gate.park();
+                runtime.set_parked(true)?;
+                if !gate.set_unless_draining(super::Mode::Parked) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "the outbox companion is draining",
+                    ));
+                }
                 Reply::Parked
             }
             Ok(Request::Resume) => {
-                gate.resume();
+                runtime.set_parked(false)?;
+                if !gate.set_unless_draining(super::Mode::Open) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "the outbox companion is draining",
+                    ));
+                }
                 Reply::Resumed
             }
             Ok(Request::RegisterBackup { dir, label }) => match register(&dir, &label, uid) {
                 Ok(plan) => {
+                    runtime.set_backup(&dir, &label)?;
                     *registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(plan);
                     Reply::Registered
                 }
@@ -331,26 +351,53 @@ pub(in crate::managed) fn register_backup(dir: &Path, label: &str) -> anyhow::Re
 }
 
 /// Parks the companion before the engine reports idle: it finishes a local
-/// commit in flight and starts none until [`resume_companion`].
+/// commit in flight and starts none until [`resume_companion`]. Delivery is
+/// retried until acknowledged, including across a companion replacement.
 pub(in crate::managed) async fn park_companion() {
-    lifecycle(Request::Park).await;
+    lifecycle(true).await;
 }
 
-/// Opens the companion again once the host resumed the vault.
+/// Opens the companion again once the host resumed the vault, retrying
+/// until the replacement acknowledges the request too.
 pub(in crate::managed) async fn resume_companion() {
-    lifecycle(Request::Resume).await;
+    lifecycle(false).await;
 }
 
-async fn lifecycle(request: Request) {
-    let answered = tokio::task::spawn_blocking(move || call(&request))
-        .await
-        .map_err(std::io::Error::other)
-        .and_then(|reply| reply);
-    if let Err(error) = answered {
-        tracing::warn!(
-            reason = "vm_outbox_companion_unreachable",
-            %error,
-            "the vault VM's outbox companion did not answer; its carrier keeps its work"
-        );
+async fn lifecycle(park: bool) {
+    loop {
+        match lifecycle_call(park).await {
+            Ok(Reply::Parked) if park => return,
+            Ok(Reply::Resumed) if !park => return,
+            Ok(_) => tracing::warn!(
+                reason = "vm_outbox_lifecycle_unacknowledged",
+                operation = if park { "park" } else { "resume" },
+                "the companion did not acknowledge the lifecycle request; retrying"
+            ),
+            Err(error) => tracing::warn!(
+                reason = "vm_outbox_companion_unreachable",
+                operation = if park { "park" } else { "resume" },
+                %error,
+                "the outbox companion did not answer the lifecycle request; retrying"
+            ),
+        }
+        tokio::time::sleep(super::RESCAN_EVERY).await;
     }
+}
+
+/// The socket stays owned by the future, so cancelling a park or resume
+/// drops its pending I/O instead of leaving a blocking worker behind.
+async fn lifecycle_call(park: bool) -> std::io::Result<Reply> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+
+    let request = if park { Request::Park } else { Request::Resume };
+    let mut stream = tokio::net::UnixStream::connect(ENDPOINT).await?;
+    let mut line = serde_json::to_vec(&request).map_err(std::io::Error::other)?;
+    line.push(b'\n');
+    stream.write_all(&line).await?;
+    let mut reply = String::new();
+    tokio::io::BufReader::new(stream)
+        .take(MAX_LINE)
+        .read_line(&mut reply)
+        .await?;
+    serde_json::from_str(reply.trim_end()).map_err(std::io::Error::other)
 }

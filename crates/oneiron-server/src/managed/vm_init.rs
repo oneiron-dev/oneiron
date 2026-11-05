@@ -51,7 +51,9 @@
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
-//! the engine gets its outbox flags only once it is ready. When the engine
+//! the engine gets its outbox flags only once it is ready. The bootstrap
+//! restarts an exited companion while the engine serves, without blocking
+//! engine supervision on the replacement's readiness. When the engine
 //! exits the bootstrap stops the companion and waits for it (a local commit
 //! in flight finishes, a network transfer parks), then ends whatever the
 //! engine left running, syncs, removes the key from the filesystem's keyring
@@ -452,7 +454,7 @@ fn run_engine(
     // The key is in and the storage laid out; nothing runs as the UID yet.
     let runtime = guest_runtime::prepare(uid, args.guest_config_dir.is_some());
     let anchor = anchor::exchange(&args.vault, uid)?;
-    let companion = outbox::start(&args.vault, uid, ENGINE_PATH);
+    let mut companion = outbox::start(&args.vault, uid, ENGINE_PATH);
     let mut flags = if companion.is_some() {
         outbox::engine_flags()
     } else {
@@ -466,10 +468,15 @@ fn run_engine(
     let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
     let mut anchored = None;
+    let mut refresh_companion = || {
+        if let Some(companion) = companion.as_mut() {
+            companion.refresh(&args.vault, uid, ENGINE_PATH);
+        }
+    };
     let status = match restore_channel {
         None => start_engine(args, uid, &flags, &anchor_fds, &runtime).and_then(|mut engine| {
             anchored = Some(anchor.start(lost_sender)?);
-            restore::supervise(&mut engine, &lost)
+            restore::supervise(&mut engine, &lost, &mut refresh_companion)
         }),
         Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
             let fds = [fds, &anchor_fds[..]].concat();
@@ -479,7 +486,7 @@ fn run_engine(
         .and_then(|started| {
             let restoring = restoring.insert(started);
             anchored = Some(anchor.start(lost_sender)?);
-            restoring.wait(&lost)
+            restoring.wait(&lost, &mut refresh_companion)
         }),
     };
     // The anchor's socket goes with the engine.

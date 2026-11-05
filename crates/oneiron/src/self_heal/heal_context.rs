@@ -76,10 +76,13 @@ pub struct HealUnavailable {
     /// The part, engine-authored: its kind and its 32-hex id, as `body:<id>`.
     pub source: String,
     /// Why: `unrecorded`, `missing`, `missing_or_withheld`, `withheld`,
-    /// `withheld:<count>`, `unprovable`, `host_ref`, `not_an_entity_ref`, `owner_door_only`,
-    /// `unlinked`, a read's own code or an error's kind. `withheld`: the reader may not read
-    /// a row or world the part records it was read from; `unprovable`: the part records no
-    /// complete set of the rows it was read from, so only the vault owner reads it.
+    /// `withheld:<count>`, `unprovable`, `host_ref`, `not_an_entity_ref`,
+    /// `source_withheld`, `response_erased`, `unlinked`, a read's own code or an error's
+    /// kind. `withheld`: the reader may not read a row or world the part records it was
+    /// read from; `unprovable`: the part records no complete set of the rows it was read
+    /// from, so a record part is the vault owner's alone while a body part with unknown
+    /// sources stays unavailable off this device; `source_withheld`: a body carries a
+    /// secret mark or taint; `response_erased`: an erase of the run's actor took it.
     pub reason: String,
 }
 

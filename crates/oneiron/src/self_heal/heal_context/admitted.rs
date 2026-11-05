@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 
-use super::records::{code_run_value, source_order};
+use super::records::{code_run_value, raw_output_body_value, source_order};
 use super::{Gather, HealLink, kind};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt};
@@ -150,6 +150,23 @@ impl Gather<'_> {
     /// window's runs, each report's replay source, the cause walk with every attempt's
     /// kept step requests, every code run named and each reached attempt's pack receipt.
     pub(super) fn recorded(&mut self, lane: &ScopedRead<'_>) {
+        // The code-run bodies below are found inside the snapshot this read
+        // opens, so the whole set is pinned and custody is guarded before it
+        // opens, held through the last body read and file close.
+        let _bodies = self.vault.pin_all_result_bodies();
+        let _custody = match self.vault.store.gate_custody_read_guard() {
+            Ok(guard) => guard,
+            Err(error) => {
+                let why = kind(&error);
+                if let Some(runs) = self.runs.take() {
+                    for run in runs {
+                        self.unavailable(format!("run:{}", run.run_id.to_hex()), why.clone());
+                    }
+                }
+                self.unavailable("records".into(), why);
+                return;
+            }
+        };
         let read = lane.read_projected(&[], None, |txn, _| {
             let admit = Admit {
                 lane,
@@ -381,8 +398,10 @@ impl Gather<'_> {
     }
 
     /// Every code run named. A replay record keeps its bridge calls, checkpoints and
-    /// output previews with no rows they were read from: the owner's alone. Output bodies
-    /// are read only through the owner's result doors.
+    /// output previews with no rows they were read from: the owner's alone. Each output
+    /// body is read through the reader's lane in the same snapshot, admitted against
+    /// its occurrence's and its run's recorded source rows; an unavailable body keeps its
+    /// manifest and preview, with only its reason recorded.
     fn code_runs_in(&mut self, admit: &Admit<'_, '_, '_>) {
         let vault = self.vault;
         let mut runs = BTreeSet::new();
@@ -403,13 +422,28 @@ impl Gather<'_> {
             }
             match vault.get_code_run_replay_record_in_txn(admit.txn, &run) {
                 Ok(Some(record)) => {
-                    for output in &record.outputs {
-                        self.unavailable(
-                            format!("output_body:{id}:{}", output.handle),
-                            "owner_door_only",
-                        );
+                    let mut value = code_run_value(&record);
+                    if let Some(outputs) = value.get_mut("outputs").and_then(Value::as_array_mut) {
+                        for (output, rendered) in record.outputs.iter().zip(outputs.iter_mut()) {
+                            let part = format!("output_body:{id}:{}", output.handle);
+                            match vault
+                                .code_run_context_body_in_txn(admit.txn, admit.lane, run, output)
+                            {
+                                Ok(Ok(Some(body))) => {
+                                    if let Some(rendered) = rendered.as_object_mut() {
+                                        rendered.insert(
+                                            "body".into(),
+                                            raw_output_body_value(output, &body),
+                                        );
+                                    }
+                                }
+                                Ok(Ok(None)) => self.unavailable(part, "missing"),
+                                Ok(Err(why)) => self.unavailable(part, why),
+                                Err(error) => self.unavailable(part, kind(&error)),
+                            }
+                        }
                     }
-                    shown.push(code_run_value(&record));
+                    shown.push(value);
                 }
                 Ok(None) => self.unavailable(format!("code_run:{id}"), "unrecorded"),
                 Err(error) => self.unavailable(format!("code_run:{id}"), kind(&error)),
