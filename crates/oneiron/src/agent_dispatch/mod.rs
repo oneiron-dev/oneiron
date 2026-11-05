@@ -83,6 +83,9 @@ mod spend_calibration;
 pub(crate) mod spend_handoff;
 mod spend_lease;
 mod spend_provider_tokens;
+pub use spend_provider_tokens::{
+    ProviderLeaseTokenObservation, ProviderLeaseTokenSettlement, ProviderTokenCapture,
+};
 mod spend_record;
 mod task_type_tree;
 mod team_shape;

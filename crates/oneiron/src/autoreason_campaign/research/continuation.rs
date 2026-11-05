@@ -167,7 +167,7 @@ pub struct ResearchContinuation {
 pub struct ResearchScopeProviderTokens {
     pub scope: Option<crate::agent_dispatch::SpendScopeId>,
     pub runs: Vec<AttemptId>,
-    pub snapshots: Option<Vec<crate::llm::ProviderTokenSnapshot>>,
+    pub snapshots: Option<Vec<crate::agent_dispatch::ProviderTokenCapture>>,
 }
 
 /// Provider reports recorded for the campaign's native run scopes. These
