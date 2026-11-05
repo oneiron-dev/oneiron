@@ -194,8 +194,11 @@ impl Vault {
                     .is_some();
                 if !referenced {
                     let id = chunks::chunk_id(hash)?;
-                    let (_, had_vector, had_graph, neighbors) =
-                        crate::batch::deindex_entity(&self.store, txn, &id)?;
+                    let (_, had_vector, had_graph, neighbors) = crate::batch::deindex_entity(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        txn,
+                        &id,
+                    )?;
                     graph |= had_graph;
                     vector |= had_vector;
                     crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(

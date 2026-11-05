@@ -355,7 +355,7 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
 
 /// Cheap, snapshot-bound view for hot authorization callers. Cloning it only
 /// increments an Arc; owned fold callers retain the compatible full value.
-pub(super) fn authority_view_readonly_for_store_in_txn(
+pub(crate) fn authority_view_readonly_for_store_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
