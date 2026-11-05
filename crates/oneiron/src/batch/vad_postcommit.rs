@@ -250,8 +250,9 @@ pub(super) fn ops_put_tasks(ops: &[BatchOp]) -> Vec<EntityId> {
             BatchOp::Put {
                 id,
                 entity_type: crate::registry::ENTITY_TYPE_TASK,
+                data,
                 ..
-            } => Some(*id),
+            } => Some(crate::context_board::task_body_for_announcement(data, *id)),
             _ => None,
         })
         .collect()
