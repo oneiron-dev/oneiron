@@ -39,6 +39,18 @@ impl ScopedRead<'_> {
         critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<ScopedReadReceipt> {
+        self.filter_context_pack_critical_projected_under(pack, critical, disclosure, |_, _| Ok(()))
+            .map(|(receipt, ())| receipt)
+    }
+
+    /// Keeps a dependent projection in the final pack filter's snapshot.
+    pub(crate) fn filter_context_pack_critical_projected_under<T>(
+        &self,
+        pack: &mut ContextPack,
+        critical: &PackCriticalAccounting,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+        project: impl FnOnce(&heed::RoTxn<'_>, &ContextPack) -> Result<T>,
+    ) -> Result<(ScopedReadReceipt, T)> {
         let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         // One authority fold for this read snapshot, not one per claim in a
@@ -156,7 +168,11 @@ impl ScopedRead<'_> {
                 });
             }
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
-            Ok(self.receipt_for(None, &policy, &filter, suppressed))
+            let projected = project(&rtxn, pack)?;
+            Ok((
+                self.receipt_for(None, &policy, &filter, suppressed),
+                projected,
+            ))
         })();
         self.end_recall_plan()?;
         result

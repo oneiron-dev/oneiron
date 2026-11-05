@@ -202,11 +202,28 @@ pub(crate) fn build_prep_pack_scoped(
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
         .run_scoped_with_run_status(read)?;
-    let mut candidates = scoped.value.results;
-    candidates.extend(scoped.value.neighbors);
+    let mut pack = scoped.value;
+    let (receipt, prior_commitments) = read.filter_context_pack_critical_projected_under(
+        &mut pack,
+        &crate::serialize::pack_accounting::PackCriticalAccounting::default(),
+        None,
+        |txn, _| {
+            super::ledger::ledger_prep_items(
+                read.vault(),
+                txn,
+                &request.event,
+                request.fired_at,
+                |id| read.graph_ask_raw_in_txn(txn, id),
+            )
+        },
+    )?;
+    let mut candidates = pack.results;
+    candidates.extend(pack.neighbors);
+    let mut items = prep_items_from_candidates(read.vault(), &request.event, &candidates)?;
+    merge_prior_commitments(&mut items, prior_commitments);
     Ok(crate::claim::ScopedReadResult {
-        value: pack_from_candidates(read.vault(), request, &candidates)?,
-        receipt: scoped.receipt,
+        value: assemble_prep_pack(&request.event, request.fired_at, request.policy, items),
+        receipt,
     })
 }
 
@@ -234,13 +251,28 @@ fn pack_from_candidates(
     request: &PrepBuildRequest,
     candidates: &[ContextEntity],
 ) -> Result<Option<PrepPack>> {
-    let items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let mut items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let prior_commitments =
+        super::ledger::unscoped_ledger_prep_items(vault, &request.event, request.fired_at)?;
+    merge_prior_commitments(&mut items, prior_commitments);
     Ok(assemble_prep_pack(
         &request.event,
         request.fired_at,
         request.policy,
         items,
     ))
+}
+
+fn merge_prior_commitments(
+    items: &mut Vec<(EntityId, PrepItem)>,
+    prior_commitments: Vec<(EntityId, PrepItem)>,
+) {
+    let mut seen: HashSet<_> = items.iter().map(|(id, _)| *id).collect();
+    items.extend(
+        prior_commitments
+            .into_iter()
+            .filter(|(id, _)| seen.insert(*id)),
+    );
 }
 
 /// Runs the scoped live assembly around one EVENT.
