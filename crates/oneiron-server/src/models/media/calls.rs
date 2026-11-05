@@ -5,7 +5,7 @@
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
     Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
@@ -170,12 +170,14 @@ impl MediaRuntime {
                 super::run_replay::Claim::Leader(leader) => Some(leader),
                 super::run_replay::Claim::Follower(follower) => {
                     drop(request);
-                    return self.follow_replay(key, follower).await;
+                    return self.follow_replay(key, follower, admitted).await;
                 }
             }
         } else {
             None
         };
+        let local_admitted = AtomicBool::new(false);
+        let admitted = admitted.or_else(|| leader.as_ref().map(|_| &local_admitted));
         let answer = async {
             if let Some(key) = key
                 && let Some(answer) = self.replay_answer(key)
@@ -203,7 +205,10 @@ impl MediaRuntime {
         }
         .await;
         match leader {
-            Some(leader) => leader.finish(answer),
+            Some(leader) => leader.finish(
+                answer,
+                admitted.is_some_and(|admitted| admitted.load(Ordering::Acquire)),
+            ),
             None => answer,
         }
     }

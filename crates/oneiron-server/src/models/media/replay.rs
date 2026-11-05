@@ -15,7 +15,7 @@
 //! wakes its waiting repeats with a cut, without sending them again.
 //! A call in a banked voice is never replayed: a voice its owner withdrew
 //! since speaks no more. With no key, every call goes out as before.
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use oneiron::llm::media::MediaReplayKey;
 
@@ -188,21 +188,25 @@ impl MediaRuntime {
             super::run_replay::Claim::Leader(leader) => leader,
             super::run_replay::Claim::Follower(follower) => {
                 drop(request);
-                return self.follow_replay(key, follower).await;
+                return self.follow_replay(key, follower, None).await;
             }
         };
+        let admitted = AtomicBool::new(false);
         let answer = async {
             // A prior leader may have kept its answer after our first read.
             if let Some(answer) = self.replay_answer(key) {
                 return answer;
             }
             let kept = request.clone();
-            let response = self.run_in(request, None, payer.clone(), sources).await?;
+            let run = self.media_run(payer.clone(), sources)?;
+            let response = self
+                .run_admitted_for_step(&run, request, None, None, &admitted)
+                .await?;
             self.keep_replay_answer(key, &kept, &response, actor, payer);
             Ok(response)
         }
         .await;
-        leader.finish(answer)
+        leader.finish(answer, admitted.load(Ordering::Acquire))
     }
 
     /// A waiting repeat reads the current erase marker before copying the
@@ -211,8 +215,15 @@ impl MediaRuntime {
         &self,
         key: &MediaReplayKey,
         follower: super::run_replay::Follower,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaResponse> {
         let answer = follower.answer().await;
+        if let Ok(answer) = &answer
+            && answer.admitted
+            && let Some(admitted) = admitted
+        {
+            admitted.store(true, Ordering::Release);
+        }
         let id = format!("{REPLAY_TICKET}{}", key.memo_id());
         if self
             .store
@@ -222,7 +233,7 @@ impl MediaRuntime {
         {
             return Err(FatalLlmError::ResponseErased.into());
         }
-        answer?.as_ref().clone()
+        answer?.result.clone()
     }
 
     /// The answer the call `key` knows keeps for its repeats, when one

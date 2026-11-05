@@ -7,8 +7,13 @@ use oneiron::llm::media::{MediaReplayKey, MediaResponse};
 use oneiron::{LlmResult, RetryableLlmError};
 use tokio::sync::watch;
 
-type Answer = Arc<LlmResult<MediaResponse>>;
+type Answer = Arc<RunAnswer>;
 type Receiver = watch::Receiver<Option<Answer>>;
+
+pub(super) struct RunAnswer {
+    pub(super) result: LlmResult<MediaResponse>,
+    pub(super) admitted: bool,
+}
 
 #[derive(Default)]
 pub(super) struct ReplayRuns {
@@ -49,11 +54,17 @@ impl ReplayRuns {
 }
 
 impl Leader<'_> {
-    pub(super) fn finish(self, result: LlmResult<MediaResponse>) -> LlmResult<MediaResponse> {
-        let result = Arc::new(result);
-        let _ = self.answer.send_replace(Some(Arc::clone(&result)));
+    pub(super) fn finish(
+        self,
+        result: LlmResult<MediaResponse>,
+        admitted: bool,
+    ) -> LlmResult<MediaResponse> {
+        let answer = Arc::new(RunAnswer { result, admitted });
+        let _ = self.answer.send_replace(Some(Arc::clone(&answer)));
         drop(self);
-        Arc::try_unwrap(result).unwrap_or_else(|result| result.as_ref().clone())
+        Arc::try_unwrap(answer)
+            .map(|answer| answer.result)
+            .unwrap_or_else(|answer| answer.result.clone())
     }
 }
 
