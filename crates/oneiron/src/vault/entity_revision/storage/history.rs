@@ -282,7 +282,10 @@ fn physical_alias_raw(
 ) -> Result<Vec<u8>> {
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
-    if reference(id, &raw) != revision {
+    if reference(id, &raw) != revision
+        || crate::batch::EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_NOTE)
+    {
         return Err(Error::CorruptedIndex("NOTE physical alias mismatch"));
     }
     Ok(raw)
