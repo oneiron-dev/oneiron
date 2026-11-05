@@ -21,7 +21,10 @@ immutable capture id. Content also binds the member ordinal, source component,
 decision id, native source-key digest, raw stored revision, whole-component
 plaintext fingerprint and chunk index/count. The source owner computes the
 source-key digest from its native family label and length-framed actual raw key.
-The first family is only the claim-free gate ledger and its named sidecars.
+The first family is the gate ledger and its named sidecars: whole-family
+capture is claim-free, while explicit native decision-key selection can also
+open claim-bound rows under their actual native custody. Neither path exports
+or retains an ordinary claim key.
 
 The full canonical binding is extra associated data, not serialized plaintext.
 The envelope header contains only binding/scope digests and fixed role labels,

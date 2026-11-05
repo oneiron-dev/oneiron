@@ -85,94 +85,93 @@ impl HostLegalConnection {
         let mut plaintext_bytes = 0_u64;
         let mut descriptors = blake3::Hasher::new();
         let mut stored_revision = [0; 32];
-        let decisions = vault
-            .store
-            .for_each_claim_free_gate_clone_component_in_txn(
-                &txn,
-                |decision| request.scope.includes(&decision.as_bytes()),
-                check,
-                |decision, component, key, value| {
+        let decisions = vault.store.for_each_gate_clone_component_in_txn(
+            &txn,
+            matches!(&request.scope, CaptureScope::GateDecisions(_)),
+            |decision| request.scope.includes(&decision.as_bytes()),
+            check,
+            |decision, component, key, value| {
+                check()?;
+                let fingerprint = *blake3::hash(value).as_bytes();
+                let revision = match component {
+                    GateCloneComponent::StoredPrimary => {
+                        stored_revision = fingerprint;
+                        fingerprint
+                    }
+                    GateCloneComponent::OpenedPrimary => stored_revision,
+                    _ => fingerprint,
+                };
+                let source_key_digest = source_key_digest(component.label(), key);
+                let chunk_count = value.len().div_ceil(MAX_PLAINTEXT_LEN).max(1) as u64;
+                let descriptor = CaptureDescriptor {
+                    component: component_code(component),
+                    decision: decision.as_bytes(),
+                    source_key: key.to_vec(),
+                    source_key_digest,
+                    revision,
+                    plaintext_fingerprint: fingerprint,
+                    plaintext_len: value.len() as u64,
+                    chunk_count,
+                };
+                let encoded =
+                    Zeroizing::new(serde_json::to_vec(&descriptor).map_err(io::Error::other)?);
+                descriptors.update(&encoded);
+                let sealed = legal_clone::seal_descriptor(
+                    &public,
+                    &binding,
+                    components,
+                    &encoded,
+                    &mut SysRng,
+                )
+                .map_err(crypto_error)?;
+                envelope(
+                    &mut self.stream,
+                    &mut transcript,
+                    FrameKind::Descriptor,
+                    components,
+                    0,
+                    sealed,
+                )?;
+                for chunk_index in 0..chunk_count {
                     check()?;
-                    let fingerprint = *blake3::hash(value).as_bytes();
-                    let revision = match component {
-                        GateCloneComponent::StoredPrimary => {
-                            stored_revision = fingerprint;
-                            fingerprint
-                        }
-                        GateCloneComponent::OpenedPrimary => stored_revision,
-                        _ => fingerprint,
-                    };
-                    let source_key_digest = source_key_digest(component.label(), key);
-                    let chunk_count = value.len().div_ceil(MAX_PLAINTEXT_LEN).max(1) as u64;
-                    let descriptor = CaptureDescriptor {
-                        component: component_code(component),
+                    let start = chunk_index as usize * MAX_PLAINTEXT_LEN;
+                    let end = start.saturating_add(MAX_PLAINTEXT_LEN).min(value.len());
+                    let content = ContentBinding {
+                        capture: binding,
+                        member_ordinal: components,
+                        component: source_component(component),
                         decision: decision.as_bytes(),
-                        source_key: key.to_vec(),
                         source_key_digest,
                         revision,
                         plaintext_fingerprint: fingerprint,
-                        plaintext_len: value.len() as u64,
+                        chunk_index,
                         chunk_count,
                     };
-                    let encoded =
-                        Zeroizing::new(serde_json::to_vec(&descriptor).map_err(io::Error::other)?);
-                    descriptors.update(&encoded);
-                    let sealed = legal_clone::seal_descriptor(
+                    let sealed = legal_clone::seal_content(
                         &public,
-                        &binding,
-                        components,
-                        &encoded,
+                        &content,
+                        &value[start..end],
                         &mut SysRng,
                     )
                     .map_err(crypto_error)?;
                     envelope(
                         &mut self.stream,
                         &mut transcript,
-                        FrameKind::Descriptor,
+                        FrameKind::Content,
                         components,
-                        0,
+                        chunk_index,
                         sealed,
                     )?;
-                    for chunk_index in 0..chunk_count {
-                        check()?;
-                        let start = chunk_index as usize * MAX_PLAINTEXT_LEN;
-                        let end = start.saturating_add(MAX_PLAINTEXT_LEN).min(value.len());
-                        let content = ContentBinding {
-                            capture: binding,
-                            member_ordinal: components,
-                            component: source_component(component),
-                            decision: decision.as_bytes(),
-                            source_key_digest,
-                            revision,
-                            plaintext_fingerprint: fingerprint,
-                            chunk_index,
-                            chunk_count,
-                        };
-                        let sealed = legal_clone::seal_content(
-                            &public,
-                            &content,
-                            &value[start..end],
-                            &mut SysRng,
-                        )
-                        .map_err(crypto_error)?;
-                        envelope(
-                            &mut self.stream,
-                            &mut transcript,
-                            FrameKind::Content,
-                            components,
-                            chunk_index,
-                            sealed,
-                        )?;
-                    }
-                    plaintext_bytes = plaintext_bytes
-                        .checked_add(value.len() as u64)
-                        .ok_or(Error::ArithmeticOverflow("legal clone byte count"))?;
-                    components = components
-                        .checked_add(1)
-                        .ok_or(Error::ArithmeticOverflow("legal clone component count"))?;
-                    Ok(())
-                },
-            )?;
+                }
+                plaintext_bytes = plaintext_bytes
+                    .checked_add(value.len() as u64)
+                    .ok_or(Error::ArithmeticOverflow("legal clone byte count"))?;
+                components = components
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow("legal clone component count"))?;
+                Ok(())
+            },
+        )?;
         check()?;
         if let CaptureScope::GateDecisions(ids) = &request.scope
             && decisions as u128 != ids.len() as u128
