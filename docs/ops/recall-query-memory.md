@@ -60,9 +60,16 @@ the lease on normal completion, early errors, deadline returns and cancellation.
 The blocking local recall never receives this clone. Per-page RPC values and
 serialized copies are distinct allocations outside this charge.
 
-Other input copies, temporary seed vectors, the borrowed `media_seeds` view vector,
-model weights, GPU memory, provider scratch, other recall allocations and a full
-working-set bound remain outside this slice.
+Native seeded recall also records the borrowed `media_seeds` view vector's
+backing storage on that same process memory line. The charge uses its actual
+capacity and the size of `RecallMediaSeed`, counting only the view's slots, not
+the strings or vector data they borrow. A local lease starts before the view is
+built and ends after the view drops, including errors and deadline-detached
+native work. The original query-vector owners keep their separate charges.
+
+Other input copies, temporary seed vectors, model weights, GPU memory, provider
+scratch, other recall allocations and a full working-set bound remain outside
+this slice.
 It does not establish queue fairness, pre-growth admission, provider cancellation, runtime
 performance or a machine-derived embedding-width floor. The separate semantic
 search request/probe owners are unchanged.
