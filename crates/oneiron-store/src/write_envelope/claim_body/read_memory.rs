@@ -48,12 +48,6 @@ impl<'a> ClaimScopeReadMemory<'a> {
         }
     }
 
-    /// Adds distinct input that this caller must retain until the read returns.
-    pub fn with_additional_pinned_bytes(mut self, bytes: u64) -> Self {
-        self.pinned = self.pinned.saturating_add(bytes);
-        self
-    }
-
     pub(super) fn admit(self, count: usize) -> Result<MemoryLease, MemoryRefusal> {
         let mut lease = self.memory.empty_lease();
         let bytes = relationship_bytes(count);
@@ -92,11 +86,6 @@ impl ClaimBodyRead {
             lease
         });
         Self::new(body, memory)
-    }
-
-    /// Actual relationship storage held by this body's private lease.
-    pub fn leased_relationship_bytes(&self) -> u64 {
-        self._memory.as_ref().map_or(0, MemoryLease::bytes)
     }
 
     /// Extracts a body only when no relationship backing is leased.

@@ -396,42 +396,32 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
     counterparty_contact_record_from_heads(
-        contact_claim_bodies_in_txn(vault, rtxn, contact_id, None)
+        contact_claim_values_in_txn(vault, rtxn, contact_id, None)
             .map_err(ClaimBodyReadError::into_unbound_error)?,
     )
 }
 
-fn contact_claim_bodies_in_txn(
+fn contact_claim_values_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
     memory: Option<ClaimScopeReadMemory<'_>>,
-) -> std::result::Result<Vec<ContactClaim>, ClaimBodyReadError> {
+) -> std::result::Result<Vec<ContactClaimValue>, ClaimBodyReadError> {
     let mut bodies = Vec::new();
-    let mut retained_relationship_bytes = 0u64;
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
     // Keep the first duplicate for the fold, but read every claim so later
     // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        let read_memory =
-            memory.map(|memory| memory.with_additional_pinned_bytes(retained_relationship_bytes));
-        if let Some(body) =
-            vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, read_memory)?
-        {
-            if duplicate || !is_live_contact_head(&body) {
+        if let Some(body) = vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, memory)? {
+            if duplicate {
                 continue;
             }
-            let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
-                .iter()
-                .position(|predicate| *predicate == body.predicate)
-            else {
+            let Some(value) = contact_claim_value(body) else {
                 continue;
             };
-            duplicate = std::mem::replace(&mut seen[index], true);
-            retained_relationship_bytes =
-                retained_relationship_bytes.saturating_add(body.leased_relationship_bytes());
-            bodies.push(body);
+            duplicate = std::mem::replace(&mut seen[value.predicate_index], true);
+            bodies.push(value);
         }
     }
     Ok(bodies)
@@ -466,8 +456,8 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
         return Ok(None);
     }
-    let bodies = contact_claim_bodies_in_txn(vault, rtxn, contact_id, memory)?;
-    if !bodies.iter().any(|body| is_live_contact_head(body)) {
+    let bodies = contact_claim_values_in_txn(vault, rtxn, contact_id, memory)?;
+    if bodies.is_empty() {
         return Ok(None);
     }
     counterparty_contact_record_from_heads(bodies)
@@ -532,38 +522,50 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
             continue;
         };
         if raw.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            bodies.push(ContactClaim::retained(
+            if let Some(value) = contact_claim_value(ContactClaim::retained(
                 crate::claim::decode_claim_body(&raw.body, true)?,
                 None,
-            ));
+            )) {
+                bodies.push(value);
+            }
         }
     }
-    if !bodies.iter().any(|body| is_live_contact_head(body)) {
+    if bodies.is_empty() {
         return Ok(None);
     }
     counterparty_contact_record_from_heads(bodies).map(Some)
 }
 
+struct ContactClaimValue {
+    predicate_index: usize,
+    value: Value,
+}
+
+fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
+    if !is_live_contact_head(&body) {
+        return None;
+    }
+    let predicate_index = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+        .iter()
+        .position(|predicate| *predicate == body.predicate)?;
+    Some(ContactClaimValue {
+        predicate_index,
+        value: body.into_value(),
+    })
+}
+
 fn counterparty_contact_record_from_heads(
-    bodies: Vec<ContactClaim>,
+    bodies: Vec<ContactClaimValue>,
 ) -> Result<CounterpartyContactRecord> {
     let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     for body in bodies {
-        let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
-            .iter()
-            .position(|predicate| *predicate == body.predicate)
-        else {
-            continue;
-        };
-        if body.lifecycle != ClaimLifecycleStatus::Active || body.stale {
-            continue;
-        }
+        let index = body.predicate_index;
         if heads[index].is_some() {
             return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
                 "counterparty contact claim family has two live heads for one predicate",
             )));
         }
-        heads[index] = Some(body.into_value());
+        heads[index] = Some(body.value);
     }
 
     let mut entries = vec![(

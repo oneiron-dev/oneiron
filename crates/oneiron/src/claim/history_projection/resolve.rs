@@ -26,39 +26,59 @@ impl Vault {
 /// plus the closed, authenticated operation history. No peer-supplied body
 /// or Loro LWW position participates in this projection.
 pub(crate) fn project_machine_claim(projection: &ClaimTransitionProjection) -> ClaimBody {
-    let mut body = projection.birth.clone();
-    body.approval = projection.approval;
-    body.lifecycle = projection.lifecycle;
-    body.valid_to = projection.valid_to;
-    // The band and basis project as the birth stored them: a signed
-    // weakening carries its number only, and a reader invents no pair for
-    // it (FIX 7761).
-    body.confidence = projection.confidence;
-    body.stale = projection.stale;
-    if projection.demotion_rung.is_some() || projection.scope_band_floor.is_some() {
-        let mut scope = match body.scope.take() {
-            Some(Value::Map(entries)) => entries,
-            _ => Vec::new(),
-        };
-        if let Some(rung) = projection.demotion_rung {
-            scope.retain(|(key, _)| {
-                key.as_str() != Some(super::super::CLAIM_SCOPE_DEMOTION_RUNG_KEY)
-            });
-            let label = match rung {
-                super::super::ClaimDemotionRung::Decayed => "decayed",
-                super::super::ClaimDemotionRung::Weakened => "weakened",
-                super::super::ClaimDemotionRung::Stale => "stale",
+    machine_claim_projector(projection)(projection.birth.clone())
+}
+
+/// Transfers the already-owned birth when no later caller needs the projection.
+pub(crate) fn into_projected_machine_claim(projection: ClaimTransitionProjection) -> ClaimBody {
+    let project = machine_claim_projector(&projection);
+    project(projection.birth)
+}
+
+fn machine_claim_projector(
+    projection: &ClaimTransitionProjection,
+) -> impl FnOnce(ClaimBody) -> ClaimBody + use<> {
+    let approval = projection.approval;
+    let lifecycle = projection.lifecycle;
+    let valid_to = projection.valid_to;
+    let confidence = projection.confidence;
+    let stale = projection.stale;
+    let demotion_rung = projection.demotion_rung;
+    let scope_band_floor = projection.scope_band_floor;
+    move |mut body| {
+        body.approval = approval;
+        body.lifecycle = lifecycle;
+        body.valid_to = valid_to;
+        // The band and basis project as the birth stored them: a signed
+        // weakening carries its number only, and a reader invents no pair for
+        // it (FIX 7761).
+        body.confidence = confidence;
+        body.stale = stale;
+        if demotion_rung.is_some() || scope_band_floor.is_some() {
+            let mut scope = match body.scope.take() {
+                Some(Value::Map(entries)) => entries,
+                _ => Vec::new(),
             };
-            scope.push((
-                Value::from(super::super::CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                Value::from(label),
-            ));
+            if let Some(rung) = demotion_rung {
+                scope.retain(|(key, _)| {
+                    key.as_str() != Some(super::super::CLAIM_SCOPE_DEMOTION_RUNG_KEY)
+                });
+                let label = match rung {
+                    super::super::ClaimDemotionRung::Decayed => "decayed",
+                    super::super::ClaimDemotionRung::Weakened => "weakened",
+                    super::super::ClaimDemotionRung::Stale => "stale",
+                };
+                scope.push((
+                    Value::from(super::super::CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+                    Value::from(label),
+                ));
+            }
+            if let Some(band) = scope_band_floor {
+                scope.retain(|(key, _)| key.as_str() != Some("sensitivity"));
+                scope.push((Value::from("sensitivity"), Value::from(band)));
+            }
+            body.scope = Some(Value::Map(scope));
         }
-        if let Some(band) = projection.scope_band_floor {
-            scope.retain(|(key, _)| key.as_str() != Some("sensitivity"));
-            scope.push((Value::from("sensitivity"), Value::from(band)));
-        }
-        body.scope = Some(Value::Map(scope));
+        body
     }
-    body
 }
