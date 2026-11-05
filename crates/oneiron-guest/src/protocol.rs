@@ -1,10 +1,11 @@
 //! Strict, bounded host/guest JSON framing and admission state machine.
 
-use crate::{Error, Result};
-use oneiron_sandbox_contract::{WorkspacePath, WorkspaceShape};
+use crate::{Error, Result, filesystem::Workspace};
+use oneiron_sandbox_contract::{GUEST_PROTOCOL_VERSION, WorkspacePath, WorkspaceShape};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    fs::File,
     io::{Read, Write},
 };
 
@@ -16,7 +17,8 @@ pub(crate) const MAX_TOTAL: usize = oneiron_sandbox_contract::MAX_WORKSPACE_BYTE
 pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
-pub(crate) type Snapshot = BTreeMap<String, Vec<u8>>;
+/// Source identities and exact lengths; seeded bytes stay in the workspace.
+pub(crate) type Snapshot = BTreeMap<String, usize>;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -33,13 +35,21 @@ enum HostFrame {
         offset: usize,
         bytes: Vec<u8>,
     },
-    File {
+    FileOpen {
         path: String,
+        len: u64,
+    },
+    FileChunk {
         bytes: Vec<u8>,
     },
+    FileClose,
     Ready,
     Receipt {
         accepted: bool,
+    },
+    Failure {
+        code: String,
+        detail: String,
     },
 }
 
@@ -85,6 +95,13 @@ pub(crate) struct Input {
     pub(crate) files: Snapshot,
 }
 
+struct SeedFile {
+    path: WorkspacePath,
+    file: File,
+    len: usize,
+    received: usize,
+}
+
 pub(crate) struct Session<T> {
     channel: T,
     requests: usize,
@@ -100,8 +117,10 @@ impl<T: Read + Write> Session<T> {
         }
     }
 
-    pub(crate) fn receive(&mut self) -> Result<Input> {
-        self.send(&GuestFrame::Hello { version: 1 })?;
+    pub(crate) fn receive(&mut self, workspace: &Workspace) -> Result<Input> {
+        self.send(&GuestFrame::Hello {
+            version: GUEST_PROTOCOL_VERSION,
+        })?;
         let HostFrame::Start {
             version,
             vm_id,
@@ -113,7 +132,7 @@ impl<T: Read + Write> Session<T> {
         else {
             return Err(Error::Protocol("expected start"));
         };
-        if version != 1
+        if version != GUEST_PROTOCOL_VERSION
             || !matches!(tier.as_str(), "foreign" | "untrusted")
             || !(1..=4096).contains(&pids)
             || component_bytes == 0
@@ -130,8 +149,23 @@ impl<T: Read + Write> Session<T> {
         let mut component = Vec::new();
         let mut files = BTreeMap::new();
         let mut shape = WorkspaceShape::new();
-        for _ in 1..MAX_REQUESTS {
-            match self.read()? {
+        let mut open: Option<SeedFile> = None;
+        let mut requests = 1;
+        loop {
+            let frame = self.read()?;
+            // One logical file spends one request, regardless of byte length.
+            if !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose) {
+                if requests == MAX_REQUESTS {
+                    return Err(Error::Protocol("source request count exhausted"));
+                }
+                requests += 1;
+            }
+            if open.is_some()
+                && !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose)
+            {
+                return Err(Error::Protocol("host frame inside an open source file"));
+            }
+            match frame {
                 HostFrame::Component { offset, bytes }
                     if files.is_empty()
                         && component.len() < component_bytes
@@ -141,13 +175,42 @@ impl<T: Read + Write> Session<T> {
                 {
                     component.extend(bytes);
                 }
-                HostFrame::File { path, bytes } if component.len() == component_bytes => {
+                HostFrame::FileOpen { path, len } if component.len() == component_bytes => {
                     let checked = WorkspacePath::parse(&path)
                         .map_err(|error| Error::Protocol(error.reason()))?;
+                    let len = usize::try_from(len)
+                        .map_err(|_| Error::Protocol("source file length overflow"))?;
                     shape
-                        .add_file(&checked, bytes.len())
+                        .add_file(&checked, len)
                         .map_err(|error| Error::Protocol(error.reason()))?;
-                    files.insert(path, bytes);
+                    open = Some(SeedFile {
+                        file: workspace.create_seed(&path)?,
+                        path: checked,
+                        len,
+                        received: 0,
+                    });
+                }
+                HostFrame::FileChunk { bytes } => {
+                    let Some(open) = open.as_mut() else {
+                        return Err(Error::Protocol("source chunk outside a file"));
+                    };
+                    if bytes.is_empty()
+                        || bytes.len() > MAX_CHUNK
+                        || bytes.len() > open.len - open.received
+                    {
+                        return Err(Error::Protocol("source file chunk bounds"));
+                    }
+                    open.file.write_all(&bytes)?;
+                    open.received += bytes.len();
+                }
+                HostFrame::FileClose => {
+                    let Some(open) = open.take() else {
+                        return Err(Error::Protocol("source end outside a file"));
+                    };
+                    if open.received != open.len {
+                        return Err(Error::Protocol("incomplete source file"));
+                    }
+                    files.insert(open.path.as_str().to_owned(), open.len);
                 }
                 HostFrame::Ready if component.len() == component_bytes => {
                     return Ok(Input {
@@ -160,7 +223,6 @@ impl<T: Read + Write> Session<T> {
                 _ => return Err(Error::Protocol("unexpected or out-of-order host frame")),
             }
         }
-        Err(Error::Protocol("source request count exhausted"))
     }
 
     pub(crate) fn credential(
@@ -186,13 +248,18 @@ impl<T: Read + Write> Session<T> {
         Ok(())
     }
 
-    /// One frame of the open file. Frames are not requests: the host answers
-    /// none, and a file of any size spends no request budget.
-    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+    /// One frame of the open file. Wait for its receipt without spending a
+    /// logical request, so a file's size never spends the request budget.
+    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<std::result::Result<(), String>> {
         if self.finished || bytes.len() > MAX_CHUNK {
             return Err(Error::Protocol("proposal frame bounds"));
         }
-        self.send(&GuestFrame::WriteChunk { bytes })
+        self.send(&GuestFrame::WriteChunk { bytes })?;
+        match self.read()? {
+            HostFrame::Receipt { accepted: true } => Ok(Ok(())),
+            HostFrame::Failure { code, detail } => Ok(Err(format!("{code}: {detail}"))),
+            _ => Err(Error::Protocol("expected proposal chunk receipt")),
+        }
     }
 
     pub(crate) fn close_write(&mut self) -> Result<()> {

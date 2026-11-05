@@ -18,6 +18,10 @@ impl oneiron_organ_host::FloorLease for OrganLease {
         MemoryLease::grow_pending(&mut self.0, more, deadline, stopped).map_err(organ_refusal)
     }
 
+    fn materialized(&mut self, reserved: u64, actual: u64) {
+        MemoryLease::materialized(&mut self.0, reserved, actual);
+    }
+
     fn shrink(&mut self, bytes: u64) {
         MemoryLease::shrink(&mut self.0, bytes);
     }

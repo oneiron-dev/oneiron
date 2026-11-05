@@ -45,6 +45,7 @@ pub use wire::VoiceWireBindings;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmError};
+use oneiron::memory::RecallScope;
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
@@ -52,6 +53,7 @@ use oneiron::voice_cascade::{
     VoiceCascadeSession, VoiceSessionConfig,
 };
 
+use crate::auth::CoreAuth;
 use crate::managed::ManagedShutdown;
 use crate::runtime::RuntimeConfig;
 use extraction::TinyExtractor;
@@ -75,6 +77,9 @@ pub struct VoiceHostBindings {
     pub extraction_prompt: String,
     pub session: VoiceSessionConfig,
     pub shutdown: ManagedShutdown,
+    /// The actual owner credential admitted for a live call. An unbound
+    /// trusted pass attachment supplies None, never a fabricated credential.
+    pub speculative_auth: Option<CoreAuth>,
     /// The host's owner-plane policy config each sentence's safeguard
     /// enforces under (FIX 5043): its notice wording and dial.
     pub owner_policy: PolicyModelConfig,
@@ -94,6 +99,8 @@ pub enum HostError {
     Llm(#[from] LlmError),
     #[error(transparent)]
     Core(#[from] oneiron::Error),
+    #[error(transparent)]
+    Memory(#[from] oneiron::memory::MemoryError),
 }
 
 struct SessionState {
@@ -111,6 +118,7 @@ pub struct VoiceHost {
     /// The vault's call-mode deadline: every speculative fire and finalize
     /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
     call_deadline: std::time::Duration,
+    speculative_auth: Option<CoreAuth>,
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
@@ -192,6 +200,7 @@ impl VoiceHost {
         let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
         Ok(Self {
             call_deadline,
+            speculative_auth: bindings.speculative_auth,
             container,
             roster,
             speculative: SpeculativeThreads::default(),
@@ -245,16 +254,53 @@ impl VoiceHost {
         }
         let mut state = self.lock()?;
         let serial = state.next_handle.checked_add(1).ok_or(HostError::Stopped)?;
-        let handle = state.core.open_utterance(
-            utterance_id,
-            SpeculativeSessionConfig {
-                max_fires: 4,
-                fire_limit: 8,
-                final_limit: 32,
-                deadline: Some(self.call_deadline),
-                threads: Some(self.speculative.clone()),
-            },
-        )?;
+        let config = SpeculativeSessionConfig {
+            max_fires: 4,
+            fire_limit: 8,
+            final_limit: 32,
+            deadline: Some(self.call_deadline),
+            threads: Some(self.speculative.clone()),
+        };
+        let handle = match &self.speculative_auth {
+            Some(auth)
+                if (auth.managed_owner().is_none()
+                    && !auth.is_host_holder()
+                    && auth.verified_slip().is_some()
+                    && auth.actor_class() == Some("human"))
+                    || (auth.is_owner_grade()
+                        && auth.verified_slip().is_none()
+                        && auth.invocation_slip().is_none()
+                        && auth.actor_class() == Some("human")
+                        && auth.managed_owner().is_some_and(|holder| {
+                            auth.principal_ref()
+                                .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                                == Some(holder)
+                        })) =>
+            {
+                // The owner door proved this ordinary slip or managed
+                // attestation's same Human principal, not the payer's class.
+                let actor = auth
+                    .principal_ref()
+                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                    .ok_or(HostError::InvalidRequest)?;
+                let memory = crate::api::credential_memory(
+                    &self.vault,
+                    Some(auth),
+                    actor,
+                    oneiron::EdgeActorClass::Human,
+                )
+                .at(auth.locality());
+                state.core.open_scoped_utterance(
+                    utterance_id,
+                    config,
+                    &memory,
+                    &RecallScope::default(),
+                )?
+            }
+            // Other admitted credential forms and unbound attachments retain
+            // the existing trusted path, not an auth-error fallback.
+            Some(_) | None => state.core.open_utterance(utterance_id, config)?,
+        };
         // Connection-local, monotonically unique correlation. Not authentication.
         let token = serial.to_string();
         state.next_handle = serial;

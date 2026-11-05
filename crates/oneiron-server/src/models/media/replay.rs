@@ -136,7 +136,7 @@ impl MediaRuntime {
             Ok(walk) => walk.await,
             Err(error) => Err(error),
         };
-        let job = match answer {
+        let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.unclaim(&id, intent);
@@ -153,7 +153,7 @@ impl MediaRuntime {
             row.receipt = job.receipt.clone();
         }
         let answer = ticket(&job.model);
-        self.keep_submitted(&id, row, intent);
+        job.unkept = !self.keep_submitted(&id, row, intent);
         self.lock_jobs()
             .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
         Ok(answer)
@@ -303,10 +303,12 @@ impl MediaRuntime {
     /// Keeps the row of job `id` its provider answered, over its intent row
     /// when that was kept. A row the vault refuses is kept as the job's held
     /// write (FIX 2963), and one refused there too leaves the job running
-    /// here only.
-    fn keep_submitted(&self, id: &str, row: Option<JobRow>, intent: bool) {
+    /// here only. Answers whether the write was handled: durable, held, or
+    /// erased (FIX 11517). Only a real persistence failure answers false; an
+    /// intent row without its provider job is no handling of this write.
+    fn keep_submitted(&self, id: &str, row: Option<JobRow>, intent: bool) -> bool {
         let (Some(store), Some(row)) = (&self.store, row) else {
-            return;
+            return false;
         };
         let row_kept = row.clone();
         let kept = match intent {
@@ -319,8 +321,12 @@ impl MediaRuntime {
             false => store.put(id, row),
         };
         // FIX 2963: a row the vault refuses is held as the job's held write.
-        if let Err(error) = kept.or_else(|_| store.hold(id, row_kept).map(|()| true)) {
-            tracing::error!(%error, ticket = id, "a media job was not kept: it runs held here");
+        match kept.or_else(|_| store.hold(id, row_kept).map(|()| true)) {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a media job was not kept: it runs held here");
+                false
+            }
         }
     }
 
@@ -373,7 +379,7 @@ impl MediaRuntime {
                 Err(error) => Err(error),
             }
         };
-        let job = match answer {
+        let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.lock_jobs().remove(id);
@@ -390,7 +396,7 @@ impl MediaRuntime {
         row.model = job.model.clone();
         row.provider_job = Some(job.provider_job.clone());
         row.receipt = job.receipt.clone();
-        self.keep_submitted(id, Some(row), true);
+        job.unkept = !self.keep_submitted(id, Some(row), true);
         self.lock_jobs().insert(
             id.to_owned(),
             Held::Running(Arc::new(tokio::sync::Mutex::new(job))),

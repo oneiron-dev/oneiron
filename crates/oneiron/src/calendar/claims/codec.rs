@@ -95,7 +95,16 @@ pub(super) const KEY_OUTCOME: &str = "outcome";
 /// subject here rather than re-deriving the EVENT rule.
 #[must_use = "the EVENT-subject assertion must be propagated, not discarded"]
 pub fn require_event_subject(vault: &Vault, subject: &EntityId) -> Result<()> {
-    if vault.get_entity_type(subject)? != Some(ENTITY_TYPE_EVENT) {
+    let txn = vault.store.env.read_txn()?;
+    require_event_subject_in_txn(vault, &txn, subject)
+}
+
+pub(in crate::calendar) fn require_event_subject_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<()> {
+    if vault.get_entity_type_in_txn(txn, subject)? != Some(ENTITY_TYPE_EVENT) {
         return Err(Error::EntityNotFound);
     }
     Ok(())

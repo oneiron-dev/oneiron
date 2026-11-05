@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::pipeline::{PipelineBuilder, Signal, WorldScope};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 use crate::write_envelope::profile_snapshot::PsychProfileKey;
 
 use oneiron_model::llm::ModelId;
@@ -40,6 +41,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) field_profile: FieldProfile,
     /// The explicit token ceiling ([`Self::token_budget`]); `None` = unset.
     pub(super) token_budget: Option<usize>,
+    /// The pack tokenizer for every serialization budget gate
+    /// ([`Self::pack_tokenizer`]); selected before any gate runs.
+    pub(super) tokenizer: PackTokenizer,
     /// The stored profile's window budget ([`Self::memory_profile`]).
     pub(super) profile_token_budget: Option<usize>,
     /// The declared share of the active model's window the default budget
@@ -181,6 +185,7 @@ impl<'a> ContextPackBuilder<'a> {
             format: PackFormat::default(),
             field_profile: FieldProfile::default(),
             token_budget: None,
+            tokenizer: DEFAULT_CONTEXT_PACK_TOKENIZER,
             profile_token_budget: None,
             context_fraction: DEFAULT_CONTEXT_FRACTION,
             model_window_tokens: None,
@@ -616,6 +621,15 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub fn token_budget(mut self, budget: usize) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Selects the pack tokenizer for every serialization budget gate
+    /// (opt-in reader measurement). The default is the engine-normalized
+    /// `o200k` counter; selection never changes authority, ranking, or row
+    /// order.
+    pub fn pack_tokenizer(mut self, tokenizer: PackTokenizer) -> Self {
+        self.tokenizer = tokenizer;
         self
     }
 

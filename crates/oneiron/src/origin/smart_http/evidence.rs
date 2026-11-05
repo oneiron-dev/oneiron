@@ -211,7 +211,7 @@ fn receive_pack_lfs_value(pointers: &[LfsPushedPointer]) -> Value {
             .iter()
             .map(|pointer| {
                 Value::Array(vec![
-                    Value::from(pointer.path.clone()),
+                    Value::Binary(pointer.path.clone()),
                     Value::from(pointer.oid.to_hex()),
                     Value::from(pointer.size_bytes),
                 ])
@@ -680,10 +680,10 @@ impl Vault {
                     .filter(|fields| fields.len() == 3)
                     .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?;
                 Ok(LfsPushedPointer {
-                    path: fields[0]
-                        .as_str()
-                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS path"))?
-                        .to_owned(),
+                    path: match &fields[0] {
+                        Value::Binary(path) => path.clone(),
+                        _ => return Err(receive_pack_provenance_refused("invalid LFS path")),
+                    },
                     oid: LfsOid::parse_hex(
                         fields[1]
                             .as_str()

@@ -182,19 +182,27 @@ impl Vault {
     }
 
     pub fn renew_symbols(&self, task: EntityId, holder: EntityId, now: u64) -> Result<SymbolLease> {
-        self.with_write_txn_grouped(|txn| {
-            let mut lease = load(&self.store, txn, task)?.ok_or(Error::EntityNotFound)?;
-            if lease.holder_ref != holder.to_hex() || !lease.held || lease.expires_at <= now {
-                return Err(Error::InvalidConfig(
-                    "symbol lease is not live for holder".to_owned(),
-                ));
-            }
-            lease.expires_at = now
-                .checked_add(lease.ttl_seconds)
-                .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
-            save(&self.store, txn, task, &lease)?;
-            Ok(lease)
-        })
+        self.with_write_txn_grouped(|txn| self.renew_symbols_in_txn(txn, task, holder, now))
+    }
+
+    pub(crate) fn renew_symbols_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        task: EntityId,
+        holder: EntityId,
+        now: u64,
+    ) -> Result<SymbolLease> {
+        let mut lease = load(&self.store, txn, task)?.ok_or(Error::EntityNotFound)?;
+        if lease.holder_ref != holder.to_hex() || !lease.held || lease.expires_at <= now {
+            return Err(Error::InvalidConfig(
+                "symbol lease is not live for holder".to_owned(),
+            ));
+        }
+        lease.expires_at = now
+            .checked_add(lease.ttl_seconds)
+            .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
+        save(&self.store, txn, task, &lease)?;
+        Ok(lease)
     }
 
     pub fn release_symbols(&self, task: EntityId, holder: EntityId) -> Result<bool> {

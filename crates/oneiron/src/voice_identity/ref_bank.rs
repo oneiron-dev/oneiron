@@ -801,8 +801,10 @@ mod checkpoint_response;
 // Stored packs checked for integrity, new intake measured (FIX 10177, FIX 10220).
 #[path = "ref_bank/validation.rs"]
 mod validation;
+#[cfg(unix)]
+pub(crate) use crate::store::voice_bank_response::voice_bank_row;
 pub use actor::{VoiceBankActor, VoiceCreator};
-pub(crate) use checkpoint_response::{voice_bank_owners, voice_bank_row, voice_bank_scan};
+pub(crate) use checkpoint_response::{voice_bank_owners, voice_bank_scan};
 pub use owner_acts::{
     VoiceBankInspection, VoiceBankView, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
     VoiceReferenceFenceView, VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,

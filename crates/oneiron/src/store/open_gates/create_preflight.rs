@@ -21,8 +21,9 @@ pub(super) fn create_preflight(
     config: &VaultConfig,
     seed_mode: DefaultPolicySeedMode,
     hooks: StoreHooks,
+    clock: crate::ports::StoreClock,
 ) -> Result<Store> {
-    let store = Store::assemble(env, raw, registered_path, config, hooks)?;
+    let store = Store::assemble(env, raw, registered_path, config, hooks, clock)?;
 
     // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
     // fails closed before the HNSW compat check below can compare it.

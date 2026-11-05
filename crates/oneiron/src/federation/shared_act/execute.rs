@@ -307,11 +307,11 @@ impl Vault {
 
     /// The executing host's own issuer for a run given no slips (FIX 5898):
     /// this install's host issuer, while it is a live host on the vault's
-    /// roster in this writer, so the handover still lands signed. Its
-    /// signature proves only that this host executed the completed act,
-    /// which stays the handover's authority (FIX 2222). None when this
-    /// install holds no live host issuer; the run then lands as before.
-    fn executing_host_issuer_in_txn(
+    /// roster in this writer. It signs the act's execution or the membership
+    /// change's revocations, never supplies the caller's authority (FIX 2222).
+    /// None when this install holds no live host issuer; the run then lands
+    /// as before.
+    pub(super) fn executing_host_issuer_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         issuer: Option<HostSlipIssuer>,

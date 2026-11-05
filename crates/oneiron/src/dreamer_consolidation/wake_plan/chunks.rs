@@ -30,6 +30,8 @@ use crate::dreamer_runner::{
     EnqueueDreamerConsolidationAttempt,
 };
 use crate::entity_id::bytes_to_hex_lower;
+use std::collections::BTreeMap;
+
 use crate::{EntityId, Result, Vault};
 
 use super::chunk_identity::ChunkPin;
@@ -49,6 +51,14 @@ pub(super) struct WakePreparationChunks {
     parent: Option<AttemptId>,
     run_id: Option<String>,
     chunks: Vec<(QueuedBranch, String)>,
+    /// Snapshot-frozen (reading, partition) per owed member, captured in
+    /// `read_matching` while the wake's snapshot is still open (FIX
+    /// 12544): the enqueue stamp writes these values, never words read
+    /// live in its own commit. Empty for non-Micro wakes (nothing is
+    /// stamped there) and for members whose text the snapshot could
+    /// not read - those register membership with no stamp. In-memory
+    /// only, never persisted.
+    frozen: BTreeMap<EntityId, ([u8; 32], [u8; 32])>,
 }
 
 impl WakePreparationChunks {
@@ -86,7 +96,19 @@ impl WakePreparationChunks {
             parent: lineage.parent,
             run_id: lineage.run_id.clone(),
             chunks,
+            frozen: BTreeMap::new(),
         })
+    }
+
+    /// The owed chunks with their keys, for the wake's frozen-stamp
+    /// capture.
+    pub(super) fn chunks(&self) -> &[(QueuedBranch, String)] {
+        &self.chunks
+    }
+
+    /// The snapshot-frozen readings this set's enqueue stamps.
+    pub(super) fn set_frozen(&mut self, frozen: BTreeMap<EntityId, ([u8; 32], [u8; 32])>) {
+        self.frozen = frozen;
     }
 
     /// Queues every chunk in the caller's commit; returns how many were new.
@@ -141,7 +163,8 @@ impl WakePreparationChunks {
                 )?;
                 // The chunk's turns are assigned work from this commit on: a
                 // Micro retry records the chunk as a projector round and
-                // their current words as taken (FIX 12246), so no later
+                // their snapshot-frozen words as taken (FIX 12246, FIX
+                // 12544), so no later
                 // widening takes them again and an erase/demote of one
                 // member releases the survivors. The chunk itself keeps
                 // them as its own originals and runs them whole.
@@ -152,6 +175,7 @@ impl WakePreparationChunks {
                         &status.attempt.kind,
                         key,
                         &chunk.turn_ids(),
+                        &self.frozen,
                     )?;
                 }
                 queued += 1;

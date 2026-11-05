@@ -76,6 +76,63 @@ impl Vault {
         }
     }
 
+    /// Automatic issuance composed with a witness landing. Existing terminal
+    /// rows stand unchanged, just as through the self-contained issuer.
+    pub(crate) fn issue_connector_witness_read_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        if !CONNECTOR_WITNESS_READ_GRANT {
+            return Ok(());
+        }
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if self.get_access_grant_in_txn(txn, &id)?.is_some() {
+            return Ok(());
+        }
+        match self.create_access_grant_in_txn(
+            txn,
+            &id,
+            &witness_read_grant(agent, conversation, now),
+        ) {
+            Err(Error::Record(RecordError::AccessGrantAlreadyExists)) => Ok(()),
+            issued => issued,
+        }
+    }
+
+    /// The existing read-grant predicate at this record's actual scope.
+    /// This is not a claim that every other message read check has passed.
+    pub(crate) fn connector_witness_read_grant_allows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        record: &oneiron_authority::federation::Scope,
+    ) -> Result<bool> {
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                ..
+            }
+        ) {
+            return Ok(false);
+        }
+        let Some(grant) = self.get_access_grant_in_txn(txn, &id)? else {
+            return Ok(false);
+        };
+        Ok(witness_read_conversation(&id, &grant) == Some(conversation)
+            && grant.allows_conversation_message_read(
+                agent,
+                conversation,
+                record,
+                self.instant_in_txn(txn)?.secs(),
+            ))
+    }
+
     /// Revokes the witness-read grant at `grant_ref` on `owner`'s word. It
     /// stays revoked: its revoked row is what keeps a later witness from
     /// issuing it again, and only the owner's own grant

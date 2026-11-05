@@ -11,7 +11,7 @@ use sha2::Sha256;
 use super::claims::{
     COMM_SCHEMA_VERSION, CommError, CommResult, KEY_PARTY_KEY, KEY_SCHEMA_VERSION,
 };
-use super::records::{encode_value, required_string, validate_key_string, value_map};
+use super::records::{encode_value, required_string, value_map};
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ClaimSource;
@@ -45,6 +45,13 @@ enum PartyLookup {
     Repairable(EntityId),
     /// No active comm-owned PERSON carries this `party_key`.
     Absent,
+}
+
+pub(super) fn validate_party_key(party: &str) -> CommResult<()> {
+    if party.trim() != party || party.is_empty() {
+        return Err(CommError::InvalidRecord);
+    }
+    Ok(())
 }
 
 fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
@@ -205,7 +212,7 @@ impl CommParties {
     /// The party `party` resolves to, as `resolve_party` resolves it,
     /// leaving the shortcut as it is.
     pub(crate) fn resolve(&self, party: &str) -> CommResult<Option<EntityId>> {
-        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+        validate_party_key(party)?;
         Ok(self.0.get(party).copied())
     }
 
@@ -275,7 +282,7 @@ pub(super) fn resolve_or_create_party_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     party: &str,
 ) -> CommResult<EntityId> {
-    validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+    validate_party_key(party)?;
     if let Some(id) = resolve_party_in_txn(vault, wtxn, party)? {
         return Ok(id);
     }
@@ -310,6 +317,7 @@ pub(super) fn mint_comm_person_in_txn(
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -329,7 +337,7 @@ pub(super) fn mint_comm_person_in_txn(
 /// exists as absent (which would let the next write mint a twin for it). Only a
 /// repair takes a write transaction; the fresh and absent cases stay read-only.
 pub(super) fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<EntityId>> {
-    validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+    validate_party_key(party)?;
     let lookup = {
         let rtxn = vault.store.env.read_txn()?;
         lookup_party_in_txn(&vault.store, &rtxn, party)?
@@ -355,7 +363,7 @@ pub(crate) fn resolve_party_ref_in_txn(
     rtxn: &heed::RoTxn<'_>,
     party: &str,
 ) -> CommResult<Option<EntityId>> {
-    validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+    validate_party_key(party)?;
     Ok(match lookup_party_in_txn(&vault.store, rtxn, party)? {
         PartyLookup::Fresh(id) | PartyLookup::Repairable(id) => Some(id),
         PartyLookup::Absent => None,
@@ -489,6 +497,7 @@ pub(crate) fn resolve_actor_party_in_txn(
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,

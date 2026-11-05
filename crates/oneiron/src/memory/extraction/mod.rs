@@ -6,7 +6,7 @@ mod shadow;
 mod types;
 pub(crate) use register::register_turn;
 pub(crate) use shadow::hash_input;
-pub use shadow::{infer_encoder, infer_encoder_for};
+pub use shadow::{infer_encoder, infer_encoder_for, infer_encoder_in};
 pub use types::{
     ContextLink, CorefLink, EncoderAttempt, EncoderExecution, EncoderGolden, EncoderInput,
     EncoderMessage, EncoderOutput, EncoderParity, EncoderRegister, EncoderTurn, ExecutionCompute,

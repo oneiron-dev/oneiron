@@ -104,36 +104,51 @@ pub(super) fn crl_entry_valid<'a>(
     anchors: &'a [EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-) -> Option<&'a EmbeddedCert> {
+    memory: &MemoryLedger,
+) -> Result<Option<&'a EmbeddedCert>, SealMemoryRefusal> {
     use der::{Decode, Encode};
     let Ok(crl) = x509_cert::crl::CertificateList::from_der(data) else {
-        return None;
+        return Ok(None);
     };
     if !crl_complete_scope(&crl) {
-        return None;
+        return Ok(None);
     }
+    let Some(tbs_len) = crl
+        .tbs_cert_list
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let _tbs_held = memory.hold(tbs_len)?;
     let Ok(tbs) = crl.tbs_cert_list.to_der() else {
-        return None;
+        return Ok(None);
     };
     let oid = crl.signature_algorithm.oid.as_bytes();
-    let issuer = issuer_candidates(&crl.tbs_cert_list.issuer, embedded, anchors).find(|cand| {
-        let Ok(alg) = cms::cert_signature_algorithm(&cand.der) else {
-            return false;
-        };
-        cms::sig_alg_permitted(alg, oid)
-            && cms::verify_signature_value(alg, &cand.der, &tbs, crl.signature.raw_bytes()).is_ok()
-    })?;
+    let Some(issuer) =
+        issuer_candidates(&crl.tbs_cert_list.issuer, embedded, anchors).find(|cand| {
+            let Ok(alg) = cms::cert_signature_algorithm(&cand.der) else {
+                return false;
+            };
+            cms::sig_alg_permitted(alg, oid)
+                && cms::verify_signature_value(alg, &cand.der, &tbs, crl.signature.raw_bytes())
+                    .is_ok()
+        })
+    else {
+        return Ok(None);
+    };
     // Key verification alone is not authorization: the issuer certificate
     // must permit CRL signing (cRLSign) when it carries a KeyUsage.
     if !issuer_permits_crl_sign(&issuer.cert) {
-        return None;
+        return Ok(None);
     }
     if !evidence_fresh(
         crl.tbs_cert_list.this_update,
         crl.tbs_cert_list.next_update,
         at_unix,
     ) {
-        return None;
+        return Ok(None);
     }
     // Revocation evaluation: a validation-set certificate issued by this
     // CRL's issuer whose serial is on the revoked list makes the evidence
@@ -151,11 +166,11 @@ pub(super) fn crl_entry_valid<'a>(
                 .iter()
                 .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
             {
-                return None;
+                return Ok(None);
             }
         }
     }
-    Some(issuer)
+    Ok(Some(issuer))
 }
 
 /// id-sha1 (RFC 6960 default CertID hash) and id-kp-OCSPSigning.
@@ -299,7 +314,7 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 /// to, read in place, so the coverage rule can match them against the
 /// covered chain. The response's own certificates are held on `memory`
 /// as responder candidates (FIX 12260); memory refused is `Err`.
-pub(super) fn ocsp_entry_valid<'a>(
+pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
@@ -349,6 +364,7 @@ pub(super) fn ocsp_entry_valid<'a>(
             candidates.push(candidate);
         }
     }
+    memory.admit_len::<&[u8]>(basic.tbs_response_data.responses.len())?;
     Ok(ocsp_basic_valid(
         &basic,
         &candidates,

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use super::target::CompilationTarget;
+use super::target::{CompilationTarget, CompilationTargetValidation};
 use crate::entity_id::EntityId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -274,7 +274,7 @@ impl DreamerRunnerStore<'_> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<()> {
-        if self.vault.config.tagging.is_none() {
+        if self.vault.tagging_marker_config().is_none() {
             return Ok(());
         }
         self.enqueue_kind_in_txn(

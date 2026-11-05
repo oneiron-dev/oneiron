@@ -55,7 +55,7 @@ pub(super) fn conversation_arc(conversation: EntityId) -> Result<ScopeSummaryReq
             },
         },
         requester: WriteActor::new(
-            crate::dreamer_runner::authority::dreamer_actor_id()?,
+            crate::store::base_agent::dreamer_actor_id()?,
             EdgeActorClass::System,
         ),
     })

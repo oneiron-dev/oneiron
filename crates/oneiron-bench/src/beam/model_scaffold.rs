@@ -79,6 +79,17 @@ pub(super) struct ModelRow {
     pub context_truncated: bool,
     /// A reader call stopped at the pinned output cap.
     pub output_truncated: bool,
+    /// The counter that actually budgeted the delivered raw context.
+    pub context_tokenizer_id: String,
+    /// The recognized reader encoding, if the wire model maps to one;
+    /// `None` means admitted but explicitly non-reader-measured.
+    pub reader_tokenizer_id: Option<String>,
+    /// The delivered raw context counted with `context_tokenizer_id`.
+    pub context_tokens: usize,
+    /// The same delivered raw context counted with engine-normalized `o200k`.
+    pub engine_normalized_context_tokens: usize,
+    /// The context budget for this row; `None` means the budget was off.
+    pub context_token_budget: Option<usize>,
     pub scoring: ScoreReport,
     pub query_cost: CostComponentReport,
     pub judge_overhead: CostComponentReport,
@@ -404,6 +415,13 @@ pub(super) fn run_with_session(
         access_factor_observations.extend(observations);
         for effort in &plan.efforts {
             for arm in &plan.answerers {
+                let reader_tokenizer = oneiron::tokenizer::PackTokenizer::for_provider_model(
+                    &arm.model.provider_model,
+                );
+                let (context_tokenizer, reader_tokenizer_id) = match reader_tokenizer {
+                    Some(tokenizer) => (tokenizer, Some(tokenizer.id().to_owned())),
+                    None => (oneiron::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER, None),
+                };
                 let legs: &[Option<&str>] = if arm.arm == ArmKind::Deterministic {
                     &[
                         None,
@@ -425,18 +443,9 @@ pub(super) fn run_with_session(
                         });
                         continue;
                     }
+                    let budget_off = leg == Some("ablation-1:context-budget-off");
                     let mut request_case = case.clone();
-                    request_case.token_budget = if leg == Some("ablation-1:context-budget-off") {
-                        record
-                            .corpus
-                            .iter()
-                            .map(|row| oneiron::count_context_pack_tokens(&row.text))
-                            .sum::<usize>()
-                            .saturating_add(8192)
-                            .max(effort.token_budget)
-                    } else {
-                        effort.token_budget
-                    };
+                    request_case.token_budget = if budget_off { 0 } else { effort.token_budget };
                     let started = Instant::now();
                     let mut costs = Vec::new();
                     let (mut context_truncated, mut output_truncated) = (false, false);
@@ -452,6 +461,7 @@ pub(super) fn run_with_session(
                                         )
                                         .with_temporal_now(plan.temporal_now)
                                         .with_access_factor_overrides(&factor_overrides)
+                                        .pack_tokenizer(context_tokenizer)
                                     },
                                     &vault,
                                     &request_case,
@@ -462,6 +472,7 @@ pub(super) fn run_with_session(
                                     &request_case,
                                     query_vector,
                                     plan.temporal_now,
+                                    context_tokenizer,
                                 )?
                             };
                             context_truncated = pack_cut(&pack);
@@ -487,6 +498,7 @@ pub(super) fn run_with_session(
                                         .then_some(query_vector)
                                         .flatten(),
                                     plan.temporal_now,
+                                    context_tokenizer,
                                 )?;
                                 context_truncated = pack_cut(&pack);
                                 context = String::from_utf8(pack.serialized)
@@ -512,16 +524,30 @@ pub(super) fn run_with_session(
                                 &case.query,
                                 effort,
                                 &mut costs,
+                                context_tokenizer,
                             )?;
                             (context_truncated, output_truncated) = (trace.cut, trace.capped);
                             trace.text
                         }
-                        ArmKind::Chat => chat_history(&record.corpus, path, effort.token_budget)?,
+                        ArmKind::Chat => chat_history(
+                            &record.corpus,
+                            path,
+                            effort.token_budget,
+                            context_tokenizer,
+                        )?,
                         _ => return Err(refusal("arm not supported by shared model scaffold")),
                     };
-                    let bounded = bounded_context(&context, request_case.token_budget);
-                    context_truncated |= bounded.len() < context.len();
-                    let context = bounded;
+                    let context = if budget_off {
+                        context
+                    } else {
+                        let bounded =
+                            bounded_context(&context, request_case.token_budget, context_tokenizer);
+                        context_truncated |= bounded.len() < context.len();
+                        bounded
+                    };
+                    let context_tokens = context_tokenizer.count(&context);
+                    let engine_normalized_context_tokens =
+                        oneiron::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER.count(&context);
                     let (answer_text, cost, capped) = answer(
                         session,
                         &arm.model,
@@ -579,6 +605,11 @@ pub(super) fn run_with_session(
                         task_family: ability.clone(),
                         context_truncated,
                         output_truncated,
+                        context_tokenizer_id: context_tokenizer.id().to_owned(),
+                        reader_tokenizer_id: reader_tokenizer_id.clone(),
+                        context_tokens,
+                        engine_normalized_context_tokens,
+                        context_token_budget: (!budget_off).then_some(request_case.token_budget),
                         // These are alternative answers under one question label,
                         // not independent factual nuggets. Bill every alias vote.
                         scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {

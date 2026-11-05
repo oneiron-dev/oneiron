@@ -413,6 +413,40 @@ pub(crate) fn held_pad_world_in_txn(
     Ok(false)
 }
 
+/// The real-legal-hold-only version of the pad keep query, for truthful
+/// reason reports. Cooperative restrictions are not legal-hold facts.
+pub(crate) fn legal_hold_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> Result<bool> {
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    // A body that does not decode names no world: it reads unheld, warned
+    // with no byte of it, so the walk drops it.
+    let world = match pad_body_world(raw) {
+        None => return Ok(false),
+        Some(Ok(world)) => world,
+        Some(Err(_)) => {
+            tracing::warn!("a world key pad row that does not decode reads as unheld");
+            return Ok(false);
+        }
+    };
+    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
+        return Ok(false);
+    }
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, world.as_bytes())? {
+        return Ok(true);
+    }
+    for id in sealed_claims_in_txn(store, txn, world)? {
+        if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Refuses destroying the pad row `raw` read from a carrier, a window value
 /// or a cached body that no canonical row may back, while a legal hold
 /// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
@@ -445,13 +479,14 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
 /// Only an erase calls it: a soft delete keeps the world's keys. Idempotent: a
 /// second call keeps the first receipt and purges any pad left.
 pub(crate) fn destroy_world_keys_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     target: EntityId,
     cause: WorldKeyDestroyCause,
     request_id: Option<[u8; 16]>,
     deleted_at: u64,
 ) -> Result<Option<WorldKeyDestruction>> {
+    let store = write.store;
     if target == crate::claim::base_world_id() {
         return Ok(None);
     }
@@ -482,7 +517,7 @@ pub(crate) fn destroy_world_keys_in_txn(
         request_id: request_id.unwrap_or(*target.as_bytes()),
     };
     for (id, _, learned_at) in &rows {
-        crate::batch::deindex_entity(store, wtxn, id)?;
+        crate::batch::deindex_entity(write, wtxn, id)?;
         let window = pad_window(target, *learned_at);
         stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window.clone(), &tombstone)?;
         // The batch that owns this transaction publishes the window once it
@@ -614,6 +649,7 @@ impl Vault {
                 end: learned_at,
             },
             learned_at,
+            row_version: None,
             data: pad_custody::encode_carrier(key, pad.bytes()),
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -642,8 +678,14 @@ impl Vault {
         request_id: Option<[u8; 16]>,
     ) -> Result<Option<WorldKeyDestruction>> {
         let deleted_at = self.instant_in_txn(wtxn)?.secs();
-        let destroyed =
-            destroy_world_keys_in_txn(&self.store, wtxn, target, cause, request_id, deleted_at)?;
+        let destroyed = destroy_world_keys_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            wtxn,
+            target,
+            cause,
+            request_id,
+            deleted_at,
+        )?;
         if destroyed.is_some() {
             self.world_key_ring().retain(|id, _| id.world != target);
         }

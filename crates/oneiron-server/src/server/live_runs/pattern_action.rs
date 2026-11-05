@@ -102,7 +102,8 @@ fn funds_a_start(
         None => provider.host_meter().map(|guard| (guard, None)),
     };
     line.is_some_and(|(guard, payer)| {
-        guard.read().remaining_units > 0 && provider.reader_backend(guard, payer).is_some()
+        guard.read().remaining_units > 0
+            && provider.reader_backend(guard, payer, Vec::new()).is_some()
     })
 }
 

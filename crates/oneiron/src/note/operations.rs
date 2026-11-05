@@ -49,8 +49,9 @@ pub enum NoteChange {
 /// erased: the record stays, naming no one (FIX 6072, Engine R2). A stored
 /// live write's record names its writer's stamp token in the actor's place
 /// (FIX 11964), and a reader sees the actor the token resolves to, or no one
-/// once it is forgotten; the birth's own record names the NOTE's author.
-/// Every new record names the live, authenticated writer.
+/// once it is forgotten. The birth's raw record names no one; its author is
+/// read from the NOTE's immutable core. Later records name the live,
+/// authenticated writer through that writer's stamp token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteAuthorship {
@@ -65,6 +66,16 @@ pub struct NoteAuthorship {
 }
 
 impl NoteAuthorship {
+    /// Native storage keeps the birth author in the NOTE core, never as a
+    /// literal in retained Loro history. Later operation tokens stay intact.
+    pub(super) fn stored_for_note(&self, note: EntityId) -> Self {
+        let mut record = self.clone();
+        if record.operation == note {
+            record.actor = NoteActor::Erased;
+        }
+        record
+    }
+
     /// Whether `other` keeps this record (ErasedWins, FIX 6072): the same
     /// record, or its erased twin, the same in every field but an actor that
     /// names no one. A live actor never keeps an erased record.
@@ -131,15 +142,17 @@ pub(super) fn record_authorship(
 
 /// [`record_authorship`] for a birth's own record, its commit naming no one
 /// as the birth's stamp does: a birth is derived alike on every replica, so
-/// it can name no device's stamp token. The record names the NOTE core's
-/// author, its `author_ref`.
+/// it can name no device's stamp token. Its record names no one either;
+/// readers bind the birth author from the same NOTE's immutable core.
 pub(super) fn record_birth_authorship(
     doc: &NoteDocument,
     record: &NoteAuthorship,
 ) -> crate::Result<()> {
-    // The commit names no one, as the birth's own stamp does (FIX 10930);
-    // the record keeps the author.
-    insert_authorship(doc, record, &super::NoteActor::Erased.to_wire())
+    insert_authorship(
+        doc,
+        &record.stored_for_note(doc.id),
+        &super::NoteActor::Erased.to_wire(),
+    )
 }
 
 /// Inserts `record` and commits it under the engine stamp naming `named`. No
@@ -161,35 +174,52 @@ fn insert_authorship(
     Ok(())
 }
 
-/// `records`, the stored entries of `note`'s authorship map, as a reader
-/// sees them (FIX 11964): a live write's entry names its writer's stamp
-/// token, which reads as the actor through the token's live claim and as no
-/// one once the token is forgotten. The birth's own entry (its operation is
-/// `note`) names the NOTE core's author; it reads as no one once this vault
-/// erased that author.
+/// Stored authorship as a reader sees it. Later records resolve their stamp
+/// token; the birth author is bound from the same NOTE core in this snapshot.
+/// A forgotten token or erased core author reads as no one.
 ///
 /// # Errors
 ///
-/// Storage errors, or a stored token claim that does not decode.
+/// Storage errors, an invalid NOTE core, or a stored token claim that does not decode.
 pub(super) fn resolved_authorship_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     records: Vec<NoteAuthorship>,
 ) -> crate::Result<Vec<NoteAuthorship>> {
+    let birth_author = if records.iter().any(|record| record.operation == note) {
+        super::verbs::stored_note_core_in(&vault.store, txn, note)?
+            .1
+            .author_ref
+    } else {
+        NoteActor::Erased
+    };
+    resolved_authorship_with_birth_in_txn(vault, txn, note, birth_author, records)
+}
+
+/// Uses the birth author the admitted room or vault content read already
+/// loaded. This value is display metadata, not operation admission.
+pub(super) fn resolved_authorship_with_birth_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    birth_author: NoteActor,
+    records: Vec<NoteAuthorship>,
+) -> crate::Result<Vec<NoteAuthorship>> {
     let mut resolved = Vec::with_capacity(records.len());
     for mut record in records {
-        record.actor = match record.actor {
-            NoteActor::Actor(_) if record.operation == note => {
-                record.actor.erased_here(vault, txn)?
+        record.actor = if record.operation == note {
+            birth_author.erased_here(vault, txn)?
+        } else {
+            match record.actor {
+                NoteActor::Actor(token) => {
+                    crate::provenance::resolve_actor_stamp_in_txn(vault, txn, &token)?
+                        .map_or(NoteActor::Erased, |actor| {
+                            NoteActor::Actor(actor.entity_ref())
+                        })
+                }
+                NoteActor::Erased => NoteActor::Erased,
             }
-            NoteActor::Actor(token) => {
-                crate::provenance::resolve_actor_stamp_in_txn(vault, txn, &token)?
-                    .map_or(NoteActor::Erased, |actor| {
-                        NoteActor::Actor(actor.entity_ref())
-                    })
-            }
-            NoteActor::Erased => NoteActor::Erased,
         };
         resolved.push(record);
     }

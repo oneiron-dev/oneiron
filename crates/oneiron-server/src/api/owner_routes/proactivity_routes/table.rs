@@ -260,6 +260,7 @@ pub(in super::super) fn owner_table() -> OwnerTable {
             get(self_heal_minted),
         ),
     ];
+    table.extend(super::policy_requests::owner_table());
     table.extend(training_runs::owner_table());
     table
 }

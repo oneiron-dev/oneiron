@@ -186,7 +186,7 @@ pub(crate) fn skill_reliability_sources(vault: &Vault, skill: &EntityId) -> Resu
 /// A skill's posterior as [`super::skill_reliability_posterior`] reads it, or
 /// with no measured head its prior, and the rows it stands on, from one
 /// snapshot.
-fn skill_reliability_with_sources(
+pub(crate) fn skill_reliability_with_sources(
     vault: &Vault,
     skill: &EntityId,
 ) -> Result<(SkillReliabilityPosterior, Vec<EntityId>)> {

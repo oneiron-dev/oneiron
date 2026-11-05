@@ -5,6 +5,7 @@
 //! lease, and the optional durable started-milestone claim co-commit.
 
 mod buckets;
+mod requester;
 mod settlement;
 mod spend;
 mod validation;
@@ -92,6 +93,11 @@ impl SideKey for BudgetReservationKey {
 struct DreamerKindAdmissionResult {
     outcome: DreamerAdmissionOutcome,
     budget_exhausted_candidate: Option<AttemptId>,
+    /// FIX 11687: the queued TASK realization the scan found its requester
+    /// withdrawn for, to end after this writer commits. A hint, not a
+    /// claim: the terminal rechecks the row natively. `None` for every
+    /// ordinary result and every other kind.
+    requester_withdrawn_candidate: Option<AttemptId>,
 }
 
 impl DreamerRunnerStore<'_> {
@@ -257,8 +263,8 @@ impl DreamerRunnerStore<'_> {
     /// Atomically admits the next queued Coach heal attempt for a host Coach.
     ///
     /// Per-device, like SKILL-OPT: the attempt's only output is a proposal.
-    /// The wake driver never calls this; the Coach's model turn is the host's,
-    /// as an `agent.dispatch` healer's is.
+    /// A separate Coach consumer or an explicitly opted-in wake executor
+    /// runs the host's model turn, as an `agent.dispatch` healer's is.
     ///
     /// The admission's grouped write skips the write door's scope-summary
     /// rederive (FIX 11664 item 2a), the way a cold open's recovery writes do
@@ -392,9 +398,22 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
+        // FIX 11687: the withdrawn-realization terminal below needs its
+        // lease owner and instant after the scan's writer commits.
+        let lease_owner = input.lease_owner.clone();
+        let now = input.now;
         let result = self.vault.with_write_txn_grouped(|wtxn| {
             self.admit_next_kind_in_txn(wtxn, queue_kind, input, None)
         })?;
+        // A queued TASK realization its requester withdrew ends here, in a
+        // writer of its own: the hint is rechecked natively, then the try
+        // is claimed and taken, its TASK fails not to be retried, and the
+        // try fails for good with the typed reason. Other kinds never hint.
+        if queue_kind == DREAMER_TASK_REALIZE_ATTEMPT_KIND
+            && let Some(id) = result.requester_withdrawn_candidate
+        {
+            self.end_withdrawn_task_realize(id, &lease_owner, now)?;
+        }
         self.vault.store.notify_attempt_observers();
         Ok(result.outcome)
     }
@@ -432,8 +451,32 @@ impl DreamerRunnerStore<'_> {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
                 budget_exhausted_candidate: None,
+                requester_withdrawn_candidate: None,
             });
         };
+        // FIX 11687: a TASK realization whose requester withdrew ends
+        // before any routed line, budget read, reserve or milestone. The
+        // hint is rechecked natively before it ends anything; no
+        // requester, or a read that fails, runs the ordinary path.
+        if queue_kind == DREAMER_TASK_REALIZE_ATTEMPT_KIND {
+            let withdrawn = self
+                .attempts
+                .get_in_txn(wtxn, candidate_attempt_id)?
+                .and_then(|record| decode_dreamer_attempt_status(record).ok())
+                .and_then(|status| {
+                    crate::task_verb::decode_task_realization_input(&status.payload.input).ok()
+                })
+                .and_then(|(_, requester)| requester)
+                .and_then(|requester| requester.withdrawn_in_txn(self.vault, &*wtxn))
+                .is_some();
+            if withdrawn {
+                return Ok(DreamerKindAdmissionResult {
+                    outcome: DreamerAdmissionOutcome::Empty,
+                    budget_exhausted_candidate: None,
+                    requester_withdrawn_candidate: Some(candidate_attempt_id),
+                });
+            }
+        }
         // A routed candidate debits its own line, before any budget row is
         // read; that row is accounting only, so its total never refuses.
         if let Some(route) = route
@@ -475,6 +518,7 @@ impl DreamerRunnerStore<'_> {
                     return Ok(DreamerKindAdmissionResult {
                         outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
                         budget_exhausted_candidate: Some(candidate_attempt_id),
+                        requester_withdrawn_candidate: None,
                     });
                 }
             }
@@ -482,6 +526,7 @@ impl DreamerRunnerStore<'_> {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
                 budget_exhausted_candidate: Some(candidate_attempt_id),
+                requester_withdrawn_candidate: None,
             });
         }
 
@@ -501,6 +546,7 @@ impl DreamerRunnerStore<'_> {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
                 budget_exhausted_candidate: None,
+                requester_withdrawn_candidate: None,
             });
         };
         if attempt.id != candidate_attempt_id {
@@ -574,6 +620,7 @@ impl DreamerRunnerStore<'_> {
                 reservation,
             })),
             budget_exhausted_candidate: None,
+            requester_withdrawn_candidate: None,
         })
     }
 

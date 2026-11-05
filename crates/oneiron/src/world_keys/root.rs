@@ -1,14 +1,20 @@
 //! The owner's recovery root: 32 random bytes that only the recovery kit carries.
 //!
-//! One seed gives two keys, each with its own label:
+//! World recovery uses two keys from the seed, each with its own label:
 //! - the recovery keypair (hybrid). World keys are wrapped to its public half, and
 //!   the kit opens them with the secret half;
 //! - the owner anchor (Ed25519). It signs the root record and an Owned mark at kit
 //!   issue or restore (E2).
+//! A separate vault-bound authority signer can also be derived, but has no standing
+//! until the owner explicitly enrols its distinct key before loss.
 //!
 //! The engine never stores the seed. How the kit's pieces carry the 32 bytes is the
 //! kit's business; this module takes back only the kit's whole restore, never bare
 //! bytes, so it knows the kit's kind and how many genuine pieces rebuilt it.
+
+mod authority_signing;
+
+pub use authority_signing::RecoveryAuthoritySigner;
 
 use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;

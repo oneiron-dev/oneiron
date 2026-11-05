@@ -22,4 +22,6 @@ pub mod document_sub_tags {
     pub const ARTIFACT_PUBLICATION: u8 = 6;
     /// The sync server's answer to one publication: its digest and outcome.
     pub const ARTIFACT_RECEIPT: u8 = 7;
+    /// Direct, nonterminal answer: one REQUEST or UPDATE waited out its open.
+    pub const WAITED_OUT: u8 = 8;
 }

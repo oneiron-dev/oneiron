@@ -12,9 +12,10 @@ use super::{
     CallPurpose, DescriptionPolicy, MeasuredDescription, ModelDescription, SeatSettings, invalid,
     purpose_key,
 };
+use crate::Vault;
 use crate::error::Error;
 use crate::llm::decision::{DecisionAnswer, TypedDecision};
-use crate::llm::seat::SeatPolicy;
+use crate::llm::seat::{SeatLearningContext, SeatPolicy, learned_models};
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::task_type::TaskTypeRef;
 
@@ -111,6 +112,8 @@ pub(super) fn resolve<'a>(
     policy: &'a DescriptionPolicy,
     seat_policy: &SeatPolicy,
     measurements: &'a BTreeMap<ModelId, MeasuredDescription>,
+    vault: &Vault,
+    learning: Option<&SeatLearningContext>,
     settings: &SeatSettings,
     purpose: &CallPurpose,
     task: &str,
@@ -137,10 +140,16 @@ pub(super) fn resolve<'a>(
                 .map(|line| (row, line, effort))
         })
         .collect();
+    let learned = learned_models(
+        vault,
+        learning,
+        rows.iter().map(|(row, _, _)| row.model.clone()),
+    );
     let grading = decisions
         .fitness(
             task,
             type_ref,
+            &learned,
             &rows
                 .iter()
                 .map(|&(row, description, effort)| Candidate {

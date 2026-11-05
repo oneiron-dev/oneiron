@@ -7,7 +7,7 @@
 //! unreadable required record answers `None`. No read matches a push,
 //! reviews, initializes a queue, refreshes a check or exports. Lists are
 //! deduplicated and sorted by stable id; documents by path.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::workbench_types::{
     CodeForkDocumentView, CodeForkGetRequest, CodeForkView, CodeIngressRef,
@@ -255,6 +255,7 @@ impl Memory<'_> {
             task_refs: Vec::new(),
             ingress: None,
         };
+        let mut candidate_fork = false;
         for (provenance, row) in self.vault.received_code_ingress_rows(&served.store)? {
             let Some(candidate) = &row.candidate else {
                 continue;
@@ -266,6 +267,7 @@ impl Memory<'_> {
             else {
                 continue;
             };
+            candidate_fork = true;
             if self.workbench_readable(provenance)? {
                 view.ingress = Some(CodeIngressRef {
                     provenance,
@@ -299,6 +301,73 @@ impl Memory<'_> {
                 });
             }
             view.revision_refs = self.workbench_sealed_with(&served, candidate.candidate)?;
+        }
+        if !candidate_fork {
+            let repos: BTreeSet<_> = base
+                .file_frontiers
+                .values()
+                .map(|frontier| frontier.repo.as_str())
+                .collect();
+            let mut documents: BTreeMap<_, _> = base
+                .file_frontiers
+                .iter()
+                .map(|(id, frontier)| {
+                    (
+                        *id,
+                        CodeForkDocumentView {
+                            document_id: Some(bytes_to_hex_lower(id)),
+                            path: frontier.path.clone(),
+                            base: Some(frontier.clone()),
+                            landed: None,
+                            target: None,
+                            metadata_edit: None,
+                            proposal_ref: None,
+                        },
+                    )
+                })
+                .collect();
+            let receipts = {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                self.origin_owner_in_txn(owner, &txn)?;
+                self.vault
+                    .code_document_receipts_for_session_in_txn(&txn, fork.fork_session_id)?
+            };
+            let mut sequences = BTreeMap::new();
+            for receipt in receipts {
+                // One session can edit several repositories; the tested base
+                // supplies this fork's proven document namespaces.
+                if !repos.contains(receipt.after.repo.as_str()) {
+                    continue;
+                }
+                if sequences
+                    .get(&receipt.document_id)
+                    .is_some_and(|sequence| *sequence >= receipt.sequence)
+                {
+                    continue;
+                }
+                sequences.insert(receipt.document_id, receipt.sequence);
+                let document =
+                    documents
+                        .entry(receipt.document_id)
+                        .or_insert_with(|| CodeForkDocumentView {
+                            document_id: Some(bytes_to_hex_lower(&receipt.document_id)),
+                            path: receipt.after.path.clone(),
+                            base: None,
+                            landed: None,
+                            target: None,
+                            metadata_edit: None,
+                            proposal_ref: None,
+                        });
+                document.path.clone_from(&receipt.after.path);
+                document.landed = Some(receipt.after);
+                document.metadata_edit = receipt.metadata_edit;
+            }
+            view.documents = documents.into_values().collect();
         }
         view.documents.sort_by(|left, right| {
             (&left.path, &left.document_id).cmp(&(&right.path, &right.document_id))

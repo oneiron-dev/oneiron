@@ -23,11 +23,13 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod hook_hold;
 mod index;
 mod kind_payload_erase;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
+pub(crate) use payload_erase::ErasedByoaPayloads;
 mod payload_rebind;
 mod ports;
 mod read_set;
@@ -64,6 +66,7 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub(crate) use hook_hold::HoldAttemptForHook;
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
@@ -79,32 +82,19 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
+pub(crate) use payload_erase::feedback_triage::erase_feedback_triage_as_in_txn;
 pub(crate) use payload_erase::{
-    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
-    erase_model_step_failure_reasons_in_txn, retire_attempt_payload_in_txn,
+    attempt_row_opaque, dispatch_payload_actor, erase_attempt_payload_actor_in_txn,
+    erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
+    erase_model_step_failure_reasons_in_txn, scrub_hard_erased_payload_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)
 }
-/// A signal row's bytes, read once by the side-row wall in the writer's
-/// transaction ([`encoding::encode_admitted_record`]). An erased dispatch
-/// target's text leaves the row first, as on every queue write (FIX 7076).
-pub(crate) fn encode_admitted_signal_record(
-    vault: &crate::Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    record: &mut AttemptRecord,
-) -> crate::Result<Vec<u8>> {
-    payload_erase::scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
-    encoding::encode_admitted_record(vault, wtxn, record)
-}
-pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
-    validate::validate_cancel_actor(actor)?;
-    validate::validate_optional_failure_reason(reason)
-}
+pub(crate) use crate::store::attempt_record_codec::encode_admitted_signal_record;
 
-pub(crate) use engine::dreamer_run_root_id_in_txn;
+pub(crate) use crate::store::attempt_record_codec::signal_validators::validate_signal_cancel;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
 #[cfg_attr(not(test), allow(unused_imports))]

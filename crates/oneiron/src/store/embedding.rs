@@ -230,6 +230,16 @@ pub struct PendingEmbeddingInput {
     pub pending_embedding_token: Vec<u8>,
 }
 
+/// One document's measured answer: its vector with the device and runtime that
+/// computed it, and the actual encoder input-token count when the embedder
+/// measures it. `None` is truthful unmeasured, never zero.
+#[derive(Debug, Clone)]
+pub struct EmbeddedVector {
+    pub vector: Vec<f32>,
+    pub provenance: EmbeddingProvenance,
+    pub input_tokens: Option<u64>,
+}
+
 /// Host-injected retrieval embedder.
 ///
 /// The engine owns queueing, leases, and vector storage. Implementations own
@@ -283,6 +293,46 @@ pub trait Embedder: Send + Sync {
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;
         self.embed_marked(inputs)
+    }
+
+    /// [`Self::embed_marked`], each vector with its measured input-token count
+    /// when the embedder counts the actual encoder input. An embedder that
+    /// measures overrides this; any other marks each `None` via this default,
+    /// which calls [`Self::embed_marked`] exactly once and never the model
+    /// twice.
+    fn embed_marked_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> Result<Vec<EmbeddedVector>> {
+        Ok(self
+            .embed_marked(inputs)?
+            .into_iter()
+            .map(|(vector, provenance)| EmbeddedVector {
+                vector,
+                provenance,
+                input_tokens: None,
+            })
+            .collect())
+    }
+
+    /// [`Self::embed_released`], each vector with its measured input-token
+    /// count when the embedder counts the actual encoder input. The default
+    /// calls [`Self::embed_released`] exactly once (preserving every custom
+    /// final-request release hook) and marks each `None`.
+    fn embed_released_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[EntityId]) -> Result<()>,
+    ) -> Result<Vec<EmbeddedVector>> {
+        Ok(self
+            .embed_released(inputs, release)?
+            .into_iter()
+            .map(|(vector, provenance)| EmbeddedVector {
+                vector,
+                provenance,
+                input_tokens: None,
+            })
+            .collect())
     }
 }
 

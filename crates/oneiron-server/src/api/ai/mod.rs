@@ -17,7 +17,7 @@ use oneiron::llm::manifest::ModelRole;
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::config::models::role_key;
-use crate::models::{QuotaChoice, SeatState, TaggerStatus};
+use crate::models::{QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
 use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
@@ -103,7 +103,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
         return error.into_response();
     }
     let mut models = server.ai.models_live_status();
-    models.tagger = server.tagger.as_ref().map(tagger_status);
+    models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     Json(serde_json::json!({
         "ai": server.ai.status(),
@@ -116,8 +116,8 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
 /// An `extraction_encoder` seat no generating rung serves keeps its
 /// state, and says who serves the encoder instead (FIX 6914): every rung
 /// a oneironer provider and a tagger slot standing. The seat state still
-/// says no models rung serves it, which is true; the flip to ready waits
-/// on the slot's retained probe state (FIX 7384).
+/// says no models rung serves it, which is true. Historical card/serving
+/// metadata is not a current successful probe.
 fn point_tagger_seat(models: &mut crate::models::ModelsStatus) {
     if models.tagger.is_none() {
         return;
@@ -157,6 +157,25 @@ fn tagger_status(slot: &TaggerSlot) -> TaggerStatus {
         } else {
             "never_ready"
         },
+        runtimes: slot
+            .runtime_status()
+            .into_iter()
+            .map(|runtime| {
+                let (reason, detail) = match runtime.why {
+                    Some(why) => match why.strip_prefix("its load failed: ") {
+                        Some(detail) => (Some("load_failed".to_owned()), Some(detail.to_owned())),
+                        None => (Some(why), None),
+                    },
+                    None => (None, None),
+                };
+                TaggerRuntimeStatus {
+                    runtime: runtime.runtime.as_str(),
+                    state: runtime.state.map(|state| state.as_str()),
+                    reason,
+                    detail,
+                }
+            })
+            .collect(),
         checkpoint_sha16: slot.config().checkpoint_sha16.clone(),
         card_checkpoint_sha16: card.map(|card| card.checkpoint_sha16),
         engine: serving.map(|serving| serving.engine.id()),

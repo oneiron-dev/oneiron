@@ -259,7 +259,10 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<LoadedReplayRecord> {
         let continuation_digest = continuation.map(|note| &note.digest);
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("engine executor code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "engine executor determinism changed for existing run".to_owned(),
                 )

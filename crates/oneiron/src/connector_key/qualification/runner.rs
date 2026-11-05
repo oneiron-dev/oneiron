@@ -35,9 +35,14 @@ fn run_qualification(
     }
     let mut first = connector.connect()?;
     let mut second = connector.connect()?;
-    let mut tools = first.tools_list()?;
-    if tools != second.tools_list()? {
+    let first_list = first.tools_list()?;
+    let second_list = second.tools_list()?;
+    let mut tools = first_list.tools;
+    if tools != second_list.tools {
         return Err(QualificationFailure::StatelessMismatch);
+    }
+    for request in first_list.requests.iter().chain(&second_list.requests) {
+        validate_discovery_headers(request)?;
     }
     let resolved = super::super::manifest_drift::ResolvedConnectorManifest::resolve(
         tools
@@ -447,6 +452,19 @@ fn probe(
     validate_trace(&reply, &case.call.id)?;
     evidence.record(&reply)?;
     Ok(reply)
+}
+
+fn validate_discovery_headers(request: &ProbeCapturedRequest) -> Result<(), QualificationFailure> {
+    let method = request.request_body.get("method").and_then(Value::as_str);
+    let mut headers = request
+        .request_headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("Mcp-Method"))
+        .map(|(_, value)| value.as_str());
+    if method != Some("tools/list") || headers.next() != method || headers.next().is_some() {
+        return Err(QualificationFailure::HeaderMismatch);
+    }
+    Ok(())
 }
 
 pub fn validate_headers(

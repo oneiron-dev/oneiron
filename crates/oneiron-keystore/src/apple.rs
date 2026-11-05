@@ -50,15 +50,19 @@ impl AppleKeychain {
     /// The query that finds a slot: this service and account, in the
     /// data-protection keychain, among non-synchronizable items only.
     fn lookup(&self, slot: &KeystoreSlot) -> PasswordOptions {
-        let mut options = PasswordOptions::new_generic_password(&self.service, &slot.name());
+        self.lookup_account(&slot.name())
+    }
+
+    fn lookup_account(&self, account: &str) -> PasswordOptions {
+        let mut options = PasswordOptions::new_generic_password(&self.service, account);
         options.set_access_synchronized(Some(false));
         options.use_protected_keychain();
         options
     }
 
     /// The lookup plus the item's protection. Every write goes through here.
-    fn new_item(&self, slot: &KeystoreSlot) -> Result<PasswordOptions> {
-        let mut options = self.lookup(slot);
+    fn new_item_account(&self, account: &str) -> Result<PasswordOptions> {
+        let mut options = self.lookup_account(account);
         let access = SecAccessControl::create_with_protection(
             Some(ProtectionMode::AccessibleAfterFirstUnlockThisDeviceOnly),
             0,
@@ -72,7 +76,11 @@ impl AppleKeychain {
 impl AppleKeychain {
     /// The slot's item as stored; `None` when the slot is empty.
     pub(crate) fn read_item(&self, slot: &KeystoreSlot) -> Result<Option<Vec<u8>>> {
-        match generic_password(self.lookup(slot)) {
+        self.read_item_account(&slot.name())
+    }
+
+    pub(crate) fn read_item_account(&self, account: &str) -> Result<Option<Vec<u8>>> {
+        match generic_password(self.lookup_account(account)) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
             Err(e) => Err(platform(e.code())),
@@ -83,7 +91,11 @@ impl AppleKeychain {
     /// so `AlreadyExists`. The library's set call falls back to an update, and a
     /// check before it races another first use of the slot.
     pub(crate) fn add_item(&self, slot: &KeystoreSlot, data: &[u8]) -> Result<()> {
-        let item = self.new_item(slot)?;
+        self.add_item_account(&slot.name(), data)
+    }
+
+    pub(crate) fn add_item_account(&self, account: &str, data: &[u8]) -> Result<()> {
+        let item = self.new_item_account(account)?;
         #[expect(
             deprecated,
             reason = "PasswordOptions has no add-only call; its query is the item"

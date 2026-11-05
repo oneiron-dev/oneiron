@@ -441,6 +441,16 @@ pub struct NapiBlobVersionView {
     /// Unix seconds.
     pub created_at: i64,
 }
+/// A checked append's landed version or complete retained proposal.
+#[napi(object)]
+pub struct NapiBlobVersionAppendOutcome {
+    /// `landed` | `proposed`.
+    pub outcome: String,
+    /// Set only for `landed`.
+    pub view: Option<NapiBlobVersionView>,
+    /// The full engine proposal; set only for `proposed`.
+    pub proposal: Option<serde_json::Value>,
+}
 
 /// A recall's media query (OF-370): bytes the server embeds into one
 /// declared space, searched as that space's list beside the query's.
@@ -529,9 +539,25 @@ pub struct NapiMemoryStaleStamp {
     pub pact_epoch: f64,
 }
 
+/// Raw evidence from one exact embedding space, before fusion.
+#[napi(object)]
+pub struct NapiEmbeddingMatchEvidence {
+    pub space: String,
+    pub embedding_kind: String,
+    pub query_kind: String,
+    pub score: f64,
+    pub floor: f64,
+    pub strong: f64,
+    pub matched: bool,
+}
+
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
+    /// The ASSET id for a media or text asset hit.
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    pub embedding_matches: Vec<NapiEmbeddingMatchEvidence>,
     /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.

@@ -30,7 +30,7 @@ use loro::{
 
 use super::super::super::{RevisionRef, pending_index, phonetic};
 use super::super::{
-    DOC, FRONTIER, IDENTITY, RevisionState, STATE, doc_raw, reference, text_fields,
+    DOC, FRONTIER, IDENTITY, RevisionState, STATE, common_binding, doc_raw, reference, text_fields,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, short_id_content_hash};
 use crate::entity_id::EntityId;
@@ -448,21 +448,46 @@ impl Bindings {
     /// it stays as it is under every opening of the document's actors, and
     /// each ref its state, its reverse rows and its `staged` inputs name is
     /// one of its retained frontiers.
-    fn keeps(&self, id: &EntityId, doc: &LoroDoc, staged: &[RevisionRef]) -> Admission<()> {
+    fn keeps(
+        &self,
+        id: &EntityId,
+        doc: &LoroDoc,
+        common: Option<&crate::entity_doc::EntityDoc>,
+        staged: &[RevisionRef],
+    ) -> Result<Admission<()>> {
         let unproved = Unresolved::ActorSplit(BINDING_UNPROVED);
-        let bound = self.entities.get(id).ok_or(unproved)?;
-        let state = bound.state.ok_or(unproved)?;
+        let Some(bound) = self.entities.get(id) else {
+            return Ok(Err(unproved));
+        };
+        let Some(state) = bound.state else {
+            return Ok(Err(unproved));
+        };
         let mut retained = BTreeSet::new();
         for (revision, encoded) in &bound.frontiers {
-            keeps_binding(id, doc, *revision, encoded)?;
+            if binding_origin(id, doc, *revision, encoded).is_some() {
+                if let Err(reason) = keeps_binding(id, doc, *revision, encoded) {
+                    return Ok(Err(reason));
+                }
+            } else {
+                // An invalid generic encoding keeps its original unclassified outcome.
+                if Frontiers::decode(encoded).is_err() {
+                    return Ok(Err(unproved));
+                }
+                let Some(common) = common else {
+                    return Ok(Err(unproved));
+                };
+                if !common_binding(id, common, *revision, encoded)? {
+                    return Ok(Err(unproved));
+                }
+            }
             retained.insert(*revision);
         }
         let mut named = state.iter().chain(&bound.identities).chain(staged);
-        if named.all(|revision| retained.contains(revision)) {
+        Ok(if named.all(|revision| retained.contains(revision)) {
             Ok(())
         } else {
             Err(unproved)
-        }
+        })
     }
 }
 
@@ -501,7 +526,10 @@ fn project(
         return Ok(Err(reason));
     }
     let staged = staged_revisions(dbs, txn, &row.key)?;
-    Ok(bindings.keeps(&row.key, &doc, &staged).map(|()| split))
+    let common = crate::entity_doc::record_document(dbs, txn, &row.key, None)?;
+    Ok(bindings
+        .keeps(&row.key, &doc, common.as_ref(), &staged)?
+        .map(|()| split))
 }
 
 /// A revision document's split, with the document and its history: a full
@@ -668,11 +696,22 @@ pub(super) fn finish_restore_in_txn(
     let doc = full_doc(&bytes).map_err(|_| rows::bad_part())?;
     let state = STATE.get(dbs, txn, id)?.filter(|state| state.has_doc);
     let state = state.ok_or_else(rows::bad_part)?;
+    let common = crate::entity_doc::record_document(dbs, txn, id, None)?;
     let mut retained = BTreeSet::new();
     for ((_, revision), encoded) in FRONTIER.scan_from(dbs, txn, id.as_bytes())? {
         let reverse = IDENTITY.get(dbs, txn, &revision)?;
         let revision = RevisionRef(revision);
-        let bound = binding_origin(id, &doc, revision, &encoded).is_some();
+        let bound = if binding_origin(id, &doc, revision, &encoded).is_some() {
+            true
+        } else {
+            if Frontiers::decode(&encoded).is_err() {
+                return Err(rows::bad_part());
+            }
+            match common.as_ref() {
+                Some(common) => common_binding(id, common, revision, &encoded)?,
+                None => false,
+            }
+        };
         if !bound || reverse != Some(*id) {
             return Err(rows::bad_part());
         }

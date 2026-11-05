@@ -157,6 +157,9 @@ fn settle_connector_calls(
     if let Err(error) = vault.repair_connector_call_owner_asks() {
         tracing::warn!(%error, "connector call owner ask repair failed");
     }
+    if let Err(error) = vault.repair_connector_code_consent_asks() {
+        tracing::warn!(%error, "connector call code consent ask repair failed");
+    }
     // Connector event wakes a budget window paced are admitted again once
     // it opens (FIX 8686).
     if let Err(error) = vault.continue_paced_connector_wakes() {

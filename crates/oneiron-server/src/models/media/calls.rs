@@ -15,8 +15,9 @@ use super::{
 /// stops, charging nothing: the job runs on at its provider, and the runtime
 /// that takes it up from its kept row pays its end, once. A program's job
 /// whose row was not kept has no row to take it up from: it pays its
-/// reservation on its run's line now (FIX 780, 6083). A job in a poll that
-/// holds it is left to its own permit.
+/// reservation on its run's line now (FIX 780, 6083). A direct job whose
+/// submit was never kept, neither durable nor held, pays its reservation now
+/// too (FIX 11517). A job in a poll that holds it is left to its own permit.
 impl Drop for MediaRuntime {
     fn drop(&mut self) {
         if self.store.is_none() {
@@ -29,7 +30,7 @@ impl Drop for MediaRuntime {
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
-            if self.unkept_program_job(ticket) {
+            if job.unkept || self.unkept_program_job(ticket) {
                 let charges = job.charges();
                 job.settle_failed();
                 // What its settle charged reaches the scope that funds it

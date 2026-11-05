@@ -9,7 +9,7 @@
 
 use oneiron::Vault;
 use oneiron::connector_key::qualification::{
-    ProbeReply, ProbeRequest, ProbeTool, QualificationConnection, QualificationConnector,
+    ProbeReply, ProbeRequest, ProbeToolsList, QualificationConnection, QualificationConnector,
     QualificationFailure,
 };
 use oneiron::connector_key::{
@@ -84,10 +84,11 @@ struct ProbeConnection<'p, 'a> {
 }
 
 impl QualificationConnection for ProbeConnection<'_, '_> {
-    fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-        Ok(vec![PackConnectionEvidence::probe_tool(
-            self.probe.check.check,
-        )])
+    fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+        Ok(ProbeToolsList {
+            tools: vec![PackConnectionEvidence::probe_tool(self.probe.check.check)],
+            requests: Vec::new(),
+        })
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {

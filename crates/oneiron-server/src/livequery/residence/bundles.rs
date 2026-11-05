@@ -73,25 +73,16 @@ pub(super) fn bundle_put(
     let part = base64::engine::general_purpose::STANDARD
         .decode(input.part)
         .map_err(|_| AppError::invalid_params())?;
-    // A peer that proved no machine is refused by the stage itself.
-    let claim = match peer {
-        PeerMachine::Proven { machine, .. } => Some(
-            server
-                .transfers
-                .hold_sealed_stage(machine, stage.object, input.total, input.offset)
-                .ok_or_else(|| {
-                    AppError::new(
-                        "DISK_FLOOR",
-                        "the home's disk keeps its free-space floor",
-                        ["Retry once the home has room."],
-                    )
-                })?,
-        ),
-        PeerMachine::Unknown => None,
-    };
-    let staged = stage_sealed_bundle_part(&server.vault, peer, &stage, input.offset, &part);
-    drop(claim);
-    server.transfers.reconcile_sealed_stages(&server.vault);
+    let staged = server
+        .transfers
+        .stage_sealed_part(&server.vault, peer, &stage, input.offset, &part)
+        .map_err(|()| {
+            AppError::new(
+                "DISK_FLOOR",
+                "the home's disk keeps its free-space floor",
+                ["Retry once the home has room."],
+            )
+        })?;
     let staged = staged.map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((json!({"staged": staged}), Some(Vec::new())))
 }

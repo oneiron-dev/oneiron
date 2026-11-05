@@ -88,6 +88,16 @@ impl RecordingJsHost<'_, '_> {
             .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
     }
 
+    /// The rows of an own occurrence's fixed bytes. Unknown provenance uses
+    /// the live union; act gates retain their verb-only row set.
+    fn occurrence_rows(&self, output: &CodeRunRawOutput, callable: bool) -> Option<Vec<EntityId>> {
+        if callable {
+            output.input_rows.clone().or_else(|| self.result_rows())
+        } else {
+            self.verb_rows()
+        }
+    }
+
     /// Whether the run's results stay on this device for its door's caller
     /// now (DEC-0005), by [`Self::result_rows`].
     pub(super) fn withholds_results(&self) -> Result<bool> {
@@ -316,7 +326,7 @@ impl RecordingJsHost<'_, '_> {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
         let rows = match found.rows.clone() {
-            None => own,
+            None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
         match self.withholds_rows(rows.clone())? {
@@ -573,64 +583,72 @@ impl RecordingJsHost<'_, '_> {
         storage: &ExecutorStorage<'_>,
         path: &str,
     ) -> Result<Option<Vec<u8>>> {
-        if self.withholds_results()? {
-            return Err(Error::InvalidConfig(
-                "stored result read refused: result_withheld".into(),
-            ));
-        }
         // The read names a body by content and, when the card gave one, an
         // occurrence: a same-byte result reads its own occurrence, never
         // the first with its bytes. A path without an occurrence keeps the
         // legacy meaning (the first occurrence with those bytes).
-        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
+        let found = parse_result_read_path(path).and_then(|(wanted, occurrence, offset)| {
+            self.results
+                .iter()
+                .chain(&self.captured)
+                .find(|output| {
+                    output.output_ref() == wanted
+                        && occurrence.as_ref().is_none_or(|occurrence| {
+                            ResultOccurrence::of(Some(self.run_id), output)
+                                .ok()
+                                .map(|mine| mine.id())
+                                .as_ref()
+                                == Some(occurrence)
+                        })
+                })
+                .map(|output| (output, offset))
+        });
+        let Some((output, offset)) = found else {
+            if self.withholds_results()? {
+                return Err(Error::InvalidConfig(
+                    "stored result read refused: result_withheld".into(),
+                ));
+            }
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".into(),
             ));
         };
-        for output in self.results.iter().chain(&self.captured) {
-            if output.output_ref() != wanted {
-                continue;
-            }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), output)
-                    .ok()
-                    .map(|mine| mine.id());
-                if mine.as_ref() != Some(occurrence) {
-                    continue;
-                }
-            }
-            if offset > output.raw_len {
-                return Err(Error::InvalidConfig(
-                    "stored result offset exceeds its body".into(),
-                ));
-            }
-            // A raw chunk is the occurrence's bytes: a tainted occurrence
-            // (a secret mark reads tainted) refuses here, as its facets do.
-            if storage
-                .code_run_result_taint(Some(self.run_id), output)?
-                .0
-                .is_tainted()
-            {
-                return Err(Error::InvalidConfig(
-                    "stored result read refused: tainted".into(),
-                ));
-            }
-            let bytes = storage
-                .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            // A body stored before its scan read every rule may hold a
-            // secret no mark names: a chunk showing one is withheld like a
-            // card or answer showing one is.
-            if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
-                return Err(Error::InvalidConfig(format!(
-                    "stored result read refused: {reason}"
-                )));
-            }
-            return Ok(Some(bytes));
+        let withheld = self
+            .withholds_rows(self.occurrence_rows(output, true))?
+            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))?;
+        if withheld {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: result_withheld".into(),
+            ));
         }
-        Err(Error::InvalidConfig(
-            "stored result is outside this run".into(),
-        ))
+        if offset > output.raw_len {
+            return Err(Error::InvalidConfig(
+                "stored result offset exceeds its body".into(),
+            ));
+        }
+        // A raw chunk is the occurrence's bytes: a tainted occurrence
+        // (a secret mark reads tainted) refuses here, as its facets do.
+        if storage
+            .code_run_result_taint(Some(self.run_id), output)?
+            .0
+            .is_tainted()
+        {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: tainted".into(),
+            ));
+        }
+        let bytes = storage
+            .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        // A body stored before its scan read every rule may hold a
+        // secret no mark names: a chunk showing one is withheld like a
+        // card or answer showing one is.
+        if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
+            return Err(Error::InvalidConfig(format!(
+                "stored result read refused: {reason}"
+            )));
+        }
+        Ok(Some(bytes))
     }
 
     /// A recorded-output read answers where the step's next bridge call

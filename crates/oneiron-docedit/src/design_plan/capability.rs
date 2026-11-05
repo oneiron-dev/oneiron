@@ -142,12 +142,13 @@ impl Metrics {
             Some(name) => Some(name),
         };
         let bold = style.bold.value.unwrap_or(false);
+        let italic = style.italic.value.unwrap_or(false);
         Some(Self {
             size,
             indent,
             first_line: style.first_line.value.unwrap_or(0),
             insets,
-            face: typeface.and_then(|name| fonts.face(name, bold, false)),
+            face: typeface.and_then(|name| fonts.face(name, bold, italic)),
             line_spacing: style
                 .line_spacing
                 .value

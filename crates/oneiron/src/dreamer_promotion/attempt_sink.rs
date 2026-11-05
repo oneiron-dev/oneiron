@@ -3,7 +3,8 @@
 //! host never builds (or can forge) a per-attempt run context.
 use std::sync::Arc;
 
-use super::{DreamerRunContext, promote_scoped_consolidation};
+use super::DreamerRunContext;
+use super::scoped::promote_scoped_consolidation_recording_outputs;
 use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
@@ -107,7 +108,8 @@ impl AttemptPromotionSink {
             agent_actor,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
         };
-        let outcome = promote_scoped_consolidation(&self.vault, &run, write, checker)?;
+        let outcome =
+            promote_scoped_consolidation_recording_outputs(&self.vault, &run, write, checker)?;
         let outputs: Vec<_> = outcome
             .landed
             .iter()

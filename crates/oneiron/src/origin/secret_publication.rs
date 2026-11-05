@@ -19,8 +19,10 @@
 //! `marked_live_secret` while any of its marks blocks (C2: a live key and a
 //! key of unknown liveness block; only the owner's not-a-secret or the
 //! provider's revocation clears one, and a local rotation proves nothing).
-//! Until those dispositions land (slice 8), nothing proves a key dead, so
-//! every mark blocks. Marks are read per blob (CALL S4FIX-UNKNOWN-MARK): a
+//! An explicit native owner not-a-secret clears via the span's exact
+//! custody; unknown, `Opaque` and provider-unproven marks still block, a
+//! local rotation proves nothing, and history/masking are unchanged. Marks
+//! are read per blob (CALL S4FIX-UNKNOWN-MARK): a
 //! mark that does not decode but names its blob holds, as marked, only the
 //! tips whose history carries a blob of those bytes; one that names no
 //! blob, or a store failure in the mark walk, holds every tip
@@ -43,10 +45,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use super::mirror::{OriginMirrorTarget, TARGETS};
-use super::secret_marks::{RepoMarkFacts, RepoSecretMark};
+use super::secret_marks::{RepoMarkFacts, RepoSecretMark, RepoSecretPlacement};
 use super::secret_projection::index::UNATTRIBUTABLE_MARK_FAILS_CLOSED;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -163,11 +166,31 @@ impl RepoSecretLiveness {
     }
 }
 
-/// One mark's liveness: the one hook slice 8's dispositions answer. Until
-/// they land nothing proves a key dead, a local rotation included (C2), so
-/// every mark is `Unknown` and blocks.
-pub(crate) const fn repo_secret_liveness(_mark: &RepoSecretMark) -> RepoSecretLiveness {
-    RepoSecretLiveness::Unknown
+/// One mark's liveness: an explicit native owner not-a-secret clears via
+/// the span's exact custody; unknown, `Opaque` and provider-unproven marks
+/// still block, a local rotation proves nothing, and history/masking are
+/// unchanged. A `Span` custody ruled not-a-secret reads `NotASecret`, any
+/// other `Span` reads `Unknown`, and a read that fails holds `Unknown`.
+pub(crate) fn repo_secret_liveness(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    mark: &RepoSecretMark,
+) -> RepoSecretLiveness {
+    let custody = match &mark.placement {
+        RepoSecretPlacement::Span { custody, .. } => custody,
+        RepoSecretPlacement::Opaque => return RepoSecretLiveness::Unknown,
+    };
+    match crate::secret_custody::ruled_no_secret_in_txn(&vault.store, txn, custody) {
+        Ok(true) => RepoSecretLiveness::NotASecret,
+        Ok(false) => RepoSecretLiveness::Unknown,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "owner not-a-secret could not be read; its mark stays blocking"
+            );
+            RepoSecretLiveness::Unknown
+        }
+    }
 }
 
 /// Why the gate held a tip (A1).
@@ -363,7 +386,9 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let (facts, _) =
                 RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
-            Ok(facts.blob_oids(|mark: &RepoSecretMark| repo_secret_liveness(mark).blocks_public()))
+            Ok(facts.blob_oids(|mark: &RepoSecretMark| {
+                repo_secret_liveness(self, &txn, mark).blocks_public()
+            }))
         };
         read()
             .inspect_err(|error| {
@@ -392,8 +417,9 @@ impl Vault {
         }
         let (facts, unread) =
             RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
-        let blocking =
-            facts.blob_oids(|mark: &RepoSecretMark| repo_secret_liveness(mark).blocks_public());
+        let blocking = facts.blob_oids(|mark: &RepoSecretMark| {
+            repo_secret_liveness(self, &txn, mark).blocks_public()
+        });
         Ok(
             (!blocking.is_empty() || !unread.is_empty()).then(|| MarkJoin {
                 blocking,

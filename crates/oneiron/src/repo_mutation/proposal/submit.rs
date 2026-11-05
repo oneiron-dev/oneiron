@@ -5,6 +5,7 @@
 //! the same code. No proposal lands a file here.
 
 use super::*;
+use crate::code_document::CodeOpProvenanceValidation;
 use crate::memory::repo_doors::RepoRunStamp;
 use crate::repo_mutation::snapshot::RepoPinnedBase;
 

@@ -152,6 +152,11 @@ const RELEASE: SideTable<EntityId, PatchPullRequest, Named> =
 /// Key: id16 (actor) + bytes32 (blake3 hash of the run name).
 const RUN: SideTable<(EntityId, [u8; 32]), HealerRunReceipt, Named> =
     SideTable::new(&side_table::SELF_HEAL_HEALER_RUN);
+/// Whether a masked copy of a `SELF_HEAL_HEALER_RUN` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn self_heal_healer_run_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HealerRunReceipt, Named>(bytes)
+}
 
 /// The digest half of a run receipt's key: a run name is unbounded text, so
 /// only its blake3 hash is stored.

@@ -125,6 +125,25 @@ impl Memory<'_> {
         if record.settlement.is_some() || forks.is_empty() {
             return Ok(());
         }
+        let revision = waiting_revision(proposal, artifact, &forks);
+        let intent_key = format!(
+            "{ASK_INTENT}/{}/{}/{revision}",
+            proposal.to_hex(),
+            artifact.to_hex()
+        );
+        for asked in &record.asks {
+            if asked.artifact == *artifact
+                && asked.forks == forks
+                && self.owns_task_ask_intent(
+                    crate::task_verb::TaskAskHandle {
+                        group_ref: asked.ask,
+                    },
+                    &intent_key,
+                )?
+            {
+                return Ok(vault.record_office_proposal_ask(proposal, asked.clone())?);
+            }
+        }
         let (class, envelope) = office_scope(artifact)?;
         let who = {
             let txn = vault
@@ -150,7 +169,6 @@ impl Memory<'_> {
         let version = vault
             .blob_artifact_head(artifact)?
             .ok_or_else(|| MemoryError::not_found("the office artifact has no version"))?;
-        let revision = waiting_revision(proposal, artifact, &forks);
         let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(version.claim_id));
         question.revision = revision;
         question.options = BTreeMap::from([
@@ -170,21 +188,33 @@ impl Memory<'_> {
             forks.len()
         ));
         let mut spec = TaskAskSpec::shorthand(Some(who), question, None, TaskAskDefault::Hold);
-        spec.intent_key = format!(
-            "{ASK_INTENT}/{}/{}/{revision}",
-            proposal.to_hex(),
-            artifact.to_hex()
-        );
-        let receipt = self.tasks_ask(&spec)?;
-        vault.record_office_proposal_ask(
-            proposal,
-            ProposalAsk {
-                artifact: *artifact,
-                ask: receipt.handle.group_ref,
-                forks,
-                at: vault.now_recorded_at(),
-            },
-        )?;
+        spec.intent_key = intent_key;
+        let receipt = self.tasks_ask_with_txn_effect(&spec, |txn, group| {
+            vault
+                .record_office_proposal_ask_in_txn(
+                    txn,
+                    proposal,
+                    ProposalAsk {
+                        artifact: *artifact,
+                        ask: group,
+                        forks: forks.clone(),
+                        at: vault.now_recorded_at(),
+                    },
+                )
+                .map_err(MemoryError::from)
+        })?;
+        // Admission replays do not rerun their transaction effect.
+        if receipt.idempotent_replay {
+            vault.record_office_proposal_ask(
+                proposal,
+                ProposalAsk {
+                    artifact: *artifact,
+                    ask: receipt.handle.group_ref,
+                    forks,
+                    at: vault.now_recorded_at(),
+                },
+            )?;
+        }
         Ok(())
     }
 }

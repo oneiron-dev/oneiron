@@ -109,6 +109,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
                 end: header.occurred_end,
             },
             header.learned_at,
+            Some(header.row_version),
             data,
         )
         .apply(wtxn);

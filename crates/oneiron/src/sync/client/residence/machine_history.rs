@@ -284,6 +284,7 @@ fn land_row(
                 end: header.occurred_end,
             },
             learned_at: header.learned_at,
+            row_version: header.row_version,
             body: &raw[ENTITY_METADATA_HEADER_LEN..],
         },
         ImportTier::OwnDevice,

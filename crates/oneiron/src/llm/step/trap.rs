@@ -343,6 +343,122 @@ pub(crate) fn wake_trap_in_txn(
     consume_trap_signal_in_txn(vault, wtxn, &store, trap, now).map(Some)
 }
 
+/// Broken-park reason for [`TrapConsumePrecheck::Skip`] (FIX 1503): the two
+/// resume-leg lifecycle failures a delivering commit may log and skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrapBrokenPark {
+    OtherOwner,
+    OrphanPark,
+}
+
+/// Read-only consume precheck (FIX 1503): decided before any `Sent`/marker
+/// mutation in the caller's txn. `Proceed` runs the existing wake; `Skip`
+/// carries the wait log's attempt/owner metadata; every other failure is a
+/// hard `Err` that fails the commit as today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TrapConsumePrecheck {
+    Proceed,
+    Skip {
+        reason: TrapBrokenPark,
+        attempt_id: AttemptId,
+        park_owner: String,
+    },
+}
+
+/// Pure read-only validation of the wake (`send` + `consume`) the caller is
+/// about to attempt, in the caller's txn (same snapshot, so no TOCTOU).
+/// A head already `Sent`/`Consumed` and a missing `PARKED` row are `Proceed`
+/// (the wake no-ops or consumes to `Consumed` and retires bindings). Otherwise
+/// the send-leg door, the consume-leg binding/hashes/lineage, and the
+/// delegation reverse-pointer read are validated; any decode/L8/lineage/
+/// binding/corruption/storage error propagates hard. A `PARKED` row held by
+/// another owner is `Skip::OtherOwner` with the row's owner; a matching owner
+/// whose queue row is literally absent (`status_with_park` returns `None`) is
+/// `Skip::OrphanPark`. Terminal+`PARKED`, lease drift, and every third case
+/// are `Proceed`. Erased/undecodable/wrong-kind rows stay hard-`Err`.
+pub(crate) fn trap_consume_precheck_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    trap: &TrapRef,
+) -> Result<TrapConsumePrecheck> {
+    let (head_id, head) = trap_head_in_txn(vault, txn, &trap.trap_claim_id)?;
+    if matches!(
+        head.state,
+        DreamerTrapState::Sent | DreamerTrapState::Consumed
+    ) {
+        return Ok(TrapConsumePrecheck::Proceed);
+    }
+    let anchor = vault
+        .get_claim_in_txn(txn, &trap.trap_claim_id)?
+        .ok_or(invalid_trap("dreamer trap created record missing"))?;
+    let anchor_decoded = decode_trap_claim_value(&anchor.value)?;
+    if anchor_decoded.state != DreamerTrapState::Created {
+        return Err(invalid_trap("dreamer trap anchor must be a created record"));
+    }
+    let binding = trap_binding_read_in_txn(vault, txn, &trap.trap_claim_id)?
+        .ok_or(invalid_trap("dreamer trap binding missing"))?;
+    if binding.park_owner != trap_park_owner(&trap.trap_claim_id) {
+        return Err(invalid_trap(
+            "dreamer trap consume requires an attempt-scoped binding",
+        ));
+    }
+    if head.step_hash != binding.step_hash
+        || anchor_decoded.step_hash != binding.step_hash
+        || trap.step_hash != binding.step_hash
+    {
+        return Err(invalid_trap("dreamer trap signal hash mismatch"));
+    }
+    if head.attempt_id != binding.attempt_id || anchor_decoded.attempt_id != binding.attempt_id {
+        return Err(invalid_trap(
+            "dreamer trap signal names a different attempt",
+        ));
+    }
+    require_attempt_scoped_signal_in_txn(vault, txn, &trap.trap_claim_id)?;
+    require_lineage_chains_to_anchor_in_txn(vault, txn, &head_id, &trap.trap_claim_id)?;
+    let _ = peer_wait_task_for_trap_in_txn(vault, txn, &trap.trap_claim_id)?;
+    let head_body = vault
+        .get_claim_in_txn(txn, &head_id)?
+        .ok_or(invalid_trap("dreamer trap record missing"))?;
+    envelope_from_claim_body(&head_body)?;
+    if !matches!(head_body.subject, ClaimSubject::Entity(_)) {
+        return Err(invalid_trap("dreamer trap subject must be an entity"));
+    }
+
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    let Some(parked) = store.parked_attempt_in_txn(txn, binding.attempt_id)? else {
+        return Ok(TrapConsumePrecheck::Proceed);
+    };
+    if parked.park_owner != binding.park_owner {
+        return Ok(TrapConsumePrecheck::Skip {
+            reason: TrapBrokenPark::OtherOwner,
+            attempt_id: binding.attempt_id,
+            park_owner: parked.park_owner,
+        });
+    }
+    match store.status_with_park_in_txn(txn, binding.attempt_id)? {
+        None => Ok(TrapConsumePrecheck::Skip {
+            reason: TrapBrokenPark::OrphanPark,
+            attempt_id: binding.attempt_id,
+            park_owner: binding.park_owner,
+        }),
+        Some(_) => Ok(TrapConsumePrecheck::Proceed),
+    }
+}
+
+/// Retires the peer delegation binding for THIS trap, if one exists (FIX 1503
+/// C2-C3). A no-op when the trap-to-task reverse pointer is absent (non-Peer
+/// traps); never touches another trap's binding.
+pub(crate) fn retire_peer_wait_binding_for_trap_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    trap_claim_id: &EntityId,
+) -> Result<()> {
+    if let Some(task_ref) = peer_wait_task_for_trap_in_txn(vault, wtxn, trap_claim_id)? {
+        peer_wait_binding_delete_in_txn(vault, wtxn, &task_ref, trap_claim_id)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct EncodedTrapClaim {
     pub(super) kind: DreamerTrapKind,

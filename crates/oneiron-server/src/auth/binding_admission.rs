@@ -13,6 +13,7 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::PeerMachine;
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 use std::sync::Arc;
 
 /// What a deleted shared vault still answers: its holders read the deletion
@@ -199,7 +200,7 @@ fn admit_binding(
     let mcp_credential = matches!(path, "/mcp" | "/mcp/tool-first" | "/v1/chat/completions")
         .then(|| {
             headers
-                .get("x-oneiron-mcp-credential")
+                .get(MCP_CREDENTIAL_HEADER)
                 .and_then(|value| value.to_str().ok())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -228,6 +229,12 @@ fn admit_binding(
         });
         match accepted {
             Ok((auth, proof)) => {
+                if let Some(slip) = auth.verified_slip() {
+                    crate::http_listener::attach_body_slip(
+                        Arc::clone(server.vault()),
+                        Arc::new(slip.clone()),
+                    );
+                }
                 machine =
                     super::machine_proof::peer_machine(headers, token, &proof, server.vault());
                 // A managed vault keeps the caller admitted here, with the

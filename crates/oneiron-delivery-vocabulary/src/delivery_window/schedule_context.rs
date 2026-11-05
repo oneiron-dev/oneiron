@@ -36,9 +36,11 @@ impl OutboundScheduleContext {
                 &["Supply a current civil UTC offset."],
             ));
         }
-        if self.iana_timezone.as_deref().is_some_and(|label| {
-            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
-        }) {
+        if self
+            .iana_timezone
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+        {
             return Err(MemoryError::bad_request_with(
                 "iana_timezone must be non-blank and contain no controls",
                 &["Supply a valid IANA label as provenance."],

@@ -162,6 +162,7 @@ fn run_embedded(
             owner_surface: owner.map(|_| ActSurface::ThisInstall),
             live_run: None,
             planner: None,
+            slip_issuer: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)

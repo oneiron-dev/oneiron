@@ -100,11 +100,11 @@ impl Store {
         record: &EntityId,
     ) -> Result<Option<Error>> {
         if !USE_LIMITS.contains(self, txn, record)? {
-            return Ok(None);
+            return cooperative_refusal_in_txn(self, txn, record);
         }
         let holds = retaining_holds_in_txn(self, txn, record)?;
         if holds.is_empty() {
-            return Ok(None);
+            return cooperative_refusal_in_txn(self, txn, record);
         }
         let now = self.clock.now_recorded_at();
         let refusal = match law_notice(&holds, now, LegalHoldState::UseRestricted) {
@@ -113,4 +113,15 @@ impl Store {
         };
         Ok(Some(refusal))
     }
+}
+
+fn cooperative_refusal_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<Error>> {
+    Ok(
+        super::cooperative_restriction_active_in_txn(store, txn, record)?
+            .then_some(Error::EntityNotFound),
+    )
 }

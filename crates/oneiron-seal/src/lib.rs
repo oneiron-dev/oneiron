@@ -9,6 +9,7 @@
 //! `oneiron-seal-organ`, behind the organ host (the `organ` module).
 
 pub mod api;
+mod buffers;
 mod error;
 #[cfg(feature = "native")]
 mod memory;
@@ -32,9 +33,10 @@ pub use api::{
     OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, SealConfig, SealFetcher,
     SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
+pub use buffers::{AdmittedBytes, AdmittedStr, SharedBytes, SharedStr};
 pub use error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 #[cfg(feature = "native")]
-pub use memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes};
+pub use memory::{SealMemory, SealMemoryProvider, SealMemoryRefusal};
 
 #[cfg(feature = "native")]
 pub use native::NativeSealEngine;

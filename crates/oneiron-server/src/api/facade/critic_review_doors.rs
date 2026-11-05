@@ -103,7 +103,9 @@ fn review(
             .flat_map(|critic| [critic.lens_ref, critic.actor.entity_ref()]),
     );
     let state = target_state(&input.kind, &target);
-    let decisions = server.decision_host().review_decisions(actor, &state);
+    let decisions = server
+        .decision_host()
+        .review_decisions(actor, &state, vault)?;
     let result = review_artifact(vault, &request, &catalog, &decisions)?;
     read.push(result.verdict_claim);
     Ok(result.into())

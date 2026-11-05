@@ -248,14 +248,29 @@ pub fn witness_agent_run_close(
     output: EntityId,
 ) -> Result<bool> {
     let mut txn = vault.store.env.write_txn()?;
+    let witnessed = witness_agent_run_close_in_txn(vault, &mut txn, attempt, lease_owner, output)?;
+    txn.commit()?;
+    Ok(witnessed)
+}
+
+/// The close witness inside the caller's result/completion transaction.
+/// A staged output and its attribution become visible together with the
+/// result whose terminal receipt freezes them.
+pub(crate) fn witness_agent_run_close_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptRecord,
+    lease_owner: &str,
+    output: EntityId,
+) -> Result<bool> {
     AttemptQueue::new(vault).require_skill_load_lease_in_txn(
-        &txn,
+        txn,
         attempt.id,
         lease_owner,
         attempt.attempt_count,
     )?;
     let Some(mut fields) =
-        crate::receipt::attempt_pack_attribution_in_txn(&vault.store, &txn, attempt.id)?
+        crate::receipt::attempt_pack_attribution_in_txn(&vault.store, txn, attempt.id)?
     else {
         return Ok(false);
     };
@@ -265,7 +280,7 @@ pub fn witness_agent_run_close(
     }
     super::derivation_witness::drain_in_txn(
         &vault.store,
-        &txn,
+        txn,
         attempt.id,
         attempt.attempt_count,
         &mut fields,
@@ -283,7 +298,7 @@ pub fn witness_agent_run_close(
         .collect();
     let stored: BTreeSet<EntityId> = vault
         .port_edge_neighbors(
-            &txn,
+            txn,
             &output,
             EdgeDirection::Out,
             Some(EdgeKind::DerivedFrom),
@@ -308,22 +323,16 @@ pub fn witness_agent_run_close(
         }
     }
     if new_edges {
-        batch.apply(&mut txn)?;
+        batch.apply(txn)?;
     }
-    witness_lineage_in_txn(vault, &txn, &mut fields, &mut seen, output)?;
+    witness_lineage_in_txn(vault, txn, &mut fields, &mut seen, output)?;
     // The whole chain is kept; its length is measured (Rule 5).
     let _ = vault.measure_limit(
         EngineLimit::AttemptManifestEntries,
         fields.used_edges.len() as u64,
     );
     fields.output = Some(output);
-    crate::receipt::put_attempt_pack_attribution_in_txn(
-        &vault.store,
-        &mut txn,
-        attempt.id,
-        &fields,
-    )?;
-    txn.commit()?;
+    crate::receipt::put_attempt_pack_attribution_in_txn(&vault.store, txn, attempt.id, &fields)?;
     Ok(true)
 }
 

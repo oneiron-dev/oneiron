@@ -4,12 +4,13 @@
 //! durable or why it is not. Each end holds only its own local locks, and
 //! only for a local commit, never across a round trip.
 
+use super::journal::{Making, SetChange};
 pub(super) use super::link::Link;
 use super::link::SourceReadError;
 use super::local::{self, Staged};
 use super::scan::{OutOp, OutSet};
 use super::source_check;
-use super::store::{Cached, Received, Version};
+use super::store::Version;
 use super::{Carrier, Mode};
 use oneiron_vault_contract::vm_outbox::{
     VM_OUTBOX_WIRE_REVISION, VmOutboxAck, VmOutboxDeferral, VmOutboxDescriptor, VmOutboxFrame,
@@ -21,6 +22,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 mod local_check;
+mod receive;
 
 /// One transfer the other end sent, taken and waiting for its set.
 struct Taken {
@@ -39,6 +41,19 @@ enum Plan {
     /// this end's own copy, which the carrier never agreed on, kept
     /// (FIX 11074).
     Keep(Version),
+}
+
+/// The existing whole-set outcome when one member was not taken.
+fn set_incomplete(taken: &[Taken]) -> Option<VmOutboxOutcome> {
+    taken.iter().find_map(|item| match &item.plan {
+        Plan::Answer(VmOutboxOutcome::Durable | VmOutboxOutcome::DivergedUnagreed { .. }) => None,
+        Plan::Answer(_) => Some(VmOutboxOutcome::deferred(
+            VmOutboxDeferral::SetIncomplete,
+            &format!("the set's member {}", item.descriptor.member),
+            "another transfer of the set was not taken",
+        )),
+        Plan::Put(_) | Plan::Remove | Plan::Keep(_) => None,
+    })
 }
 
 impl Carrier {
@@ -80,7 +95,7 @@ impl Carrier {
             let mut taken = false;
             loop {
                 match link.read()? {
-                    Some(VmOutboxFrame::Transfer(first)) => {
+                    Some(VmOutboxFrame::Offer(first)) => {
                         self.receive_set(link, first)?;
                         taken = true;
                     }
@@ -157,7 +172,7 @@ impl Carrier {
                 Some(frame @ VmOutboxFrame::DivergenceCleared { .. }) => {
                     self.take_divergence_cleared(frame);
                 }
-                Some(VmOutboxFrame::Transfer(first)) => self.receive_set(link, first)?,
+                Some(VmOutboxFrame::Offer(first)) => self.receive_set(link, first)?,
                 Some(VmOutboxFrame::Pull) => {
                     self.send_aside_answers(link)?;
                     if self.gate.proceed() {
@@ -188,7 +203,9 @@ impl Carrier {
     }
 
     /// One set: each put's file held first, identities recorded before a
-    /// byte goes, then the transfers, then one ack each. When an identity
+    /// byte goes, then all offers and the peer's go, then the bodies and
+    /// one ack each. An early deferral reads the same ordered acks without
+    /// sending bodies. When an identity
     /// does not record, none of the set goes: what was recorded is kept, the
     /// set is paced and its kind waits on its records. When a put's file
     /// does not open, none of the set goes either and nothing is recorded:
@@ -245,32 +262,49 @@ impl Carrier {
                 return Ok(false);
             }
         };
-        for (descriptor, file) in &transfers {
-            link.send(&VmOutboxFrame::Transfer(descriptor.clone()))?;
-            if let Some(file) = file
-                && let Err(error) = link.send_data(file, descriptor.length)
-            {
-                // Its frame has started, so the session ends; a member that
-                // did not read paces its set first, so the next session
-                // sends the kinds after it (FIX 7892).
-                if let Some(read) = error.downcast_ref::<SourceReadError>() {
-                    let what = format!(
-                        "its set {} waits: it did not read as it was sent: {read}",
-                        set.set
-                    );
-                    self.say(set.kind, &descriptor.member, &what);
-                    self.pace(set.kind, &set.set);
-                }
-                return Err(error);
-            }
+        for (descriptor, _) in &transfers {
+            link.send(&VmOutboxFrame::Offer(descriptor.clone()))?;
         }
         link.flush()?;
+        let mut first_ack = match link.read()? {
+            Some(VmOutboxFrame::Go) => None,
+            Some(VmOutboxFrame::Ack(ack)) => Some(ack),
+            _ => anyhow::bail!("the other end did not answer the offered outbox set"),
+        };
+        if first_ack.is_none() {
+            for (descriptor, file) in &transfers {
+                if let Some(file) = file
+                    && let Err(error) = link.send_data(file, descriptor.length)
+                {
+                    // Its frame has started, so the session ends; a member that
+                    // did not read paces its set first, so the next session
+                    // sends the kinds after it (FIX 7892).
+                    if let Some(read) = error.downcast_ref::<SourceReadError>() {
+                        let what = format!(
+                            "its set {} waits: it did not read as it was sent: {read}",
+                            set.set
+                        );
+                        self.say(set.kind, &descriptor.member, &what);
+                        self.pace(set.kind, &set.set);
+                    }
+                    return Err(error);
+                }
+            }
+            link.flush()?;
+        }
         let mut again = false;
         for (descriptor, _) in &transfers {
-            let ack = match link.read()? {
-                Some(VmOutboxFrame::Ack(ack)) if ack.answers(descriptor) => ack,
-                _ => anyhow::bail!("the other end did not ack an outbox transfer in order"),
+            let ack = match first_ack.take() {
+                Some(ack) => ack,
+                None => match link.read()? {
+                    Some(VmOutboxFrame::Ack(ack)) => ack,
+                    _ => anyhow::bail!("the other end did not ack an outbox transfer in order"),
+                },
             };
+            anyhow::ensure!(
+                ack.answers(descriptor),
+                "the other end acked another outbox transfer"
+            );
             again |= source_check::paces(&ack.outcome);
             self.take_ack(descriptor, ack);
         }
@@ -412,110 +446,6 @@ impl Carrier {
         drop(held);
     }
 
-    /// Takes one set the other end sends, `first` its first transfer, and
-    /// answers each of its transfers.
-    fn receive_set<S: Read + Write>(
-        &mut self,
-        link: &mut Link<S>,
-        first: VmOutboxDescriptor,
-    ) -> anyhow::Result<()> {
-        let (kind, set_id) = (first.kind, first.set_id.clone());
-        let root = self.roots.open(kind);
-        let mut taken = Vec::new();
-        let mut next = first;
-        loop {
-            anyhow::ensure!(
-                next.kind == kind && next.set_id == set_id,
-                "an outbox set changed its kind or id before its commit"
-            );
-            let last = next.commit_set;
-            taken.push(self.take(link, next, &root)?);
-            if last {
-                break;
-            }
-            next = match link.read()? {
-                Some(VmOutboxFrame::Transfer(transfer)) => transfer,
-                _ => anyhow::bail!("an outbox set ended before its commit"),
-            };
-        }
-        let acks = self.commit(kind, root.ok().flatten(), taken);
-        for ack in acks {
-            link.send(&VmOutboxFrame::Ack(ack))?;
-        }
-        link.flush()
-    }
-
-    /// Reads one transfer and stages a put, or decides its answer outright.
-    fn take<S: Read + Write>(
-        &mut self,
-        link: &mut Link<S>,
-        descriptor: VmOutboxDescriptor,
-        root: &std::io::Result<Option<File>>,
-    ) -> anyhow::Result<Taken> {
-        let put = descriptor.operation == VmOutboxOperation::Put;
-        let answered = |link: &mut Link<S>,
-                        descriptor: VmOutboxDescriptor,
-                        member: Option<VmOutboxMember>,
-                        outcome: VmOutboxOutcome| {
-            if put {
-                link.read_data(descriptor_length(&descriptor), None)?;
-            }
-            anyhow::Ok(Taken {
-                descriptor,
-                member,
-                plan: Plan::Answer(outcome),
-            })
-        };
-        let member = match descriptor.validate(self.side.peer()) {
-            Ok(member) => member,
-            Err(outcome) => return answered(link, descriptor, None, outcome),
-        };
-        if let Some(outcome) = self.decide(&descriptor, &member, root) {
-            return answered(link, descriptor, Some(member), outcome);
-        }
-        let Ok(Some(root)) = root else {
-            let outcome = VmOutboxOutcome::deferred(
-                VmOutboxDeferral::TargetUnavailable,
-                &format!("this end's {} root", descriptor.kind),
-                "this end has no root for the kind yet",
-            );
-            return answered(link, descriptor, Some(member), outcome);
-        };
-        if !put {
-            return Ok(Taken {
-                descriptor,
-                member: Some(member),
-                plan: Plan::Remove,
-            });
-        }
-        let mut staged =
-            match Staged::new(root, &descriptor.member, self.owner, descriptor.transfer_id) {
-                Ok(staged) => staged,
-                Err(error) => {
-                    let outcome = self.io_outcome(descriptor.kind, &error);
-                    return answered(link, descriptor, Some(member), outcome);
-                }
-            };
-        if let Some(error) = link.read_data(descriptor.length, Some(&mut staged))? {
-            drop(staged);
-            let outcome = self.io_outcome(descriptor.kind, &error);
-            return Ok(answer(descriptor, member, outcome));
-        }
-        if staged.version().blake3 != descriptor.blake3 {
-            drop(staged);
-            let outcome = VmOutboxOutcome::refused(
-                VmOutboxRefusal::DigestMismatch,
-                "the bytes do not hash to the transfer's digest",
-            );
-            return Ok(answer(descriptor, member, outcome));
-        }
-        Ok(Taken {
-            descriptor,
-            member: Some(member),
-            plan: Plan::Put(Box::new(staged)),
-        })
-    }
-
     /// The answer `transfer` gets without a change here, if it gets one: a
     /// replay of one taken before, one a newer change already passed, or one
     /// with nowhere to go yet, a backup set's while the label the guest
@@ -572,7 +502,7 @@ impl Carrier {
     }
 
     /// A local failure as a deferral naming its bound.
-    fn io_outcome(&self, kind: VmOutboxKind, error: &std::io::Error) -> VmOutboxOutcome {
+    pub(super) fn io_outcome(&self, kind: VmOutboxKind, error: &std::io::Error) -> VmOutboxOutcome {
         let side = self.side_name();
         local_deferral(
             error,
@@ -600,8 +530,10 @@ impl Carrier {
     }
 
     /// Publishes a taken set whole, in its order, under this end's gate and,
-    /// for training, its outbox lock; or publishes none of it. Returns one
-    /// ack per transfer.
+    /// for training, its outbox lock; or publishes none of it. Its changes
+    /// are journaled before the first is made, so one that stops midway is
+    /// finished at the kind's next turn and answered durable only then
+    /// ([`super::journal`], FIX 7543). Returns one ack per transfer.
     fn commit(
         &mut self,
         kind: VmOutboxKind,
@@ -623,17 +555,7 @@ impl Carrier {
         } else if let Err(error) = &lock {
             Some(self.io_outcome(kind, error))
         } else {
-            taken.iter().find_map(|item| match &item.plan {
-                Plan::Answer(
-                    VmOutboxOutcome::Durable | VmOutboxOutcome::DivergedUnagreed { .. },
-                ) => None,
-                Plan::Answer(_) => Some(VmOutboxOutcome::deferred(
-                    VmOutboxDeferral::SetIncomplete,
-                    &format!("the set's member {}", item.descriptor.member),
-                    "another transfer of the set was not taken",
-                )),
-                Plan::Put(_) | Plan::Remove | Plan::Keep(_) => None,
-            })
+            set_incomplete(&taken)
         };
         let checked = match (&blocked, &root) {
             (None, Some(root)) => self.check_local(root, &mut taken),
@@ -658,15 +580,17 @@ impl Carrier {
                 self.reoffer(kind, &item.descriptor.member);
             }
         }
-        let mut acks = Vec::with_capacity(taken.len());
+        let mut answers = Vec::with_capacity(taken.len());
+        let mut changes = Vec::new();
         for (index, item) in taken.into_iter().enumerate() {
-            let outcome = match item.plan {
-                Plan::Answer(outcome) => outcome,
+            let protected = item.member.as_ref().is_some_and(|member| member.protected);
+            let making = match item.plan {
+                Plan::Answer(outcome) => Err(outcome),
                 plan if blocked.is_some() || mismatch => {
                     if let Plan::Put(staged) = plan {
                         drop(staged);
                     }
-                    checked
+                    Err(checked
                         .get(index)
                         .cloned()
                         .flatten()
@@ -677,83 +601,44 @@ impl Carrier {
                                 "the set's local versions",
                                 "another member of the set holds a version this end does not know",
                             )
-                        })
+                        }))
                 }
-                plan => match root.as_ref() {
-                    Some(root) => self.apply(root, &item.descriptor, item.member.as_ref(), plan),
-                    None => VmOutboxOutcome::Durable,
-                },
+                _ if root.is_none() => Err(VmOutboxOutcome::Durable),
+                Plan::Put(staged) => Ok(Making::Put(staged)),
+                Plan::Remove => Ok(Making::Remove),
+                Plan::Keep(held) => Ok(Making::Keep(self.kept(&item.descriptor, held))),
             };
-            acks.push(VmOutboxAck::answering(&item.descriptor, outcome));
+            let outcome = match making {
+                Ok(making) => {
+                    changes.push(SetChange {
+                        descriptor: item.descriptor.clone(),
+                        protected,
+                        making,
+                    });
+                    None
+                }
+                Err(outcome) => Some(outcome),
+            };
+            answers.push((item.descriptor, outcome));
         }
+        // The set's changes go whole, journaled first (FIX 7543).
+        let mut made = match root.as_ref() {
+            Some(root) if !changes.is_empty() => self.publish_set(kind, root, changes),
+            _ => Vec::new(),
+        }
+        .into_iter();
+        let acks: Vec<VmOutboxAck> = answers
+            .into_iter()
+            .map(|(descriptor, outcome)| {
+                let outcome = outcome
+                    .or_else(|| made.next())
+                    .unwrap_or(VmOutboxOutcome::Durable);
+                VmOutboxAck::answering(&descriptor, outcome)
+            })
+            .collect();
         drop(lock);
         drop(held);
         acks
-    }
-
-    /// Makes one checked change and records it before it is acked. When its
-    /// record does not write, the change stays made, the transfer is
-    /// deferred on this end's carrier records and its kind waits on them
-    /// until that record is written again (FIX 7891).
-    fn apply(
-        &mut self,
-        root: &File,
-        transfer: &VmOutboxDescriptor,
-        member: Option<&VmOutboxMember>,
-        plan: Plan,
-    ) -> VmOutboxOutcome {
-        let protected = member.is_some_and(|member| member.protected);
-        let mut kept = None;
-        let published = match plan {
-            Plan::Put(staged) => (*staged).publish(self.owner, protected).map(Some),
-            Plan::Remove => local::remove(root, transfer.kind, &transfer.member).map(|()| None),
-            Plan::Keep(held) => {
-                kept = Some(self.kept(transfer, held));
-                Ok(None)
-            }
-            Plan::Answer(outcome) => return outcome,
-        };
-        let stamp = match published {
-            Ok(stamp) => stamp,
-            Err(error) => return self.io_outcome(transfer.kind, &error),
-        };
-        let mut record = self.store.get(transfer.kind, &transfer.member);
-        record.revision = record.revision.max(transfer.revision);
-        let version = (transfer.operation == VmOutboxOperation::Put).then(|| Version {
-            blake3: transfer.blake3.clone(),
-            length: transfer.length,
-        });
-        record.cached = stamp
-            .zip(version.clone())
-            .map(|(stamp, version)| Cached { stamp, version });
-        record.agreed = version;
-        record.received = Some(Received {
-            transfer_id: transfer.transfer_id,
-            revision: transfer.revision,
-            blake3: transfer.blake3.clone(),
-        });
-        if record
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.revision <= transfer.revision)
-        {
-            record.pending = None;
-        }
-        record.refused = None;
-        record.diverged = kept;
-        match self
-            .store
-            .put(transfer.kind, &transfer.member, record.clone())
-        {
-            Ok(()) => {
-                self.received_written(transfer.kind, &transfer.member);
-                self.taken_answer(transfer, &record)
-            }
-            Err(error) => {
-                self.received_failed(transfer.kind, &transfer.member, record, &error);
-                self.records_outcome(&error)
-            }
-        }
     }
 }
 
@@ -779,18 +664,6 @@ fn descriptor_length(descriptor: &VmOutboxDescriptor) -> u64 {
 }
 
 /// A transfer whose data was read, answered without a change.
-fn answer(
-    descriptor: VmOutboxDescriptor,
-    member: VmOutboxMember,
-    outcome: VmOutboxOutcome,
-) -> Taken {
-    Taken {
-        descriptor,
-        member: Some(member),
-        plan: Plan::Answer(outcome),
-    }
-}
-
 fn operation_name(operation: VmOutboxOperation) -> &'static str {
     match operation {
         VmOutboxOperation::Put => "put",

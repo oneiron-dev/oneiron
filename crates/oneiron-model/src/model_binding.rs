@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
     RetrievalEmbedder,
+    MediaEmbedder,
     Reranker,
     ExtractionEncoder,
     ExtractionTeacher,
@@ -21,6 +22,10 @@ pub enum ModelRole {
     /// owned endpoint (ARCH-0036 r9 product pins).
     LocalReasoner,
     Checker,
+    DecisionHead,
+    DecisionBand,
+    DecisionEscalation,
+    PolicySafeguard,
     DreamerCurrent,
     DreamerTarget,
     /// Optional until the owner binds a checkpoint from a training pack.
@@ -45,14 +50,19 @@ pub enum ModelRole {
     /// step stays on the generative reasoner's. No model is chosen for it.
     BrowserPlanner,
 }
-pub const MODEL_ROLES: [ModelRole; 18] = [
+pub const MODEL_ROLES: [ModelRole; 23] = [
     ModelRole::RetrievalEmbedder,
+    ModelRole::MediaEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
     ModelRole::ExtractionTeacher,
     ModelRole::GenerativeReasoner,
     ModelRole::LocalReasoner,
     ModelRole::Checker,
+    ModelRole::DecisionHead,
+    ModelRole::DecisionBand,
+    ModelRole::DecisionEscalation,
+    ModelRole::PolicySafeguard,
     ModelRole::DreamerCurrent,
     ModelRole::DreamerTarget,
     ModelRole::DreamerDistilled,
@@ -75,6 +85,10 @@ impl ModelRole {
             Self::GenerativeReasoner
                 | Self::LocalReasoner
                 | Self::Checker
+                | Self::DecisionHead
+                | Self::DecisionBand
+                | Self::DecisionEscalation
+                | Self::PolicySafeguard
                 | Self::DreamerCurrent
                 | Self::DreamerTarget
                 | Self::DreamerDistilled
@@ -83,14 +97,22 @@ impl ModelRole {
                 | Self::BrowserPlanner
         )
     }
-    /// A role a v2 manifest may leave unbound: a trained checkpoint the owner
-    /// has not bound yet, or the Coach or the browser planner, each of which
-    /// falls back to the chat seat.
+    /// A role a v2 manifest may leave unbound. Media, decision and safeguard
+    /// roles have independent bindings with no implicit fallback. The trained
+    /// checkpoint may be unbound; the Coach and browser planner fall back to
+    /// the chat seat.
     #[must_use]
     pub const fn is_optional(self) -> bool {
         matches!(
             self,
-            Self::DreamerDistilled | Self::Coach | Self::BrowserPlanner
+            Self::DreamerDistilled
+                | Self::Coach
+                | Self::BrowserPlanner
+                | Self::MediaEmbedder
+                | Self::DecisionHead
+                | Self::DecisionBand
+                | Self::DecisionEscalation
+                | Self::PolicySafeguard
         )
     }
     /// The disposition a row that names none takes: the extraction teacher

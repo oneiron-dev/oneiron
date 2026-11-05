@@ -3,7 +3,7 @@
 use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use zeroize::Zeroizing;
 
@@ -19,6 +19,7 @@ pub(super) fn apply_put_arm(
     mut entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: Option<u64>,
     data: Vec<u8>,
     allow_maintenance: bool,
     allow_reserved_predicate: bool,
@@ -63,6 +64,7 @@ pub(super) fn apply_put_arm(
         entity_type,
         replicated,
         (state.birth_mask, sources),
+        &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
@@ -83,6 +85,7 @@ pub(super) fn apply_put_arm(
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
+                    row_version: None,
                 }],
                 text_index_trusted,
                 ApplyOpsGateMode::new(
@@ -126,6 +129,10 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    put_options.decision.pending_auto_probe = preflight_decision_id
+        .and_then(|decision| state.pending_auto_probes.get(&decision))
+        .copied()
+        .filter(|probe| probe.matches(&id, preflight_decision_id));
     let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new
@@ -139,7 +146,12 @@ pub(super) fn apply_put_arm(
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
     let applied = apply_put_beside(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {
@@ -148,6 +160,7 @@ pub(super) fn apply_put_arm(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version,
             },
             options: put_options,
             context: PutContext {
@@ -217,6 +230,7 @@ pub(super) fn apply_put_arm(
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
+                row_version: None,
             }],
             text_index_trusted,
             ApplyOpsGateMode::new(
@@ -261,8 +275,17 @@ pub(super) fn apply_put_arm(
         && !(allow_maintenance && allow_reserved_predicate)
         && !applied.is_lexical_query_hint_claim
     {
-        let deleted =
-            delete_lexical_query_hint_claims_for_target(store, wtxn, &id, &HashSet::new())?;
+        let deleted = delete_lexical_query_hint_claims_for_target(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+            &HashSet::new(),
+        )?;
         for (deleted_id, neighbors) in &deleted.deleted {
             state.pending_embedding_tokens_written.remove(deleted_id);
             #[cfg(feature = "sync")]

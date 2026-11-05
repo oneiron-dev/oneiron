@@ -40,11 +40,12 @@ const OWED_STAGED_ERASES: SideTable<[u8; 32], OwedStagedErase, Named> =
 ///
 /// Storage errors.
 pub(crate) fn erase_staged_input_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     jobs: &BTreeSet<[u8; 32]>,
     owners: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    let store = write.store;
     for digest in jobs {
         let artifact = entity_id_from_hash_material(
             BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
@@ -69,14 +70,14 @@ pub(crate) fn erase_staged_input_in_txn(
             OWED_STAGED_ERASES.put(store, txn, digest, &owed)?;
             tracing::warn!(
                 artifact = %artifact.to_hex(),
-                "staged job erase: a legal hold keeps the job's artifact; its pins are erased"
+                "staged job erase: a hold or selected storage-only restriction keeps the job's artifact; its pins are erased"
             );
             continue;
         }
         crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
-            store, txn, &artifact, true,
+            write, txn, &artifact, true,
         )?;
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &artifact)?;
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, &artifact)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &artifact, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;
@@ -114,7 +115,11 @@ impl Store {
     /// # Errors
     ///
     /// Storage errors from the hold or live-pin read, or the ordinary erase.
-    pub(crate) fn settle_owed_staged_erases_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    pub(crate) fn settle_owed_staged_erases_in_txn(
+        &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
         let mut due = BTreeSet::new();
         for digest in OWED_STAGED_ERASES.scan_keys(self, &*txn, &[])? {
             let artifact = entity_id_from_hash_material(
@@ -130,6 +135,6 @@ impl Store {
             }
             due.insert(digest);
         }
-        erase_staged_input_in_txn(self, txn, &due, &BTreeSet::new())
+        erase_staged_input_in_txn(write, txn, &due, &BTreeSet::new())
     }
 }

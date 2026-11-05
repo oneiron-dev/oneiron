@@ -8,6 +8,7 @@ use super::{
         PackSource,
     },
 };
+use crate::ports::TombstoneStoreRead;
 pub use crate::store::default_skill_hub::default_skill_hub_id;
 use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, temporal::TimeRange};
 
@@ -114,6 +115,37 @@ impl Vault {
                     HubSyncPolicy::PinnedCommit,
                 )),
         })
+    }
+
+    /// The installed holder of one default-hub skill: the loadable skill of
+    /// this `name` whose current bytes an eligible provenance claim ties to
+    /// the configured `skills/<name>` alias at the owner's pin. Pure vault
+    /// read, fail-closed: no fetch, no default rewrite. An absent or deleted
+    /// default hub configures no source, so this returns `None` and callers
+    /// keep the seeded fallback.
+    pub(crate) fn default_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        let hub = default_skill_hub_id()?;
+        // Only absence/deletion returns None: a live row of another type, a
+        // corrupt header, or a misconfigured hub still errors below. The type
+        // read alone still answers for a deleted shell, so deletion is
+        // checked too.
+        if TombstoneStoreRead::port_deletion_state(&self.store, txn, &hub)?.deleted
+            || self.get_entity_type_in_txn(txn, &hub)?.is_none()
+        {
+            return Ok(None);
+        }
+        let configured = self.default_skill_hub_in_txn(txn)?;
+        let root = &configured.skills.hub_ref;
+        let source = HubRef::new(
+            root.hub_id,
+            format!("{}/{}", root.ref_string, name),
+            root.pin.clone(),
+        )?;
+        self.installed_hub_skill_in_txn(txn, &source, name)
     }
 
     fn check_default_skill_source_in_txn(

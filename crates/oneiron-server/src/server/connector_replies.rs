@@ -82,10 +82,25 @@ impl SyncServer {
 }
 
 /// One pass: the leases left behind (this worker holds none between
-/// passes), then every ready job, each settled with its result.
+/// passes), completed jobs' owed witnesses, then every ready job, each settled
+/// with its result. A witness repair failure never withholds the ordinary jobs.
 fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> oneiron::Result<()> {
     let vault = server.vault();
     vault.reclaim_connector_reply_jobs(unix_now())?;
+    match catch_unwind(AssertUnwindSafe(|| {
+        crate::ai_host::repair_connector_reply_witnesses(vault, unix_now())
+    })) {
+        Ok(Ok(repaired)) if repaired > 0 => {
+            tracing::info!(repaired, "connector reply witnesses repaired");
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(code = %error.code, "connector witness repair pass failed; reply jobs continue");
+        }
+        Err(_) => {
+            tracing::warn!("connector witness repair pass panicked; reply jobs continue");
+        }
+    }
     while let Some((claimed, job)) = vault.claim_connector_reply_job(unix_now())? {
         let result = catch_unwind(AssertUnwindSafe(|| {
             crate::ai_host::run_connector_reply_job(server, runtime, &job)

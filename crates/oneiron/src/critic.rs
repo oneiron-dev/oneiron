@@ -35,6 +35,11 @@ pub use crate::store::critic_lens::CRITIC_LENS_CATALOG_SCHEMA_VERSION;
 pub(crate) const CRITIQUE_ARTIFACT: SideTable<CritiqueArtifactKey, CritiqueArtifact, Named> =
     SideTable::new(&side_table::CRITIC_ARTIFACT);
 
+/// Native value validation for the lift sweep, shared by both artifact writers.
+pub(crate) fn critique_artifact_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CritiqueArtifact, Named>(bytes)
+}
+
 /// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
 /// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
 #[derive(Debug, Clone, PartialEq, Eq)]

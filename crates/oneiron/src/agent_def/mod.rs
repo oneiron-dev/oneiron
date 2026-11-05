@@ -12,7 +12,6 @@
 
 mod byte_observation;
 mod codec;
-mod decode;
 mod doors;
 mod id_pin;
 mod manifest;

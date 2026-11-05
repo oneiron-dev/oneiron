@@ -2,12 +2,14 @@
 
 use super::keys_classifier::{
     LAST_QUARANTINE_SEQ_KEY, MAX_QUARANTINE_ROWS, QUARANTINE_BATCH_DROPS_KEY,
-    QUARANTINE_EVICTIONS_KEY, QUARANTINE_MAX_AGE_SECS, QUARANTINE_PREFIX, QuarantineRecord,
-    RECENT_REASON_CODES, decode_quarantine_seq, decode_record, decode_u64_le_counter,
+    QUARANTINE_EVICTIONS_KEY, QUARANTINE_MAX_AGE_SECS, QUARANTINE_PREFIX, QuarantineContainer,
+    QuarantineRecord, RECENT_REASON_CODES, decode_quarantine_seq, decode_record,
+    decode_u64_le_counter,
 };
 use super::remat_markers::pending_remat_windows;
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::origin::RepoProjectionHoldCause;
 use serde::Serialize;
 
 pub(super) fn allocate_next_quarantine_seq(
@@ -157,6 +159,47 @@ pub fn quarantined_records(vault: &Vault) -> Result<Vec<(u64, QuarantineRecord)>
     Ok(records)
 }
 
+impl Vault {
+    /// Retained hash-only held-edit evidence in stored sequence order.
+    /// The owner and any bound credential are checked in the same snapshot
+    /// before the quarantine scan. Shared retention still applies: these
+    /// records are neither live pending work nor settlement status.
+    pub fn held_edits_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<Vec<(u64, QuarantineRecord)>> {
+        let rtxn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &rtxn)?;
+        let mut records = Vec::new();
+        let iter = self
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, QUARANTINE_PREFIX)?;
+        for entry in iter {
+            let (key, value) = entry?;
+            let Some(seq) = decode_quarantine_seq(&key) else {
+                continue;
+            };
+            match decode_record(&value) {
+                Ok(rec)
+                    if rec.container == QuarantineContainer::Entities
+                        && (rec.reason_code
+                            == RepoProjectionHoldCause::SealedFileEdited.as_str()
+                            || rec.reason_code
+                                == RepoProjectionHoldCause::ProjectionEditConflict.as_str()) =>
+                {
+                    records.push((seq, rec));
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::warn!(seq, "sync: skipping undecodable quarantine row");
+                }
+            }
+        }
+        Ok(records)
+    }
+}
+
 /// Doctor/maintain surface for the sync quarantine + rematerialization
 /// markers (ONE-1124 AC5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -181,10 +224,18 @@ pub struct SyncQuarantineReport {
     /// [`drain_remat_markers`](crate::sync::drain_remat_markers) succeeds. Unparsable `rm:` rows surface here
     /// too (fail closed — never dropped).
     pub rm_pending_windows: Vec<String>,
+    /// Retained hash-only held-edit evidence ordered by stored seq: the
+    /// `x:` rows with `QuarantineContainer::Entities` and a
+    /// `RepoProjectionHoldCause::SealedFileEdited` /
+    /// `RepoProjectionHoldCause::ProjectionEditConflict` reason code.
+    /// Subject to the existing shared retention (cap/age); not live pending
+    /// work and not settlement status.
+    pub held_edits: Vec<(u64, QuarantineRecord)>,
 }
 
 /// Builds the sync doctor report: quarantine count, most-recent reason
-/// codes, eviction count, and pending `rm:` windows.
+/// codes, eviction count, pending `rm:` windows, and retained held-edit
+/// evidence.
 pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
     let records = quarantined_records(vault)?;
     let quarantine_count = records.len();
@@ -193,6 +244,14 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         .rev()
         .take(RECENT_REASON_CODES)
         .map(|(_, rec)| rec.reason_code.clone())
+        .collect();
+    let held_edits = records
+        .into_iter()
+        .filter(|(_, rec)| {
+            rec.container == QuarantineContainer::Entities
+                && (rec.reason_code == RepoProjectionHoldCause::SealedFileEdited.as_str()
+                    || rec.reason_code == RepoProjectionHoldCause::ProjectionEditConflict.as_str())
+        })
         .collect();
 
     let rtxn = vault.store.env.read_txn()?;
@@ -217,6 +276,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         eviction_count,
         batch_drop_count,
         rm_pending_windows,
+        held_edits,
     };
     if !report.rm_pending_windows.is_empty() {
         tracing::error!(

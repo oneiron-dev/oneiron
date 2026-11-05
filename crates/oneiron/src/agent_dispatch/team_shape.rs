@@ -16,8 +16,13 @@ use crate::error::Result;
 
 pub use crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME;
 
-/// The installed team-shape skill: the bootstrap-derived vault skill. A
-/// project's fork is found from it by lineage.
+/// The team-shape fallback namespace: the pure derived id the seeded tree,
+/// the no-installed-skill case and the upkeep held-out partition read from.
+/// A project's fork is found from the root in force by lineage.
+///
+/// The installed root is [`team_shape_root_in_txn`]: the installed holder
+/// (loadable, or the Superseded lineage anchor) when the default-hub
+/// skill is present, else this namespace.
 ///
 /// # Errors
 ///
@@ -27,6 +32,43 @@ pub fn team_shape_skill() -> Result<EntityId> {
         crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
         &[TEAM_SHAPE_SKILL_NAME.as_bytes()],
     )
+}
+
+/// The team-shape root in force in `txn`: the installed default-hub holder
+/// (loadable, or the Superseded lineage anchor), else the pure fallback
+/// namespace [`team_shape_skill`]. Absent keeps today's seeded-tree,
+/// fork, lineage and supersession behavior bit for bit.
+///
+/// # Errors
+///
+/// Storage errors, or an id derivation failure.
+pub(crate) fn team_shape_root_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<EntityId> {
+    if let Some(holder) = vault.default_hub_skill_in_txn(txn, TEAM_SHAPE_SKILL_NAME)? {
+        return Ok(holder);
+    }
+    team_shape_skill()
+}
+
+/// The team-shape workflow default in its own read transaction: the
+/// current active head in force for the vault, else the pure fallback
+/// namespace [`team_shape_skill`] when no head exists (same absent
+/// behavior as today). Workflow constructors read this, never the
+/// frozen lineage anchor: the pack loader reads the exact id and
+/// requires it loadable without following succession.
+///
+/// # Errors
+///
+/// Storage errors, or an id derivation failure.
+pub(crate) fn team_shape_default(vault: &crate::Vault) -> Result<EntityId> {
+    let txn = vault.store.env.read_txn()?;
+    if let Some(head) = super::task_type_tree::team_shape_skill_in_force_in_txn(vault, &txn, None)?
+    {
+        return Ok(head);
+    }
+    team_shape_skill()
 }
 
 /// The skill's lessons, in the order the SKILL.md teaches them. The planner

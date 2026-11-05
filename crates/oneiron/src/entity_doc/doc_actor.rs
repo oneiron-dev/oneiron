@@ -116,7 +116,6 @@ impl DocActor {
     }
 }
 
-#[cfg(feature = "sync")]
 impl super::CitationPin {
     /// This pin naming no one: the form a window keys it by, so a pin and
     /// its erased twin ride under one key (FIX 4247).
@@ -126,7 +125,10 @@ impl super::CitationPin {
             ..self.clone()
         }
     }
+}
 
+#[cfg(feature = "sync")]
+impl super::CitationPin {
     /// ErasedWins (FIX 4247), the one rule wherever two copies of one pin
     /// meet: the copy that stands, or `None` when they conflict. Equal
     /// copies are one, and this one stands. Where one names an actor and the

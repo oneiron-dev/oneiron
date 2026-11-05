@@ -21,6 +21,8 @@ const SOURCE_ROWS: &str = "sourceRows";
 /// The stored usage events, each as its named map. Key: the suffix after
 /// `usage:event:`.
 const EVENTS: SideTable<String, Value, Named> = SideTable::new(&side_table::USAGE_EVENT);
+const PENDING: SideTable<String, Value, Named> =
+    SideTable::new(&side_table::USAGE_SETTLEMENT_PENDING);
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("usage event source rows")
@@ -82,8 +84,26 @@ pub(crate) fn erase_usage_source_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    erase_usage_source_from_table_in_txn(vault, wtxn, id, &EVENTS)
+}
+
+/// Pending settlements carry the same named source set as recorded events.
+pub(crate) fn erase_pending_usage_source_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    erase_usage_source_from_table_in_txn(vault, wtxn, id, &PENDING)
+}
+
+fn erase_usage_source_from_table_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    table: &SideTable<String, Value, Named>,
+) -> Result<()> {
     let mut named = Vec::new();
-    for row in EVENTS.iter_raw_from(&vault.store, &*wtxn, &[])? {
+    for row in table.iter_raw_from(&vault.store, &*wtxn, &[])? {
         let (key, raw) = row?;
         let read = event_map(&raw).and_then(|entries| Ok((source_rows(&entries)?, entries)));
         let (rows, entries) = match read {
@@ -105,7 +125,7 @@ pub(crate) fn erase_usage_source_in_txn(
     for (key, mut rows, mut entries) in named {
         rows.retain(|row| row != id);
         set_source_rows(&mut entries, &rows)?;
-        EVENTS.put(&vault.store, wtxn, &key, &Value::Map(entries))?;
+        table.put(&vault.store, wtxn, &key, &Value::Map(entries))?;
     }
     Ok(())
 }

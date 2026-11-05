@@ -6,6 +6,7 @@ use crate::beam::{
     report_model::{ContractCorpusRecord, CostComponentReport},
 };
 use oneiron::CallPurpose;
+use oneiron::tokenizer::PackTokenizer;
 use std::path::Path;
 
 pub(super) struct OwnTrace {
@@ -26,13 +27,14 @@ pub(super) fn own_trace(
     question: &str,
     effort: &Effort,
     costs: &mut Vec<CostComponentReport>,
+    tokenizer: PackTokenizer,
 ) -> BeamResult<OwnTrace> {
     let mut steps = Vec::new();
     let mut capped = false;
     for _ in 0..effort.retrieval_steps {
-        let (trace, _) = recent_steps(&steps, effort.token_budget)?;
+        let (trace, _) = recent_steps(&steps, effort.token_budget, tokenizer)?;
         // One oversized step is clipped here too, as the answer call clips it.
-        let trace = bounded_context(&trace, effort.token_budget);
+        let trace = bounded_context(&trace, effort.token_budget, tokenizer);
         let input = serde_json::json!({"question": question, "trace": trace}).to_string();
         let (step, cost, cut) =
             session.invoke_capped(pin, CallPurpose::AnswerGen, prompt, &input)?;
@@ -40,16 +42,20 @@ pub(super) fn own_trace(
         capped |= cut;
         steps.push(step);
     }
-    let (text, cut) = recent_steps(&steps, effort.token_budget)?;
+    let (text, cut) = recent_steps(&steps, effort.token_budget, tokenizer)?;
     Ok(OwnTrace { text, cut, capped })
 }
 
 /// The newest steps that fit `budget`, as a JSON array; the newest step
 /// always stays (the shared bound clips it if it alone is too long).
-fn recent_steps(steps: &[String], budget: usize) -> BeamResult<(String, bool)> {
+fn recent_steps(
+    steps: &[String],
+    budget: usize,
+    tokenizer: PackTokenizer,
+) -> BeamResult<(String, bool)> {
     let mut start = 0;
     let mut text = serde_json::to_string(steps)?;
-    while start + 1 < steps.len() && oneiron::count_context_pack_tokens(&text) > budget {
+    while start + 1 < steps.len() && tokenizer.count(&text) > budget {
         start += 1;
         text = serde_json::to_string(&steps[start..])?;
     }
@@ -60,6 +66,7 @@ pub(super) fn chat_history(
     corpus: &[ContractCorpusRecord],
     path: &Path,
     budget: usize,
+    tokenizer: PackTokenizer,
 ) -> BeamResult<String> {
     let mut ordered = corpus
         .iter()
@@ -72,7 +79,7 @@ pub(super) fn chat_history(
     let mut history = String::new();
     for (_, item) in ordered.into_iter().rev() {
         let text = format!("{}\n{history}", item.text);
-        if oneiron::count_context_pack_tokens(&text) > budget {
+        if tokenizer.count(&text) > budget {
             break;
         }
         history = text;
@@ -80,8 +87,8 @@ pub(super) fn chat_history(
     Ok(history)
 }
 
-pub(super) fn bounded_context(text: &str, budget: usize) -> String {
-    if oneiron::count_context_pack_tokens(text) <= budget {
+pub(super) fn bounded_context(text: &str, budget: usize, tokenizer: PackTokenizer) -> String {
+    if tokenizer.count(text) <= budget {
         return text.to_owned();
     }
     let boundaries: Vec<usize> = text
@@ -92,7 +99,7 @@ pub(super) fn bounded_context(text: &str, budget: usize) -> String {
     let (mut lo, mut hi) = (0, boundaries.len() - 1);
     while lo < hi {
         let mid = lo + (hi - lo).div_ceil(2);
-        if oneiron::count_context_pack_tokens(&text[..boundaries[mid]]) <= budget {
+        if tokenizer.count(&text[..boundaries[mid]]) <= budget {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -111,11 +118,13 @@ pub(super) fn measured_pack(
     case: &crate::beam::model::FixtureCase,
     query_vector: Option<&[f32]>,
     now: u64,
+    tokenizer: PackTokenizer,
 ) -> BeamResult<crate::beam::arms::BudgetedContextPack> {
     crate::beam::arms::run_budgeted_context_pack(
         || {
             crate::beam::arms::configured_context_pack_builder(vault, case, query_vector)
                 .with_temporal_now(now)
+                .pack_tokenizer(tokenizer)
         },
         vault,
         case,

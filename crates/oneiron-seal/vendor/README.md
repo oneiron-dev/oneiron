@@ -58,16 +58,19 @@
   written in it. Never run the workspace formatter over this directory.
 - Local patch list (the first vendor commit is the unmodified sources plus
   the manifest strip, so `git log -p` on this directory shows each change).
-  Without a `DecodeAdmission` every load and decode runs upstream's code,
-  but for three fixes that apply to both paths: Flate inflates through one
+  Decode admission is opt-in. The iterative parser and checked xref
+  arithmetic apply with or without an admission. Without a
+  `DecodeAdmission` every load and decode otherwise runs upstream's code,
+  but for two fixes that apply to both paths: Flate inflates through one
   shared loop that keeps every byte written before a corruption (FIX
-  8449), an xref entry whose object number does not fit `u32` is skipped
-  instead of wrapped (FIX 8451), and the xref table's entries go straight
-  into the table instead of through a list per section (FIX 8450).
+  8449), and an xref entry whose object number does not fit `u32` is
+  skipped instead of wrapped (FIX 8451).
   - `src/decode_admission.rs` (new): the `DecodeAdmission` trait (`admit`
-    before each allocation, `decoded` to observe an output length),
+    before each allocation, defaulted `release`/`transfer` for local reuse,
+    `decoded` to observe an output length),
     `DecodeAdmissionError` (`MemoryFloor { needed, available }`, `Deadline`,
-    `Cancelled`), the admitted growth helper, the codec working-state charge
+    `Cancelled`), the admitted growth helper (releases the replaced capacity
+    after a successful realloc), the codec working-state charge
     and the `BTreeMap` node charge. `src/lib.rs` exports both types.
   - `src/error.rs`: `Error::DecodeAdmission`.
   - `src/load_options.rs`: `LoadOptions::decode_admission` (default `None`;
@@ -77,35 +80,38 @@
     fallback included), LZW (weezl `decode_bytes` into admitted output),
     ASCII85 and the copy of unfiltered content. `decompressed_content` and
     `decompressed_content_with_limit` go through a dispatcher whose `None`
-    arm is upstream's `decode_filters`.
+    arm is upstream's `decode_filters`. Dictionary capacity and fallible
+    reservation expose the parser's admitted map growth.
   - `src/filters/png.rs`: `decode_frame_admitted` for the PNG predictor.
-  - `src/object_stream.rs`: `ObjectStream::new_admitted`.
+  - `src/object_stream.rs`: `ObjectStream::new_admitted`, including each
+    member's admitted object graph.
   - `src/parser_aux.rs`: `decode_xref_stream_admitted`; it reads each field
-    a byte at a time instead of through a buffer as wide as `/W` says.
+    a byte at a time instead of through a buffer as wide as `/W` says, and
+    checks `/Index` object-id arithmetic in both decode paths.
+  - `src/admitted/`: dictionary-growth, textual-xref and `/Prev`-merge
+    admission helpers.
+  - `src/parser/iterative.rs`: single-pass literal strings and explicit-stack
+    arrays and dictionaries, with object-graph allocation admitted first;
+    the 100-level nesting refusals are gone.
   - `src/parser/mod.rs`: the admitted stream content copy, and a refusal
     while resolving an indirect `/Length`, inside an indirect object or in
     an xref stream is carried out of nom instead of becoming an unknown
     length, `IndirectObject` or `InvalidTrailer`.
   - `src/reader.rs`: `Reader::decode_admission`, set by every constructor
     (`None` for the metadata and incremental loaders); object streams, the
-    delayed stream copies and the encrypted loader's raw object copies use
-    it, and a refusal ends the load. The encrypted loader's object-stream
-    members and `get_compressed_object`'s container move instead of being
-    cloned; the result is the same, with or without an admission.
-  - Release and parse charges (FIX 8446, 8448, 8450): `DecodeAdmission::release`
+    delayed stream copies, the encrypted loader's raw object copies and
+    `/Prev` xref growth use it, and a refusal ends the load. The encrypted
+    loader's object-stream members and `get_compressed_object`'s container
+    move instead of being cloned; the result is the same, with or without
+    an admission.
+  - Release charges (FIX 8448, 8450): `DecodeAdmission::release`
     gives back a buffer's old allocation once it grows, a filter chain's
-    dropped layer and the PNG predictor's row buffers. A `ParseScope`, opened
-    by an admitted load (`Reader::read`, `indirect_object`,
-    `xref_and_trailer`, `ObjectStream::new_admitted`), charges each name,
-    string, array and dictionary the parser builds on its thread as it is
-    built, 64 KiB admitted at a time; a refused charge fails the parse as
-    `Error::DecodeAdmission`. The xref table admits a map node share per
-    entry, and `Xref::merge_admitted` per entry a `/Prev` merge adds.
-
-  - Parsed-container growth (FIX 8446 follow-up): `src/parser/parsed_alloc.rs`
-    admits name/string/array buffers before each allocation or growth, using
-    the existing decode growth helper through the current parse scope. Maps
-    reserve a complete estimated replacement before insertion and refund the
-    unused estimate after growth; truncated containers are already charged.
-    Allocator failures remain typed decode-admission refusals. The parser's
-    existing inline test modules remain untouched.
+    dropped layer and the PNG predictor's row buffers. The xref table admits
+    a map node share per entry, and the admitted `/Prev`-merge helper per
+    entry a merge adds.
+  - CMap scratch/copy removal (FIX 12777, narrow slice): `src/parser/cmap_parser.rs`
+    folds 1..4-byte source codes and the discarded XUID digit list on the stack
+    instead of temporary vectors, and `src/encodings/cmap.rs` moves owned range
+    targets into the map instead of cloning them. Grammar, entry points, error
+    behavior, returned mappings and the reverse map are unchanged; no new API,
+    and no admission/heap/lifecycle claim.

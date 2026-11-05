@@ -26,6 +26,8 @@ pub enum WarningCode {
     ChartsPresentMinimalMutation,
     MacrosPresentMinimalMutation,
     SessionReported,
+    /// The current worksheet repair does not cover this XML or structural edit.
+    WorksheetPreservationIncomplete,
     /// Laid-out deck text changed, or a text frame was resized, with no
     /// rendered fit proof.
     FitUnverified,
@@ -112,14 +114,7 @@ impl EditManifest {
                 "edit manifest failed to decode",
             ))
         })?;
-        // Version 1 predates the native Word op; its durable rows (stranded
-        // proposals, PPTX manifests) stay readable, but never with that op.
-        let legacy_v1 = manifest.schema_version == 1
-            && !manifest
-                .ops
-                .iter()
-                .any(|op| matches!(op, EditOp::DocxRevision { .. }));
-        if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION && !legacy_v1 {
+        if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "edit manifest schema version is unsupported",
             )));

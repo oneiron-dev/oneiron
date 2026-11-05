@@ -109,7 +109,11 @@ pub(crate) fn attendee_entry_id(
 
 /// The intent key `Memory::raise_unknown_attendee_ask` admits a speaker's
 /// identity ask under.
-fn identity_intent(session_key: &str, speaker_key: &str, revision: u64) -> Result<String> {
+pub(super) fn identity_intent(
+    session_key: &str,
+    speaker_key: &str,
+    revision: u64,
+) -> Result<String> {
     Ok(format!(
         "{PREDICATE_DISCLOSURE_ATTENDEE_ASK}/{}",
         attendee_ask_ref(session_key, speaker_key, revision)?.to_hex()
@@ -245,10 +249,20 @@ fn observe_entry(
         } => session_key.len().max(speaker_key.len()),
         ContainerAttendee::Person(_) => 0,
     };
+    observe_identity_shape(vault, txn, entry_ref, fact.candidates.len(), longest_key);
+}
+
+pub(super) fn observe_identity_shape(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entry_ref: EntityId,
+    candidates: usize,
+    longest_key: usize,
+) {
     for (scan, rows) in [
         (
             crate::scan_check::EngineScan::AttendeeIdentityCandidates,
-            fact.candidates.len(),
+            candidates,
         ),
         (
             crate::scan_check::EngineScan::AttendeeIdentityKeyBytes,

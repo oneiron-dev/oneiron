@@ -64,9 +64,15 @@ impl DispatchClaim {
     /// [`Self::submit`] with the windows already `planned` by the caller, on
     /// its own blocking unit: the tagging coordinator plans them there, so
     /// the tokenizer encode never runs on its async task (FIX 7331).
-    pub(crate) fn submit_planned(
+    pub(crate) fn submit_planned(self, planned: oneiron::Result<InferenceWindows>) -> Completion {
+        self.submit_planned_in(planned, None)
+    }
+
+    /// The same submission with the actual invocation context retained until send.
+    pub(crate) fn submit_planned_in(
         mut self,
         planned: oneiron::Result<InferenceWindows>,
+        call_context: Option<oneiron::llm::TaggerCallContext>,
     ) -> Completion {
         self.holds_room = false;
         let (reply, completion) = oneshot::channel();
@@ -87,6 +93,7 @@ impl DispatchClaim {
             window: windows.tokens(),
             windows,
             work: self.work,
+            call_context,
             queued_at: Instant::now(),
             reply,
         };

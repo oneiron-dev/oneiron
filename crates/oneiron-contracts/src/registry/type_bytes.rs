@@ -42,7 +42,7 @@ pub const ENTITY_TYPE_NOTIFICATION: u8 = 42;
 pub const ENTITY_TYPE_AGENT_DEF: u8 = 41;
 
 /// OF-334 saved ordered agent composition; inert configuration, short prefix `wf`.
-pub const ENTITY_TYPE_WORKFLOW: u8 = 18;
+pub const ENTITY_TYPE_WORKFLOW: u8 = 43;
 
 pub const ENTITY_TYPE_TASK_LIST: u8 = 100;
 

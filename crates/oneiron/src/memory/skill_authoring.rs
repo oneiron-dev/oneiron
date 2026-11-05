@@ -336,6 +336,15 @@ impl Memory<'_> {
             let package =
                 self.vault
                     .fork_skill_package_in_txn(txn, &parent, &stored, &mut record)?;
+            if let Some((document, frontier)) =
+                crate::entity_doc::source_document_pin_in_txn(&self.vault.store, txn, &parent)?
+            {
+                crate::write_envelope::skill_record::retain_fork_parent_pin(
+                    &mut record,
+                    document,
+                    frontier,
+                )?;
+            }
             let (author, proof) = self.birth_skill_in_txn(txn, id, &mut record, now)?;
             if let Some(package) = package {
                 let package = crate::store::skill_package::package_from_source(

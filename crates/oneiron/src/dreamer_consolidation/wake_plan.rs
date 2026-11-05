@@ -373,6 +373,13 @@ impl PreparedWake {
             &mut owed,
             preempt,
         )?;
+        // Freeze what the owed chunks stamp (FIX 12544): each owed
+        // member's reading and partition at THIS snapshot, so a
+        // republication or scope move between here and the owe()
+        // commits is never stamped as read.
+        if scope == crate::dreamer_runner::DreamerConsolidationScope::Micro {
+            capture_owed_frozen(vault, &read, &txn, &sources, &texts, &mut owed)?;
+        }
         if preempted() {
             return abandoned();
         }
@@ -560,4 +567,65 @@ fn left_for_later(
         }
     }
     left
+}
+
+/// Captures, per owed chunk set, each member's frozen (reading,
+/// partition) at the wake's snapshot (FIX 12544): the reading exactly as
+/// `BranchResources::taken_reading` computes it over the same frozen
+/// bytes, the partition from the chunk's own declared part key (the
+/// `taken_partition` shape, no new read). Members already pinned in
+/// `texts` reuse it; the rest get one `collect_in` in the snapshot
+/// transaction, its withheld children counted on a throwaway counter so
+/// the wake's read receipt stays exactly what it is today. A member
+/// whose text the snapshot refuses gets no entry: its enqueue registers
+/// membership with no stamp, and its own run's completion stamp covers
+/// it. Nothing is inserted into `texts` - the frozen digests ride the
+/// owed sets alone and drop with them.
+fn capture_owed_frozen(
+    vault: &Vault,
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    sources: &BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    texts: &BTreeMap<EntityId, super::turn_text::TurnText>,
+    owed: &mut [chunks::WakePreparationChunks],
+) -> Result<()> {
+    for set in owed.iter_mut() {
+        let mut frozen = BTreeMap::new();
+        let mut withheld = 0_usize;
+        for (chunk, _) in set.chunks() {
+            for part in &chunk.parts {
+                let partition = chunk.part_key(part.conversation_ref).partition_hash();
+                for turn in &part.turns {
+                    let Some((ENTITY_TYPE_TURN, _, body)) = sources.get(turn) else {
+                        continue;
+                    };
+                    let collected;
+                    let text = if let Some(text) = texts.get(turn) {
+                        text.text()
+                    } else {
+                        match super::turn_text::collect_in(read, txn, turn, body, &mut withheld) {
+                            Ok(fresh) => {
+                                collected = fresh;
+                                collected.text()
+                            }
+                            Err(crate::Error::InvalidClaimBody(_)) => continue,
+                            Err(error) => return Err(error),
+                        }
+                    };
+                    let facts = super::decode_turn_body(body);
+                    let role = crate::dreamer_runner::dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &vault.config.assistant_display_names,
+                    );
+                    let reading = crate::dreamer_wake::reading_of_text(
+                        text.unwrap_or_default(),
+                        super::conflict::turn_trust_class(role, facts.imported),
+                    );
+                    frozen.insert(*turn, (reading, partition));
+                }
+            }
+        }
+        set.set_frozen(frozen);
+    }
+    Ok(())
 }

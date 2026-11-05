@@ -234,5 +234,6 @@ pub(crate) fn erase_live_edit_ask_group_actor_in_txn(
     for (group, route) in updated {
         LIVE_EDIT_GROUPS.put(&vault.store, wtxn, &group, &route)?;
     }
+    super::consent::revoke_office_edit_grants_naming_in_txn(&vault.store, wtxn, actor)?;
     Ok(())
 }

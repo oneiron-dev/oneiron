@@ -631,6 +631,7 @@ fn admit_result_in_txn(
 }
 
 mod account;
+pub mod command_spec;
 mod leg;
 mod reapi;
 pub use leg::{BuildLegReceipt, CachedBuildLeg};

@@ -228,15 +228,15 @@ impl SpeculativeSession {
         &mut self,
         partial: SpeculativePartial<'_>,
     ) -> Result<SpeculativeFireDecision> {
+        if self.fires_used >= self.config.max_fires {
+            return Ok(SpeculativeFireDecision::SkippedCapExhausted);
+        }
         let signature = partial_signature(&partial);
         if signature.is_empty() {
             return Ok(SpeculativeFireDecision::SkippedEmptySignature);
         }
         if signature == self.last_signature {
             return Ok(SpeculativeFireDecision::SkippedUnchanged);
-        }
-        if self.fires_used >= self.config.max_fires {
-            return Ok(SpeculativeFireDecision::SkippedCapExhausted);
         }
 
         if self.config.fire_limit == 0 {

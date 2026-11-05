@@ -459,6 +459,8 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::TasksRefuse,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         let vault = self.coordination_vault()?;
@@ -623,6 +625,8 @@ impl<'a> HostSelfDispatcher<'a> {
             Err(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::SkillsCall,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             }))
         };
         // A turn program's run lends its pinned callable its own leased try.
@@ -657,6 +661,8 @@ impl<'a> HostSelfDispatcher<'a> {
         SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: SelfEffect::SkillsCall,
             error: "skills_call_no_runtime".to_owned(),
+            code: None,
+            disk_floor: None,
         })
     }
 
@@ -725,5 +731,7 @@ fn failed(effect: SelfEffect, error: crate::memory::MemoryError) -> SelfDispatch
     SelfDispatchOutcome::Failed(SelfFailedResult {
         effect,
         error: error.code,
+        code: None,
+        disk_floor: None,
     })
 }

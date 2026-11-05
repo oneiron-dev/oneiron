@@ -50,6 +50,16 @@ export type HostRootProfile = {
   readonly wrongRoot: boolean
 }
 
+/** One engine-limit crossing the SDK client's own vault kept. */
+export type NativeLimitQuestion = {
+  /** The `[limits]` row key that asked. */
+  readonly row: string
+  /** What the row stood at for the work, exact. */
+  readonly bound: bigint
+  /** What the work measured, exact. */
+  readonly measured: bigint
+}
+
 /** What {@link Oneiron.startEngine} takes besides the path (OF-237). */
 export type EngineOptions = {
   /** Embedding vector dimensions; omitted takes the config's. */
@@ -439,7 +449,7 @@ export type RetrievalMeta = {
   claimsReturned: number
   deepPending?: boolean
   temporalHints?: TemporalHint[]
-  /** The request's limit was past the ceiling and was served at it. */
+  /** Whether a retrieval policy lowered the requested result count. */
   limitClamped?: boolean
 }
 

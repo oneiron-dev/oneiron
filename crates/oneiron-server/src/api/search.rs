@@ -57,8 +57,9 @@ pub(crate) struct ScopedSearchResponse {
     residence: Option<ResidenceAnswer>,
 }
 impl ScopedSearchResponse {
-    /// Says whether the request's `limit` was served at the ceiling; a page
-    /// its deadline cut says it too.
+    /// Says whether the request's `limit` was lowered to serve it: always
+    /// false, since the whole requested limit is served, on a deadline-cut
+    /// page too.
     fn limit_clamped(mut self, clamped: bool) -> Self {
         self.response.meta.limit_clamped = clamped;
         self
@@ -306,7 +307,7 @@ pub(crate) async fn search_vector(
             text,
         )?;
     }
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -381,7 +382,7 @@ pub(crate) async fn search_vector(
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
-        .map(|page| Json(page.limit_clamped(clamped)))
+        .map(|page| Json(page.limit_clamped(false)))
 }
 
 /// Query parameters for BM25 text search.
@@ -498,7 +499,7 @@ pub(crate) async fn search_text(
         "query",
         &params.query,
     )?;
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let deadline = search_deadline(params.deadline_ms)?;
     // An opened machine asks its home alongside its own page (OF-534).
     let home = ask_home(
@@ -526,7 +527,7 @@ pub(crate) async fn search_text(
         search_page_by_deadline(server, arrived, deadline, page),
         home
     );
-    page.map(|page| Json(page.limit_clamped(clamped).residence(residence)))
+    page.map(|page| Json(page.limit_clamped(false).residence(residence)))
 }
 
 /// A blank `queryText` is an ABSENT one.
@@ -757,6 +758,9 @@ pub(crate) struct SemanticSearchRequest {
     /// Natural-language query. The server embeds it with the active provider,
     /// prefixed by the model's query instruction; on the one-space preset,
     /// through the text tower of the space the text kind slot binds.
+    /// Original text bytes past `[limits].semantic_query_bytes` (8 MiB
+    /// unless set) raise a row question; this row does not truncate or
+    /// refuse the query. The embedder's input window remains separate.
     #[schema(example = "what did we decide about the embedder slot")]
     pub(crate) text: String,
     /// Maximum number of nearest entities to return. Defaults to `10`.
@@ -833,12 +837,6 @@ pub(crate) struct SemanticSearchRequest {
             content_type = "application/json"
         ),
         (
-            status = 413,
-            description = "Query text exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
-            body = ApiError,
-            content_type = "application/json"
-        ),
-        (
             status = 500,
             description = "Vector search or projection failed.",
             body = ApiError,
@@ -863,12 +861,12 @@ pub(crate) async fn search_semantic(
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;
-    server.check_retrieval_query(
+    server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
         "text",
         &params.text,
-    )?;
+    );
     let deadline = search_deadline(params.deadline_ms)?;
     let text = params.text.trim();
     if text.is_empty() {
@@ -899,7 +897,7 @@ pub(crate) async fn search_semantic(
         }
     };
     let count_mode = params.count_mode.for_search_response();
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let (depth, view) = (params.depth, params.view.unwrap_or(View::Summary));
     let page_auth = auth.clone();
     let page_space = space.clone();
@@ -968,7 +966,7 @@ pub(crate) async fn search_semantic(
             .await?
         }
     };
-    let mut response = serde_json::to_value(page.limit_clamped(clamped))
+    let mut response = serde_json::to_value(page.limit_clamped(false))
         .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
         object.insert("embedder".to_owned(), embedder);

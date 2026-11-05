@@ -22,6 +22,14 @@ use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::workspace_roster::spend_scope::SpendState;
 use crate::{EntityId, Result, Vault};
 
+fn terminal_or_activity_at(record: &AttemptRecord) -> Option<u64> {
+    if settled(record.state) {
+        record.settled_at
+    } else {
+        Some(record.updated_at)
+    }
+}
+
 /// `long_wait`: an attempt that spent more than the dial's share of its life
 /// waiting, not on a person, over at least the dial's minutes. A settled
 /// attempt's life is closed. A live one's runs to now, and its open trap
@@ -41,11 +49,13 @@ pub(super) fn long_wait_findings(
             continue;
         };
         let live = matches!(record.state, AttemptState::Leased | AttemptState::Paused);
-        if !live && (!settled(record.state) || record.updated_at < since) {
+        if !live && (!settled(record.state) || record.settled_at.is_none_or(|at| at < since)) {
             continue;
         }
         let dials = book.of(Some(dispatch));
-        let end = if live { now } else { record.updated_at };
+        let Some(end) = (if live { Some(now) } else { record.settled_at }) else {
+            continue;
+        };
         let life = end.saturating_sub(record.created_at);
         if life == 0 || life < dials.wait_secs {
             continue;
@@ -147,6 +157,9 @@ pub(super) fn cost_spike_findings(
         let Some(record) = attempts.get(key) else {
             continue;
         };
+        let Some(candidate_at) = terminal_or_activity_at(record) else {
+            continue;
+        };
         let Some(scope_id) = dispatcher.spend_scope_for_attempt(record.id)? else {
             continue;
         };
@@ -154,7 +167,7 @@ pub(super) fn cost_spike_findings(
         let newer = scopes
             .get(&name)
             .and_then(|(held, _)| attempts.get(held))
-            .is_none_or(|held| held.updated_at <= record.updated_at);
+            .is_none_or(|held| terminal_or_activity_at(held).is_some_and(|at| at <= candidate_at));
         if newer && let Some(scope) = dispatcher.read_spend_scope(&scope_id)? {
             scopes.insert(name, (*key, scope));
         }
@@ -191,9 +204,12 @@ pub(super) fn cost_spike_findings(
         };
         let dials = book.of(Some(dispatch));
         let live = record.state == AttemptState::Leased;
-        if !live && (!settled(record.state) || record.updated_at < since) {
+        if !live && (!settled(record.state) || record.settled_at.is_none_or(|at| at < since)) {
             continue;
         }
+        let Some(end) = (if live { Some(now) } else { record.settled_at }) else {
+            continue;
+        };
         let spent = own(name, scope);
         let runs: Vec<u64> = history
             .get(&(dispatch.type_node.as_str(), &scope.unit))
@@ -230,10 +246,7 @@ pub(super) fn cost_spike_findings(
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
             evidence: vec![attempt],
-            window: (
-                record.created_at,
-                if live { now } else { record.updated_at },
-            ),
+            window: (record.created_at, end),
             // A live ratio moves on every review; the DIAGNOSTIC carries it in
             // halves, so it is written again only when it crosses one.
             actual: if live { permille / 500 * 500 } else { permille },
@@ -357,13 +370,13 @@ pub(super) fn duplicate_findings(
             .filter_map(|record| entity(record.id))
             .collect();
         found.insert(key);
-        out.push(dup_finding(record, dispatch, evidence));
+        out.extend(dup_finding(record, dispatch, evidence));
     }
     // Labels are kept per team, by its stamp's reference, not a queue run.
     let teams: BTreeSet<String> = dispatched
         .keys()
         .filter_map(|id| attempts.get(id))
-        .filter(|record| record.updated_at >= since)
+        .filter(|record| terminal_or_activity_at(record).is_some_and(|at| at >= since))
         .filter_map(team_of)
         .collect();
     for team in &teams {
@@ -392,6 +405,9 @@ pub(super) fn duplicate_findings(
             let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
+            if settled(record.state) && record.settled_at.is_none_or(|at| at < since) {
+                continue;
+            }
             if found.contains(record.id.as_bytes()) || cheap(record, dispatch)? {
                 continue;
             }
@@ -402,7 +418,7 @@ pub(super) fn duplicate_findings(
                     .filter_map(|record| entity(record.id))
                     .collect();
             evidence.extend(EntityId::from_hex(&label.receipt).ok());
-            out.push(dup_finding(record, dispatch, evidence));
+            out.extend(dup_finding(record, dispatch, evidence));
         }
     }
     Ok((out, pairs))
@@ -418,15 +434,19 @@ fn team_of(record: &AttemptRecord) -> Option<String> {
 
 /// One `duplicate_work` finding on the attempt that did the second piece of
 /// work.
-fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<EntityId>) -> Finding {
-    Finding {
+fn dup_finding(
+    record: &AttemptRecord,
+    dispatch: &Dispatched,
+    evidence: Vec<EntityId>,
+) -> Option<Finding> {
+    Some(Finding {
         subject: dispatch.actor,
         signal: AgentHealthSignal::DuplicateWork,
         task: task_of(record),
         attempt: Some(record.id),
         generation: Some(record.attempt_count),
         evidence,
-        window: (record.created_at, record.updated_at),
+        window: (record.created_at, terminal_or_activity_at(record)?),
         actual: 1,
         dial: 0,
         measured: 1,
@@ -435,7 +455,7 @@ fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<Enti
         blocked: false,
         observed_brief: None,
         silence: None,
-    }
+    })
 }
 
 /// `misalignment`: an audit found a flaw in an objective the agent's
@@ -451,7 +471,7 @@ pub(super) fn misalignment_findings(
         let Some(record) = attempts.get(id) else {
             continue;
         };
-        if !settled(record.state) || record.updated_at < since {
+        if !settled(record.state) || record.settled_at.is_none_or(|at| at < since) {
             continue;
         }
         let Some(sealed) = vault.sealed_attempt_receipt(record.id)? else {
@@ -528,7 +548,10 @@ pub(super) fn widen_denial_findings(
         if denials < dials.widen_denials {
             continue;
         }
-        if settled(record.state) && record.updated_at < since {
+        let Some(end) = terminal_or_activity_at(record) else {
+            continue;
+        };
+        if settled(record.state) && end < since {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -542,10 +565,7 @@ pub(super) fn widen_denial_findings(
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
             evidence: vec![attempt],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), end),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -576,9 +596,13 @@ pub(super) fn unsupported_done_findings(
         let Some(record) = attempts.get(id) else {
             continue;
         };
-        if record.state != AttemptState::Completed || record.updated_at < since {
+        if record.state != AttemptState::Completed || record.settled_at.is_none_or(|at| at < since)
+        {
             continue;
         }
+        let Some(end) = record.settled_at else {
+            continue;
+        };
         let (Some(task), Some(attempt)) = (task_of(record), entity(record.id)) else {
             continue;
         };
@@ -603,10 +627,7 @@ pub(super) fn unsupported_done_findings(
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
             evidence: vec![attempt, task],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), end),
             actual: count,
             dial: 0,
             measured: count,

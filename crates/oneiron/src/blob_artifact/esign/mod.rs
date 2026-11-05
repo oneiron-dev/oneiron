@@ -82,7 +82,8 @@ pub use seal_run::EsignSealRun;
 mod sealer;
 pub use sealer::{
     EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignSignatureRevision, EsignVerdict, SealDegrade, SealProfile, SealVerdict,
+    EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason, SealProfile,
+    SealProfileEvidence, SealVerdict,
 };
 mod signature_revision;
 pub use signature_revision::SEAL_CONTENTS_LADDER;
@@ -90,6 +91,7 @@ pub use signature_revision::SEAL_CONTENTS_LADDER;
 mod reseal;
 
 mod public_read;
+pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
 pub(crate) use artifact_actor::actor as artifact_machine;

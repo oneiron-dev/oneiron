@@ -5,10 +5,10 @@
 //! The stamp is the one the attempt froze when its run began
 //! (`AttemptRecord::executor_model`, copied onto its terminal pack receipt).
 //! With no attempt stamp, a generated proposal's birth receipt names the
-//! model that concluded it. It is never re-derived later from whatever model
-//! serves then. A proposal neither names, and a stamp that does not read as
-//! `id@revision`, has an unknown executor: recorded as unknown, never refused
-//! and never guessed.
+//! model that concluded it, then the attempt captured at artifact birth.
+//! It is never re-derived later from whatever model serves then. A proposal
+//! naming none of these, or a stamp that does not read as `id@revision`, has an
+//! unknown executor: recorded as unknown, never refused and never guessed.
 
 use crate::Vault;
 use crate::edit_distance::ProposalArtifactRef;
@@ -37,9 +37,10 @@ type Placement = (TypeRef, Option<EntityId>);
 
 /// The executor, task type and project the evidence door records for one
 /// amendment: the named attempt's stamps first, then the executor the amended
-/// proposal's birth receipt names, then what the host stamped, each kept only
-/// when it reads as one. The project travels with the task type: an
-/// attempt's type brings the project its run counted in, the vault's
+/// proposal's birth receipt names, then its captured birth attempt, then what
+/// the host stamped, each kept only when it reads as one. The project travels
+/// with the task type: the named attempt's type brings the project its run
+/// counted in, the vault's
 /// included; with no attempt type, both are the host's.
 ///
 /// # Errors
@@ -104,24 +105,33 @@ fn attempt_origin(
 
 /// The executor a generated proposal's birth receipt names (FIX 9812): its
 /// process, when a model concluded the proposal, as `identity@version` that
-/// reads as a [`ModelId`](crate::llm::ModelId). `None` for a stated
-/// proposal, an unretained document, and a process that names no model.
+/// reads as a [`ModelId`](crate::llm::ModelId). Without that model, the
+/// attempt captured at birth supplies its terminal receipt's executor.
+/// `None` when neither birth source names an executor.
 #[cfg(feature = "sync")]
 fn birth_executor(vault: &Vault, proposal: ProposalArtifactRef) -> Result<Option<String>> {
     let Some(retained) = crate::edit_distance::retained_proposal(vault, proposal)? else {
         return Ok(None);
     };
-    let Ok(document) = retained.document() else {
+    let process = match retained.document() {
+        Ok(document) => crate::edit_distance::proposal_text::birth_process(vault, document)?,
+        Err(_) => None,
+    };
+    let generated = process
+        .filter(|process| process.class == crate::provenance::made_by::MadeByClass::Concluded)
+        .map(|process| format!("{}@{}", process.identity, process.version))
+        .filter(|stamp| {
+            stamp.len() <= MAX_EXECUTOR_BYTES && stamp.parse::<crate::llm::ModelId>().is_ok()
+        });
+    if generated.is_some() {
+        return Ok(generated);
+    }
+    let Some(attempt) = retained.record.birth_attempt else {
         return Ok(None);
     };
-    Ok(
-        crate::edit_distance::proposal_text::birth_process(vault, document)?
-            .filter(|process| process.class == crate::provenance::made_by::MadeByClass::Concluded)
-            .map(|process| format!("{}@{}", process.identity, process.version))
-            .filter(|stamp| {
-                stamp.len() <= MAX_EXECUTOR_BYTES && stamp.parse::<crate::llm::ModelId>().is_ok()
-            }),
-    )
+    let receipt = crate::receipt::attempt_pack_receipt_id(&attempt);
+    let (executor, _) = attempt_origin(vault, &receipt)?;
+    Ok(executor)
 }
 
 /// No proposal text is retained without the `sync` feature.

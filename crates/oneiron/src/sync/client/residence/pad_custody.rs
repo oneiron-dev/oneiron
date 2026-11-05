@@ -256,7 +256,12 @@ async fn repair(
     keys: &[[u8; 40]],
 ) -> Result<(), TransportError> {
     let budgets = residence_budgets(vault)?;
-    let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
+    let rpc = if config.note_session.is_some() && config.residence_selector.is_some() {
+        ResidenceRpc::connect(vault, config, budgets).await?
+    } else {
+        ResidenceRpc::connect_machine(vault, config, budgets).await?
+    };
+    let Some(mut rpc) = rpc else {
         return Ok(());
     };
     // A home that may not read the world is not told its name (FIX 922 item
@@ -308,9 +313,9 @@ impl SyncClient {
         let Some(world) = window.world() else {
             return;
         };
+        let bound = self.config.note_session.is_some() && self.config.residence_selector.is_some();
         if self.config.federation_peer.is_some()
-            || self.config.note_session.is_none()
-            || self.config.residence_selector.is_none()
+            || (!bound && self.config.transport_credential.is_none())
         {
             return;
         }

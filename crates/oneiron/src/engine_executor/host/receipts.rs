@@ -4,9 +4,6 @@
 
 use super::*;
 
-/// The longest recipe a fold's `store` may name for its receipt, as JSON.
-pub(super) const RECEIPT_RECIPE_MAX_BYTES: usize = 4096;
-
 impl RecordingJsHost<'_, '_> {
     /// The fold receipt `input` names, computed here from the jobs it names
     /// (ARCH-0079 #reader-forks): its source resolved and read-checked, each
@@ -114,13 +111,6 @@ impl RecordingJsHost<'_, '_> {
                 summary,
                 inputs: refs,
             });
-        }
-        if input
-            .recipe
-            .as_ref()
-            .is_some_and(|recipe| recipe.to_string().len() > RECEIPT_RECIPE_MAX_BYTES)
-        {
-            return Ok(Err(result_refusal("receipt_recipe_too_large")));
         }
         let read = merge_ranges(read);
         let covered = merge_ranges(read.iter().copied().chain(short).collect());

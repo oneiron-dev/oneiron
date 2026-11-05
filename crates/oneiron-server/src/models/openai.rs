@@ -8,6 +8,7 @@ use oneiron::llm::{
     CacheDigest, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
     returned_model_wire_id,
 };
+use oneiron_driver::InferenceWorker;
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
@@ -17,10 +18,12 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
+use super::exl3_evidence::{Tie, external_tie};
 use super::http::{HttpFailure, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
+use super::worker_host;
 use crate::config::models::ResponseFormatWire;
 
 pub(super) struct OpenAiHttp {
@@ -34,6 +37,9 @@ pub(super) struct OpenAiHttp {
     /// carried inference receipt is stamped with the call's before it is
     /// finished.
     pub(super) engine_models: BTreeMap<String, ModelId>,
+    /// The external chat workers bound at construction, by wire id (FIX 9200):
+    /// a serving answer observed on a row requalifies that row's worker only.
+    pub(super) external_workers: BTreeMap<String, worker_host::ExternalWorker>,
 }
 
 impl OpenAiHttp {
@@ -46,6 +52,117 @@ impl OpenAiHttp {
         target: Option<&str>,
     ) -> Option<AnsweringIdentity> {
         self.identities.resolve(&self.http, returned, target).await
+    }
+
+    /// A buffered call checked against its managed launch or captured external
+    /// EXL3 manifest pin (FIX 9296); other HTTP routes carry no tie.
+    pub(super) fn execute_with_tie<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        tie: Option<Tie>,
+    ) -> OpenAiCompatFuture<'a> {
+        Box::pin(async move {
+            let mut body = request.body;
+            self.cap.apply(&mut body);
+            send_format(self.response_format, &mut body);
+            let target = configured_target(&body);
+            let execution = execution_mode(&body);
+            // The bound external worker, if any, captured before any send (FIX 9200).
+            let bound = target
+                .as_deref()
+                .and_then(|wire| self.external_workers.get(wire));
+            let observed = bound.map(|bound| bound.worker.clone());
+            let tie = tie.or_else(|| bound.and_then(external_tie));
+            // One physical request, observed from its send (FIX 9417).
+            let publisher = InferencePublisher::begin(lease);
+            let mut reply = self
+                .http
+                .post_json(&request.path, &request.headers, &body)
+                .await?;
+            let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
+                Some(returned) if (200..300).contains(&reply.status) => {
+                    self.answering(Some(returned), target.as_deref()).await
+                }
+                _ => None,
+            };
+            carry_sent_reply_evidence(
+                reply.status,
+                &mut reply.body,
+                target.as_deref(),
+                answering.as_ref(),
+                execution.as_ref(),
+            );
+            if let Some(tie) = tie.as_ref() {
+                tie.apply(&mut reply.body);
+            }
+            // The receipt the reply carries is the request's final one.
+            if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
+                if let Some(worker) = &observed {
+                    note_served_epoch(worker, &receipt);
+                }
+                if let Some(model) = target
+                    .as_deref()
+                    .and_then(|wire| self.engine_models.get(wire))
+                {
+                    receipt.model = Some(model.clone());
+                }
+                publisher.finish(receipt);
+            }
+            Ok(OpenAiCompatHttpResponse {
+                status: reply.status,
+                headers: reply.headers,
+                body: reply.body,
+            })
+        })
+    }
+
+    /// A streamed call checked against its managed launch or captured external
+    /// EXL3 manifest pin (FIX 9296); other HTTP routes carry no tie.
+    pub(super) fn stream_with_tie<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        tie: Option<Tie>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        let mut body = request.body;
+        self.cap.apply(&mut body);
+        send_format(self.response_format, &mut body);
+        let target = configured_target(&body);
+        let execution = execution_mode(&body);
+        // The bound external worker, if any, captured before any send (FIX 9200).
+        let bound = target
+            .as_deref()
+            .and_then(|wire| self.external_workers.get(wire));
+        let observed = bound.map(|bound| bound.worker.clone());
+        let tie = tie.or_else(|| bound.and_then(external_tie));
+        // One physical request, observed from its send (FIX 9417).
+        let publisher = InferencePublisher::begin(lease);
+        let model = target
+            .as_deref()
+            .and_then(|wire| self.engine_models.get(wire))
+            .cloned();
+        let events = self.http.post_sse(&request.path, &request.headers, &body);
+        let frames = futures_util::stream::unfold(
+            Frames {
+                transport: self,
+                target,
+                execution,
+                model,
+                tie,
+                worker: observed,
+                answering: None,
+                publisher,
+                measured: None,
+                events: Box::pin(events),
+                served: None,
+                saw_usage: false,
+                finished: false,
+                closed: false,
+            },
+            Frames::next,
+        );
+        Ok(Box::pin(frames))
     }
 }
 
@@ -73,47 +190,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
-        Box::pin(async move {
-            let mut body = request.body;
-            self.cap.apply(&mut body);
-            send_format(self.response_format, &mut body);
-            let target = configured_target(&body);
-            let execution = execution_mode(&body);
-            // One physical request, observed from its send (FIX 9417).
-            let publisher = InferencePublisher::begin(lease);
-            let mut reply = self
-                .http
-                .post_json(&request.path, &request.headers, &body)
-                .await?;
-            let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
-                Some(returned) if (200..300).contains(&reply.status) => {
-                    self.answering(Some(returned), target.as_deref()).await
-                }
-                _ => None,
-            };
-            carry_sent_reply_evidence(
-                reply.status,
-                &mut reply.body,
-                target.as_deref(),
-                answering.as_ref(),
-                execution.as_ref(),
-            );
-            // The receipt the reply carries is the request's final one.
-            if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
-                if let Some(model) = target
-                    .as_deref()
-                    .and_then(|wire| self.engine_models.get(wire))
-                {
-                    receipt.model = Some(model.clone());
-                }
-                publisher.finish(receipt);
-            }
-            Ok(OpenAiCompatHttpResponse {
-                status: reply.status,
-                headers: reply.headers,
-                body: reply.body,
-            })
-        })
+        self.execute_with_tie(request, lease, None)
     }
 
     fn stream<'a>(
@@ -121,36 +198,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
-        let mut body = request.body;
-        self.cap.apply(&mut body);
-        send_format(self.response_format, &mut body);
-        let target = configured_target(&body);
-        let execution = execution_mode(&body);
-        // One physical request, observed from its send (FIX 9417).
-        let publisher = InferencePublisher::begin(lease);
-        let model = target
-            .as_deref()
-            .and_then(|wire| self.engine_models.get(wire))
-            .cloned();
-        let events = self.http.post_sse(&request.path, &request.headers, &body);
-        let frames = futures_util::stream::unfold(
-            Frames {
-                transport: self,
-                target,
-                execution,
-                model,
-                answering: None,
-                publisher,
-                measured: None,
-                events: Box::pin(events),
-                served: None,
-                saw_usage: false,
-                finished: false,
-                closed: false,
-            },
-            Frames::next,
-        );
-        Ok(Box::pin(frames))
+        self.stream_with_tie(request, lease, None)
     }
 }
 
@@ -167,6 +215,23 @@ fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Notes a serving answer's backend epoch on its bound external worker (FIX 9200):
+/// the carried receipt's kind must be the worker's own and name an epoch; then,
+/// while the worker is still its row's, a real probe requalifies it. Anything
+/// else leaves serving as it was. The probe's judgement alone qualifies.
+fn note_served_epoch(worker: &InferenceWorker, receipt: &InferenceCallReceipt) {
+    if receipt.worker.kind != worker.spec().kind {
+        return;
+    }
+    let Some(epoch) = receipt.worker.identity.backend_epoch.as_ref() else {
+        return;
+    };
+    if !worker_host::is_current(worker) {
+        return;
+    }
+    worker.note_external_epoch(epoch.as_str());
 }
 
 /// A provider set to `response_format = "none"` is sent no
@@ -289,6 +354,11 @@ struct Frames<'a, S> {
     /// The engine model the call was admitted for, when its wire id names
     /// one: stamped on its final receipt.
     model: Option<ModelId>,
+    /// The managed launch the HTTP fallback's answers tie to when one names
+    /// it (FIX 9296): `None` is the direct HTTP route, as before.
+    tie: Option<Tie>,
+    /// The bound external worker captured at request start, if any (FIX 9200).
+    worker: Option<InferenceWorker>,
     /// The last top-level `model` this stream's chunks named, as it came.
     answering: Option<String>,
     /// The request's observation (FIX 9417): each receipt a usage chunk
@@ -328,6 +398,9 @@ where
                 .answering(self.answering.as_deref(), self.target.as_deref())
                 .await;
             carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
+            if let Some(tie) = self.tie.as_ref() {
+                tie.apply(&mut carrier);
+            }
             self.publish(&carrier);
             self.published_end();
             return Some((Ok(OpenAiCompatStreamFrame::Chunk(carrier)), self));
@@ -338,7 +411,10 @@ where
 
     async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
         match item? {
-            SseItem::Status(reply) => {
+            SseItem::Status(mut reply) => {
+                if let Some(tie) = self.tie.as_ref() {
+                    tie.apply(&mut reply.body);
+                }
                 Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
                     status: reply.status,
                     headers: reply.headers,
@@ -371,6 +447,9 @@ where
                     None
                 };
                 carry_chat_evidence(&mut chunk, answering.as_ref(), self.execution.as_ref());
+                if let Some(tie) = self.tie.as_ref() {
+                    tie.apply(&mut chunk);
+                }
                 self.publish(&chunk);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
@@ -393,6 +472,9 @@ where
         if self.finished
             && let Some(mut receipt) = self.measured.take()
         {
+            if let Some(worker) = &self.worker {
+                note_served_epoch(worker, &receipt);
+            }
             if let Some(model) = &self.model {
                 receipt.model = Some(model.clone());
             }

@@ -17,7 +17,9 @@ mod live_lease_backend;
 mod quickjs_provider;
 mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
-pub use self::quickjs_provider::{McpQuickJsProvider, checked_in_quickjs_runtime};
+pub use self::quickjs_provider::{
+    McpQuickJsProvider, checked_in_quickjs_runtime, checked_in_quickjs_runtime_with_wall,
+};
 pub mod oauth_client;
 mod paging;
 pub mod qualification;
@@ -60,8 +62,9 @@ pub use self::exec_host::{
     mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
-    EngineRunError, ModelCallBackend, OffRecordRunSession, ScopeMeter, enter_engine_native_run,
-    off_record_run_id, run_read_worlds, run_seat, task_engine_run_seat, task_run_seat,
+    EngineRunError, ModelCallBackend, ModelListBackend, OffRecordRunSession, ScopeMeter,
+    enter_engine_native_run, off_record_run_id, run_read_worlds, run_seat, task_engine_run_seat,
+    task_run_seat,
 };
 pub(crate) use self::live_lease_backend::{LiveLeaseBackend, LiveLeaseRunner};
 pub use self::paging::{

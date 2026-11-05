@@ -148,4 +148,15 @@ impl Flows {
     pub(crate) fn expire(&mut self, now: Instant) {
         self.held.retain(|_, flow| !flow.left(now).is_zero());
     }
+
+    /// The held flows' opaque handles with the actor that started each, as
+    /// owned pairs. An erase watch snapshots this under the flows guard,
+    /// drops the guard, and only then reads the vault. No flow, device
+    /// code or token is cloned, and the epoch never moves here.
+    pub(super) fn snapshot_held(&self) -> Vec<(String, EntityId)> {
+        self.held
+            .iter()
+            .map(|(handle, flow)| (handle.clone(), flow.actor))
+            .collect()
+    }
 }

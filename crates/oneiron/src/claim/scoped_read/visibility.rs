@@ -211,6 +211,9 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
+        if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
         if self.actor_key.vault_owner_ref().is_some() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
@@ -884,6 +887,7 @@ impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;
-        self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)
+        let held = HeldAuthority::for_request(None);
+        self.is_entity_retrievable_held_in(txn, &policy, &filter, id, &held)
     }
 }

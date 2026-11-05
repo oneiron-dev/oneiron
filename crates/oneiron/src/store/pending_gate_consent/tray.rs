@@ -90,7 +90,8 @@ impl Store {
             //
             // A replacement is no answer: the obligation a confirm parked
             // before obligations were recorded is recorded first.
-            if crate::gate::pending_row_holds_critical_confirm(&existing) {
+            if crate::store::critical_confirm_record::pending_row_holds_critical_confirm(&existing)
+            {
                 self.open_owner_answer_obligation_in_txn(
                     wtxn,
                     &claim_id,
@@ -101,7 +102,7 @@ impl Store {
         }
         // Every critical confirm, from any door, opens its claim's
         // owner-answer obligation (`crate::gate::owner_answer`).
-        if crate::gate::pending_row_holds_critical_confirm(record) {
+        if crate::store::critical_confirm_record::pending_row_holds_critical_confirm(record) {
             self.open_owner_answer_obligation_in_txn(
                 wtxn,
                 &claim_id,
@@ -164,7 +165,9 @@ impl Store {
             // A confirm parked before obligations were recorded is one, and
             // only an answer removes it without recording it.
             if removal != TrayRemoval::Answered
-                && crate::gate::pending_row_holds_critical_confirm(&record)
+                && crate::store::critical_confirm_record::pending_row_holds_critical_confirm(
+                    &record,
+                )
             {
                 self.open_owner_answer_obligation_in_txn(
                     wtxn,

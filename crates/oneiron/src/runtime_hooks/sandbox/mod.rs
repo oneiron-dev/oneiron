@@ -402,9 +402,7 @@ fn execute(
         Ok(Ok(Ok(()))) => match state.outcome {
             Some(outcome_json) => Ok(HookBodyRun {
                 outcome_json,
-                // A run that succeeded keeps its plain count, as before: one
-                // whose fuel did not read counts its whole budget spent.
-                fuel_used: usage.fuel_used.unwrap_or(budget.fuel),
+                fuel_used: usage.fuel_used,
                 host_calls: state.host_calls,
             }),
             None => Err(failure("hook body emitted no outcome")),

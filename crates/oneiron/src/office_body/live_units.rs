@@ -33,13 +33,7 @@ use crate::secret_custody::SecretSight;
 use oneiron_docedit::live::{DeckNode, LiveDeck, NodeId, NodeKind, TextBody};
 use std::collections::BTreeMap;
 
-/// Where one live office body stood: its head's frontier and the commits on
-/// it so far.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LivePin {
-    pub frontier: Vec<u8>,
-    pub commits: u64,
-}
+pub use crate::typed_body::live_pin::LivePin;
 
 /// How one unit fares between a pinned frontier and the head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

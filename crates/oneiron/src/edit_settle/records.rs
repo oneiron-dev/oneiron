@@ -115,6 +115,9 @@ pub struct SettlementRecord {
     pub actor_ref: Option<String>,
     /// The assigning brief this settle rode, if any.
     pub brief_ref: Option<String>,
+    /// The standing grant selected by authorization in the settlement's write
+    /// transaction; absent when the owner consented directly.
+    pub grant_ref: Option<String>,
     /// The artifact head version the select was appended ONTO — the D6 receipt's
     /// before-version ref (select only; a discard commits no version).
     pub before_version: Option<u64>,

@@ -46,13 +46,16 @@ pub use self::ledger::{
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
 };
+pub(crate) use self::projector::reconcile_displaced_actor_credit_in_txn;
 pub use self::projector::{
     FIELD_SKILL_GOAL_REVISION, FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF,
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
     project_skill_reliability_for, project_skill_reliability_for_executor,
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
-pub(crate) use self::provenance::{skill_reliability_prior_rows, skill_reliability_sources};
+pub(crate) use self::provenance::{
+    skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
+};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,

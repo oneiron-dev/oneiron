@@ -28,7 +28,7 @@
 //! timed out, and no startup has a deadline.
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use oneiron::llm::{
@@ -42,6 +42,7 @@ use super::inference_admission::{DeviceAdmission, LoadGrant};
 use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, ResidentSource};
 
 mod drive;
+mod startup;
 
 use drive::drive;
 
@@ -268,8 +269,12 @@ struct Inner {
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
     admission: Mutex<Option<Arc<DeviceAdmission>>>,
+    predecessors: Mutex<Vec<Weak<Inner>>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
+    /// Serializes an external worker's probes: the initial probe and serving
+    /// observations share it, so concurrent observations coalesce.
+    probe_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// One worker's supervisor. Clones share it.
@@ -451,8 +456,10 @@ impl InferenceWorker {
                 policy,
                 device,
                 admission: Mutex::new(None),
+                predecessors: Mutex::new(Vec::new()),
                 state: Mutex::new(state),
                 changed: watch::Sender::new(0),
+                probe_gate: Arc::new(tokio::sync::Mutex::new(())),
             }),
         }
     }
@@ -460,6 +467,51 @@ impl InferenceWorker {
     #[must_use]
     pub fn spec(&self) -> &WorkerSpec {
         &self.inner.spec
+    }
+
+    /// Whether `other` is this same supervisor: clones share one [`Inner`].
+    #[must_use]
+    pub fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// Notes a serving answer's backend epoch on an external worker: when it
+    /// differs from this instance's observed epoch, or none is observed, a
+    /// real probe requalifies. An unchanged epoch, a contended gate, or no
+    /// runtime drops silently, as does a managed worker. The passed epoch is
+    /// only compared, never stored or published: only the probe's result
+    /// lands.
+    pub fn note_external_epoch(&self, epoch: &str) {
+        if self.inner.launcher.is_some() {
+            return;
+        }
+        let gate = match self.inner.probe_gate.clone().try_lock_owned() {
+            Ok(gate) => gate,
+            Err(_) => return,
+        };
+        let known = {
+            let state = self.inner.lock();
+            let observed = match &state.probed {
+                WorkerReadiness::Ready { observed } => Some(observed),
+                WorkerReadiness::Unverified { observed } => observed.as_ref(),
+                WorkerReadiness::Failed { observed, .. } => observed.as_ref(),
+                WorkerReadiness::Unchecked | WorkerReadiness::Starting => None,
+            };
+            observed
+                .and_then(|descriptor| descriptor.identity.backend_epoch.as_ref())
+                .map(|known| known.as_str().to_owned())
+        };
+        if known.as_deref() == Some(epoch) {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        let worker = self.clone();
+        tokio::spawn(async move {
+            let _gate = gate;
+            worker.inner.probe_publish().await;
+        });
     }
 
     /// The device-budget class this worker's kind serves.
@@ -482,15 +534,14 @@ impl InferenceWorker {
         }
     }
 
-    /// An external worker's one probe, kept for its status. Nothing for a
+    /// An external worker's initial probe, kept for its status. Nothing for a
     /// managed worker, which its own qualification probes.
     pub async fn probe_once(&self) {
         if self.inner.launcher.is_some() {
             return;
         }
-        let readiness = self.inner.probe.probe(&self.inner.spec).await;
-        self.inner.lock().probed = readiness;
-        self.inner.notify();
+        let _gate = self.inner.probe_gate.lock().await;
+        self.inner.probe_publish().await;
     }
 
     /// Registers this caller's demand, waits for a ready incarnation (one a
@@ -803,5 +854,14 @@ impl Inner {
                 },
             );
         }
+    }
+
+    /// Runs the real probe and publishes its result, then notifies: the one
+    /// path the initial probe and serving observations share under the
+    /// probe gate.
+    async fn probe_publish(&self) {
+        let readiness = self.probe.probe(&self.spec).await;
+        self.lock().probed = readiness;
+        self.notify();
     }
 }

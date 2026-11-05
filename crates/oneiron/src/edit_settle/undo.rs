@@ -55,7 +55,8 @@ impl Vault {
     /// Undoes one Keep by appending the version it was kept onto as the
     /// next version. Refused when the proposal was not kept, was already
     /// undone, kept no new version, or when a later version sits on the
-    /// kept one: undo never clobbers later work.
+    /// kept one: undo never clobbers later work. The restored bytes retain
+    /// the calculator stamp that produced their cached values.
     pub fn undo_kept_proposal(
         &self,
         artifact_id: &EntityId,
@@ -68,7 +69,7 @@ impl Vault {
         self.authorize_settle(consent, actor)?;
         let key = settlement_key_parts(artifact_id, proposal_ref);
         self.with_write_txn_grouped(|wtxn| {
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            let _ = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             let settled = RECORD
                 .get(&self.store, wtxn, &key)?
                 .ok_or(Error::EntityNotFound)?;
@@ -133,16 +134,17 @@ impl Vault {
                 at: learned_at,
                 trigger: None,
             };
-            let version = self.append_blob_artifact_version_made_by_in_txn(
+            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact_id,
-                None,
                 &bytes,
                 &provenance,
-                &made_by,
+                restored_record.calc_engine.as_ref(),
                 actor,
                 occurred,
                 learned_at,
+                None,
+                Some(&made_by),
             )?;
             if version.version <= kept {
                 return Err(Error::CorruptedIndex("undo appended no version"));
@@ -183,7 +185,8 @@ impl Vault {
     /// Restores an earlier version (ARCH-0078 "Versions and forks"): its bytes
     /// become the next version, with an `artifact.restore` made_by naming the
     /// restored and replaced versions. Comments that stood on the restored
-    /// version, or drifted off it, reattach by exact stored identity.
+    /// version, or drifted off it, reattach by exact stored identity. Cached
+    /// values retain the restored version's calculator stamp.
     pub fn restore_blob_artifact_version(
         &self,
         artifact_id: &EntityId,
@@ -237,16 +240,17 @@ impl Vault {
                 at: learned_at,
                 trigger: None,
             };
-            let appended = self.append_blob_artifact_version_made_by_in_txn(
+            let appended = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact_id,
-                None,
                 &bytes,
                 &provenance,
-                &made_by,
+                restored.calc_engine.as_ref(),
                 actor,
                 occurred,
                 learned_at,
+                None,
+                Some(&made_by),
             )?;
             if appended.version <= head.version {
                 return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(

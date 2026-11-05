@@ -8,9 +8,9 @@ use std::time::Duration;
 use loro::{LoroValue, ValueOrContainer};
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron_vault_contract::{
-    Credentials, LedgerAck, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReportHead,
-    LedgerUpdate, MAX_CTL_LINE, ManagedTrainingSetting, Schedule, TokenHex, WakeEntry, now_ts,
-    validate_wake_entries,
+    ArtifactOrigin, Credentials, LedgerAck, LedgerPage, LedgerPageRequest, LedgerPulledRequest,
+    LedgerReportHead, LedgerUpdate, MAX_CTL_LINE, ManagedTrainingSetting, Schedule, TokenHex,
+    WakeEntry, now_ts, validate_wake_entries,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -116,6 +116,7 @@ pub struct FrozenReport {
 pub struct LedgerSnapshot {
     pub entries: Vec<WakeEntry>,
     pub training: ManagedTrainingSetting,
+    pub artifact_origins: Vec<ArtifactOrigin>,
 }
 
 impl std::fmt::Debug for WakeLedger {
@@ -150,6 +151,15 @@ impl WakeLedger {
             rev: AtomicU64::new(rev),
             exported: Mutex::new(Exported::default()),
         })
+    }
+
+    /// A distinct native preview caller with this ledger's exact spawn identity.
+    pub fn preview_route_client(&self) -> super::preview_route::PreviewRouteClient {
+        super::preview_route::PreviewRouteClient::new(
+            self.hypnos_socket.clone(),
+            self.vault_name.clone(),
+            self.token.clone(),
+        )
     }
 
     pub(super) fn verify_widen_action(
@@ -252,13 +262,26 @@ impl WakeLedger {
         })
     }
 
-    /// The report as it stands: [`Self::export`]'s entries and
-    /// [`Self::training`].
+    /// The report as it stands: wake entries, training and stored publication
+    /// origins, held together for both push and frozen pull.
     pub fn snapshot(&self, server: &SyncServer) -> Result<LedgerSnapshot, ManagedError> {
         Ok(LedgerSnapshot {
             entries: self.export(server)?,
             training: self.training()?,
+            artifact_origins: self.artifact_origins()?,
         })
+    }
+
+    /// Logical destinations only. Public DNS belongs to the supervisor, and
+    /// publication changes no artifact's own credential or serve-tier checks.
+    fn artifact_origins(&self) -> Result<Vec<ArtifactOrigin>, ManagedError> {
+        let ids = self
+            .vault
+            .published_artifact_ids()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+        let mut origins = vec![ArtifactOrigin::Vault];
+        origins.extend(ids.into_iter().filter_map(ArtifactOrigin::app));
+        Ok(origins)
     }
 
     /// Export-at-freeze for the pull path: refreshes the report and, when it
@@ -290,6 +313,7 @@ impl WakeLedger {
                 rev,
                 &snapshot.entries,
                 &snapshot.training,
+                &snapshot.artifact_origins,
             ),
             snapshot,
         };
@@ -312,6 +336,7 @@ impl WakeLedger {
             .page(
                 &frozen.snapshot.entries,
                 &frozen.snapshot.training,
+                &frozen.snapshot.artifact_origins,
                 request.offset,
             )
             .map_err(|error| ManagedError::CtlRequestRefused {
@@ -410,8 +435,13 @@ impl WakeLedger {
     /// Timing out is a typed refusal like any other push failure, so the retry
     /// policy above is unchanged by it.
     pub async fn push_once(&self, rev: u64, snapshot: &LedgerSnapshot) -> Result<(), ManagedError> {
-        let head =
-            LedgerReportHead::of(&self.vault_name, rev, &snapshot.entries, &snapshot.training);
+        let head = LedgerReportHead::of(
+            &self.vault_name,
+            rev,
+            &snapshot.entries,
+            &snapshot.training,
+            &snapshot.artifact_origins,
+        );
         let stream = bounded(async {
             Ok::<_, ManagedError>(UnixStream::connect(&self.hypnos_socket).await?)
         })
@@ -420,11 +450,17 @@ impl WakeLedger {
         let mut reader = BufReader::new(reader);
         for offset in head.offsets() {
             let page = head
-                .page(&snapshot.entries, &snapshot.training, offset)
+                .page(
+                    &snapshot.entries,
+                    &snapshot.training,
+                    &snapshot.artifact_origins,
+                    offset,
+                )
                 .map_err(|error| ManagedError::LedgerRefused {
                     reason: error.to_string(),
                 })?;
-            let last = offset + page.entries.len() as u64 >= head.total;
+            let last = offset + page.entries.len() as u64 + page.artifact_origins.len() as u64
+                >= head.row_count();
             let update = LedgerUpdate {
                 op: "ledger_update".to_owned(),
                 vault: self.vault_name.clone(),
@@ -509,7 +545,9 @@ fn same_schedule(reported: &LedgerSnapshot, now: &LedgerSnapshot) -> bool {
         }
         entries
     };
-    reported.training == now.training && schedule(reported) == schedule(now)
+    reported.training == now.training
+        && reported.artifact_origins == now.artifact_origins
+        && schedule(reported) == schedule(now)
 }
 
 /// The frozen report `exported` holds when it is the one `rev` and

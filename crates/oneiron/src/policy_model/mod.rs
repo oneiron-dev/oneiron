@@ -110,9 +110,10 @@ pub use owner_rows::{
     PolicyNotificationMode, PolicyNotificationRule, PolicyNotificationTarget, PolicyProposalStatus,
     PolicyRowProposal, PolicyRowReceipt, PolicyRowSubmission, SecretScanReceipt,
     WORLD_PRIVACY_ROW_REF, WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome,
-    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest,
-    WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
-    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, policy_row_grant_target,
+    WorldMachinePlacement, WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt,
+    WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
+    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, machine_placement_settings,
+    policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
     holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,

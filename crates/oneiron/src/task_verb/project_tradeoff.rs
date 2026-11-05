@@ -266,7 +266,7 @@ impl Memory<'_> {
     /// older question never settles a newer one. Otherwise the gate's own
     /// door ([`crate::skill_optimize::settle_skill_tradeoff_ask`]) decides,
     /// with its role and digest checks. The settlement and the route's close
-    /// are two writes, in that order.
+    /// commit together in one transaction.
     pub fn tasks_settle_project_tradeoff(
         &self,
         ask: TaskAskHandle,
@@ -289,23 +289,29 @@ impl Memory<'_> {
         }
         let route = self.pending_project_tradeoff_route(ask)?;
         let now = vault.store.clock.now_recorded_at();
-        let verdict = crate::skill_optimize::settle_skill_tradeoff_ask(
-            vault,
-            owner,
-            &route.proposal,
-            &route.question_digest,
-            choice,
-            now,
-        )?;
-        close_route(
-            vault,
-            ask.group_ref,
-            RouteState::Settled {
-                verdict: verdict.id,
-                at: now,
-            },
-        )?;
-        Ok(verdict)
+        vault
+            .with_write_txn_grouped(|txn| {
+                let verdict = crate::skill_optimize::settle_skill_tradeoff_ask_in_txn(
+                    vault,
+                    txn,
+                    owner,
+                    &route.proposal,
+                    &route.question_digest,
+                    choice,
+                    now,
+                )?;
+                close_route_in(
+                    vault,
+                    txn,
+                    ask.group_ref,
+                    RouteState::Settled {
+                        verdict: verdict.id,
+                        at: now,
+                    },
+                )?;
+                Ok(verdict)
+            })
+            .map_err(MemoryError::from)
     }
 
     /// Settle the skill tradeoff a routed project ask carries with this
@@ -316,7 +322,7 @@ impl Memory<'_> {
     /// [`Self::tasks_settle_project_tradeoff`]; the gate's agent door
     /// ([`crate::skill_optimize::settle_skill_tradeoff_ask_as_agent`]) then
     /// decides, with its live role and digest checks. The settlement and the
-    /// route's close are two writes, in that order.
+    /// route's close commit together in one transaction.
     pub fn tasks_settle_project_tradeoff_as_agent(
         &self,
         ask: TaskAskHandle,
@@ -339,23 +345,29 @@ impl Memory<'_> {
         let agent = self.write_actor();
         let route = self.pending_project_tradeoff_route(ask)?;
         let now = vault.store.clock.now_recorded_at();
-        let verdict = crate::skill_optimize::settle_skill_tradeoff_ask_as_agent(
-            vault,
-            &agent,
-            &route.proposal,
-            &route.question_digest,
-            choice,
-            now,
-        )?;
-        close_route(
-            vault,
-            ask.group_ref,
-            RouteState::Settled {
-                verdict: verdict.id,
-                at: now,
-            },
-        )?;
-        Ok(verdict)
+        vault
+            .with_write_txn_grouped(|txn| {
+                let verdict = crate::skill_optimize::settle_skill_tradeoff_ask_as_in_txn(
+                    vault,
+                    txn,
+                    &agent,
+                    &route.proposal,
+                    &route.question_digest,
+                    choice,
+                    now,
+                )?;
+                close_route_in(
+                    vault,
+                    txn,
+                    ask.group_ref,
+                    RouteState::Settled {
+                        verdict: verdict.id,
+                        at: now,
+                    },
+                )?;
+                Ok(verdict)
+            })
+            .map_err(MemoryError::from)
     }
 
     /// The open route `ask` carries, its gate question read again. No

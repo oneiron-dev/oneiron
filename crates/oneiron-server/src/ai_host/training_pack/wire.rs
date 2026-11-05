@@ -471,6 +471,11 @@ pub(super) fn decode_output(
         tokens_match: check.tokens_match,
         passed: check.passed,
     };
+    let reference_logits: Vec<_> = receipt
+        .probes
+        .iter()
+        .map(|probe| probe.export_logits.clone())
+        .collect();
     let probes = receipt
         .probes
         .into_iter()
@@ -501,6 +506,8 @@ pub(super) fn decode_output(
         &request.plan.probes,
         &exported_checkpoint,
         &probes,
+        &reference_logits,
+        request.plan.export_logit_tolerance,
     );
     Ok(TrainOutput {
         run: request.run,

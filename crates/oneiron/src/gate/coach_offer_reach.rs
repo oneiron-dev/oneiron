@@ -207,7 +207,7 @@ pub(crate) fn coach_offer_ask_ceiling_in_txn(
     let Some(key) = crate::task_verb::training_offer_ask_key(&input.intent_key) else {
         return Ok(false);
     };
-    let (offer, owner, digest) = &key;
+    let (offer, owner, digest, _) = &key;
     let asks_owner = matches!(
         &input.who,
         Some(TaskAskTarget::Responder(TaskAssignee::Human { actor_ref })) if actor_ref == owner
@@ -327,7 +327,7 @@ pub(crate) fn coach_offer_question_permit_in_txn(
     {
         return Ok(None);
     }
-    let (offer, owner, digest) = &key;
+    let (offer, owner, digest, _) = &key;
     let Some(row) = pending_for_owner_in(vault, txn, offer, digest, owner)? else {
         return Ok(None);
     };

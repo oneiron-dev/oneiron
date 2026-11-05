@@ -107,6 +107,16 @@ impl BranchResources<'_> {
                         scope.writable.remove(&source.resource);
                     }
                 }
+                let kept_memberships: BTreeSet<_> = known
+                    .membership_versions()
+                    .map(|(_, version)| version.clone())
+                    .collect();
+                for (_, version) in self.known.membership_versions() {
+                    if !kept_memberships.contains(version) {
+                        scope.readable.remove(version);
+                        scope.writable.remove(version);
+                    }
+                }
                 let kept_messages: BTreeSet<_> = ids
                     .iter()
                     .filter_map(|id| self.texts.get(id))
@@ -132,6 +142,10 @@ impl BranchResources<'_> {
                     None => self.word_relationships(&ids)?.into_iter().collect(),
                 };
                 for page in &pages {
+                    let mut page_rels = rels.clone();
+                    if scope.relationship.is_none() {
+                        page_rels.extend(page.member_relationships());
+                    }
                     let mut labels = CallLabelMap::default();
                     let mut transcript = material.clone();
                     let mut current = None;
@@ -148,7 +162,7 @@ impl BranchResources<'_> {
                             }
                             if at == 0 {
                                 transcript
-                                    .push_str(&page.render(&mut labels, rels.iter().copied()));
+                                    .push_str(&page.render(&mut labels, page_rels.iter().copied()));
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
@@ -169,6 +183,9 @@ impl BranchResources<'_> {
                             .iter()
                             .any(|(id, prior)| page.shows(*id) && low_trust_prior(prior));
                     let mut sources: Vec<EntityId> = labels.rows().collect();
+                    if scope.relationship.is_none() {
+                        sources.extend(page.membership_bindings());
+                    }
                     sources.extend(
                         chunk
                             .iter()

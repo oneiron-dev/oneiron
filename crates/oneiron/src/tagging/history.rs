@@ -66,7 +66,8 @@ pub(super) fn record_in_txn(
     trace: &TaggingTrace,
     recorded_at: u64,
 ) -> Result<()> {
-    let Some(tagging) = vault.config.tagging.as_ref() else {
+    let armed = vault.tagging_marker_config();
+    let Some(tagging) = armed.as_ref() else {
         return Ok(());
     };
     let keep = usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX);
@@ -97,7 +98,8 @@ pub(super) fn record_in_txn(
 /// Whether the oldest recorded trace is past the history's age at `now`:
 /// a read, so a pass with nothing to prune writes nothing.
 pub(super) fn expired_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, now: u64) -> Result<bool> {
-    let Some(tagging) = vault.config.tagging.as_ref() else {
+    let armed = vault.tagging_marker_config();
+    let Some(tagging) = armed.as_ref() else {
         return Ok(false);
     };
     let Some(oldest) = TRACE_AGE.iter_from(&vault.store, txn, &[])?.next() else {
@@ -119,7 +121,8 @@ pub(super) fn prune_expired_in_txn(
     txn: &mut heed::RwTxn<'_>,
     now: u64,
 ) -> Result<usize> {
-    let Some(tagging) = vault.config.tagging.as_ref() else {
+    let armed = vault.tagging_marker_config();
+    let Some(tagging) = armed.as_ref() else {
         return Ok(0);
     };
     let max_age_secs = tagging.trace_history.max_age_secs;
@@ -149,7 +152,8 @@ pub(super) fn excess_per_turn_in_txn(
     txn: &heed::RoTxn<'_>,
     from: Option<[u8; 16]>,
 ) -> Result<(Vec<Excess>, Option<[u8; 16]>)> {
-    let Some(tagging) = vault.config.tagging.as_ref() else {
+    let armed = vault.tagging_marker_config();
+    let Some(tagging) = armed.as_ref() else {
         return Ok((Vec::new(), None));
     };
     let keep = usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX);
@@ -210,7 +214,8 @@ impl Vault {
     ) -> Result<Vec<TaggingTraceRecord>> {
         let txn = self.store.env.read_txn()?;
         let key = turn.map_or([0; 16], |turn| *turn.as_bytes());
-        let keep = self.config.tagging.as_ref().map_or(0, |tagging| {
+        let armed = self.tagging_marker_config();
+        let keep = armed.as_ref().map_or(0, |tagging| {
             usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX)
         });
         let mut records: Vec<TaggingTraceRecord> = TRACES

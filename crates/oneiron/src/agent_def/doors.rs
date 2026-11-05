@@ -275,6 +275,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
                 occurred,
                 learned_at,
+                row_version: 0,
                 body: data,
             },
         )?;
@@ -590,6 +591,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

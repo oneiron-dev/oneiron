@@ -16,116 +16,12 @@ pub(super) fn search(
 ) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    oneiron::memory::caps::check_as_of(input.as_of)?;
     if input.query.trim().is_empty()
         || input.query.len() > budgets.search_query_max_bytes
         || input.limit == 0
     {
         return Err(AppError::invalid_params());
     }
-    // More hits than one page carries are served in pages (FIX 8865).
-    if input.limit > budgets.search_limit || input.page.is_some() {
-        return pages::search_pages(server, auth, peer, input, budgets, attribution);
-    }
-    let selector = bound_selector(server, auth, &input.selector)?;
-    // A forwarded caller reads under its own credential, at the locality its
-    // device signed, and the device's selector stays the second ceiling
-    // every hit passes.
-    let forwarded = input.forwarded_caller(server, peer, &selector)?;
-    *attribution = forwarded
-        .as_ref()
-        .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
-    let admission = match &forwarded {
-        Some(caller) => caller.admission(server, peer, &selector)?,
-        None => admitted(server, auth, peer, &selector)?,
-    };
-    let grant_before = server
-        .vault
-        .get_raw(&selector.grant_id)
-        .map_err(|_| AppError::internal_server_error("grant unavailable"))?
-        .ok_or_else(|| AppError::not_found("grant", None))?;
-    let actor = match &forwarded {
-        Some(caller) => caller.read_key(),
-        None => device_search_read_key(server, auth)?,
-    };
-    let candidates = home_search_candidates(
-        &server.vault,
-        actor,
-        &input.query,
-        input.limit,
-        input.scope.as_ref(),
-    )
-    .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
-    let current_windows: std::collections::HashSet<_> =
-        read_window_list(&server.root_doc).into_iter().collect();
-    let mut selected_by_window = std::collections::HashMap::new();
-    let mut hits = Vec::new();
-    let mut rows = Vec::new();
-    let aliases = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
-        .map_err(|_| AppError::internal_server_error("search aliases unavailable"))?;
-    for (id, score, window) in candidates {
-        if !current_windows.contains(&window) {
-            continue;
-        }
-        if !selected_by_window.contains_key(&window) {
-            let doc = server
-                .reassert_manager
-                .open_window(&window)
-                .map_err(|_| AppError::internal_server_error("search window unavailable"))?;
-            // Home search reads LMDB, whose latest local writes can be ahead of
-            // an already-open Loro window. Mirror missing canonical rows before
-            // applying the same grant selector used by first touch.
-            oneiron::sync::window::reverse_rematerialize(&server.vault, &doc.doc, &window)
-                .map_err(|_| AppError::internal_server_error("search window unavailable"))?;
-            let selected = oneiron::sync::filtered_window_doc_for(
-                &server.vault,
-                &doc.doc,
-                &window,
-                crate::handler::selector_grant_scope(),
-                &selector,
-                admission.withhold(),
-            )
-            .map_err(|_| AppError::not_found("grant", None))?;
-            selected_by_window.insert(window.clone(), selected);
-        }
-        let selected = selected_by_window
-            .get(&window)
-            .ok_or_else(|| AppError::internal_server_error("search window unavailable"))?;
-        if matches!(
-            selected.get_map("entities").get(&id.to_hex()),
-            Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
-        ) && admission
-            .allows_item(id)
-            .map_err(|_| AppError::internal_server_error("search admission unavailable"))?
-        {
-            // FIX 7608 slice 4: a marked repo item is shown by its copy id.
-            let shown = aliases.shown(&id).to_hex();
-            hits.push(json!({"entityId": shown, "score": score, "window": window.as_str()}));
-            rows.push(id);
-            if hits.len() == input.limit {
-                break;
-            }
-        }
-    }
-    // The app credential, grant and selector are rechecked after the search,
-    // and a forwarded caller too: a revoked or replaced grant never returns a
-    // cached answer.
-    let selector = bound_selector(server, auth, &input.selector)?;
-    if forwarded.is_some() {
-        input
-            .forwarded_caller(server, peer, &selector)
-            .inspect_err(|_| *attribution = None)?;
-    }
-    if server
-        .vault
-        .get_raw(&selector.grant_id)
-        .map_err(|_| AppError::internal_server_error("grant unavailable"))?
-        .as_deref()
-        != Some(grant_before.as_slice())
-    {
-        return Err(AppError::not_found("grant", None));
-    }
-    Ok((
-        json!({"hits": hits, "source": "home", "complete": true}),
-        Some(rows),
-    ))
+    pages::search_pages(server, auth, peer, input, budgets, attribution)
 }

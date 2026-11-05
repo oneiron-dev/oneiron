@@ -18,7 +18,7 @@ enum CheckOutcome {
     NotRun(VerifyFindingCode),
 }
 impl CheckOutcome {
-    fn emit(self, kind: VerifyCheckKind, checks: &mut Checks) {
+    fn emit(self, kind: VerifyCheckKind, checks: &mut Checks<'_>) -> Result<(), SealMemoryRefusal> {
         match self {
             Self::Pass => checks.record(kind, true, VerifyFindingCode::TimestampInvalid),
             Self::Fail(reason) => checks.record(kind, false, reason),
@@ -157,7 +157,7 @@ impl TimestampEvidence {
     pub(super) fn project(
         self,
         kind: TimestampKind,
-        checks: &mut Checks,
+        checks: &mut Checks<'_>,
         covered: &mut Vec<EmbeddedCert>,
         memory: &MemoryLedger,
     ) -> Result<TimestampResult, SealMemoryRefusal> {
@@ -174,12 +174,12 @@ impl TimestampEvidence {
         let slots = self.slots(invalid);
         match slots {
             TimestampSlots::Absent => {
-                checks.absent(crypto_kind);
-                checks.absent(VerifyCheckKind::TimestampCertificatePath);
+                checks.absent(crypto_kind)?;
+                checks.absent(VerifyCheckKind::TimestampCertificatePath)?;
             }
             TimestampSlots::Complete { crypto, trust } => {
-                crypto.emit(crypto_kind, checks);
-                trust.emit(VerifyCheckKind::TimestampCertificatePath, checks);
+                crypto.emit(crypto_kind, checks)?;
+                trust.emit(VerifyCheckKind::TimestampCertificatePath, checks)?;
             }
         }
         if let Self::Valid(token) = self {

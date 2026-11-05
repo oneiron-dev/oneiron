@@ -44,6 +44,8 @@
 
 use std::sync::Arc;
 
+use oneiron::world_keys::DeviceSyncStart;
+
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -106,6 +108,9 @@ impl DeviceSyncHost {
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
                  the next serve"
             );
+            server
+                .vault
+                .record_device_sync_start(DeviceSyncStart::FrozenForReap);
             return None;
         };
         Self::open_logged(server, dial, mesh, freeze).await
@@ -115,9 +120,25 @@ impl DeviceSyncHost {
     /// says, or `None` with the one line that says why.
     fn dial(server: &SyncServer, config: &ServeConfig, source: EnrolmentSource) -> Option<Dial> {
         match Dial::resolve(server, config, source) {
-            Ok(dial) => dial,
+            Ok(Some(dial)) => {
+                if let Err(error) = server.vault.record_configured_device_residence(
+                    oneiron::sync::SyncClientConfig::default().residence_mode,
+                ) {
+                    tracing::warn!(%error, "device sync residence could not be recorded");
+                }
+                Some(dial)
+            }
+            Ok(None) => {
+                server
+                    .vault
+                    .record_device_sync_start(DeviceSyncStart::NotConfigured);
+                None
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                server
+                    .vault
+                    .record_device_sync_start(DeviceSyncStart::ConfigurationFailed);
                 None
             }
         }
@@ -138,9 +159,19 @@ impl DeviceSyncHost {
         // and those the freeze refused taken in again at its thaw (FIX 12154).
         let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, freeze.clone());
         match open(server, dial, mesh, freeze).await {
-            Ok(host) => Some(host.with_removal(removal)),
+            Ok(host) => {
+                server
+                    .vault
+                    .record_device_sync_start(DeviceSyncStart::Started);
+                Some(host.with_removal(removal))
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                server
+                    .vault
+                    .record_device_sync_start(DeviceSyncStart::OpenFailed {
+                        archive_receiver_running: removal.is_some(),
+                    });
                 removal.map(Self::receiving)
             }
         }

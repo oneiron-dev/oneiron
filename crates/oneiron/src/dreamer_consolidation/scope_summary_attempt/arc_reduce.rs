@@ -15,6 +15,7 @@
 
 use super::super::residency::{residency_deferral, waits_on_residency};
 use super::arc_children::ArcRun;
+use super::arc_chunks::MemberText;
 use super::arc_output::{ArcLines, arc_wire};
 use super::arc_part_merge::{PartLine, merge_part};
 use super::arc_review::{Observation, store_exit};
@@ -31,7 +32,8 @@ use crate::memory::Memory;
 use crate::model_step_context::DurableStepContext;
 use crate::model_step_record::CallerSettledStep;
 use crate::scope_summary::{
-    ArcChildRow, ArcReduceRow, ArcStepRef, ComposedSummary, SummaryLineSources, result_digest,
+    ArcChildRow, ArcRange, ArcReduceRow, ArcStepRef, ComposedSummary, SummaryLineSources,
+    result_digest,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -126,6 +128,39 @@ pub(super) fn observations(memory: &Memory<'_>, reviewed: &[ArcStepRef]) -> Resu
         }
     }
     Ok(Observed::All(observations))
+}
+
+/// Keeps a part's observations unless every cited TURN is known to
+/// support only other members. Shared and unknown support stays (FIX 12358).
+pub(super) fn part_observations(
+    observed: Vec<Observation>,
+    members: &[MemberText],
+    group: &[ArcRange],
+    opened: &[u32],
+) -> Vec<Observation> {
+    let owned: BTreeSet<u32> = group
+        .iter()
+        .map(|range| range.member)
+        .chain(opened.iter().copied())
+        .collect();
+    let mut turns_in_part = BTreeMap::new();
+    for (index, member) in members.iter().enumerate() {
+        for turn in &member.turns {
+            *turns_in_part.entry(*turn).or_insert(false) |= owned.contains(&(index as u32));
+        }
+    }
+    observed
+        .into_iter()
+        .filter(|observation| {
+            observation.turn_refs.is_empty()
+                || observation.turn_refs.iter().any(|reference| {
+                    let Ok(turn) = crate::EntityId::from_hex(reference) else {
+                        return true;
+                    };
+                    turns_in_part.get(&turn).is_none_or(|owned| *owned)
+                })
+        })
+        .collect()
 }
 
 /// The Arc `parts` (each part's id and checked compose steps, in source
@@ -233,7 +268,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         };
         // The text lands in durable names, never its calls' labels (FIX
         // 10359); the reduce digest is the landed text's.
-        let lines = super::durable_labels::durable_arc(lines, run.view);
+        let lines = super::durable_labels::durable_arc_parts(lines, run.view, &run.members);
         let reduce = ArcReduceRow {
             digest: result_digest(&lines.text, &lines.keep, &lines.line_sources),
             lines: lines.line_sources.len() as u64,

@@ -47,18 +47,18 @@ pub enum RetrievalLoopAction {
 }
 
 impl RetrievalLoopAction {
-    /// Stable local action tags for the shared pre-decision state bus.
+    /// Shared previous-verb tags for the pre-decision state bus.
     pub(super) const fn state_tag(&self) -> u8 {
         match self {
-            Self::Search { .. } => 1,
-            Self::Expand { .. } => 2,
-            Self::DrillUp { .. } => 3,
-            Self::DrillDown { .. } => 4,
-            Self::WidenTemporal { .. } => 5,
-            Self::Read { .. } => 6,
-            Self::Continue => 9,
-            Self::Stop => 7,
-            Self::Abstain => 8,
+            Self::Search { .. } => RetrievalState::ACTION_SEARCH,
+            Self::Expand { .. } => RetrievalState::ACTION_EXPAND,
+            Self::DrillUp { .. } => RetrievalState::ACTION_DRILL_UP,
+            Self::DrillDown { .. } => RetrievalState::ACTION_DRILL_DOWN,
+            Self::WidenTemporal { .. } => RetrievalState::ACTION_WIDEN_TEMPORAL,
+            Self::Read { .. } => RetrievalState::ACTION_READ,
+            Self::Continue => RetrievalState::ACTION_CONTINUE,
+            Self::Stop => RetrievalState::ACTION_STOP,
+            Self::Abstain => RetrievalState::ACTION_ABSTAIN,
         }
     }
 }

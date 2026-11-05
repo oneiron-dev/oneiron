@@ -62,8 +62,10 @@ pub use contribution::{
     contributed, contribution_check_candidates_after, record_contribution_pair,
 };
 mod contribution_admission;
-pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
 pub use contribution_admission::{ContributionRecord, UnmatchedReason};
+pub(crate) use contribution_admission::{
+    erase_contribution_checks_in_txn, rebind_contribution_fork_receipts_in_txn,
+};
 mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
@@ -150,7 +152,9 @@ mod host;
 pub use host::{
     bind_agent_run_attribution, bind_dreamer_weave_attribution, witness_agent_run_close,
 };
-pub(crate) use host::{run_executor_model, run_executor_model_in_txn};
+pub(crate) use host::{
+    run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
+};
 mod judge_binding;
 pub(crate) use judge_binding::finalize_run_judge_in_txn;
 mod derivation_witness;

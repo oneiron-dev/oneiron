@@ -6,7 +6,7 @@ use super::codec::{RECORD, corrupt};
 use super::keys::{
     FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
     FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_DECK_HANDOFF, FIELD_DECK_MADE_BY, FIELD_DECK_PARTS,
-    FIELD_DECK_RENDERS, FIELD_DECK_THREAD, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
+    FIELD_DECK_RENDERS, FIELD_DECK_THREAD, FIELD_GRANT_REF, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
     FIELD_PARAGRAPH_JUDGMENTS, FIELD_PROPOSAL_REF, FIELD_QUESTION_VERSION, FIELD_REASON,
     FIELD_RUN_REF, FIELD_SHEET_ANSWER_COUNT, FIELD_SHEET_ANSWERS, FIELD_SLIDE_JUDGMENTS,
     FIELD_VERSION,
@@ -65,6 +65,9 @@ pub(super) fn settlement_receipt_record(
     fields.insert(FIELD_RUN_REF.to_owned(), record.proposal_ref.clone());
     if let Some(brief_ref) = record.brief_ref.as_ref() {
         fields.insert(FIELD_BRIEF_REF.to_owned(), brief_ref.clone());
+    }
+    if let Some(grant_ref) = record.grant_ref.as_ref() {
+        fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
     }
 
     if let Some(bundle) = &record.sheet_answers {
@@ -192,7 +195,7 @@ pub(super) fn settlement_receipt_record(
         // brief-rooted receipts.
         job_ref: record.brief_ref.clone(),
         trigger_ref: Some(trigger_ref),
-        policy_trace: Vec::new(),
+        policy_trace: record.grant_ref.iter().cloned().collect(),
         fields,
     })
 }

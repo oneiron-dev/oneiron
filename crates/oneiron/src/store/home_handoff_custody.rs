@@ -448,6 +448,30 @@ pub(crate) fn lookup_actor(s: &Store, t: &RoTxn<'_>, actor: EntityId) -> Result<
         .collect()
 }
 
+/// The local key material's state, without reading or opening its bytes.
+/// A staged retirement whose key is still live remains `Live` here until
+/// custody retires it; the inventory's `Staged` intent is not that proof.
+/// An absent custody binding or key is `Missing`.
+///
+/// # Errors
+/// Custody storage and metadata faults.
+pub(crate) fn key_state(s: &Store, k: KeyRef) -> Result<KeyState> {
+    let Some(custody) = s.core.key_custody.local() else {
+        return Ok(KeyState::Missing);
+    };
+    if !custody_present(custody.binding().root())? {
+        return Ok(KeyState::Missing);
+    }
+    let Some(item) = custody.erasable_by_ref(&k.0)? else {
+        return Ok(KeyState::Missing);
+    };
+    Ok(match custody.erasable_state(&item)? {
+        EntryState::Live => KeyState::Live,
+        EntryState::Retired => KeyState::Retired,
+        EntryState::Missing => KeyState::Missing,
+    })
+}
+
 /// Seals `p` under the key `k`, binding `aad` (the carrier's: vault,
 /// incarnation, ref, section, part and order). No custody guard is taken:
 /// the caller's writer keeps the finisher away.
@@ -494,7 +518,8 @@ pub(crate) fn open_content(s: &Store, k: KeyRef, aad: &[u8], c: &[u8]) -> Result
 }
 
 /// Every retired key's copy a holder still keeps: what the carrier asks
-/// each holder to retire, once this custody retired its own.
+/// each holder to retire after local retirement and completion of that
+/// subject's custody journal obligations.
 ///
 /// # Errors
 /// Custody faults.
@@ -508,6 +533,10 @@ pub(crate) fn holder_retirements(s: &Store) -> Result<Vec<HolderRetirement>> {
             continue;
         };
         if custody.erasable_state(&item)? == EntryState::Retired {
+            let obligations = s.custody_obligations_of(&item.subject(&custody)?)?;
+            if obligations.is_empty() || obligations.iter().any(|(_, done)| !done) {
+                continue;
+            }
             owed.push(HolderRetirement {
                 key_ref: KeyRef(key_ref),
                 incarnation: Incarnation(item.incarnation),

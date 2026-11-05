@@ -123,7 +123,7 @@ impl PipelineBuilder<'_> {
             let mut state = RetrievalState::one_shot(&breakdown);
             state.iteration = iteration;
             state.hops = hops;
-            state.last_action = last_action as u8;
+            state.last_action = last_action.state_tag();
             state.intent_class = options.intent as u8;
             state.budget_remaining = if self.deadline_reached() {
                 0

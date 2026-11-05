@@ -1,5 +1,5 @@
-//! A home search for more hits than one page carries (FIX 8865): the device
-//! keeps the caller's whole count and asks the home page after page, each
+//! A home search served in pages (FIX 8865, FIX 196): the device keeps the
+//! caller's whole count and asks the home page after page, each
 //! page a slice of one ranked list the home names by its revision, until it
 //! holds that many hits or the list ends. A list that changed between pages
 //! starts the search over, so the answer never mixes two lists and is never
@@ -37,6 +37,7 @@ pub(super) async fn search_pages(
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    as_of: Option<u64>,
     caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
     let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
@@ -46,6 +47,9 @@ pub(super) async fn search_pages(
         let mut params = json!({"query": query, "limit": limit, "selector": selector});
         if let Some(scope) = scope {
             params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
+        }
+        if let Some(as_of) = as_of {
+            params["as_of"] = json!(as_of);
         }
         if let Some(page) = &page {
             params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
@@ -58,6 +62,7 @@ pub(super) async fn search_pages(
                 limit,
                 selector_wire,
                 scope,
+                as_of,
                 locality,
                 page.as_ref(),
                 |request| vault.forwarding_machine_proof(request, caller),
@@ -90,6 +95,7 @@ pub(super) async fn search_pages(
                 reply.hits.is_empty()
                     || next.offset != end as u64
                     || next.revision != reply.revision
+                    || as_of.is_some_and(|as_of| as_of != next.as_of)
                     || page.as_ref().is_some_and(|page| page.as_of != next.as_of)
             })
         {

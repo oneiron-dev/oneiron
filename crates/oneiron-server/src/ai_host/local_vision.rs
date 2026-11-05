@@ -37,7 +37,6 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use crate::decision_verdict::model_call_context;
-use crate::models::CallDeadline;
 
 use super::AiHandle;
 
@@ -225,9 +224,8 @@ impl DecisionModel for LocalVisionModel {
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
         let record_request = admitted.request.clone();
-        // A rested offer is waited for within the call's own time, not the
-        // vault's longest wait. Retain the actual answering binding through
-        // the same rung/fallback traversal.
+        // Cooling waits also keep the vault's limit; sends keep the full work time.
+        let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
@@ -236,7 +234,7 @@ impl DecisionModel for LocalVisionModel {
                     admitted.request,
                     None,
                     &|| true,
-                    CallDeadline::waits_within(time_left),
+                    wait_budget,
                 ),
             )
             .await

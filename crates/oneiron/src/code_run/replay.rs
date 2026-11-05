@@ -641,12 +641,14 @@ fn cached_rows(
     cached.rows.clone()
 }
 
-/// Persisted deterministic replay record for a first-party code run.
+/// Persisted replay record for a first-party code run. Imported result
+/// outputs may have unknown frozen inputs and cannot seed deterministic execution.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct CodeRunReplayRecord {
     pub run_id: EntityId,
-    pub determinism: CodeRunDeterminism,
+    /// Frozen inputs when witnessed; imported outputs can retain unknown inputs.
+    pub determinism: Option<CodeRunDeterminism>,
     pub bridge_calls: Vec<CodeRunBridgeCall>,
     pub step_checkpoints: Vec<CodeRunStepCheckpoint>,
     pub outputs: Vec<CodeRunRawOutput>,
@@ -742,6 +744,13 @@ impl CodeRunReplayGeneration {
 impl CodeRunReplayRecord {
     #[must_use]
     pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
+        Self::with_determinism(run_id, Some(determinism))
+    }
+
+    pub(crate) fn with_determinism(
+        run_id: EntityId,
+        determinism: Option<CodeRunDeterminism>,
+    ) -> Self {
         Self {
             run_id,
             determinism,

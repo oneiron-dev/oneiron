@@ -15,7 +15,9 @@ use crate::{
     },
     engine_executor::StepCancellation,
 };
-use oneiron_sandbox_contract::{MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath};
+use oneiron_sandbox_contract::{
+    GUEST_PROTOCOL_VERSION, MAX_CHUNK_BYTES, MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -78,13 +80,21 @@ enum HostFrame<'a> {
         offset: usize,
         bytes: &'a [u8],
     },
-    File {
+    FileOpen {
         path: &'a str,
+        len: u64,
+    },
+    FileChunk {
         bytes: &'a [u8],
     },
+    FileClose,
     Ready,
     Receipt {
         accepted: bool,
+    },
+    Failure {
+        code: &'a str,
+        detail: &'a str,
     },
 }
 
@@ -154,7 +164,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         }
         if !matches!(
             read_frame(&mut stream, deadline)?,
-            GuestFrame::Hello { version: 1 }
+            GuestFrame::Hello { version } if version == GUEST_PROTOCOL_VERSION
         ) {
             return Err(refused("guest protocol version mismatch"));
         }
@@ -162,7 +172,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         write_frame(
             &mut stream,
             &HostFrame::Start {
-                version: 1,
+                version: GUEST_PROTOCOL_VERSION,
                 vm_id: vm.id(),
                 tier: vm.tier().as_str(),
                 pids: budget.pids,
@@ -184,16 +194,34 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         // Snapshot bytes only. There is no host mount device inside the VM
         // and no path from a guest overlay file to the original source
         // directory.
-        let base = super::snapshot::files(vm.base_root())?;
+        let base = super::snapshot::files(vm.base_root(), spool, cancel, deadline)?;
+        let mut frame = vec![0; MAX_CHUNK_BYTES];
         for file in &base.files {
+            cancel.check()?;
             write_frame(
                 &mut stream,
-                &HostFrame::File {
+                &HostFrame::FileOpen {
                     path: file.path.as_str(),
-                    bytes: &file.bytes,
+                    len: file.body.len(),
                 },
                 deadline,
             )?;
+            let mut reader = file.body.reader();
+            loop {
+                cancel.check()?;
+                let read = reader.read(&mut frame)?;
+                if read == 0 {
+                    break;
+                }
+                write_frame(
+                    &mut stream,
+                    &HostFrame::FileChunk {
+                        bytes: &frame[..read],
+                    },
+                    deadline,
+                )?;
+            }
+            write_frame(&mut stream, &HostFrame::FileClose, deadline)?;
         }
         cancel.check()?;
         write_frame(&mut stream, &HostFrame::Ready, deadline)?;
@@ -204,12 +232,11 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         for write in writes {
             match write {
                 SandboxProposalWrite::FileWrite(file) => {
-                    let old = base
-                        .files
-                        .iter()
-                        .find(|entry| entry.path == file.path)
-                        .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
-                    if let Some(edit) = file.lower_to_edit(old)? {
+                    let edit = match base.files.iter().find(|entry| entry.path == file.path) {
+                        Some(entry) => file.lower_to_edit_spooled(&entry.body, cancel, deadline)?,
+                        None => file.lower_to_edit(b"")?,
+                    };
+                    if let Some(edit) = edit {
                         edits.push(SandboxProposalWrite::FileEdit(edit));
                     }
                 }
@@ -325,8 +352,13 @@ fn receive_proposals_cancellable(
                 // The host call is admitted only while the step runs, and a
                 // cancel that lands while it runs drops its answer.
                 cancel.check()?;
-                let accepted = transport
-                    .is_some_and(|transport| proxy.forward_read(vm, &call, transport).is_ok());
+                let accepted = match transport {
+                    Some(transport) => proxy.forward_read(vm, &call, transport).is_ok(),
+                    None => {
+                        proxy.record_transport_unavailable(vm, &call);
+                        false
+                    }
+                };
                 cancel.check()?;
                 write_frame(&mut stream, &HostFrame::Receipt { accepted }, deadline)?;
             }
@@ -355,7 +387,41 @@ fn receive_proposals_cancellable(
                 let Some((_, body)) = open.as_mut() else {
                     return Err(refused("guest file frame outside a file proposal"));
                 };
-                body.append(&bytes)?;
+                if let Err(error) = body.append(&bytes) {
+                    if matches!(
+                        &error,
+                        crate::Error::Code(
+                            crate::error::CodeError::SandboxProposalDiskFloor { .. }
+                        )
+                    ) {
+                        drop(open.take());
+                        writes.clear();
+                        drop(bytes);
+                        cancel.check()?;
+                        if write_frame(
+                            &mut stream,
+                            &HostFrame::Failure {
+                                code: oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
+                                detail: &error.to_string(),
+                            },
+                            deadline,
+                        )
+                        .is_ok()
+                        {
+                            // Returning now would let the backend kill the guest before
+                            // its chunk call receives the reason. Drop proposals first,
+                            // then wait for one frame under the original step bound.
+                            cancel.check()?;
+                            let _ = read_frame(&mut stream, deadline);
+                        }
+                    }
+                    return Err(error);
+                }
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
             }
             GuestFrame::WriteClose => {
                 let Some((path, body)) = open.take() else {

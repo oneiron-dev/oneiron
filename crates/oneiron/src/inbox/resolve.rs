@@ -10,9 +10,11 @@ use crate::edit_distance::delta::{
     OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
     capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
-use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
+use crate::edit_distance::miner::CompilationTargetValidation;
+use crate::edit_distance::miner::record_inbox_learning_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::gate_receipt::gate_decision_receipt;
@@ -494,6 +496,7 @@ fn accept_member_with_amendment_in_txn(
                 end: raw.occurred.end,
             },
             learned_at: raw.learned_at,
+            row_version: None,
             data: approved,
             allow_maintenance: false,
             allow_reserved_predicate: false,

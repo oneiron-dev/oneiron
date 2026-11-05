@@ -3,7 +3,9 @@
 //! A hold tells the owner once, through the decision-ask queue: which
 //! connector and tool the call names and why it is held, never its
 //! arguments or any credential. The ask carries the call ref as its
-//! correlation. Answering it grants nothing: the owner still allows the call
+//! correlation. A Gate-composed consent attachment lets an owner reason draft
+//! a Proposed standing grant; only the owner's later confirm makes it live.
+//! Answering it grants nothing: the owner still allows the call
 //! through the connector consent door (naming the held call) or the key and
 //! manifest doors, and the settler's next resume sends it. The ask is queued
 //! after the hold commits, outside any write transaction; its arrival number
@@ -40,7 +42,9 @@ const CONNECTOR_CALL_ASK_VERSION: u32 = 1;
 /// The version of the question that also names the approve-once digest to
 /// press (FIX 6424 part 3): its wording adds that one sentence, and names the
 /// call-ref door that presses it (FIX 990). A call's later approvable asks
-/// put it again at the next versions.
+/// put it again at later versions. Each revision reserves two versions, the
+/// second identifying its consent attachment so queue dedup cannot reuse a
+/// generic question as an ask about an effect.
 const CONNECTOR_CALL_ASK_DIGEST_VERSION: u32 = 2;
 
 /// The most characters of a connector or tool name the ask quotes.
@@ -73,6 +77,7 @@ fn connector_call_ask_text(
     tool: &str,
     reasons: &[String],
     approval_digest: Option<&str>,
+    drafts_consent: bool,
 ) -> String {
     let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
     let reasons = if reasons.is_empty() {
@@ -92,12 +97,18 @@ fn connector_call_ask_text(
              ref)."
         )
     });
+    let draft = if drafts_consent {
+        " If you add a reason, it drafts a Proposed standing grant for this effect's action \
+         class. That draft allows nothing until you confirm it."
+    } else {
+        ""
+    };
     format!(
         "A connector call waits for you: tool \"{tool}\" on connector \"{name}\" (held call {call}) \
          is held because: {reasons}. Answering this ask allows nothing. To let it run, grant the \
          tool through the connector's consent for this held call, or approve the connector's key \
          or manifest.{press} A call nobody allows expires {days} days after it was first held. \
-         Will you review it?",
+         Will you review it?{draft}",
         tool = clip(tool),
         name = clip(name),
         call = call_ref.to_hex(),
@@ -120,13 +131,17 @@ fn connector_call_ask(
     // next version of the question.
     let approval = pending.approval.as_ref();
     let approval_digest = ConnectorCallApproval::current_digest(approval);
+    let drafts_consent = approval
+        .and_then(|approval| approval.current.as_ref())
+        .is_some_and(|ask| ask.ask_consent.is_some());
     HumanDecisionRequest {
         question: DecisionQuestion {
             // One question per held call: its own ref names it.
             id: *call_ref,
             version: match approval.filter(|_| approval_digest.is_some()) {
                 Some(approval) => CONNECTOR_CALL_ASK_DIGEST_VERSION
-                    .saturating_add(approval.revision.saturating_sub(1)),
+                    .saturating_add(approval.revision.saturating_sub(1).saturating_mul(2))
+                    .saturating_add(u32::from(drafts_consent)),
                 None => CONNECTOR_CALL_ASK_VERSION,
             },
             text: connector_call_ask_text(
@@ -135,6 +150,7 @@ fn connector_call_ask(
                 &pending.tool,
                 reasons,
                 approval_digest,
+                drafts_consent,
             ),
             class: DecisionClass::Judgment,
             contract: AnswerContract::Noul,
@@ -186,8 +202,16 @@ impl Vault {
         let Ok(principal) = EntityId::from_hex(&pending.principal_ref) else {
             return Ok(None);
         };
-        let queued =
-            self.queue_decision_ask(&connector_call_ask(call_ref, principal, &pending, reasons));
+        let request = connector_call_ask(call_ref, principal, &pending, reasons);
+        let consent = pending
+            .approval
+            .as_ref()
+            .and_then(|approval| approval.current.as_ref())
+            .and_then(|ask| ask.ask_consent.as_ref());
+        let queued = match consent {
+            Some(consent) => self.queue_decision_ask_with_consent(&request, None, consent),
+            None => self.queue_decision_ask(&request),
+        };
         let seq = queued.as_ref().ok().copied();
         let withdrawn = self.with_write_txn(|txn| {
             let row = PENDING_CALLS.get(&self.store, txn, call_ref)?;
@@ -201,6 +225,11 @@ impl Vault {
             };
             if row.owner_ask_seq.is_some() {
                 return Ok(None);
+            }
+            if row.approval != pending.approval {
+                return Ok(
+                    seq.and_then(|seq| self.withdraw_stranded_ask_in_txn(txn, call_ref, seq))
+                );
             }
             row.held_reasons = reasons.to_vec();
             row.owner_ask_seq = seq;

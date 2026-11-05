@@ -31,7 +31,7 @@ pub(super) fn run_loop_findings(
             continue;
         };
         let live = matches!(record.state, AttemptState::Leased | AttemptState::Paused);
-        if !live && !(settled(record.state) && record.updated_at >= since) {
+        if !live && !(settled(record.state) && record.settled_at.is_some_and(|at| at >= since)) {
             continue;
         }
         let Some(attempt) = entity(record.id) else {

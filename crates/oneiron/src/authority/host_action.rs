@@ -114,8 +114,9 @@ impl HostActionGuard {
 
     /// The durable identity of this action on `vault`, for a record that
     /// outlives the request (FIX 7231): the posture it was proven under,
-    /// the owner, and the install's host root by its mint. Read it only
-    /// from a guard its caller just proved again in the writing snapshot.
+    /// the owner, and the install's host root by its mint. It is metadata,
+    /// not proof: before committing it, prove the guard or the identity
+    /// again in that same writing snapshot.
     pub(crate) fn durable_identity(&self, vault: &Vault) -> HostActionIdentity {
         HostActionIdentity {
             posture: vault.privacy_posture(),
@@ -158,6 +159,11 @@ pub(crate) struct HostRootIdentity {
 }
 
 impl HostActionIdentity {
+    /// The person this recorded action acts as; liveness still needs `holds_in`.
+    pub(crate) fn owner(&self) -> EntityId {
+        self.owner
+    }
+
     /// Whether this action still holds in `txn`: the same posture, the same
     /// install's root still live and still binding this owner (or, for the
     /// dev mode, the owner-verb rule still passing), and the owner a live

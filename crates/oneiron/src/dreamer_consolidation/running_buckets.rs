@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -46,7 +46,25 @@ pub(super) fn record_running_buckets(
             .map(|key| (key.conversation_ref, key.world_ref, key.facet_ref))
             .collect(),
     };
-    vault.with_write_txn_grouped(|txn| RUNNING_BUCKETS.put(vault, txn, &attempt, &row))
+    vault.with_write_txn_grouped(|txn| {
+        let current = AttemptQueue::new(vault).get_in_write_txn(txn, attempt)?;
+        if !current.is_some_and(|record| {
+            record.state.is_running() && record.attempt_count == attempt_count
+        }) {
+            return Ok(());
+        }
+        RUNNING_BUCKETS.put(vault, txn, &attempt, &row)
+    })
+}
+
+/// Retires a finished attempt's narrowed hold in its settlement writer.
+pub(crate) fn delete_running_buckets_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+) -> Result<()> {
+    RUNNING_BUCKETS.delete(vault, txn, &attempt)?;
+    Ok(())
 }
 
 /// The buckets the running `record` holds when its run narrowed them at its

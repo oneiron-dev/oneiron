@@ -117,6 +117,10 @@ impl SpeculativeSession {
         )
     }
 
+    pub(crate) fn is_scoped(&self) -> bool {
+        self.scope.is_some()
+    }
+
     pub(crate) fn with_scope(mut self, scope: SpeculativeReadScope) -> Self {
         self.scope = Some(scope);
         self

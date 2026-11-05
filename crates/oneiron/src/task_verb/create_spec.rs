@@ -1,3 +1,6 @@
+//! One TASK intent plus its node-local realizing-attempt input.
+//! Entry [`TaskCreateSpec`]; consumed by `create_facade` and `create_validation`.
+//! Owned by `task_verb`; additive fields stay optional for ticket compatibility.
 use rmpv::Value;
 
 use crate::entity_id::EntityId;

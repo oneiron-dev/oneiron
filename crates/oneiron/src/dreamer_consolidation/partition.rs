@@ -32,6 +32,7 @@ use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 
 mod payload;
+pub(crate) use payload::PartitionAudience;
 pub use payload::{PartitionThing, decode_partition_payload};
 pub(crate) use payload::{decode_branch_origin, encode_branch_payload, encode_partition_payload};
 
@@ -583,9 +584,20 @@ pub(crate) fn enqueue_parented_branch_plans_in_txn(
         // Two things may hold the same TURNs of one conversation (FIX 8723):
         // each keeps its own child, never one coalesced into the other's.
         if let Some(thing) = branch.thing {
-            for axis in [thing.entity, thing.audience] {
-                dedupe_key.push(':');
-                dedupe_key.push_str(&axis.map_or_else(|| "-".to_owned(), |id| id.to_hex()));
+            dedupe_key.push(':');
+            dedupe_key.push_str(
+                &thing
+                    .entity
+                    .map_or_else(|| "-".to_owned(), |id| id.to_hex()),
+            );
+            dedupe_key.push(':');
+            match thing.audience {
+                Some(audience) => {
+                    dedupe_key.push_str(audience.kind());
+                    dedupe_key.push(':');
+                    dedupe_key.push_str(&audience.entity().to_hex());
+                }
+                None => dedupe_key.push('-'),
             }
         }
         outcomes.push(store.enqueue_consolidation_in_txn(

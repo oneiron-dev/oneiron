@@ -9,14 +9,11 @@
 //! skipped object or a parse error. Without an admission every decode runs
 //! exactly as upstream's.
 //!
-//! An admitted load also charges the objects it parses (FIX 8446): while a
-//! [`ParseScope`] is open on a thread, every name, string, array and
-//! dictionary the parser builds there is charged its own allocation as it is
-//! built, and a refusal fails the parse for good.
+//! An admitted load also charges the objects it parses (FIX 8446): every
+//! name, string, array and dictionary the parser builds is charged its own
+//! allocation as it is built, and a refusal fails the parse for good.
 
-use std::cell::RefCell;
 use std::mem::size_of;
-use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -28,6 +25,17 @@ pub trait DecodeAdmission: Send + Sync {
     /// back through [`DecodeAdmission::release`] once it is gone. A codec's
     /// own working state is admitted before the codec is built.
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError>;
+
+    /// Move `bytes` admitted here to `to`: admit them there first, so the
+    /// moment both owners hold them is admitted, then give them back here.
+    /// When the destination refuses, nothing is given back.
+    fn transfer(
+        &self, bytes: usize, to: &dyn DecodeAdmission,
+    ) -> Result<(), DecodeAdmissionError> {
+        to.admit(bytes)?;
+        self.release(bytes);
+        Ok(())
+    }
 
     /// Observe the length of a finished decode's output. Never refuses.
     fn decoded(&self, _bytes: usize) {}
@@ -132,135 +140,6 @@ pub(crate) fn admit_btree<K, V>(admission: &dyn DecodeAdmission, entries: usize)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
         .ok_or_else(unaddressable)?;
     admission.admit(bytes)
-}
-
-/// The least a parse scope admits at once, so each small parsed object does
-/// not ask on its own. Admitted, never a bound: what is left goes back when
-/// the scope closes.
-const PARSE_CREDIT_STEP: usize = 64 * 1024;
-
-thread_local! {
-    /// The parse scope open on this thread, if any (FIX 8446).
-    static PARSE: RefCell<Option<ParseState>> = const { RefCell::new(None) };
-}
-
-/// One parse scope's admission and what it holds.
-struct ParseState {
-    admission: Arc<dyn DecodeAdmission>,
-    /// Admitted, and not yet charged to a parsed object.
-    credit: usize,
-    /// The refusal that ended a charge. Every later charge refuses with it,
-    /// so the parse cannot go on half charged.
-    refused: Option<DecodeAdmissionError>,
-}
-
-/// While open, the objects the parser builds on this thread are charged to
-/// one admission (FIX 8446). A scope opened inside another charges the outer
-/// one's. Closing it gives back what it admitted and did not charge.
-pub(crate) struct ParseScope {
-    opened: bool,
-}
-
-impl ParseScope {
-    /// Open a scope over `admission`; with none, or with a scope already open
-    /// on this thread, nothing changes.
-    pub(crate) fn enter(admission: Option<&Arc<dyn DecodeAdmission>>) -> Self {
-        let Some(admission) = admission else {
-            return Self { opened: false };
-        };
-        let opened = PARSE.with(|parse| {
-            let mut parse = parse.borrow_mut();
-            if parse.is_some() {
-                return false;
-            }
-            *parse = Some(ParseState {
-                admission: Arc::clone(admission),
-                credit: 0,
-                refused: None,
-            });
-            true
-        });
-        Self { opened }
-    }
-}
-
-impl Drop for ParseScope {
-    fn drop(&mut self) {
-        if !self.opened {
-            return;
-        }
-        if let Some(state) = PARSE.with(|parse| parse.borrow_mut().take()) {
-            release(state.admission.as_ref(), state.credit);
-        }
-    }
-}
-
-/// Charge `bytes` a parsed object's own allocation holds to the parse scope
-/// open on this thread; without one nothing is charged. `Err` once the
-/// scope's admission refused.
-pub(crate) fn charge_parsed(bytes: usize) -> Result<(), DecodeAdmissionError> {
-    PARSE.with(|parse| {
-        let mut parse = parse.borrow_mut();
-        let Some(state) = parse.as_mut() else {
-            return Ok(());
-        };
-        if let Some(refused) = &state.refused {
-            return Err(refused.clone());
-        }
-        if bytes <= state.credit {
-            state.credit -= bytes;
-            return Ok(());
-        }
-        let step = (bytes - state.credit).max(PARSE_CREDIT_STEP);
-        match state.admission.admit(step) {
-            Ok(()) => {
-                state.credit = state.credit + step - bytes;
-                Ok(())
-            }
-            Err(err) => {
-                state.refused = Some(err.clone());
-                Err(err)
-            }
-        }
-    })
-}
-
-/// The refusal that ended a charge in the parse scope open on this thread.
-pub(crate) fn parse_refusal() -> Option<DecodeAdmissionError> {
-    PARSE.with(|parse| parse.borrow().as_ref().and_then(|state| state.refused.clone()))
-}
-
-/// The parse scope on this thread, used by the admitted buffer helpers.
-pub(crate) struct ParsedAdmission;
-
-impl DecodeAdmission for ParsedAdmission {
-    fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError> {
-        charge_parsed(bytes)
-    }
-
-    fn release(&self, bytes: usize) {
-        release_parsed(bytes);
-    }
-}
-
-/// Give back a parsed buffer's old allocation as unused parse credit.
-pub(crate) fn release_parsed(bytes: usize) {
-    PARSE.with(|parse| {
-        if let Some(state) = parse.borrow_mut().as_mut()
-            && state.refused.is_none()
-        {
-            state.credit = state.credit.saturating_add(bytes);
-        }
-    });
-}
-
-/// Keep allocator failures terminal and typed, just as admission failures are.
-pub(crate) fn note_parsed_refusal(error: DecodeAdmissionError) {
-    PARSE.with(|parse| {
-        if let Some(state) = parse.borrow_mut().as_mut() {
-            state.refused.get_or_insert(error);
-        }
-    });
 }
 
 /// Bytes `len` elements of `T` take, if one allocation can hold them.

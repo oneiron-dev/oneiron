@@ -117,7 +117,7 @@ impl Memory<'_> {
         input: &HybridSearchRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<HybridSearchHit>>> {
         input.validate()?;
-        let (limit, _) = caps::clamp_search_limit(input.limit);
+        let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut seeds = Vec::new();

@@ -270,6 +270,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            self.gated_write.observe_consumed_code_replies(&record)?;
             let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
@@ -381,7 +382,7 @@ impl EngineNativeExecutor<'_> {
             // store; none is held whole here.
             let step_bodies = host
                 .take_streamed()
-                .into_step_bodies(&self.storage, &step_outcome)
+                .into_step_bodies(&self.storage, record.run_id, &step_outcome)
                 .map_err(Into::into)
                 .and_then(|bodies| {
                     validate_runtime_outputs(&record, completed_steps, &bodies.files)

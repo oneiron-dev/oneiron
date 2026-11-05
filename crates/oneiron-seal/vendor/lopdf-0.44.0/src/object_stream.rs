@@ -4,7 +4,6 @@ use crate::{Document, Error, Object, ObjectId, Result, Stream};
 use std::collections::BTreeMap;
 use std::num::TryFromIntError;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use log::warn;
 #[cfg(feature = "rayon")]
@@ -127,18 +126,18 @@ impl ObjectStream {
 
     /// Parse an existing object stream like [`ObjectStream::new_with_limit`],
     /// asking `admission`, when given, before the decode, the list of object
-    /// numbers and the object map allocate, and charging it every name,
-    /// string, array and dictionary parsed out of the decoded content (FIX
-    /// 8446). A refusal is returned, never skipped; any other decode failure
-    /// behaves as in `new_with_limit`. Without an admission this is
-    /// `new_with_limit`.
+    /// numbers and the object map allocate. A refusal is returned, never
+    /// skipped; any other decode failure behaves as in `new_with_limit`.
+    /// Without an admission this is `new_with_limit`.
+    ///
+    /// The objects parsed out of the decoded content use the same admission
+    /// for their names, strings, arrays and dictionaries.
     pub(crate) fn new_admitted(
-        stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&Arc<dyn DecodeAdmission>>,
+        stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&dyn DecodeAdmission>,
     ) -> Result<ObjectStream> {
-        let Some(shared) = admission else {
+        let Some(admission) = admission else {
             return Self::new_with_limit(stream, max_decompressed_size);
         };
-        let admission: &dyn DecodeAdmission = shared.as_ref();
         match stream.decompress_admitted(max_decompressed_size, admission) {
             Ok(()) => {}
             Err(err @ Error::DecodeAdmission(_)) => return Err(err),
@@ -182,15 +181,9 @@ impl ObjectStream {
 
         // The map's nodes for every pair in the index, before any is inserted.
         decode_admission::admit_btree::<ObjectId, Object>(admission, len / 2)?;
-        let _scope = decode_admission::ParseScope::enter(Some(shared));
         let mut objects = BTreeMap::new();
         for chunk in numbers[..len].chunks(2) {
-            let member = Self::member(stream, first_offset, chunk);
-            // A refused charge ends the parse; it is not a skipped member.
-            if let Some(err) = decode_admission::parse_refusal() {
-                return Err(err.into());
-            }
-            if let Some((id, object)) = member {
+            if let Some((id, object)) = Self::member(stream, first_offset, chunk, admission)? {
                 objects.insert(id, object);
             }
         }
@@ -204,13 +197,23 @@ impl ObjectStream {
 
     /// The object one `[number, offset]` index pair names, parsed from the
     /// decoded content as [`ObjectStream::new_with_limit`] parses it.
-    fn member(stream: &Stream, first_offset: usize, chunk: &[Option<u32>]) -> Option<(ObjectId, Object)> {
-        let id = chunk[0]?;
-        let offset = first_offset + chunk[1]? as usize;
+    fn member(
+        stream: &Stream,
+        first_offset: usize,
+        chunk: &[Option<u32>],
+        admission: &dyn DecodeAdmission,
+    ) -> Result<Option<(ObjectId, Object)>> {
+        let Some(id) = chunk[0] else {
+            return Ok(None);
+        };
+        let Some(offset) = chunk[1] else {
+            return Ok(None);
+        };
+        let offset = first_offset + offset as usize;
 
         if offset >= stream.content.len() {
             warn!("out-of-bounds offset in object stream");
-            return None;
+            return Ok(None);
         }
         // Skip leading whitespace — some PDFs emit newlines before objects in ObjStm
         let mut start = offset;
@@ -219,11 +222,11 @@ impl ObjectStream {
         }
         if start >= stream.content.len() {
             warn!("only whitespace after offset in object stream");
-            return None;
+            return Ok(None);
         }
-        let object = parser::direct_object(&stream.content[start..])?;
+        let object = parser::direct_object_admitted(&stream.content[start..], admission)?;
 
-        Some(((id, 0), object))
+        Ok(object.map(|object| ((id, 0), object)))
     }
 
     /// Create a builder for constructing new object streams

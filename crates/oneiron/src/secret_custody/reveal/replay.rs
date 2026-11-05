@@ -12,6 +12,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::store::known_value_index::PersonValuePrint;
 use crate::store::verb_invocation::InvocationId;
 use crate::vault::Vault;
 
@@ -27,6 +28,14 @@ pub(super) struct RevealCollection {
     /// [`REVEAL_LEASE_TTL_SECS`], the life of a T1 reveal lease. `None` for
     /// a custody reveal.
     person_until: Option<u64>,
+    /// Output matching outlives the value reread lease; it retains no value.
+    person_output: Option<PersonOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersonOutput {
+    exec_run: EntityId,
+    print: PersonValuePrint,
 }
 
 impl RevealCollection {
@@ -35,17 +44,52 @@ impl RevealCollection {
         Self {
             step: asker.step,
             person_until: None,
+            person_output: None,
         }
     }
 
     /// A PERSON reveal collected by `asker`'s step at `now`: its lease lives
     /// as a T1 reveal lease does.
-    pub(super) const fn person(asker: &RevealAsker, now: u64) -> Self {
+    pub(super) fn person(asker: &RevealAsker, now: u64, print: Option<PersonValuePrint>) -> Self {
         Self {
             step: asker.step,
             person_until: Some(now.saturating_add(REVEAL_LEASE_TTL_SECS)),
+            person_output: asker
+                .exec_run
+                .zip(print)
+                .map(|(exec_run, print)| PersonOutput { exec_run, print }),
         }
     }
+
+    /// An asking actor's erasure removes its value-derived output print,
+    /// not merely the identity of the owner who answered the ask.
+    pub(super) fn erase_person_output(&mut self) {
+        self.person_output = None;
+    }
+}
+
+/// Only the prints actually delivered to this typed execution, read in
+/// the matcher's own guard-held snapshot. No PERSON value is reread here.
+pub(crate) fn run_person_prints_in_txn(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    exec_run: EntityId,
+) -> Result<Vec<(String, PersonValuePrint)>> {
+    let mut prints = Vec::new();
+    for (_, row) in REVEALS.scan(dbs, txn)? {
+        if row.state != SecretRevealState::Delivered || row.person.is_none() {
+            continue;
+        }
+        if let Some(output) = row
+            .collected
+            .as_ref()
+            .and_then(|collection| collection.person_output.as_ref())
+            .filter(|output| output.exec_run == exec_run)
+        {
+            prints.push((row.handle.clone(), output.print.clone()));
+        }
+    }
+    Ok(prints)
 }
 
 impl RevealRow {

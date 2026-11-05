@@ -1,5 +1,6 @@
 //! The OpenAI-compatible memory proxy publishes the verb table's exact DTOs.
 use oneiron::task_verb::sdk::{input_schema, output_schema};
+use oneiron_vault_contract::BINDING_HEADER;
 use serde_json::{Value, json};
 
 pub(super) fn merge_openai_proxy_paths(spec: &mut Value) {
@@ -65,7 +66,7 @@ pub(super) fn merge_openai_proxy_paths(spec: &mut Value) {
         "tags": ["ai"], "operationId": "openai_proxy_chat_completions",
         "summary": "Recall, inject, forward and remember under the connector's own scope and ceiling.",
         "security": [{"CoreBearer": []}],
-        "parameters": [{"name": "x-oneiron-binding", "in": "header", "required": true,
+        "parameters": [{"name": BINDING_HEADER, "in": "header", "required": true,
             "schema": {"type": "string"}, "description": "The paired credential holder's proof."}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": request}}},
         "responses": responses

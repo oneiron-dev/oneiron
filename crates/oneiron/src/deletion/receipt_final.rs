@@ -179,7 +179,7 @@ pub(crate) fn finish_redaction_erase_in_txn(
         erase_complete_at: Some(now),
         ..receipt.clone()
     };
-    let identity = crate::identity::ensure_device_identity_in_txn(vault, wtxn)?;
+    let identity = crate::store::install_identity::ensure_device_identity_in_txn(vault, wtxn)?;
     let body = sign_redaction_audit_receipt(row, &final_id, now, &identity)?;
     validate_redaction_receipt_body(&body)?;
     crate::off_record::FloorWrites::new(&vault.store)

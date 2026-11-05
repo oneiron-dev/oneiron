@@ -18,8 +18,9 @@ use super::review_types::{
 use super::review_view::{proposal_not_open, review_revision_in_txn};
 use super::run_snapshot::{self, CleanupRunSnapshot};
 use super::{
-    CleanupCandidate, CleanupDecision, CleanupDigest, CleanupProposal, apply_archives_in_txn,
-    cleanup_posture_in_txn, decode_proposal, fresh_row_id, live_slots, put_digest_in_txn,
+    CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupProposal,
+    apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id, live_slots,
+    put_digest_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -67,6 +68,20 @@ impl Decided {
             Err(error) => Err(MemoryError::from(error)),
         }
     }
+
+    /// The sourced answer a transport returns for `decided` (FIX 10494):
+    /// the view beside its additive attempt sources. Invalid and changed
+    /// verdicts answer exactly as [`Self::answer`]; their sources are empty.
+    pub(super) fn answer_sourced(
+        decided: Result<(Self, Vec<EntityId>)>,
+        proposal: &EntityId,
+    ) -> MemoryResult<(CleanupDecideView, Vec<EntityId>)> {
+        let (decided, sources) = match decided {
+            Ok((decided, sources)) => (Ok(decided), sources),
+            Err(error) => (Err(error), Vec::new()),
+        };
+        Self::answer(decided, proposal).map(|view| (view, sources))
+    }
 }
 
 /// Decides `input` in the caller's write transaction. A verdict that is not
@@ -82,6 +97,27 @@ pub(super) fn decide_cleanup_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     input: &CleanupDecideRequest,
 ) -> Result<Decided> {
+    decide_cleanup_proposal_sourced_in_txn(vault, wtxn, input).map(|(decided, _)| decided)
+}
+
+/// [`decide_cleanup_proposal_in_txn`] beside the decision's additive attempt
+/// sources (FIX 10494): the union of genuine known gated source rows over
+/// its accepted completed-attempt slots, read from that same writer's queue
+/// bytes. Rejected and erased slots contribute nothing and are never looked
+/// up. The queue bytes never move under archive marks, so the trace stays
+/// coherent with the mark, receipt and view. Each unknown attempt
+/// contributes nothing; known rows contribute even while another attempt
+/// stays unknown. The vector is additive named release evidence only, never
+/// a complete whole-response assertion.
+///
+/// # Errors
+///
+/// As [`decide_cleanup_proposal_in_txn`].
+pub(super) fn decide_cleanup_proposal_sourced_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    input: &CleanupDecideRequest,
+) -> Result<(Decided, Vec<EntityId>)> {
     let Some(raw) = PROPOSAL.get(&vault.store, wtxn, &input.proposal)? else {
         return Err(Error::Maintenance(
             MaintenanceError::VaultCleanupProposalNotFound {
@@ -92,17 +128,20 @@ pub(super) fn decide_cleanup_proposal_in_txn(
     let row = decode_proposal(input.proposal, &raw)?;
     let choices = match verdict(row.candidates.len(), &input.choices) {
         Ok(choices) => choices,
-        Err(message) => return Ok(Decided::Invalid(message)),
+        Err(message) => return Ok((Decided::Invalid(message), Vec::new())),
     };
     if let Some(expected) = &input.expected_revision {
         if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Ok(Decided::Invalid(
-                "expected_revision must be the review's 64-hex revision".to_owned(),
+            return Ok((
+                Decided::Invalid(
+                    "expected_revision must be the review's 64-hex revision".to_owned(),
+                ),
+                Vec::new(),
             ));
         }
         let current = review_revision_in_txn(vault, wtxn, &raw, &row)?;
         if !expected.eq_ignore_ascii_case(&current) {
-            return Ok(Decided::Changed(current));
+            return Ok((Decided::Changed(current), Vec::new()));
         }
     }
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
@@ -123,9 +162,22 @@ pub(super) fn decide_cleanup_proposal_in_txn(
             archive_accepted_in_txn(vault, wtxn, &row, &accepted, rejected, at)?;
         (Some(digest), archived)
     };
+    let mut sources = Vec::new();
+    for candidate in accepted
+        .iter()
+        .filter(|candidate| candidate.kind == CleanupKind::CompletedAttempt)
+    {
+        if let Some(rows) =
+            super::attempt_retention::attempt_source_rows_in_txn(vault, wtxn, candidate.entity)?
+        {
+            sources.extend(rows);
+        }
+    }
+    sources.sort_unstable();
+    sources.dedup();
     PROPOSAL.delete(&vault.store, wtxn, &row.id)?;
     // The owner's verdict is the proposal's review, and it reached a person.
-    crate::failure_ladder::oversight::reviewed_in_txn(
+    crate::store::healer_oversight::reviewed_in_txn(
         vault,
         wtxn,
         &row.id.to_hex(),
@@ -133,11 +185,14 @@ pub(super) fn decide_cleanup_proposal_in_txn(
         at,
         true,
     )?;
-    Ok(Decided::Done(CleanupDecideView {
-        proposal: row.id,
-        items: outcomes(&row, &choices, &archived),
-        digest,
-    }))
+    Ok((
+        Decided::Done(CleanupDecideView {
+            proposal: row.id,
+            items: outcomes(&row, &choices, &archived),
+            digest,
+        }),
+        sources,
+    ))
 }
 
 /// Archives the accepted slots and records the decision's one digest, with

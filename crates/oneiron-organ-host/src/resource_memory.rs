@@ -42,6 +42,12 @@ pub trait FloorLease: Send {
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), FloorRefusal>;
 
+    /// Names `reserved` pending bytes allocated as `actual` bytes now held.
+    /// The live memory reading already counts that allocation, so growth
+    /// must not charge it again as pending. Never waits or refuses; a
+    /// reservation alone is not evidence of allocation.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+
     /// Gives back at most `bytes` previously reserved by this lease. Never
     /// waits; used to roll back growth whose budget admission failed.
     fn shrink(&mut self, bytes: u64);

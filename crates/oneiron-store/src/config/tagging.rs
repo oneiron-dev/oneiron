@@ -98,6 +98,11 @@ pub struct TaggingMarkerConfig {
     /// own text. No model's label names sit in engine code; the host
     /// supplies the table.
     pub labels: BTreeMap<String, u8>,
+    /// The vault turns' configured processing language as a lowercase ISO
+    /// 639 code, when the host names one. It is sent as every vault turn's
+    /// language; `None`, the default, sends no configured language. Leave
+    /// it unset when the vault's language is unknown or mixed.
+    pub language: Option<String>,
 }
 
 impl TaggingMarkerConfig {
@@ -111,6 +116,7 @@ impl TaggingMarkerConfig {
             trace_history: TaggingTraceHistory::default(),
             mode: TaggingMode::Save,
             labels: BTreeMap::new(),
+            language: None,
         };
         config.validate()?;
         Ok(config)

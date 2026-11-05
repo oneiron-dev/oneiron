@@ -25,8 +25,11 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod memberships;
 mod pages;
 mod render;
+
+use memberships::KnownMembership;
 
 use super::PriorHead;
 use super::resources::{document_version, standing};
@@ -53,8 +56,10 @@ const RESTRICTED_BAND: u8 = 3;
 type Row = (u8, u64, Vec<u8>);
 /// The claim rows a listing names, for the wake to pin as sources.
 pub(super) type ListedRows = Vec<(EntityId, Row)>;
-/// The ids one attempt listed: each entity with its listed claims, in order.
-type Pins = Vec<(EntityId, Vec<EntityId>)>;
+/// The ids one attempt listed: each entity, its claims and its membership
+/// (unit, binding-claim) pairs, in order.
+type MembershipPins = Vec<(EntityId, EntityId)>;
+type Pins = Vec<(EntityId, Vec<EntityId>, MembershipPins)>;
 
 /// Per attempt, the entity and claim ids its extraction listed; per NOTE a
 /// review attempt reads, that NOTE's (FIX 7578). A replay after a kill lists
@@ -140,8 +145,10 @@ pub(crate) struct Neighbourhood {
 #[derive(Debug, Clone, PartialEq)]
 struct KnownEntity {
     id: EntityId,
+    kind: u8,
     label: Option<String>,
     claims: Vec<KnownClaim>,
+    memberships: Vec<KnownMembership>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,7 +244,12 @@ impl Neighbourhood {
             .iter()
             .map(|entity| {
                 let claims = entity.claims.iter().map(|claim| claim.id).collect();
-                (entity.id, claims)
+                let memberships = entity
+                    .memberships
+                    .iter()
+                    .map(|membership| (membership.unit, membership.binding))
+                    .collect();
+                (entity.id, claims, memberships)
             })
             .collect()
     }
@@ -254,13 +266,19 @@ pub(super) fn pin(vault: &Vault, key: ListingPin, listed: &Neighbourhood) -> Res
             Some(pins) if !listed.gone.is_empty() => {
                 let kept: Pins = pins
                     .into_iter()
-                    .filter(|(id, _)| !listed.gone.contains(id))
-                    .map(|(id, claims)| {
+                    .filter(|(id, _, _)| !listed.gone.contains(id))
+                    .map(|(id, claims, memberships)| {
                         let claims = claims
                             .into_iter()
                             .filter(|claim| !listed.gone.contains(claim))
                             .collect();
-                        (id, claims)
+                        let memberships = memberships
+                            .into_iter()
+                            .filter(|(unit, binding)| {
+                                !listed.gone.contains(unit) && !listed.gone.contains(binding)
+                            })
+                            .collect();
+                        (id, claims, memberships)
                     })
                     .collect();
                 PINS.put(&vault.store, txn, &key, &kept)?;
@@ -334,8 +352,24 @@ pub(super) fn discover_in(
             named_entities(vault, txn, std::slice::from_ref(turn))?,
         );
     }
-    let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
+    let (mut fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
+    let include_memberships = key.note.is_none()
+        && passage
+            .bound
+            .is_none_or(|scope| scope.relationship.is_none());
     let Some(pins) = PINS.get(&vault.store, txn, &key)? else {
+        if include_memberships {
+            rows.extend(memberships::capture_in(
+                vault,
+                txn,
+                read,
+                &mut fresh,
+                passage.bound,
+                &passage.destination,
+                None,
+                &mut BTreeSet::new(),
+            )?);
+        }
         let thing = listed_thing(&fresh, passage.thing);
         return Ok((
             Neighbourhood {
@@ -351,10 +385,11 @@ pub(super) fn discover_in(
     let device_only = crate::settings::device_local_worlds_for(vault, txn, &passage.destination)?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
-    let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
+    let ids: Vec<_> = pins.iter().map(|(id, _, _)| *id).collect();
     let mut entities = Vec::new();
     let mut gone = BTreeSet::new();
-    for ((id, claims), row) in pins
+    let mut pinned_memberships = BTreeMap::new();
+    for ((id, claims, memberships), row) in pins
         .into_iter()
         .zip(read.get_entities_parts_in_txn(txn, &ids)?)
     {
@@ -367,8 +402,10 @@ pub(super) fn discover_in(
         }
         let mut entity = KnownEntity {
             id,
+            kind,
             label: label(&body),
             claims: Vec::new(),
+            memberships: Vec::new(),
         };
         if let Some(axes) = passage.axes {
             for (claim, row) in claims
@@ -385,7 +422,20 @@ pub(super) fn discover_in(
                 }
             }
         }
+        pinned_memberships.insert(id, memberships);
         entities.push(entity);
+    }
+    if include_memberships {
+        rows.extend(memberships::capture_in(
+            vault,
+            txn,
+            read,
+            &mut entities,
+            passage.bound,
+            &passage.destination,
+            Some(&pinned_memberships),
+            &mut gone,
+        )?);
     }
     let listed: BTreeSet<_> = entities
         .iter()
@@ -447,8 +497,10 @@ fn fresh_in(
         }
         let mut entity = KnownEntity {
             id,
+            kind,
             label: label(&body),
             claims: Vec::new(),
+            memberships: Vec::new(),
         };
         let claims = match passage.axes {
             Some(axes) => newest_claims(

@@ -1,5 +1,8 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod script_context;
+pub(super) use script_context::load_script_context;
+
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{
@@ -259,6 +262,7 @@ impl StreamedOutputs {
     pub(super) fn write(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -281,7 +285,7 @@ impl StreamedOutputs {
                     Some(at) => at,
                     None => {
                         self.files
-                            .push((path.to_owned(), storage.code_run_output_sink()?));
+                            .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1
                     }
                 };
@@ -289,7 +293,7 @@ impl StreamedOutputs {
             }
         };
         if sink.is_none() {
-            *sink = Some(storage.code_run_output_sink()?);
+            *sink = Some(storage.code_run_output_sink_for(exec_run)?);
         }
         match sink {
             Some(sink) => sink.write(frame),
@@ -310,6 +314,7 @@ impl StreamedOutputs {
     pub(super) fn into_step_bodies(
         self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
         let (observation, console) = if outcome.done {
@@ -319,12 +324,12 @@ impl StreamedOutputs {
         };
         let mut observation = match observation {
             Some(sink) => sink,
-            None => storage.code_run_output_sink()?,
+            None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
         let mut files = self.files;
         for output in &outcome.outputs {
-            let mut sink = storage.code_run_output_sink()?;
+            let mut sink = storage.code_run_output_sink_for(exec_run)?;
             sink.write(&output.bytes)?;
             files.push((output.path.clone(), sink));
         }
@@ -530,6 +535,38 @@ pub(super) fn load_observation_window(
         crate::entity_id::bytes_to_hex_lower(&output.raw_blake3),
         output.raw_len,
     ))
+}
+
+/// Bytes two windows of [`scan_output_windows`] share, so a read path or an
+/// id that straddles a window's end is whole in the next one.
+const OUTPUT_SCAN_OVERLAP_BYTES: usize = 1024;
+
+/// Hands `each` the whole of one clean output, window by window, each read
+/// by range and at most [`COMPACTION_OBSERVATION_WINDOW_BYTES`] long, the
+/// windows overlapping by [`OUTPUT_SCAN_OVERLAP_BYTES`]. A body that is not
+/// clean hands nothing: its refs never reach the model.
+pub(super) fn scan_output_windows(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    output: &CodeRunRawOutput,
+    mut each: impl FnMut(&str),
+) -> Result<()> {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
+        return Ok(());
+    }
+    let step = (COMPACTION_OBSERVATION_WINDOW_BYTES - OUTPUT_SCAN_OVERLAP_BYTES) as u64;
+    let mut offset = 0_u64;
+    loop {
+        let window = storage
+            .read_code_run_raw_output_range(output, offset, COMPACTION_OBSERVATION_WINDOW_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        each(&String::from_utf8_lossy(&window));
+        let end = offset.saturating_add(window.len() as u64);
+        if window.is_empty() || end >= output.raw_len {
+            return Ok(());
+        }
+        offset = offset.saturating_add(step);
+    }
 }
 
 /// Bytes of a finish answer a run's implicit bubble says (FIX 365). Past

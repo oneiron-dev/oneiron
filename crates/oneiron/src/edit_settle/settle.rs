@@ -136,7 +136,7 @@ impl Vault {
             self.with_write_txn_grouped(|wtxn| {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
-                self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
                 if let Some(bundle) = &proposal.sheet_answers {
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
                     let cap = policy
@@ -279,6 +279,7 @@ impl Vault {
                         settled_at: learned_at,
                         actor_ref: Some(actor.entity_ref().to_hex()),
                         brief_ref: consent.brief_ref().map(str::to_owned),
+                        grant_ref,
                         before_version: proposal.base_version,
                         version: Some(base.version),
                         content_hash: Some(base.content_hash),
@@ -417,6 +418,7 @@ impl Vault {
                     settled_at: learned_at,
                     actor_ref: Some(actor.entity_ref().to_hex()),
                     brief_ref: consent.brief_ref().map(str::to_owned),
+                    grant_ref,
                     before_version: Some(base.version),
                     version: Some(version.version),
                     content_hash: Some(version.content_hash),
@@ -491,12 +493,13 @@ impl Vault {
         let key = settlement_key_parts(artifact_id, proposal_ref);
 
         let reason = reason.trim();
-        let record = SettlementRecord {
+        let mut record = SettlementRecord {
             proposal_ref: proposal_ref.to_owned(),
             outcome: SettleOutcomeKind::Discarded,
             settled_at: learned_at,
             actor_ref: Some(actor.entity_ref().to_hex()),
             brief_ref: consent.brief_ref().map(str::to_owned),
+            grant_ref: None,
             before_version: None,
             version: None,
             content_hash: None,
@@ -520,7 +523,7 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            record.grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             require_entity_type(
                 &self.store,
                 wtxn,
@@ -666,7 +669,8 @@ impl Vault {
     }
 
     /// The transaction-composable form of [`Vault::authorize_settle`], run
-    /// INSIDE the settle's write transaction.
+    /// INSIDE the settle's write transaction. Returns the selected standing
+    /// grant's reference, or `None` for the owner's direct consent.
     ///
     /// This closes the revocation TOCTOU: a `StandingGrant` resolution checked
     /// on its own read transaction could observe a grant row a concurrent
@@ -681,17 +685,17 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         consent: &SettleConsent,
         actor: WriteActor,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(()),
+            SettleConsent::OwnerConsent { .. } => Ok(None),
             SettleConsent::StandingGrant { brief_ref } => {
                 let required = settle_grant_bound(actor, brief_ref)?;
-                let covered = self
+                let covering = self
                     .active_standing_consent_grants_in_txn(wtxn)?
-                    .iter()
-                    .any(|grant| grant.bound().contains(&required));
-                if covered {
-                    Ok(())
+                    .into_iter()
+                    .find(|grant| grant.bound().contains(&required));
+                if let Some(grant) = covering {
+                    Ok(Some(grant.bound().digest().to_hex()))
                 } else {
                     Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                         "no standing actor×artifact.settle×brief grant covers this settle",

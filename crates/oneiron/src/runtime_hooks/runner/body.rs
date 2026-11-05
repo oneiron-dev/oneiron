@@ -74,6 +74,7 @@ pub(in crate::runtime_hooks) fn ask_verdict(
 /// replies fit [`MAX_PINNED_VERDICT_BYTES`]; the first that does not ends
 /// the pins. The calls each verdict settled are kept whole beside them,
 /// whether or not its pin fit (FIX 10075).
+#[derive(Clone)]
 pub(super) struct VerdictPins {
     pins: Vec<HookVerdictPin>,
     bytes: usize,
@@ -185,7 +186,7 @@ pub(in crate::runtime_hooks) fn judge(
         }
     };
     let usage = HookBodyUsage {
-        fuel_used: Some(run.fuel_used),
+        fuel_used: run.fuel_used,
         host_calls: Some(run.host_calls),
     };
     match accept(binding, &run.outcome_json) {

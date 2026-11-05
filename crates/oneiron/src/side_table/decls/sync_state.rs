@@ -354,19 +354,26 @@ side_tables! {
     /// claim, checked when read (FIX 5554): 1 (checked) or 0 (claim) ‖ that machine (16) ‖ the
     /// generation (24) ‖ the bundle's digest (32), a ciphertext digest. It outlives the
     /// generation's retirement and goes once the request has its result here. Key: hex64 (the
-    /// request's entry hash) ":" hex32 (the committing machine).
+    /// request's entry hash) ":" hex32 (the committing machine). Work records use
+    /// "work:" hex64 with JSON immutable binding, detached source headers, phase,
+    /// prepared/source/cleanup cursors and terminal receipt. "generation:" hex48
+    /// stores the exact32-byte work id reserving unpublished stored parts.
+    /// "stage-identity:" hex32 stores one zero byte until ordinary deletion
+    /// or the work's whole cleanup finishes; an empty partial-cleanup prefix
+    /// is not a reusable identity.
     SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw;
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
-    /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
+    /// (32) ‖ u64be bytes staged ‖ immutable part identity (16),96 bytes total.
+    /// Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
     /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
     /// the holder's turn runs from ‖ u64be count of machines whose turn lapsed ‖ each (FIX 4405):
     /// u64be slot it holds first ‖ that machine (16) ‖ each machine that asked for it (16), the
     /// holder first. Key: ().
     SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
-    /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
-    /// (offset).
+    /// One immutable upload part. Key: hex32 (the header's part identity) ":" hex16
+    /// (offset). Detached work retains its parts independently of active handles.
     SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
     /// The exact attempt this machine made to publish the vault's sealed bundle for one owner's
     /// request (FIX 4787), persisted before its commit: the home (16) ‖ this machine, the
@@ -454,6 +461,26 @@ side_tables! {
     SYNC_SVF_ROOT: SyncState b"svf:root" Raw;
     /// Whether a sync window's state vector is fresh (document family). Key: yyyy-mm.
     WINDOW_SHALLOW_FENCE: SyncState b"svf:w:" Raw;
+    /// This machine's place in its home's queue of sealed world updates (DEC-0005 fix 8, FIX
+    /// 12586): the queue epoch (16) ‖ u64be the last number it took. Key: ().
+    SYNC_SEALED_UPDATE_CURSOR: SyncState b"swu:c" Raw;
+    /// One sealed world update the home keeps for the vault's machines (DEC-0005 fix 8, FIX
+    /// 12586): u64be vault second it was stored ‖ its id (16) ‖ the sealed bytes, which the home
+    /// cannot read. Kept 90 days. Key: u64hex16 (its number in the queue's epoch).
+    SYNC_SEALED_UPDATE_ENTRY: SyncState b"swu:e:" Raw;
+    /// The number the home gave one sealed world update's id, so one id is stored once: u64be.
+    /// Key: hex32 (the id).
+    SYNC_SEALED_UPDATE_ID: SyncState b"swu:i:" Raw;
+    /// The home's queue of sealed world updates: its epoch (16), minted on first use ‖ u64be the
+    /// last number it gave. Key: ().
+    SYNC_SEALED_UPDATE_QUEUE: SyncState b"swu:m" Raw;
+    /// One world update this machine sealed for its home, until the home says it is stored: its
+    /// id (16) ‖ the world (16) ‖ u64be vault second it was sealed ‖ the sealed bytes. Key:
+    /// u64hex16 (its place in the order the updates were made).
+    SYNC_SEALED_UPDATE_OUTBOX: SyncState b"swu:o:" Raw;
+    /// The place of one outbox update by its id, so one id is kept once: u64be. Key: hex32 (the
+    /// id).
+    SYNC_SEALED_UPDATE_OUTBOX_ID: SyncState b"swu:p:" Raw;
     /// Test-fixture row, never read or written by production code: a cached
     /// minted capability slip for one request-credential recipe id
     /// (`crates/oneiron-server/src/test_credentials.rs`, mounted only as
@@ -496,6 +523,11 @@ side_tables! {
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
     USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named;
+    /// One frozen automatic settlement awaiting its final ledger write (FIX 737).
+    /// Same named envelope as USAGE_EVENT. Key: hex ":" hex ":" hex
+    /// (vault, billing owner, idempotency-key); vault-first covers room-paid owners.
+    USAGE_SETTLEMENT_PENDING: SyncState b"usage:retry:" Named
+        => crate::store::erase_pending_usage_source_in_txn;
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;

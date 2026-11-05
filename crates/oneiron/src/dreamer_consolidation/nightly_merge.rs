@@ -78,12 +78,27 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
     }
     vault.with_write_txn_grouped(|txn| {
         let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly outputs");
-        let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
-        outputs.extend(ids);
-        outputs.sort_unstable();
-        outputs.dedup();
-        OUTPUT.put(&vault.store, txn, &attempt, &outputs)
+        record_outputs_in_txn(vault, txn, attempt, ids)
     })
+}
+
+/// Records claim ids in the same transaction that validated their promotion or
+/// attachment. These are committed outputs, not a whole-attempt success receipt;
+/// nightly readers still judge each claim's current live state and scope.
+pub(crate) fn record_outputs_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    ids: &[EntityId],
+) -> Result<()> {
+    if AttemptQueue::new(vault).get_in_txn(txn, attempt)?.is_none() {
+        return Err(invalid());
+    }
+    let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
+    outputs.extend(ids);
+    outputs.sort_unstable();
+    outputs.dedup();
+    OUTPUT.put(&vault.store, txn, &attempt, &outputs)
 }
 
 /// The existing extraction and merge result ledgers in the caller's snapshot.
@@ -101,7 +116,7 @@ pub(crate) fn outputs_in_txn(
     Ok(outputs)
 }
 
-/// Outputs already accepted by the promotion sink for this attempt.
+/// Claim ids recorded by the promotion sink for this attempt.
 pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
     Ok(OUTPUT

@@ -4,21 +4,39 @@
 //! private key never leaves the enclave, so the stored bytes open only here,
 //! through it (OF-168).
 //!
-//! - One enclave key per keychain service, found by its label and made on first
-//!   use: `AfterFirstUnlockThisDeviceOnly`, usable for private-key operations
-//!   only. An enclave key never synchronizes; it cannot leave the enclave.
+//! - One enclave key per keychain service, selected on first use by an immutable
+//!   keychain record containing its OS application label. Every caller resolves
+//!   that exact key before using it: `AfterFirstUnlockThisDeviceOnly`, usable for
+//!   private-key operations only. It cannot synchronize or leave the enclave.
 //! - Its items sit under the service name with `.enclave` appended, apart from
 //!   the platform tier's. Switching tiers reads nothing the other tier wrote: the
 //!   install starts empty slots, as a new machine does.
 //! - Like the platform tier it needs a signed app with a keychain access group;
 //!   an unsigned build gets `Unavailable`.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "macos")]
+use core_foundation::array::CFArray;
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::number::CFNumber;
+use core_foundation::string::CFString;
+#[cfg(target_os = "macos")]
+use core_foundation::string::CFStringRef;
 use security_framework::access_control::{ProtectionMode, SecAccessControl};
-use security_framework::item::{ItemSearchOptions, KeyClass, Location, Reference, SearchResult};
-use security_framework::key::{Algorithm, GenerateKeyOptions, KeyType, SecKey, Token};
+use security_framework::item::{ItemSearchOptions, KeyClass, Reference, SearchResult};
+use security_framework::key::{Algorithm, SecKey};
 use security_framework_sys::access_control::kSecAccessControlPrivateKeyUsage;
+#[cfg(not(target_os = "macos"))]
+use security_framework_sys::item::kSecValueRef;
+use security_framework_sys::item::{
+    kSecAttrAccessControl, kSecAttrIsPermanent, kSecAttrKeySizeInBits, kSecAttrKeyType,
+    kSecAttrKeyTypeECSECPrimeRandom, kSecAttrLabel, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave,
+    kSecPrivateKeyAttrs, kSecUseDataProtectionKeychain,
+};
+use security_framework_sys::keychain_item::SecItemDelete;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::apple::{AppleKeychain, platform};
@@ -28,6 +46,15 @@ use crate::{
 
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const SEAL: Algorithm = Algorithm::ECIESEncryptionCofactorVariableIVX963SHA256AESGCM;
+// Slot accounts always start with the vault and install hex ids, unlike this account.
+const SELECTOR_ACCOUNT: &str = "enclave-key-selector.v1";
+static KEY_SELECTION: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    // Security/SecItem.h exports this CFString; sys 2.17 does not bind it.
+    static kSecMatchItemList: CFStringRef;
+}
 
 /// Slots sealed to this service's enclave key.
 pub struct SecureEnclaveKeychain {
@@ -56,33 +83,128 @@ impl SecureEnclaveKeychain {
         })
     }
 
-    /// The enclave key: found by its label, or made in the enclave on first use.
+    /// Resolve the stored winner before caching it; never seal with a candidate.
     fn enclave_key(&self) -> Result<SecKey> {
         if let Some(key) = self.key.get() {
             return Ok(key.clone());
         }
-        let key = match self.find_key()? {
-            Some(key) => key,
-            None => self.make_key()?,
-        };
+        // The lock protects no Rust state. After a panic, reread the OS record.
+        let _selection = KEY_SELECTION.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(key) = self.key.get() {
+            return Ok(key.clone());
+        }
+        let key = self.select_key()?;
         Ok(self.key.get_or_init(|| key).clone())
     }
 
-    fn find_key(&self) -> Result<Option<SecKey>> {
+    fn select_key(&self) -> Result<SecKey> {
+        if let Some(winner) = self.items.read_item_account(SELECTOR_ACCOUNT)? {
+            return self.resolve_key(&winner);
+        }
+        let candidate = self.make_key()?;
+        let Some(identity) = candidate.application_label() else {
+            self.delete_unidentified_candidate(&candidate)?;
+            return Err(KeystoreError::Corrupt(
+                "the new enclave key has no application label",
+            ));
+        };
+        // SecItemAdd selects one immutable winner across processes. Even its
+        // successful writer rereads it rather than using the local candidate.
+        let added = match self.items.add_item_account(SELECTOR_ACCOUNT, &identity) {
+            Ok(()) | Err(KeystoreError::AlreadyExists) => Ok(()),
+            Err(error) => Err(error),
+        };
+        let winner = match self.items.read_item_account(SELECTOR_ACCOUNT) {
+            Ok(Some(winner)) => winner,
+            Ok(None) => {
+                if added.is_err() {
+                    // The add failed and no selector names this fresh key.
+                    self.delete_candidate(&identity)?;
+                }
+                added?;
+                return Err(KeystoreError::Corrupt(
+                    "the enclave key selector is missing",
+                ));
+            }
+            Err(error) => {
+                // Selection is unknown: keep the candidate rather than risk
+                // deleting a winner that another process may already use.
+                added?;
+                return Err(error);
+            }
+        };
+        if identity != winner {
+            self.delete_candidate(&identity)?;
+        }
+        added?;
+        self.resolve_key(&winner)
+    }
+
+    fn key_query(&self, identity: &[u8]) -> ItemSearchOptions {
         let mut search = ItemSearchOptions::new();
         search
             .key_class(KeyClass::private())
             .label(&self.key_label)
-            .load_refs(true);
+            .application_label(identity);
         #[cfg(target_os = "macos")]
         search.ignore_legacy_keychains();
-        match search.search() {
-            Ok(found) => Ok(found.into_iter().find_map(|result| match result {
+        search
+    }
+
+    fn resolve_key(&self, identity: &[u8]) -> Result<SecKey> {
+        let mut search = self.key_query(identity);
+        search.load_refs(true);
+        let key = match search.search() {
+            Ok(found) => found.into_iter().find_map(|result| match result {
                 SearchResult::Ref(Reference::Key(key)) => Some(key),
                 _ => None,
-            })),
-            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            }),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => None,
+            Err(e) => return Err(platform(e.code())),
+        };
+        key.ok_or(KeystoreError::Corrupt(
+            "the selected enclave key is missing",
+        ))
+    }
+
+    /// Only a fresh candidate known not to be the selector's winner.
+    fn delete_candidate(&self, identity: &[u8]) -> Result<()> {
+        match self.key_query(identity).delete() {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(e) => Err(platform(e.code())),
+        }
+    }
+
+    /// A fresh key with no usable identity has never been offered to the selector.
+    fn delete_unidentified_candidate(&self, candidate: &SecKey) -> Result<()> {
+        // SAFETY: Security exports immutable CFString constants for the life of
+        // the process; the get rule retains them. The array/dictionary retain
+        // this exact fresh candidate, and every value outlives SecItemDelete.
+        let query = unsafe {
+            #[cfg(target_os = "macos")]
+            let candidate_pair = (
+                CFString::wrap_under_get_rule(kSecMatchItemList),
+                CFArray::from_CFTypes(std::slice::from_ref(candidate)).into_CFType(),
+            );
+            #[cfg(not(target_os = "macos"))]
+            let candidate_pair = (
+                CFString::wrap_under_get_rule(kSecValueRef),
+                candidate.as_CFType(),
+            );
+            CFDictionary::from_CFType_pairs(&[
+                candidate_pair,
+                (
+                    CFString::wrap_under_get_rule(kSecUseDataProtectionKeychain),
+                    CFBoolean::true_value().into_CFType(),
+                ),
+            ])
+        };
+        // SAFETY: `query` is an owned dictionary identifying only `candidate`
+        // by reference, using SecItem.h's platform-specific deletion form.
+        match unsafe { SecItemDelete(query.as_concrete_TypeRef()) } {
+            0 | ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            status => Err(platform(status)),
         }
     }
 
@@ -92,15 +214,58 @@ impl SecureEnclaveKeychain {
             kSecAccessControlPrivateKeyUsage,
         )
         .map_err(|e| platform(e.code()))?;
-        let mut options = GenerateKeyOptions::default();
-        options
-            .set_key_type(KeyType::ec_sec_prime_random())
-            .set_size_in_bits(256)
-            .set_label(self.key_label.clone())
-            .set_token(Token::SecureEnclave)
-            .set_location(Location::DataProtectionKeychain)
-            .set_access_control(access);
-        SecKey::new(&options).map_err(|e| enclave(e.code()))
+        // SAFETY: These are immutable Security CFString exports. The get rule
+        // retains them, and the owned dictionary retains every attribute value.
+        let private = unsafe {
+            CFDictionary::from_CFType_pairs(&[
+                (
+                    CFString::wrap_under_get_rule(kSecAttrIsPermanent),
+                    CFBoolean::true_value().into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrAccessControl),
+                    access.into_CFType(),
+                ),
+            ])
+        };
+        // Emit private persistence/access control on every Apple target: pinned
+        // GenerateKeyOptions only includes its private-attributes dict on macOS.
+        // SAFETY: The exported strings are valid for the process lifetime. All
+        // values are owned CF objects retained by the dictionary through generate.
+        let attributes = unsafe {
+            CFDictionary::from_CFType_pairs(&[
+                (
+                    CFString::wrap_under_get_rule(kSecAttrKeyType),
+                    CFString::wrap_under_get_rule(kSecAttrKeyTypeECSECPrimeRandom).into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrKeySizeInBits),
+                    CFNumber::from(256_i32).into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrLabel),
+                    CFString::new(&self.key_label).into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrTokenID),
+                    CFString::wrap_under_get_rule(kSecAttrTokenIDSecureEnclave).into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecUseDataProtectionKeychain),
+                    CFBoolean::true_value().into_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecPrivateKeyAttrs),
+                    private.into_CFType(),
+                ),
+            ])
+        };
+        #[expect(
+            deprecated,
+            reason = "GenerateKeyOptions drops private-key attributes on non-macOS Apple targets"
+        )]
+        let key = SecKey::generate(attributes.into_untyped());
+        key.map_err(|e| enclave(e.code()))
     }
 
     /// `secret` sealed to the enclave key's public half.

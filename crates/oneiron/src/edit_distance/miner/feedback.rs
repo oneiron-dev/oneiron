@@ -5,7 +5,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::store::{decode_row, encode_row};
-use super::target::CompilationTarget;
+use super::target::{CompilationTarget, CompilationTargetValidation};
 use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;

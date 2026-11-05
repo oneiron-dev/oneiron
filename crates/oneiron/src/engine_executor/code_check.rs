@@ -71,10 +71,11 @@ impl TypeFeedback {
     /// before the load ends waits for it on the check's own thread; its run
     /// never does. A check that lands writes its result to its step's row on
     /// its run's own route on `vault`: its rows, or the live stretch of it
-    /// the run was bound to.
+    /// the run was bound to. The service owns the vault so a late result
+    /// can still be kept after its run has ended.
     #[must_use]
-    pub fn loading(configured: &str, vault: Option<Arc<Vault>>) -> Self {
-        Self::with(Checker::Loading, configured, vault)
+    pub fn loading(configured: &str, vault: Arc<Vault>) -> Self {
+        Self::with(Checker::Loading, configured, Some(vault))
     }
 
     /// A service with the check mode off: each step's feedback answers

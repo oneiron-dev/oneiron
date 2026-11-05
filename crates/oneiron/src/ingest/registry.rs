@@ -33,6 +33,7 @@ pub enum IngestSourceFormat {
     ImageAsset,
     DocsExportV1,
     NativeExport,
+    AgUi,
 }
 
 /// The ARCH-0027 adapter skill a source's records came from.
@@ -265,7 +266,27 @@ const fn provider_config(
         default_admission: ClaimApprovalStatus::Proposed,
     }
 }
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 23] = [
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 24] = [
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: super::AG_UI_SOURCE_ID,
+            label: "AG-UI event dump",
+            format: IngestSourceFormat::AgUi,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.ag-ui",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::AgUiSource,
+    ),
     IngestSourceRegistration::new(
         provider_config("openai-compat", IngestSourceFormat::OpenaiCompat),
         &OPENAI_SOURCE,
@@ -456,7 +477,7 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 23] = [
         },
         &super::exports::ExportSource {
             source_id: "hook-transcript",
-            layout: super::exports::ExportLayout::MemoryDirectory,
+            layout: super::exports::ExportLayout::HookTranscript,
         },
     ),
     IngestSourceRegistration::new(

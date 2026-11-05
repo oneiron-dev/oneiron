@@ -13,25 +13,30 @@ use super::{
     VersionReconciliation,
 };
 use super::{DeckProposeRejection, DeckTransaction};
+use crate::blob_artifact::deck_context::DeckEditContext;
+use crate::blob_artifact::native_output::NativeOutput;
+use crate::blob_artifact::office_address::RangeRef;
+use crate::blob_artifact::slide_review::REVIEW_IMAGE;
+use crate::blob_artifact::slide_review::SlideRenderer;
+use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
+use crate::blob_artifact::slide_review::review_copy_bytes;
+use crate::blob_artifact::unit_refusal::UnitRefusal;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    REVIEW_IMAGE, SlideAbstention, SlideJudgment, SlideRenderer, SlideReviewError,
-    SlideReviewImage, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
-    SlideUnitRefusalReason, review_copy_bytes,
+    SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
+    SlideReviewRequest, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
-    ArtifactAsk, DeckEditContext, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
-    RangeRef, SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
+    UnitAbstention, UnitCall, UnitDecider,
 };
 use crate::edit_settle::{
-    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
-    SettledReview,
+    KeepUndo, MadeByReader, OrganWaitView, PendingProposalView, SettleConsent, SettledReview,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
-use crate::lens::RecordRef;
 use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
@@ -39,6 +44,7 @@ use crate::memory::{
 use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
 use crate::ports::ClaimReadStatus;
 use crate::store::receipt_row::ReceiptRecord;
+use crate::store::record_ref::RecordRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
@@ -148,6 +154,10 @@ pub struct NativeOutputRequest {
     /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// Additional rows the caller declares it read. Waiting-proposal readers
+    /// must admit each row. This is not authority or a complete read log.
+    #[serde(default)]
+    pub read_rows: Vec<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -252,7 +262,7 @@ pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
-    pub judged_live: Option<crate::office_body::LivePin>,
+    pub judged_live: Option<crate::typed_body::live_pin::LivePin>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
@@ -1078,20 +1088,21 @@ impl Memory<'_> {
         input: &DeckProposeRequest,
     ) -> MemoryResult<DeckProposeOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        match self.vault().propose_blob_artifact_deck_edit(
+        let (outcome, read_rows) = self.vault().propose_blob_artifact_deck_edit_with_reads(
             &artifact,
             &input.transaction.canonical(),
             &input.run_ref,
             input.context.clone(),
-        )? {
+        )?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
-                proposed: Some(self.vault().retain_edit_proposal(
+                proposed: Some(self.vault().retain_edit_proposal_with_reads(
                     &artifact,
                     &proposal,
                     input.made_by.as_ref(),
                     self.made_by_reader(input.made_by.as_ref())?,
-                    self.artifact_actor(),
-                    self.vault().now_recorded_at(),
+                    (self.artifact_actor(), self.vault().now_recorded_at()),
+                    &read_rows,
                 )?),
                 rejected: None,
             }),
@@ -1115,15 +1126,20 @@ impl Memory<'_> {
             name: input.name.clone(),
             media_type: input.media_type.clone(),
             bytes,
-            report: input.report.clone(),
+            report: input.report.to_string(),
             made_by: input.made_by.clone(),
         };
-        Ok(self.vault().propose_native_output(
+        let read_rows = input
+            .read_rows
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
             self.made_by_reader(output.made_by.as_ref())?,
-            self.artifact_actor(),
-            self.vault().now_recorded_at(),
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
         )?)
     }
 

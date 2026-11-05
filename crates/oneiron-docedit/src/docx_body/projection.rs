@@ -4,7 +4,7 @@ use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use stemma::edit::EditTransaction;
-use stemma::view::{BlockView, DocumentView, TrackStatus};
+use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TrackStatus};
 
 use super::{
     DocxAnchor, DocxChange, DocxParagraph, DocxRevision, inherited, kept_marks, marked_paragraph,
@@ -88,7 +88,12 @@ pub(super) fn group_ops<'v>(
             }
             DocxChange::Delete { block } => {
                 let block = find(block)?;
-                ops.push(json!({"op": "delete", "target": block.id.to_string(), "guard": block.guard}));
+                ops.push(json!({
+                    "op": "delete",
+                    "target": block.id.to_string(),
+                    "guard": block.guard,
+                    "expect": block.text,
+                }));
             }
         }
     }
@@ -222,13 +227,36 @@ impl DocxProjection {
                 .blocks
                 .iter()
                 .filter(|block| {
-                    matches!(
+                    let survives = matches!(
                         block.block_status,
                         TrackStatus::Normal | TrackStatus::Inserted(_)
-                    )
+                    );
+                    let authored_delete = matches!(
+                        &block.paragraph_mark_status,
+                        TrackStatus::Deleted(revision) if revision.apply_op_id.is_some()
+                    );
+                    survives
+                        && !(matches!(block.block_status, TrackStatus::Normal)
+                            && authored_delete
+                            && paragraph_has_no_accepted_segments(block))
                 })
                 .map(|block| block.id.to_string())
                 .collect()
+        })
+    }
+
+    /// Whether a requested delete left the untracked physical final-mark
+    /// carrier. It still has an id, but no longer names a logical paragraph.
+    pub fn deleted_final_mark_survives(&self, changes: &[DocxChange]) -> bool {
+        crate::within(self.limits, || {
+            self.doc.read().blocks.iter().any(|block| {
+                matches!(block.block_status, TrackStatus::Normal)
+                    && matches!(block.paragraph_mark_status, TrackStatus::Normal)
+                    && paragraph_has_no_accepted_segments(block)
+                    && changes.iter().any(|change| matches!(change,
+                        DocxChange::Delete { block: deleted } if *deleted == block.id.to_string()
+                    ))
+            })
         })
     }
 
@@ -242,6 +270,15 @@ impl DocxProjection {
             crate::export_redline(&self.doc, self.limits)
         })
     }
+}
+
+fn paragraph_has_no_accepted_segments(block: &BlockView) -> bool {
+    matches!(block.role, BlockRole::Paragraph | BlockRole::Heading { .. })
+        && block.segments.iter().all(|segment| match segment {
+            SegmentView::Text { status, .. } | SegmentView::Opaque { status, .. } => {
+                !matches!(status, TrackStatus::Normal | TrackStatus::Inserted(_))
+            }
+        })
 }
 
 /// Resolve what one applied group placed: each `Insert` op's paragraph ids

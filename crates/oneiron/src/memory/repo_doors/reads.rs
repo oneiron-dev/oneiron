@@ -292,12 +292,12 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let queue = resolve_repo_queue_target(
             self.vault,
+            own.stamp.repo,
             &own.admitted.membership.repo_ref,
             &own.stamp.git_ref,
         )?
         .map_err(refusal_error)?;
-        let (entries, blockers) =
-            self.repo_queue_entries(binding, &own.admitted.membership.repo_ref, input.work)?;
+        let (entries, blockers) = self.repo_queue_entries(binding, &queue.queue, input.work)?;
         let mut rows = vec![own.stamp.repo];
         rows.extend(blockers);
         Ok(RepoRunAnswer {

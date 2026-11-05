@@ -428,10 +428,24 @@ fn fetch_grant(seal: &SealConfig, tsa: Option<&str>) -> Result<FetchGrant, Strin
         grant.origins.push(fetch_origin(seal, TSA, tsa)?);
     }
     for value in &seal.crl_origins {
-        grant.origins.push(fetch_origin(seal, CRL_ORIGINS, value)?);
+        match fetch_origin(seal, CRL_ORIGINS, value) {
+            Ok(origin) => grant.origins.push(origin),
+            Err(error) => tracing::warn!(
+                setting = %seal.name(CRL_ORIGINS),
+                %error,
+                "invalid revocation origin omitted"
+            ),
+        }
     }
     for value in &seal.ocsp_origins {
-        grant.origins.push(fetch_origin(seal, OCSP_ORIGINS, value)?);
+        match fetch_origin(seal, OCSP_ORIGINS, value) {
+            Ok(origin) => grant.origins.push(origin),
+            Err(error) => tracing::warn!(
+                setting = %seal.name(OCSP_ORIGINS),
+                %error,
+                "invalid revocation origin omitted"
+            ),
+        }
     }
     Ok(grant)
 }

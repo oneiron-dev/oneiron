@@ -384,14 +384,22 @@ async fn recall(
         query_affect: None,
         telemetry: None,
     };
+    // Home references carry no local row to judge for an onward model or
+    // caller. Keep that path local-only until it carries destination proof.
+    let home = if reads_for.is_off_device() {
+        oneiron::memory::HomeRecallCaller::none()
+    } else {
+        actor.home_caller()
+    };
     let (pack, listed) = server
-        .recall_off_runtime_listing(
+        .recall_home_listing(
             actor.actor_ref,
             actor.actor_class,
             proof,
             reads_for,
             None,
             input,
+            home,
         )
         .await;
     served.extend(listed.iter().copied());
@@ -407,10 +415,26 @@ async fn recall(
             failed.message,
         )
     })?;
-    let rendered = match pack.rendered {
+    let mut rendered = match pack.rendered {
         Some(rendered) if !pack.items.is_empty() && !rendered.trim().is_empty() => rendered,
-        _ => return Ok(None),
+        _ => String::new(),
     };
+    if let Some(residence) = pack.residence.as_ref()
+        && (!rendered.is_empty() || !residence.hits.is_empty())
+    {
+        let home = serde_json::json!({ "residence": residence }).to_string();
+        match oneiron::memory::HOME_RECALL_MERGE_ORDER {
+            oneiron::memory::HomeRecallMergeOrder::LocalThenHome => {
+                if !rendered.is_empty() {
+                    rendered.push_str("\n\n");
+                }
+                rendered.push_str(&home);
+            }
+        }
+    }
+    if rendered.is_empty() {
+        return Ok(None);
+    }
     let text = format!("{MEMORY_PREAMBLE}\n\n{rendered}");
     // A backstop past the read itself: no row a world withheld from where
     // the prompt goes leaves in it, and the refusal says why, content-free

@@ -22,6 +22,7 @@ mod pad_custody;
 mod policy;
 mod prune;
 mod recall_scope;
+mod sealed_updates;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
@@ -35,6 +36,14 @@ pub use authority_tail::{
     authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
+};
+pub use bundle::work::{
+    SEALED_BUNDLE_WORK_PART_BYTES, SealedBundleCommitInput, SealedBundleWorkOutcome,
+    SealedBundleWorkStatus, begin_sealed_bundle_work, begin_sealed_bundle_work_authorized,
+    cleanup_sealed_bundle_work, sealed_bundle_work_for_request, sealed_bundle_work_id,
+    sealed_bundle_work_memory_bytes, sealed_bundle_work_memory_room, sealed_bundle_work_status,
+    sealed_bundle_work_validation_bytes, step_sealed_bundle_work,
+    step_sealed_bundle_work_authorized, step_sealed_bundle_work_in_turn,
 };
 pub use bundle::{
     BundlePartRead, PadObjectRefill, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX,
@@ -106,6 +115,13 @@ pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
+pub use sealed_updates::{
+    OutboxSealedUpdate, SEALED_UPDATE_KEEP_SECS, SEALED_UPDATE_PAGE_BYTES,
+    SEALED_UPDATE_PAGE_ENTRIES, SealedUpdateEpoch, SealedUpdateId, SealedUpdatePage,
+    SealedUpdateQueue, StoredSealedUpdate, drop_sealed_update_outbox, put_sealed_update_cursor,
+    put_sealed_update_outbox, sealed_update_cursor, sealed_update_outbox, sealed_update_queue,
+    sealed_updates_since, store_sealed_update,
+};
 pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,

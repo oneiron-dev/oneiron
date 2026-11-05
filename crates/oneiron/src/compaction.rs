@@ -65,6 +65,7 @@ mod epoch;
 mod epoch_floor;
 mod epoch_intent;
 pub(crate) mod epoch_vector;
+mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
@@ -75,6 +76,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
+pub use fold_kinds::{FoldKind, FoldedOutput};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
@@ -499,7 +501,7 @@ const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// pass. The compaction door does exactly that
 /// ([`crate::error::CompactionPacketError::SessionMembershipNotRecorded`]).
 pub(crate) fn turn_session_membership_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -558,3 +560,6 @@ const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 mod tests;
 
 pub mod host_request;
+
+/// The most turns one transcript page returns.
+pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;

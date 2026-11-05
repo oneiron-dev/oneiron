@@ -4,7 +4,7 @@ use heed::RwTxn;
 
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::discipline::{LinkDiscipline, read_link_discipline};
 use super::keys::{
@@ -23,7 +23,7 @@ use super::storage::{
 /// Search still keeps defensive existence checks because vectors/entities can
 /// become partially inconsistent for reasons outside HNSW bookkeeping.
 pub(crate) fn hnsw_deindex(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
@@ -35,13 +35,13 @@ pub(crate) fn hnsw_deindex(
 /// so tests can pin that symmetric-graph deletes never iterate the full
 /// `hnsw_neighbors` DB (ONE-325 AC1).
 pub(super) fn hnsw_deindex_probed(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let own_neighbors = match store.hnsw_neighbors().get(&*wtxn, id.as_bytes())? {
+    let own_neighbors = match store.index_neighbors().get(&*wtxn, id.as_bytes())? {
         Some(raw) => decode_neighbors(&raw, false)?,
         None => return Ok(()),
     };
@@ -62,7 +62,7 @@ pub(super) fn hnsw_deindex_probed(
     let new_count = count
         .checked_sub(1)
         .ok_or(Error::CorruptedIndex(ERR_COUNT_UNDERFLOW))?;
-    store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
+    store.index_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
     scrub_backlinks_in_place(store, wtxn, id, &backlink_targets, ops)?;
     if discipline == LinkDiscipline::Symmetric {
@@ -75,11 +75,11 @@ pub(super) fn hnsw_deindex_probed(
     }
 
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &new_count.to_le_bytes())?;
 
     if new_count == 0 {
-        store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+        store.index_meta().delete(wtxn, ENTRY_POINT_KEY)?;
         return Ok(());
     }
 
@@ -94,7 +94,7 @@ pub(super) fn hnsw_deindex_probed(
         // replacement to owned bytes inside its scope so the entry-point put
         // below can borrow the write transaction mutably.
         let replacement_key: Vec<u8> = {
-            let mut remaining = store.hnsw_neighbors().iter(&*wtxn)?;
+            let mut remaining = store.index_neighbors().iter(&*wtxn)?;
             loop {
                 let (key, _) = remaining
                     .next()
@@ -111,7 +111,7 @@ pub(super) fn hnsw_deindex_probed(
                 other => other,
             })?;
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;
     }
 

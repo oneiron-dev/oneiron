@@ -23,7 +23,7 @@ use super::type_bytes::{
 };
 use super::zones::{EntityClassification, TypeByteZone};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct EntityTypeRegistryEntry {
     pub kind: &'static str,
     pub type_byte: u8,

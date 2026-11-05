@@ -627,7 +627,7 @@ pub(super) fn recompute_touched_habit_streaks_in_txn(
 ) -> Result<()> {
     for habit_id in candidates {
         if stored_task_role(store, &*wtxn, habit_id)? == Some(TaskRole::Habit) {
-            crate::habit::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
+            crate::store::habit_streak::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
         }
     }
     Ok(())

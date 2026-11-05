@@ -48,45 +48,7 @@ impl EdgeValueFields {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct EntityMetadataHeader {
-    pub(crate) entity_type: u8,
-    pub(crate) occurred_start: u64,
-    pub(crate) occurred_end: u64,
-    pub(crate) learned_at: u64,
-}
-
-impl EntityMetadataHeader {
-    pub(crate) fn parse(raw: &[u8]) -> Option<Self> {
-        if raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return None;
-        }
-
-        let entity_type = raw[ENTITY_TYPE_OFFSET];
-        let occurred_start = u64::from_be_bytes(
-            raw[ENTITY_OCCURRED_START_OFFSET..ENTITY_OCCURRED_END_OFFSET]
-                .try_into()
-                .ok()?,
-        );
-        let occurred_end = u64::from_be_bytes(
-            raw[ENTITY_OCCURRED_END_OFFSET..ENTITY_LEARNED_AT_OFFSET]
-                .try_into()
-                .ok()?,
-        );
-        let learned_at = u64::from_be_bytes(
-            raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_BODY_OFFSET]
-                .try_into()
-                .ok()?,
-        );
-
-        Some(Self {
-            entity_type,
-            occurred_start,
-            occurred_end,
-            learned_at,
-        })
-    }
-}
+pub(crate) use oneiron_contracts::record_layout::EntityMetadataHeader;
 
 pub(super) fn authority_observation_secs_for_write(
     store: &Store,
