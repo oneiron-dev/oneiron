@@ -11,6 +11,10 @@ const profile = process.env.E2E_PROFILE === "real-small-model"
 const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /* Source-only proposal against the current public catalog. Canon expectations
  * and authored inputs come from retrieval-scenarios and retrieval-evidence.
  * A fresh authenticated vault per flow, one slot, no engine imports, private
@@ -258,6 +262,8 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       endpoint: provider.endpoint, modelKey: vectorFixture.embedder.modelKey,
       modelId: vectorFixture.embedder.modelId, dimensions: fixture.queryVector.length, egress: { allowAll: true },
     } });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     await requireFacades(engine, ["vault.search.hybrid", "vault.vectors.put", "vault.structural.put"]);
     const records = new Map<string, Facade.EntityRefReceipt>();
@@ -316,7 +322,19 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       expect(stored.value?.body).toMatchObject({ title: fixture.corpus.find(row => row.label === label)!.text });
     }
     await engine.artifacts.json("retrieval-five-channel.json", { input, first, repeated });
-  } finally { await engine.close(); await provider.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await provider.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-02: lexical originals and explicit phonetic query codes. */
@@ -473,6 +491,8 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     steps: [rerankStep("high"), rerankStep("xhigh"), rerankStep("max"), rerankStep("deadline-base")] });
   const engine = await EngineFixture.start({ id: "RETRIEVAL-05", profile,
     initArgs: ["--dimensions", "4"], serverConfig: rerankConfig(providers.urls.reranker!) });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     await requireFacades(engine, ["vault.recall", "vault.models.roles.read",
       "vault.retrieval.hyde.configure", "vault.retrieval.hyde.get", "vault.retrieval.hyde.pending",
@@ -556,7 +576,19 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(providers.seenFixtureCalls.every(call => call.role === "reranker" && call.path === "/v1/rerank")).toBe(true);
     await engine.artifacts.json("retrieval-effort-deadline.json", { observations, held, completion, delivered: reply.body,
       providerCalls: providers.seenFixtureCalls });
-  } finally { await engine.close(); await providers.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-06 — Evidence abstention not invented recall should work.
