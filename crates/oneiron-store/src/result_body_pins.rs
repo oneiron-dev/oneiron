@@ -18,26 +18,26 @@ pub struct ResultBodyPins {
 const SEARCH_CREDIT_KEYS: usize = 64;
 
 #[derive(Default)]
-struct PinCounts {
+pub struct PinCounts {
     /// Holds on every body at once, by readers of a whole set.
-    every: usize,
-    bodies: HashMap<[u8; 32], usize>,
+    pub every: usize,
+    pub bodies: HashMap<[u8; 32], usize>,
     /// The vault instance an off-record body was promoted as, before the
     /// save transaction that names it opened (KS-2A): kept while its pin
     /// is held, read by that transaction.
-    promoted: HashMap<[u8; 32], [u8; 16]>,
+    pub promoted: HashMap<[u8; 32], [u8; 16]>,
     /// Detached line-index rebuilds one read noted (FIX 1186b), by digest.
     /// In memory only, like pins: a restart drops the queue and reads
     /// re-note.
-    rebuild: HashMap<[u8; 32], RebuildEntry>,
+    pub rebuild: HashMap<[u8; 32], RebuildEntry>,
     /// Latest issued scan-bound credit per window, by
     /// (raw body digest, window base, window len) to the exact emitted
     /// (offset, line, credit). Offsets are window-relative, so the window
     /// joins the key: the same relative tuple in another window attests
     /// different bytes. In memory only, like the pins beside it.
-    search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
+    pub search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
     /// Insertion order of `search_credit` keys, oldest first.
-    search_credit_order: VecDeque<([u8; 32], u64, u64)>,
+    pub search_credit_order: VecDeque<([u8; 32], u64, u64)>,
 }
 
 /// One queued line-index rebuild (FIX 1186b): the body's length from its
@@ -50,7 +50,7 @@ pub struct RebuildEntry {
 }
 
 impl PinCounts {
-    fn holds(&self, digest: &[u8; 32]) -> bool {
+    pub fn holds(&self, digest: &[u8; 32]) -> bool {
         self.every > 0 || self.bodies.contains_key(digest)
     }
 }

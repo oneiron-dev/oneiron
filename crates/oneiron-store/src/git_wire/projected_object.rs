@@ -184,11 +184,11 @@ pub fn unchanged(original: &GitRetainedObject) -> GitProjectedPayload {
 }
 
 /// One entry of a raw tree object, with where its object id's bytes sit.
-struct RawTreeEntry {
-    mode: u32,
-    name: Vec<u8>,
-    oid: GitOid,
-    oid_at: usize,
+pub struct RawTreeEntry {
+    pub mode: u32,
+    pub name: Vec<u8>,
+    pub oid: GitOid,
+    pub oid_at: usize,
 }
 
 /// A raw tree object's entries: `<octal mode> <name>\0<20 id bytes>` each.
