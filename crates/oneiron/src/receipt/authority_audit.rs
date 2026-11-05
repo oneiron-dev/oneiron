@@ -35,7 +35,7 @@ use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
     AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
-    adopted_authority_checkpoint_in_txn,
+    cached_adopted_authority_checkpoint_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -269,8 +269,8 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let issues = FoldIssues::of(&fold);
-        let adopted = adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
-        let mut covered = covered_after(adopted.as_ref(), query.after);
+        let adopted = cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
+        let mut covered = covered_after(adopted.as_deref(), query.after);
         let mut next_cold = covered.next().transpose()?;
         let mut stored =
             self.store
