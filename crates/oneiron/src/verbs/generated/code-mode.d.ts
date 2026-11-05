@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1284 code-mode rows (1244 host rows, 40 run rows), 4550 declarations.
-// Replies: 1098 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4581 declarations.
+// Replies: 1113 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -433,7 +433,7 @@ declare namespace Sdk {
   type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null };
   type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled";
   type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none";
-  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality";
+  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality" | "erased_payload";
   type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number };
   type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null };
   type BudgetHoldState = "warned" | "held" | "resumed";
@@ -3325,7 +3325,7 @@ declare namespace Sdk {
   type ModelStreamSubscribe = { stream_key: string };
   type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
   type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
-  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
   type ModelStreamDetach = { stream_key: string; handle: string };
   type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };
@@ -4411,6 +4411,37 @@ declare namespace Sdk {
   type CustodySetRevision = { revision: number };
   type TargetScope = "head_and_log" | "log_only";
   type CustodyMemberReenrolRequest = { target_id?: string | null; folder?: string | null; scope?: TargetScope | null };
+  type MailProvider = "google_workspace" | "google" | "microsoft365" | "imap" | "caldav" | "ics";
+  type MailSourceKind = "personal_mailbox" | "group_address" | "calendar";
+  type MailCopySetting = "all" | { recent_months: { months: number } } | "search_only";
+  type MailProviderDeleteSetting = "keep_in_memory" | "forget_too";
+  type CalendarDetailSetting = "busy_free_only" | "shared";
+  type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
+  type MailSourceStatus = "active" | "paused" | "disconnected";
+  type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
+  type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean };
+  type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null };
+  type MailSourceMembersRequest = { source_ref: string; members: string[] };
+  type MailSourceRef = { source_ref: string };
+  type SourceAudienceOp = "reader_added" | "reader_removed" | "shared" | "unshared" | "opened" | "closed";
+  type SourceAudienceEventView = { revision: number; op: SourceAudienceOp; person_ref?: string | null; by_ref?: string | null; at: number };
+  type MailThreadShareRequest = { record_ref: string; person_ref: string };
+  type MailThreadShareReceipt = { thread_ref: string; person_ref: string; shared: boolean; changed: boolean; shared_with: string[] };
+  type MailComplianceSettingView = { enabled: boolean; set_by_ref?: string | null; set_at?: number | null };
+  type MailComplianceSetRequest = { enabled: boolean; purpose: string };
+  type MailComplianceEventKind = "enabled" | "disabled" | "search";
+  type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
+  type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
+  type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null };
+  type MailStage = "headers" | "body";
+  type MailPresence = "present" | { source_deleted: { at: number } } | { forgotten: { at: number } };
+  type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean };
+  type MailInboxPage = { items: MailInboxItem[]; next_cursor?: string | null };
+  type MailThreadRequest = { thread_ref: string };
+  type MailThreadView = { thread_ref: string; source_ref: string; messages: MailInboxItem[]; shared_with?: string[] };
+  type MailComplianceSearchRequest = { query: string; purpose: string; limit?: number | null };
+  type MailComplianceHit = { source_ref: string; thread_ref: string; message_ref: string; score: number; text?: string | null };
+  type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -6467,6 +6498,50 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
     select(input: Sdk.LensSelectRequest): Promise<Sdk.LensSelection | StoredResult>;
+  };
+  mail: {
+    compliance: {
+      /** The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it. */
+      log(input: Sdk.EmptyRequest): Promise<Sdk.MailComplianceEventView[] | StoredResult>;
+      /** Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers. */
+      search(input: Sdk.MailComplianceSearchRequest): Promise<Sdk.MailComplianceSearchReply | StoredResult>;
+      /** Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log. */
+      set(input: Sdk.MailComplianceSetRequest): Promise<Sdk.MailComplianceSettingView | StoredResult>;
+      /** Whether org compliance search across mailboxes is on; off by default. */
+      setting(input: Sdk.EmptyRequest): Promise<Sdk.MailComplianceSettingView | StoredResult>;
+    };
+    /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
+    inbox(input: Sdk.MailInboxRequest): Promise<Sdk.MailInboxPage | StoredResult>;
+    pack: {
+      /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+      install(input: Sdk.EmptyRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+    };
+    sources: {
+      /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */
+      audience_events(input: Sdk.MailSourceRef): Promise<Sdk.SourceAudienceEventView[] | StoredResult>;
+      /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+      connect(input: Sdk.MailSourceConnectRequest): Promise<Sdk.MailSourceConnectReceipt | StoredResult>;
+      /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.MailSourceView[] | StoredResult>;
+      members: {
+        /** Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on. */
+        set(input: Sdk.MailSourceMembersRequest): Promise<Sdk.MailSourceView | StoredResult>;
+      };
+      settings: {
+        /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
+        set(input: Sdk.MailSourceSettingsRequest): Promise<Sdk.MailSourceView | StoredResult>;
+      };
+      /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
+      sync_status(input: Sdk.MailSourceRef): Promise<Sdk.MailSyncStatusView | StoredResult>;
+    };
+    threads: {
+      /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
+      read(input: Sdk.MailThreadRequest): Promise<Sdk.MailThreadView | StoredResult>;
+      /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
+      share(input: Sdk.MailThreadShareRequest): Promise<Sdk.MailThreadShareReceipt | StoredResult>;
+      /** Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving. */
+      unshare(input: Sdk.MailThreadShareRequest): Promise<Sdk.MailThreadShareReceipt | StoredResult>;
+    };
   };
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
