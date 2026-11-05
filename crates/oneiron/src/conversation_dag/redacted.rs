@@ -32,7 +32,7 @@ pub(crate) struct RecordPin {
 }
 
 pub(crate) fn read(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<RecordPin>> {
@@ -224,7 +224,7 @@ pub(crate) fn children(
 }
 
 pub(crate) fn spawned_by(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     session: &EntityId,
 ) -> Result<Option<EntityId>> {
