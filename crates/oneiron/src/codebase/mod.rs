@@ -19,12 +19,13 @@ pub(crate) use self::store::codebase_asset_entity_id as snapshot_asset_entity_id
 
 pub use self::file_mode::DEFAULT_CODE_FILE_MODE;
 pub(crate) use self::file_mode::validate_code_file_mode;
+pub(crate) use self::ingest::{
+    CODE_SNAPSHOT_CAPTURE_CONTENT_KIND, read_asset_blob_in_txn, read_asset_blob_sighted_in_txn,
+    validate_project_id,
+};
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
-};
-pub(crate) use self::ingest::{
-    read_asset_blob_in_txn, read_asset_blob_sighted_in_txn, validate_project_id,
 };
 pub(crate) use self::instructions::code_instruction_handles_in;
 pub use self::instructions::{CODE_INSTRUCTION_FILE_NAMES, CodeInstructionHandle};
