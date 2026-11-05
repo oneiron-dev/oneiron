@@ -238,6 +238,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE, CONTENT),
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
+    // A change to a source's readers is history, restored with the rows it
+    // admitted; the policy itself is live authority: a restore never gives
+    // back a reader removed since, or takes away one added (FIX 12559).
+    (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
+    (&t::SOURCE_AUDIENCE_POLICY, LIVE),
+    // A row's birth binding stands with the row as the image holds it.
+    (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
+    (&t::SOURCE_AUDIENCE_THREAD, CONTENT),
     (&t::SPAWN_PLANNED_INTENT, LIVE),
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),

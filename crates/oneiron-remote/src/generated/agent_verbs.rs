@@ -3707,6 +3707,39 @@ impl OneironClient {
                 "vault.custody.members.reenrol" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CustodySetRevision,
                 >(client, verb, &input),
+                "vault.mail.pack.install" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackPutReceipt,
+                >(client, verb, &input),
+                "vault.mail.sources.connect" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSourceConnectReceipt,
+                >(client, verb, &input),
+                "vault.mail.sources.list" => remote_agent_verb_output::<
+                    Vec<oneiron::mail_pack::MailSourceView>,
+                >(client, verb, &input),
+                "vault.mail.sources.settings.set" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSourceView,
+                >(client, verb, &input),
+                "vault.mail.sources.members.set" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSourceView,
+                >(client, verb, &input),
+                "vault.mail.sources.audience_events" => remote_agent_verb_output::<
+                    Vec<oneiron::mail_pack::SourceAudienceEventView>,
+                >(client, verb, &input),
+                "vault.mail.threads.share" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailThreadShareReceipt,
+                >(client, verb, &input),
+                "vault.mail.threads.unshare" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailThreadShareReceipt,
+                >(client, verb, &input),
+                "vault.mail.compliance.setting" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailComplianceSettingView,
+                >(client, verb, &input),
+                "vault.mail.compliance.set" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailComplianceSettingView,
+                >(client, verb, &input),
+                "vault.mail.compliance.log" => remote_agent_verb_output::<
+                    Vec<oneiron::mail_pack::MailComplianceEventView>,
+                >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
                 >(client, verb, &input),
@@ -18532,6 +18565,138 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.custody.members.reenrol", value)
+    }
+    pub fn vault_mail_pack_install(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackPutReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.pack.install", value)
+    }
+    pub fn vault_mail_sources_connect(
+        &self,
+        input: &oneiron::mail_pack::MailSourceConnectRequest,
+    ) -> Result<oneiron::mail_pack::MailSourceConnectReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.connect", value)
+    }
+    pub fn vault_mail_sources_list(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::mail_pack::MailSourceView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.list", value)
+    }
+    pub fn vault_mail_sources_settings_set(
+        &self,
+        input: &oneiron::mail_pack::MailSourceSettingsRequest,
+    ) -> Result<oneiron::mail_pack::MailSourceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.settings.set", value)
+    }
+    pub fn vault_mail_sources_members_set(
+        &self,
+        input: &oneiron::mail_pack::MailSourceMembersRequest,
+    ) -> Result<oneiron::mail_pack::MailSourceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.members.set", value)
+    }
+    pub fn vault_mail_sources_audience_events(
+        &self,
+        input: &oneiron::mail_pack::MailSourceRef,
+    ) -> Result<Vec<oneiron::mail_pack::SourceAudienceEventView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.audience_events", value)
+    }
+    pub fn vault_mail_threads_share(
+        &self,
+        input: &oneiron::mail_pack::MailThreadShareRequest,
+    ) -> Result<oneiron::mail_pack::MailThreadShareReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.threads.share", value)
+    }
+    pub fn vault_mail_threads_unshare(
+        &self,
+        input: &oneiron::mail_pack::MailThreadShareRequest,
+    ) -> Result<oneiron::mail_pack::MailThreadShareReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.threads.unshare", value)
+    }
+    pub fn vault_mail_compliance_setting(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::mail_pack::MailComplianceSettingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.compliance.setting", value)
+    }
+    pub fn vault_mail_compliance_set(
+        &self,
+        input: &oneiron::mail_pack::MailComplianceSetRequest,
+    ) -> Result<oneiron::mail_pack::MailComplianceSettingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.compliance.set", value)
+    }
+    pub fn vault_mail_compliance_log(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::mail_pack::MailComplianceEventView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.compliance.log", value)
     }
     pub fn connector_answer(
         &self,

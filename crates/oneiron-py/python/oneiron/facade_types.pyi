@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4488 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1243 facade rows, 4508 declarations.
+Inputs: 1174 of 1243 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1078 of 1243 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -22389,6 +22389,87 @@ class CustodyMemberReenrolRequest(TypedDict):
     target_id: NotRequired[str | None]
     folder: NotRequired[str | None]
     scope: NotRequired[TargetScope | None]
+MailProvider = Literal["google_workspace", "google", "microsoft365", "imap", "caldav", "ics"]
+MailSourceKind = Literal["personal_mailbox", "group_address", "calendar"]
+class MailCopySettingRecentMonthsBody(TypedDict):
+    months: int
+class MailCopySettingRecentMonths(TypedDict):
+    recent_months: MailCopySettingRecentMonthsBody
+MailCopySetting = Literal["all", "search_only"] | MailCopySettingRecentMonths
+MailProviderDeleteSetting = Literal["keep_in_memory", "forget_too"]
+CalendarDetailSetting = Literal["busy_free_only", "shared"]
+class MailSourceConnectRequest(TypedDict):
+    provider: MailProvider
+    kind: MailSourceKind
+    address: str
+    provider_account: str
+    custody_ref: str
+    members: NotRequired[list[str]]
+    channel_identity_ref: NotRequired[str | None]
+    copy: NotRequired[MailCopySetting | None]
+    on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
+    calendar_details: NotRequired[CalendarDetailSetting | None]
+MailSourceStatus = Literal["active", "paused", "disconnected"]
+class MailSourceView(TypedDict):
+    source_ref: str
+    provider: MailProvider
+    kind: MailSourceKind
+    address: NotRequired[str | None]
+    owner_ref: NotRequired[str | None]
+    reads: bool
+    members: NotRequired[list[str]]
+    copy: MailCopySetting
+    on_provider_delete: MailProviderDeleteSetting
+    calendar_details: CalendarDetailSetting
+    status: MailSourceStatus
+    connected_at: int
+    updated_at: int
+class MailSourceConnectReceipt(TypedDict):
+    source: MailSourceView
+    resumed: bool
+class MailSourceSettingsRequest(TypedDict):
+    source_ref: str
+    copy: NotRequired[MailCopySetting | None]
+    on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
+    calendar_details: NotRequired[CalendarDetailSetting | None]
+    status: NotRequired[MailSourceStatus | None]
+class MailSourceMembersRequest(TypedDict):
+    source_ref: str
+    members: list[str]
+class MailSourceRef(TypedDict):
+    source_ref: str
+SourceAudienceOp = Literal["reader_added", "reader_removed", "shared", "unshared", "opened", "closed"]
+class SourceAudienceEventView(TypedDict):
+    revision: int
+    op: SourceAudienceOp
+    person_ref: NotRequired[str | None]
+    by_ref: NotRequired[str | None]
+    at: int
+class MailThreadShareRequest(TypedDict):
+    record_ref: str
+    person_ref: str
+class MailThreadShareReceipt(TypedDict):
+    thread_ref: str
+    person_ref: str
+    shared: bool
+    changed: bool
+    shared_with: list[str]
+class MailComplianceSettingView(TypedDict):
+    enabled: bool
+    set_by_ref: NotRequired[str | None]
+    set_at: NotRequired[int | None]
+class MailComplianceSetRequest(TypedDict):
+    enabled: bool
+    purpose: str
+MailComplianceEventKind = Literal["enabled", "disabled", "search"]
+class MailComplianceEventView(TypedDict):
+    sequence: int
+    kind: MailComplianceEventKind
+    by_ref: NotRequired[str | None]
+    at: int
+    purpose: str
+    query_digest: NotRequired[str | None]
+    result_count: NotRequired[int | None]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
