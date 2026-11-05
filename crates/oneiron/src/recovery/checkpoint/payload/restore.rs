@@ -240,6 +240,7 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedPayload,
+    retired_digests: &BTreeSet<[u8; 32]>,
 ) -> Result<Vec<OpenedOwnerRows>> {
     #[cfg(feature = "sync")]
     let carriers = SyncCarriers::new(store);
@@ -248,6 +249,14 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     let mut blob_artifacts = Vec::new();
     for (role, rows) in opened.bundles {
         match role {
+            BundleRole::Content(Getter::ProvenanceBody) => {
+                crate::provenance::body::checkpoint::restore_pruned_in_txn(
+                    store,
+                    txn,
+                    rows,
+                    retired_digests,
+                )?;
+            }
             BundleRole::Content(Getter::BlobArtifact) => {
                 if let Some(deferred) =
                     crate::blob_artifact::checkpoint::restore_or_defer_in_txn(store, txn, rows)?

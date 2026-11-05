@@ -104,7 +104,8 @@ impl Vault {
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
-        let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        let (retired, retired_digests) =
+            carried_bodies::require(&mut image, gate_custody.plan_mut())?;
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -198,7 +199,7 @@ impl Vault {
             // Each compartment that opened lands beside them, through its
             // getter's own restore (KS7-5).
             let blob_artifacts = if let Some(opened) = opened {
-                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?
             } else {
                 Vec::new()
             };

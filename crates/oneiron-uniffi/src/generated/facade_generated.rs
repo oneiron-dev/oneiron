@@ -1226,6 +1226,11 @@ export_facade! {
     let output = client.vault_skills_fit_set(&input)?;
     crate::codec::lift_record("vault.skills.fit.set", &output)
 };
+"vault.skills.advisory_ask.set" => fn vault_skills_advisory_ask_set(&self, input: SkillAdvisoryAskRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillAdvisoryAskRequest = crate::codec::lower_record("vault.skills.advisory_ask.set", input)?;
+    let output = client.vault_skills_advisory_ask_set(&input)?;
+    crate::codec::lift_record("vault.skills.advisory_ask.set", &output)
+};
 "vault.skills.permissions.approve" => fn vault_skills_permissions_approve(&self, input: HubSkillPermissionRequest) -> HubConsentReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
     let output = client.vault_skills_permissions_approve(&input)?;
