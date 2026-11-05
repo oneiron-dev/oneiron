@@ -28,6 +28,10 @@
 //! owner's verdict on the team's deliverable ([`super::owner_outcome`]): a
 //! run's own word is no anchor.
 
+mod input_capture;
+
+pub(crate) use input_capture::record_led_team_captured;
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -105,6 +109,9 @@ pub struct TeamRecordInput {
     pub roles: Option<BTreeMap<String, u32>>,
     /// How much of the campaign's cell grid the outputs covered.
     pub coverage: Option<TeamCoverageInput>,
+    /// Optional original-input storage at an explicit native claim position.
+    /// Absent or null captures nothing; a failed capture never rejects the receipt.
+    pub capture_scope: Option<crate::memory::ClaimScope>,
 }
 
 /// Who decided. A leader or a chair is the calling agent.

@@ -14,6 +14,7 @@ use crate::code_run::{
 use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
+use crate::team::run::record_led_team_captured;
 use crate::team::run::{member_spawn_key, planned_start, record_led_team, start_stamp};
 use crate::team::run_binding::record_team_start_sourced_in_txn;
 use crate::team::{
@@ -159,6 +160,16 @@ impl HostSelfDispatcher<'_> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(Err("team_off_record"));
         };
-        record_led_team(vault, leader, input, crate::unix_seconds_now())
+        if input.capture_scope.is_none() {
+            return record_led_team(vault, leader, input, crate::unix_seconds_now());
+        }
+        let envelope = self.write_envelope(SelfEffect::Team, None).ok();
+        record_led_team_captured(
+            vault,
+            leader,
+            input,
+            envelope.as_ref(),
+            crate::unix_seconds_now(),
+        )
     }
 }
