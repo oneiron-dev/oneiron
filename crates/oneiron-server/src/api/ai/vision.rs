@@ -26,8 +26,8 @@ use axum::response::{IntoResponse, Response};
 use oneiron::llm::decision::catalogue::QuestionFamily;
 use oneiron::llm::decision::{
     AnswerContract, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionImage,
-    DecisionLadder, DecisionProvider, DecisionRung, EvidenceVersion, HumanDecisionQueue,
-    HumanDecisionRequest, ProviderPin, Reversibility,
+    DecisionLadder, DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest,
+    ProviderPin, Reversibility,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::manifest::ModelRole;
@@ -299,13 +299,14 @@ async fn box_answer(
     run: RunAdmission,
     run_id: String,
 ) -> Result<AskImageAnswer, Response> {
-    let asset = EntityId::from_hex(&pulled.asset_ref).map_err(|_| {
+    let evidence = pulled.evidence.clone().ok_or_else(|| {
         refusal(
             StatusCode::INTERNAL_SERVER_ERROR,
             "pixels_missing",
             "the pull named no asset",
         )
     })?;
+    let asset = evidence.id;
     let family = match contract {
         AnswerContract::Point => ASK_IMAGE_POINT,
         _ => ASK_IMAGE_BOX,
@@ -321,10 +322,7 @@ async fn box_answer(
         })?;
     let images = vec![DecisionImage {
         name: BOX_IMAGE.to_owned(),
-        evidence: EvidenceVersion {
-            id: asset,
-            body_hash: *blake3::hash(&image.bytes).as_bytes(),
-        },
+        evidence,
         image,
         frame: None,
     }];
