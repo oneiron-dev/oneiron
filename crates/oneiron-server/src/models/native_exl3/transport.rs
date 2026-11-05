@@ -182,6 +182,77 @@ impl Channel {
         writer.write_all(&bytes[sent..]).await
     }
 
+    async fn send_with_fd_released(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: BorrowedFd<'_>,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<(), DispatchWriteError> {
+        let bytes =
+            Self::frame(op, request_id, epoch, body).map_err(DispatchWriteError::Transport)?;
+        let fds = [fd];
+        let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+        let mut control = SendAncillaryBuffer::new(&mut space);
+        if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
+            return Err(DispatchWriteError::Transport(io::Error::other(
+                "the descriptor does not fit its control message",
+            )));
+        }
+        let writer = self.writer.lock().await;
+        let stream: &UnixStream = (*writer).as_ref();
+        let mut attempted = false;
+        let sent = loop {
+            stream
+                .writable()
+                .await
+                .map_err(DispatchWriteError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(DispatchWriteError::Release)?;
+            if !attempted {
+                lease.begin_physical_attempt();
+                attempted = true;
+            }
+            match stream.try_io(Interest::WRITABLE, || {
+                sendmsg(stream, &[IoSlice::new(&bytes)], &mut control, SEND_FLAGS)
+                    .map_err(io::Error::from)
+            }) {
+                Ok(sent) => break sent,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(DispatchWriteError::Transport(error)),
+            }
+        };
+        if sent == 0 {
+            return Err(DispatchWriteError::Transport(
+                io::ErrorKind::WriteZero.into(),
+            ));
+        }
+        let mut sent = sent;
+        while sent < bytes.len() {
+            stream
+                .writable()
+                .await
+                .map_err(DispatchWriteError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(DispatchWriteError::Release)?;
+            match stream.try_write(&bytes[sent..]) {
+                Ok(0) => {
+                    return Err(DispatchWriteError::Transport(
+                        io::ErrorKind::WriteZero.into(),
+                    ));
+                }
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(DispatchWriteError::Transport(error)),
+            }
+        }
+        Ok(())
+    }
+
     /// The next frame, or `None` once the worker has closed the connection.
     /// Cancellation-safe (FIX 11961): every chunk lands in the pending
     /// frame in `self` before the next await, so a dropped read resumes
@@ -579,8 +650,15 @@ impl CallUpdates {
     }
 }
 
+enum DispatchWriteError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+}
+
 /// How a call's start went wrong.
 pub(super) enum Start {
+    /// The current dispatch condition refused another write of this call.
+    Release(oneiron::LlmError),
     /// Nothing left this side: the worker never saw the call. Carries
     /// `OpenAiCompatTransportError::NotSent`.
     NotSent(OpenAiCompatTransportError),
@@ -726,6 +804,7 @@ impl Call {
         session: Option<JsonValue>,
         schedule: Option<&CallSchedule>,
         worker: Option<&InferenceWorker>,
+        dispatch_lease: Option<&oneiron::BudgetLease>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
@@ -743,9 +822,17 @@ impl Call {
             }
             None => "generate",
         };
-        let sent = channel
-            .send_with_fd(op, request_id, Some(epoch), body, input.fd())
-            .await;
+        let sent = match dispatch_lease {
+            Some(lease) if lease.has_dispatch_release() => {
+                channel
+                    .send_with_fd_released(op, request_id, Some(epoch), body, input.fd(), lease)
+                    .await
+            }
+            _ => channel
+                .send_with_fd(op, request_id, Some(epoch), body, input.fd())
+                .await
+                .map_err(DispatchWriteError::Transport),
+        };
         let mut call = Self {
             channel: Some(channel),
             request_id,
@@ -757,7 +844,12 @@ impl Call {
         };
         if let Err(error) = sent {
             call.ended = true;
-            return Err(Start::Cut(io_fault("send generate", Some(error))));
+            return Err(match error {
+                DispatchWriteError::Transport(error) => {
+                    Start::Cut(io_fault("send generate", Some(error)))
+                }
+                DispatchWriteError::Release(error) => Start::Release(error),
+            });
         }
         loop {
             let frame = match call.channel_mut().next().await {
