@@ -216,11 +216,25 @@ impl Vault {
                 settings.override_layout = layout;
             }
             if let Some((agent, layout)) = agent_override {
-                if layout.is_some() && self.entity_header_in_txn(&*txn, &agent)?.is_none() {
-                    return Err(Error::InvalidConfig(format!(
-                        "board layout override names agent {}, which the vault does not hold",
-                        agent.to_hex()
-                    )));
+                // An empty layout clears, as `None` does; a layout set names
+                // an agent the vault holds: its AGENT_DEF or its PERSON.
+                let layout = layout.filter(|layout| !layout.sections.is_empty());
+                if layout.is_some() {
+                    let kind = self
+                        .entity_header_in_txn(&*txn, &agent)?
+                        .map(|header| header.entity_type);
+                    if !matches!(
+                        kind,
+                        Some(
+                            crate::registry::ENTITY_TYPE_AGENT_DEF
+                                | crate::registry::ENTITY_TYPE_PERSON
+                        )
+                    ) {
+                        return Err(Error::InvalidConfig(format!(
+                            "board layout override names {}, which is no agent the vault holds",
+                            agent.to_hex()
+                        )));
+                    }
                 }
                 settings = settings.with_agent_override(agent, layout);
             }

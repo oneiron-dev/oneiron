@@ -13,8 +13,8 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use oneiron::EntityId;
 use oneiron::context_board::{
-    BoardActorClass, BoardLayout, BoardLayoutCandidate, BoardSection, MemoryTier, PeopleView,
-    PersonKind, SectionFilter, TasksSectionRows,
+    BoardActorClass, BoardLayout, BoardLayoutCandidate, BoardSection, BoardWhoFilter, MemoryTier,
+    PeopleView, PersonKind, SectionFilter, TasksSectionRows,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -163,10 +163,8 @@ pub(crate) fn filter_memories_sections(
             writers.insert(row, writer);
         }
     }
-    let mut read_sources = Vec::new();
     let members = match who.group() {
         Some(group) if read.is_entity_readable(&group)? => {
-            read_sources.push(group);
             vault.board_filter_group_members(group)?
         }
         _ => BTreeSet::new(),
@@ -186,11 +184,30 @@ pub(crate) fn filter_memories_sections(
         })
         .map(|(row, _)| *row)
         .collect();
-    for row in matched.iter().filter(|row| detail.contains(row)) {
-        if let Some(writer) = writers.get(row).filter(|writer| Some(**writer) != actor)
-            && !read_sources.contains(writer)
-        {
-            read_sources.push(*writer);
+    // What each detail row the filter alone keeps rests on: its writer
+    // (other than `actor`), the PERSON a class match read the writer's class
+    // from, and the group whose roster matched it. A pinned or fold-kept row
+    // rests on none of them.
+    let mut read_sources: Vec<EntityId> = Vec::new();
+    for row in matched
+        .iter()
+        .filter(|row| detail.contains(*row) && !keep.contains(*row))
+    {
+        let Some(writer) = writers.get(row).copied() else {
+            continue;
+        };
+        let mut rests_on = vec![writer];
+        match who {
+            BoardWhoFilter::Class { .. } => {
+                rests_on.extend(people.people.get(writer).map(|person| person.person));
+            }
+            BoardWhoFilter::Group { group } => rests_on.push(*group),
+            BoardWhoFilter::Mine | BoardWhoFilter::Actor { .. } => {}
+        }
+        for source in rests_on {
+            if Some(source) != actor && !read_sources.contains(&source) {
+                read_sources.push(source);
+            }
         }
     }
     let sections = sections
