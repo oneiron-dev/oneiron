@@ -110,6 +110,7 @@ impl Vault {
                 .filter(|_| pending.settled.is_none())
                 .map(str::to_owned),
                 principal_ref: pending.principal_ref,
+                grant_id: pending.grant_id,
                 name: pending.name,
                 tool: pending.tool,
                 held_at_ms: Some(pending.held_at_ms),
@@ -123,6 +124,7 @@ impl Vault {
             .map(|row| ConnectorCallState {
                 settled: row.settled.as_ref().map(SettledConnectorCall::outcome),
                 principal_ref: row.principal_ref,
+                grant_id: None,
                 name: row.name,
                 tool: row.tool,
                 held_at_ms: None,
