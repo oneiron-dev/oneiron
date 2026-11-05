@@ -287,6 +287,9 @@ impl SyncServerConfig {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServeConfig {
     pub vault_path: PathBuf,
+    /// The resolved file first-run model setup may rewrite, `None` for managed
+    /// argv/settings-only serving or a binding started without a file.
+    pub config_path: Option<PathBuf>,
     pub host: String,
     pub port: u16,
     /// The artifact-only listener's port on `host`; `0` takes any free one,
@@ -461,6 +464,7 @@ impl Default for ServeConfig {
 
         Self {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
+            config_path: None,
             host: "0.0.0.0".to_owned(),
             port: 9090,
             artifact_port: 0,
