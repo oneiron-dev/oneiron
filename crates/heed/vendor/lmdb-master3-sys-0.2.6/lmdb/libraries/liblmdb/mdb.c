@@ -6984,8 +6984,10 @@ mdb_rpage_get(MDB_txn *txn, pgno_t pg0, int numpgs, MDB_page **ret)
 			/* setup for encryption */
 			if (env->me_encfunc) {
 				id3.menc = malloc(len);
-				if (!id3.menc)
+				if (!id3.menc) {
+					munmap(id3.mptr, len);
 					return ENOMEM;
+				}
 			}
 			/* check for local-only page */
 			if (rem) {
@@ -7116,6 +7118,7 @@ retry:
 				if (env->me_encfunc) {
 					id3.menc = malloc(len);
 					if (!id3.menc) {
+						munmap(id3.mptr, len);
 						rc = ENOMEM;
 						goto fail;
 					}
@@ -7195,6 +7198,7 @@ fail:
 		if (env->me_encfunc) {
 			id3.menc = malloc(len);
 			if (!id3.menc) {
+				munmap(id3.mptr, len);
 				rc = ENOMEM;
 				goto fail;
 			}
