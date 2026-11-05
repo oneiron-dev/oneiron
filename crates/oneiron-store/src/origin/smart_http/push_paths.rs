@@ -17,7 +17,7 @@ use crate::origin::smart_http::paths::serve_failed;
 use oneiron_base::error::Result;
 
 /// One move's key: its old value (`None` for a creation) and its new one.
-type MoveKey = (Option<String>, String);
+pub type MoveKey = (Option<String>, String);
 
 /// Parses the whole stream into its moves.
 pub fn read_moves(mut bytes: &[u8]) -> Result<BTreeMap<MoveKey, BTreeSet<String>>> {
