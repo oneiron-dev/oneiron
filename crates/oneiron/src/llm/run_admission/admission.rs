@@ -22,6 +22,7 @@ use super::work_context::WorkContext;
 mod denied;
 mod media;
 mod origin;
+mod unrecorded;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
@@ -85,6 +86,7 @@ pub(super) struct RunInner {
     /// The host marked the run as memory work (FIX 11003).
     memory_work: AtomicBool,
     receipts: Arc<dyn RunReceiptSink>,
+    unrecorded: bool,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
     /// `calls`. A meter other runs share issues their leases too, so the
@@ -159,7 +161,16 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
     ) -> Self {
-        Self::start(run.into(), declaration, meter, host, receipts, payer, None)
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            host,
+            receipts,
+            payer,
+            None,
+            false,
+        )
     }
 
     /// Starts a run as [`Self::with_payer`] does, bound to `attribution`: the
@@ -183,6 +194,7 @@ impl RunAdmission {
             receipts,
             payer,
             Some(attribution),
+            false,
         )
     }
 
@@ -194,6 +206,7 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
         attribution: Option<RunAttribution>,
+        unrecorded: bool,
     ) -> Self {
         Self {
             inner: Arc::new(RunInner {
@@ -209,6 +222,7 @@ impl RunAdmission {
                 attribution,
                 memory_work: AtomicBool::new(false),
                 receipts,
+                unrecorded,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
             }),
