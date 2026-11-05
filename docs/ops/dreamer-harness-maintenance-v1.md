@@ -57,6 +57,36 @@ not a factual verdict from those five questions.
 
 Canon: ARCH-0026, “Curate own output” and “Observe and attribute”.
 
+## Owner-set curator rubric
+
+`GET /v1/owner/dreamer/maintenance/curator-rubric` reads the actual stored
+`CuratorRubric`, or the validated shipped defaults when no owner row exists.
+The real owner proof and active-person check are revalidated in that same
+read snapshot. It is a policy read, not a grading verdict.
+
+`POST` to the same path replaces the complete rubric through the unchanged
+native `set_curator_rubric` owner act. Its normal grouped writer revalidates
+the owner and active person before storing anything. The response echoes the
+rubric that committed, not a second read or a promise that no later writer
+changed it. No pass is queued by setting the rubric. Subsequent native
+scheduling/passes consume it as before; existing slot/dedupe behavior stays.
+
+The full JSON object has `minimum_age_secs`, `edge_weight_factor`,
+`confidence_factor`, `cadence_secs` and `questions`. The questions object has
+`authorship`, `freshness` and `least_force`. Unknown fields are invalid.
+Native validation is unchanged: cadence is nonzero; both factors are finite,
+at least zero and less than one; each question is non-blank. No new defaults,
+limits or automatic judge are added. The question wording remains policy
+data; the deterministic curator does not answer it with a grading model.
+
+Curator maintenance and OF-216 strength maintenance remain distinct. The
+curator's owner-configured weight/confidence/stale/retract ladder and its
+nightly/idle scheduling are unchanged. Strength orders selection and archives
+quiet weak claims; its separate operator policy is not exposed as owner
+policy by these routes. Archive behavior and maintenance of retained history
+are unchanged. This control surface does not complete curator quality grading
+or reconcile every policy question in FIX393.
+
 ## Owner-supplied evaluation input
 
 `POST /v1/owner/dreamer/maintenance/harness-evaluation` accepts
