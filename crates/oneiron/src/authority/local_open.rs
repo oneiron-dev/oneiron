@@ -268,14 +268,19 @@ impl Vault {
     /// a conflicted or invalid history has too.
     pub(super) fn authority_is_unstarted(&self) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        if !authority_log_rows_in_txn(&self.store, &txn)?.is_empty() {
+        self.authority_is_unstarted_in_txn(&txn)
+    }
+
+    /// The same unstarted-authority check in the caller's snapshot.
+    pub(super) fn authority_is_unstarted_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        if !authority_log_rows_in_txn(&self.store, txn)?.is_empty() {
             return Ok(false);
         }
-        let pin = super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?;
+        let pin = super::pinned_root::read_pin_row_in_txn(&self.store, txn)?;
         if pin.pin.is_some() || pin.awaiting.is_some() {
             return Ok(false);
         }
-        Ok(adopted_authority_checkpoint_in_txn(&self.store, &txn)?.is_none())
+        Ok(adopted_authority_checkpoint_in_txn(&self.store, txn)?.is_none())
     }
 }
 
