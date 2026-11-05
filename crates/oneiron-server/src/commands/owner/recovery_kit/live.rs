@@ -27,6 +27,7 @@ use crate::cli::{
 };
 use crate::commands::api::{normalized_base, signed_binding};
 use crate::owner::vault_key::hex;
+use oneiron_vault_contract::BINDING_HEADER;
 
 /// The running server one command asks, and its credential.
 struct Server {
@@ -103,7 +104,7 @@ impl Server {
                         request = request.bearer_auth(secret.as_str());
                     }
                     if let Some(binding) = &binding {
-                        request = request.header("x-oneiron-binding", binding.as_str());
+                        request = request.header(BINDING_HEADER, binding.as_str());
                     }
                     if let Some(body) = body {
                         request = request
