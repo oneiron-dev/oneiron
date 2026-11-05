@@ -948,6 +948,7 @@ pub enum Op {
         target: NodeId,
         row_index: usize,
         col_index: usize,
+        #[serde(default)]
         paragraph: Option<NodeId>,
         text: String,
         #[serde(default)]

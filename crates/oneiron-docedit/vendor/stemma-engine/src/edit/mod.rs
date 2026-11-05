@@ -13586,9 +13586,7 @@ pub(crate) fn apply_set_cell_text_on_table_block(
     // A joined redline can equal the requested text while the pending edit
     // state differs (Deleted("x") + Inserted("y") reads "xy", but keeps "y").
     // Do not mistake that genuine edit for an identity replacement.
-    if is_identity_replacement(para, &new_content)
-        && paragraph_visible_pending_text(para) == text
-    {
+    if is_identity_replacement(para, &new_content) && paragraph_visible_pending_text(para) == text {
         return Err(EditError::NoOpEdit {
             block_id: block_id.clone(),
             step_index,
