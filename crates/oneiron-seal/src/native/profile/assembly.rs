@@ -38,20 +38,33 @@ fn next_capacity(capacity: usize, needed: usize) -> usize {
 
 /// The capacities of the caller's revisions, smallest first: each one's
 /// hole, less its delimiters, holds half as many DER bytes as hex digits.
-fn supplied_capacities(revisions: &[PreparedRevision<'_>]) -> Vec<usize> {
-    let mut capacities: Vec<usize> = revisions
-        .iter()
-        .filter_map(|revision| {
-            let [_, open, close, _] = revision.byte_range;
-            let hex = close.checked_sub(open)?.checked_sub(2)?;
-            usize::try_from(hex / 2)
-                .ok()
-                .filter(|_| hex.is_multiple_of(2))
-        })
-        .collect();
+fn supplied_capacities(
+    revisions: &[PreparedRevision<'_>],
+    limits: &SealResourceLimits,
+) -> Result<crate::memory::Held<Vec<usize>>, SealError> {
+    let bytes = revisions.len().saturating_mul(std::mem::size_of::<usize>());
+    let hold = limits
+        .memory
+        .hold(bytes)
+        .map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))?;
+    let mut capacities = Vec::new();
+    capacities.try_reserve_exact(revisions.len()).map_err(|_| {
+        crate::memory::SealMemoryRefusal::Floor {
+            needed: u64::try_from(bytes).unwrap_or(u64::MAX),
+            available: 0,
+        }
+        .seal_error(SealStage::PdfIncrementalUpdate)
+    })?;
+    capacities.extend(revisions.iter().filter_map(|revision| {
+        let [_, open, close, _] = revision.byte_range;
+        let hex = close.checked_sub(open)?.checked_sub(2)?;
+        usize::try_from(hex / 2)
+            .ok()
+            .filter(|_| hex.is_multiple_of(2))
+    }));
     capacities.sort_unstable();
     capacities.dedup();
-    capacities
+    Ok(crate::memory::Held::new(capacities, hold))
 }
 
 /// What one capacity's attempt came to: the signed revision, or the DER
@@ -107,6 +120,7 @@ pub(crate) fn sub_operation_id(
 pub(crate) fn map_backend_error(err: crate::api::BackendError) -> SealError {
     use crate::api::BackendError as Be;
     match err {
+        Be::Memory(refusal) => refusal.seal_error(SealStage::BackendSign),
         Be::Unavailable { retry_after_ms } => SealError::BackendUnavailable { retry_after_ms },
         Be::RateLimited { retry_after_ms } => SealError::Retryable {
             stage: SealStage::BackendSign,
@@ -524,7 +538,31 @@ pub(crate) async fn assemble(
     operation_id: &str,
     target: PadesProfile,
 ) -> Result<AssemblyOutcome, SealError> {
-    let identity = ctx.backend.signing_identity().map_err(map_backend_error)?;
+    let identity = {
+        let identity = ctx.backend.signing_identity().map_err(map_backend_error)?;
+        let bytes = identity
+            .signer_certificate_der
+            .capacity()
+            .saturating_add(
+                identity
+                    .certificate_chain_der
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Vec<u8>>()),
+            )
+            .saturating_add(
+                identity
+                    .certificate_chain_der
+                    .iter()
+                    .map(Vec::capacity)
+                    .fold(0usize, usize::saturating_add),
+            );
+        let hold = ctx
+            .limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::BackendSign))?;
+        crate::memory::Held::new(identity, hold)
+    };
     let cert_alg = cms::cert_signature_algorithm(&identity.signer_certificate_der)?;
     if cert_alg != identity.algorithm {
         return Err(SealError::Fatal {
@@ -538,7 +576,7 @@ pub(crate) async fn assemble(
     // caller's revisions are tried smallest first, and past the largest the
     // DER bytes needed are in the call's counts for the caller to write a
     // larger one (FIX 6270).
-    let supplied = supplied_capacities(revisions);
+    let supplied = supplied_capacities(revisions, ctx.limits)?;
     let mut capacity = supplied.first().copied().unwrap_or(CAPACITY_LADDER[0]);
     let SignedCandidate { draft, token } = loop {
         match try_capacity(
