@@ -827,7 +827,7 @@ impl NativeClient {
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
-        let scope = recall_scope_to_engine(scope);
+        let scope = recall_scope_to_engine(scope).map_err(facade_error)?;
         let limit = limit
             .map(limit_to_engine)
             .transpose()
