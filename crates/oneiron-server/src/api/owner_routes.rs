@@ -74,6 +74,7 @@ mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
+mod harness_evaluation_routes;
 pub(super) mod history_routes;
 pub(super) mod house_routes;
 mod hub_table;
@@ -146,6 +147,7 @@ fn owner_tables() -> OwnerTable {
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
+        harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),
         free_time_routes::owner_table(),
         embedding_space_routes::owner_table(),
