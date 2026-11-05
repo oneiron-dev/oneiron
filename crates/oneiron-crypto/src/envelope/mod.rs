@@ -163,6 +163,9 @@ pub enum Purpose {
     /// caller binds the world key id in `key_id`, its row family as the recipient,
     /// and its native row identity and revisions as extra associated data.
     WorldSideRow = 29,
+    /// A legal-clone content chunk or encrypted descriptor/summary, sealed only
+    /// to the host's independently destroyable per-order hybrid key.
+    LegalClone = 30,
 }
 
 impl Purpose {
@@ -197,6 +200,7 @@ impl Purpose {
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
+            30 => Self::LegalClone,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
