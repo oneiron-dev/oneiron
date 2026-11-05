@@ -20,6 +20,10 @@
 //! (memory-only handlers, like `verify`); the prepared output is admitted
 //! by digest, page count and format bound before it is returned.
 
+mod inspect;
+
+pub use inspect::{PdfInspectionError, inspect_pdf_region_until};
+
 use std::collections::BTreeMap;
 
 use oneiron::blob_artifact::esign::render::{
@@ -44,7 +48,9 @@ use crate::spec::{LentInput, OrganTier};
 const PREPARED_OUTPUT: &str = "prepared.pdf";
 
 #[derive(Serialize)]
-struct InspectArgs {}
+struct InspectArgs {
+    stream_decode_bytes: u64,
+}
 
 #[derive(Serialize)]
 struct PrepareArgs {
@@ -164,7 +170,10 @@ pub fn inspect_pdf_pages_via_organ(
     settings: &SealSettings,
     bytes: &[u8],
 ) -> Result<Vec<PageGeometry>, EsignSealerError> {
-    let args = to_value(&InspectArgs {}).map_err(|_| reply_invalid())?;
+    let args = to_value(&InspectArgs {
+        stream_decode_bytes: vault.esign_stream_decode_bytes(),
+    })
+    .map_err(|_| reply_invalid())?;
     measure_input(vault, bytes);
     let lent = vec![LentInput {
         media_type: PDF.to_owned(),
@@ -180,7 +189,14 @@ pub fn inspect_pdf_pages_via_organ(
         &handlers,
         &mut CallMeasure::default(),
     )?;
-    match from_value(&reply)? {
+    inspected_pages(vault, &reply)
+}
+
+fn inspected_pages(
+    vault: &oneiron::Vault,
+    reply: &oneiron_organ_protocol::Value,
+) -> Result<Vec<PageGeometry>, EsignSealerError> {
+    match from_value(reply)? {
         InspectReply::Inspected { pages } => Ok(pages
             .into_iter()
             .map(|page| PageGeometry {

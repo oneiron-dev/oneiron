@@ -243,14 +243,26 @@ pub(super) async fn upload_geometry(
                 Ok(body) => body,
                 Err(rejection) => return rejection.into_response(),
             };
+            let inspection_server = Arc::clone(&server);
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 match reserved {
                     Some((mut lease, deadline, bytes)) => {
                         lease.materialized(bytes, body.len() as u64);
-                        parse_lease::inspected(lease, deadline, &body, stream_decode_bytes)
+                        parse_lease::inspected_anonymous(
+                            &inspection_server,
+                            lease,
+                            deadline,
+                            &body,
+                            stream_decode_bytes,
+                        )
                     }
-                    None => parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes),
+                    None => parse_lease::inspected_anonymous_in_memory(
+                        &inspection_server,
+                        &memory,
+                        &body,
+                        stream_decode_bytes,
+                    ),
                 }
             })
             .await
