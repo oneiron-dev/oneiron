@@ -276,15 +276,27 @@ pub(super) struct WindowCapture {
     pub(super) rows: Vec<RowLocator>,
 }
 
+/// One copy of a window value or withheld key the credential client holds
+/// (FIX 10278): kept as it stands under the image's own seal, as that
+/// client's dispatched rows are. Another client's copy keeps its window whole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::recovery::checkpoint) struct ClientCopy {
+    pub(in crate::recovery::checkpoint) atom: u32,
+    pub(in crate::recovery::checkpoint) value: Vec<u8>,
+}
+
 /// One split window as the image keeps it (FIX 10277): its carrier's one
 /// spelling (the vendored skeleton, its rows' locators and slices, each
 /// value's copies and their homes, never a value or an actor), and the
-/// structure copies the image's own seal holds, by ordinal.
+/// structure copies and credential client copies the image's own seal holds,
+/// by ordinal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::recovery::checkpoint) struct WindowCarrierRecord {
     pub(in crate::recovery::checkpoint) carrier: Vec<u8>,
     pub(in crate::recovery::checkpoint) structure: Vec<StructureCopy>,
+    pub(in crate::recovery::checkpoint) clients: Vec<ClientCopy>,
 }
 
 /// One structure copy of a window value: ids, markers and metadata with no
