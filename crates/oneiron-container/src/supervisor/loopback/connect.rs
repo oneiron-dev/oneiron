@@ -62,11 +62,11 @@ impl PendingConnects {
 }
 
 /// The one connect in progress on a socket. Dropping it ends it.
-pub(super) struct Connecting<'a>(&'a Socket);
+pub(in crate::supervisor) struct Connecting<'a>(&'a Socket);
 
 impl<'a> Connecting<'a> {
     /// Marks a connect in progress on `socket`: `None` if one already is.
-    pub(super) fn begin(socket: &'a Socket) -> Option<Self> {
+    pub(in crate::supervisor) fn begin(socket: &'a Socket) -> Option<Self> {
         // Built only when this call set the flag: a guard built and dropped
         // for a refused call would clear the flag of the connect in progress.
         (!socket.connecting.swap(true, Ordering::AcqRel)).then(|| Self(socket))
