@@ -23,6 +23,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
   proposals, exact owner review and confirmation, and atomic run-tray approval.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
+- [Legal-hold clone implementation map](legal-hold-clone-map.md) — planned per-order legal custody, normal user erase, and the remaining implementation slices; MAP only, not a shipped clone.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
