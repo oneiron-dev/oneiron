@@ -55,9 +55,11 @@ The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
 native attempt releases the identity. Each hash copy is recorded immediately
 after its existing read, so a later read error also releases its charge after
-the buffer drops. Its buffers are declared before the private lease. The space
-declarations' inner strings, sets and maps remain outside that charge. Native
-declaration checks, floors, hashes and capture gates stay unchanged.
+the buffer drops. Each successfully decoded space declaration's owned ID
+string is also recorded once on that lease, separately from the query's own
+space ID. Its buffers are declared before the private lease. The space
+declarations' sets and maps remain outside that charge. Native declaration
+checks, floors, hashes and capture gates stay unchanged.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
