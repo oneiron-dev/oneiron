@@ -120,6 +120,26 @@ their existing funded runs, and filter the native ladder through that same froze
 Credential authority, source provenance and payer identity remain separate. Ordinary
 sessions keep their original callers, routes, policy admission and funding.
 
+The uncalled phone preparation factory consumes this original call-bound reader and
+requires the same authenticated instrument and projected agent on the same vault before
+allocating its configured call budget. It constructs one anonymous first-claim party
+labeled only by the new opaque call ref: no owner session, PERSON, roster, room or
+voiceprint. Instructions and model restrictions come from the same admitted definition;
+its native world scope stays on both direct and speculative readers. The payer and
+model caller are the actual agent. Existing configured budget, reserve, suspension and
+render settings are reused, with no-room funding. Media uses the phone-specific door,
+not the ordinary owner/device door. This constructor is not connected to a public
+start door or a running call. Native action/model-ceiling qualification and the actual
+answering lifecycle remain open; caller attribution is not credential authority.
+
+The shared public-session implementation has a private optional phone mode. It reuses
+the same session hold, command queue, media worker, journal, stop and task ownership.
+A phone lookup first matches the original authority, then checks current line consent.
+Its credential/line watcher uses the existing liveness interval; changing the scope's
+value alone does not end the call. Ordinary start still supplies `None` and keeps its
+original owner/device checks. There is no public phone start or HTTP audio door; this
+private mode cannot yet start a phone call through an existing production caller.
+
 The call-local media entry points attach the actual receiving agent to the same
 admitted run and filter its ladder through the frozen native model list, including
 owner-selected fallback rungs. Voice routing filters eligible backend bindings before
@@ -137,13 +157,13 @@ A credential, model list or generation label does not supply a whole source set.
 media calls still assert no whole set unless their actual producer supplies it. The
 prepared phone output check uses its original captured consent, sources and audience;
 complete instruction, history, tool and saved-control accounting, live ASR withdrawal
-and the actual answering factory remain open. These ports are not phone activation or
+and the actual answering lifecycle remain open. These ports are not phone activation or
 provider/runtime proof.
 
 A phone-bound host refuses speaker matching and roster departures before accessing
 any roster. Ordinary voice hosts keep their existing matching and departure behavior.
 This guard does not create an anonymous session or activate an enrollment path; the
-actual phone factory and its no-enrollment execution remain open.
+prepared factory's public call lifecycle and no-enrollment execution remain open.
 
 Complete tool/control and saved-notice replay source accounting, explicit no-recognition
 execution and the actual answering lifecycle remain open. These native read and output-check ports are not a

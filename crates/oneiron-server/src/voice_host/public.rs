@@ -42,6 +42,7 @@ struct SessionTasks {
 pub(crate) struct PublicSession {
     pub(super) auth: CoreAuth,
     owner_only: bool,
+    phone: Option<Arc<super::PhoneCallRead>>,
     pub(super) commands: mpsc::Sender<Command>,
     pub(super) journal: Arc<Mutex<Journal>>,
     pub(super) shutdown: ManagedShutdown,
@@ -118,6 +119,9 @@ impl LiveVoiceSessions {
             .filter(|entry| entry.auth.same_authority(auth))
             .cloned()
             .ok_or_else(unavailable)?;
+        if let Some(phone) = &entry.phone {
+            phone.current_scope().map_err(|_| unavailable())?;
+        }
         entry.hold.named(|| self.admission())?;
         Ok(entry)
     }
@@ -236,6 +240,15 @@ pub(crate) async fn start_public(
     auth: &CoreAuth,
     input: LiveVoiceStartRequest,
 ) -> MemoryResult<LiveVoiceSession> {
+    start_public_with(server, auth, input, None).await
+}
+
+async fn start_public_with(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LiveVoiceStartRequest,
+    phone: Option<Arc<super::PhoneCallRead>>,
+) -> MemoryResult<LiveVoiceSession> {
     let settings = server
         .ai
         .voice_settings()
@@ -253,8 +266,18 @@ pub(crate) async fn start_public(
         brain,
         media,
         live,
-    } = prepare_call(server, &settings, auth, input.clone(), &shutdown)
-        .map_err(|_| invalid("live voice admission or configured voice routes refused"))?;
+    } = match &phone {
+        Some(phone) => super::boot::phone_call::prepare_phone_call(
+            server,
+            &settings,
+            auth,
+            input.clone(),
+            &shutdown,
+            Arc::clone(phone),
+        ),
+        None => prepare_call(server, &settings, auth, input.clone(), &shutdown),
+    }
+    .map_err(|_| invalid("live voice admission or configured voice routes refused"))?;
     let (tts, bridge, worker, wire, control) = media.build().map_err(MemoryError::from)?;
     let journal = Arc::new(Mutex::new(Journal::new(session_ref.clone())));
     let (commands, receiver) = mpsc::channel(settings.queue_capacity);
@@ -273,7 +296,8 @@ pub(crate) async fn start_public(
     }
     let entry = Arc::new(PublicSession {
         auth: auth.clone(),
-        owner_only: input.room_ref.is_none() && input.roster_ref.is_none(),
+        owner_only: phone.is_none() && input.room_ref.is_none() && input.roster_ref.is_none(),
+        phone: phone.clone(),
         commands,
         journal: Arc::clone(&journal),
         shutdown: shutdown.clone(),
@@ -311,8 +335,15 @@ pub(crate) async fn start_public(
                 // with the loop.
                 let worker = while_held(worker.run(), hold.watch());
                 tokio::pin!(worker);
-                let revoked =
-                    while_held(super::boot::revoked(&auth, &server, device), hold.watch());
+                let revoked = while_held(
+                    async {
+                        match &phone {
+                            Some(phone) => super::phone::revoked(phone).await,
+                            None => super::boot::revoked(&auth, &server, device).await,
+                        }
+                    },
+                    hold.watch(),
+                );
                 tokio::select! {
                     result = &mut serving => { if let Err(error) = result { tracing::warn!(%error.code, "public voice stopped"); } }
                     () = &mut worker => { shutdown.trigger(); let _ = serving.await; }

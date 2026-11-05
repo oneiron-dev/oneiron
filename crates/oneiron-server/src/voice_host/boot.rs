@@ -40,6 +40,8 @@
 //! sentences are spoken past the session's safeguards (`speech`), and the
 //! host's own model calls run on a line of the call's own (`backend`).
 
+pub(super) mod phone_call;
+
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
