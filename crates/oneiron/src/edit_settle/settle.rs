@@ -106,7 +106,8 @@ impl Vault {
         self.authorize_settle(consent, actor)?;
         // The brief of the thread a deck proposal answers, which a settle a
         // standing grant carries must name (judged in the writer below).
-        let thread_brief = crate::edit_roundtrip::deck_op(proposal)
+        let deck = crate::edit_roundtrip::deck_op(proposal);
+        let thread_brief = deck
             .and_then(|(_, _, context)| context.thread)
             .map(|thread| crate::anchored_annotation::thread_brief_ref(&thread));
         let proposal_ref = proposal.run_ref.as_str();
