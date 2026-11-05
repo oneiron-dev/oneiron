@@ -131,23 +131,53 @@ pub(super) fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmb
     })
 }
 
-pub(super) fn encode_embed_job_value(priority: u8, queued_at: u64) -> [u8; 9] {
-    let mut value = [0_u8; 9];
+/// The priority and enqueue time, followed by the length of an optional
+/// recipient-sealed home CLAIM copy. The copy is not embedding authority.
+const EMBED_JOB_HEADER_BYTES: usize = 1 + size_of::<u64>() + size_of::<u32>();
+
+pub(super) fn encode_embed_job_value(priority: u8, queued_at: u64) -> Vec<u8> {
+    let mut value = vec![0_u8; EMBED_JOB_HEADER_BYTES];
     value[0] = priority;
-    value[1..].copy_from_slice(&queued_at.to_be_bytes());
+    value[1..9].copy_from_slice(&queued_at.to_be_bytes());
     value
 }
 
-pub(super) fn decode_embed_job_value(value: &[u8]) -> Result<(u8, u64)> {
-    let Some((&priority, queued_at_bytes)) = value.split_first() else {
+pub(super) fn encode_embed_job_with_home_claim_copy(
+    priority: u8,
+    queued_at: u64,
+    copy: &[u8],
+) -> Result<Vec<u8>> {
+    let len = u32::try_from(copy.len())
+        .map_err(|_| Error::ArithmeticOverflow("embedding job home CLAIM copy"))?;
+    let mut value = encode_embed_job_value(priority, queued_at);
+    value[9..EMBED_JOB_HEADER_BYTES].copy_from_slice(&len.to_be_bytes());
+    value.extend_from_slice(copy);
+    Ok(value)
+}
+
+pub(super) fn embed_job_home_claim_copy(value: &[u8]) -> Result<Option<&[u8]>> {
+    let (header, copy) = value
+        .split_at_checked(EMBED_JOB_HEADER_BYTES)
+        .ok_or(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?;
+    let len = u32::from_be_bytes(
+        header[9..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
+    ) as usize;
+    if len != copy.len() {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
-    };
+    }
+    Ok((!copy.is_empty()).then_some(copy))
+}
+
+pub(super) fn decode_embed_job_value(value: &[u8]) -> Result<(u8, u64)> {
+    embed_job_home_claim_copy(value)?;
     let queued_at = u64::from_be_bytes(
-        queued_at_bytes
+        value[1..9]
             .try_into()
             .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
     );
-    Ok((priority, queued_at))
+    Ok((value[0], queued_at))
 }
 
 pub(super) fn unix_millis_now() -> u64 {
