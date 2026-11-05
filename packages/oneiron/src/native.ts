@@ -23,6 +23,7 @@ import type {
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
+  NativeLimitQuestion,
   QueryAffect,
   RecallMedia,
   RecallScope,
@@ -1275,6 +1276,8 @@ selfFocusUnsubscribe(input: unknown): unknown
   lastReceiptRef(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
+  /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */
+  nativeLimitQuestions(): NativeLimitQuestion[] | null
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
