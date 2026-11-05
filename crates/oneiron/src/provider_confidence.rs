@@ -284,6 +284,7 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
