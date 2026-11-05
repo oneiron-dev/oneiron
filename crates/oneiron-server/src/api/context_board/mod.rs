@@ -36,7 +36,7 @@ pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
-pub(crate) use turn_actions::action_board;
+pub(crate) use turn_actions::{action_board, requester_auth};
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
