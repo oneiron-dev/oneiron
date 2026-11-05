@@ -8,7 +8,7 @@
 //! data and document timestamp after it. It asks the engine back, protocol
 //! 1.1, for the signing identity (`seal.identity`), for the signature over
 //! the revision's signed attributes (`seal.sign`), and for every timestamp
-//! and CRL fetch (`net.fetch`, inside the allowlist the install grant
+//! and CRL/OCSP fetch (`net.fetch`, inside the allowlist the install grant
 //! names). Both verbs ask it for the memory their PDF decodes and their
 //! fetched bytes take, before they allocate it (`memory.grow`, FIX 7654):
 //! the engine's host leases it from the machine's memory floor and holds it
@@ -61,7 +61,9 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
+use crate::memory::{
+    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -316,6 +318,12 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
+    // A shared output buffer is copied for the reply, so its bytes ride
+    // this call's reply reservation first; a sole owner's buffer moves
+    // without copying (FIX 8452).
+    if Arc::strong_count(&sealed.bytes) != 1 {
+        memory.reserve(sealed.bytes.len() as u64)?;
+    }
     let mut answer = report(
         &SealReport::Sealed {
             evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
@@ -332,7 +340,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
-        bytes: sealed.bytes,
+        bytes: crate::memory::AdmittedBytes::into_vec(sealed.bytes),
     });
     Ok(answer)
 }
@@ -624,7 +632,7 @@ impl SealBackend for AskedBackend {
 }
 
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
-/// allowlist. The seal fetches only timestamps and CRLs. A body comes back
+/// allowlist. The seal fetches timestamps, CRLs and OCSP replies. A body comes back
 /// whole: the engine measures its size against its `[limits]` rows, and the
 /// seal's own copy of it is reserved before it is made (`memory.grow`), as
 /// admitted bytes.
@@ -640,7 +648,8 @@ impl SealFetcher for AskedFetcher {
         let purpose = match request.purpose {
             FetchPurpose::Timestamp => "tsa",
             FetchPurpose::Crl => "crl",
-            FetchPurpose::Ocsp | FetchPurpose::AuthorityInformationAccess => {
+            FetchPurpose::Ocsp => "ocsp",
+            FetchPurpose::AuthorityInformationAccess => {
                 return Err(FetchError::Denied);
             }
         };
@@ -671,7 +680,7 @@ impl SealFetcher for AskedFetcher {
         if !(200..300).contains(&answer.status) {
             return Err(FetchError::InvalidResponse);
         }
-        let mut body = match reply.data {
+        let body = match reply.data {
             // A region's bytes came reserved before the runtime copied them
             // (FIX 8454): that copy is adopted whole with what holds it, and
             // nothing copies it again. Inline bytes take a lease of their own.
@@ -681,18 +690,19 @@ impl SealFetcher for AskedFetcher {
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
-            None => AdmittedBytes::empty(),
+            None => AdmittedBytes::shared_empty(&self.memory).map_err(FetchError::Memory)?,
         };
-        // The answer's content type and the header around the body are held
-        // with it (FIX 8455).
-        let beside = self
-            .memory
-            .lease(AdmittedBytes::beside_bytes(answer.content_type.as_deref()))
-            .map_err(FetchError::Memory)?;
-        body.hold_beside(beside);
+        // The answer's text is admitted before it is copied, and shared
+        // (FIX 8455): the reservation is the copy's own.
+        let content_type = match answer.content_type {
+            None => None,
+            Some(text) => Some(Arc::new(
+                AdmittedStr::copy_from(&self.memory, &text).map_err(FetchError::Memory)?,
+            )),
+        };
         Ok(FetchResponse {
             body: Arc::new(body),
-            content_type: answer.content_type,
+            content_type,
         })
     }
 }

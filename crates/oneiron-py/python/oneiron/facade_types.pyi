@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4457 declarations.
-Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1232 facade rows, 4483 declarations.
+Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -134,6 +134,21 @@ class CommitmentFulfillRequest(TypedDict):
 class CommitmentCloseRequest(TypedDict):
     commitment_ref: str
     evidence_turn_refs: list[str]
+class EmptyRequest(TypedDict):
+    ...
+class CommitmentReminderVoice(TypedDict):
+    persona_ref: NotRequired[str | None]
+class CommitmentReminderRoute(TypedDict):
+    channel: str
+    verb: str
+    target: str
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
+    voice: NotRequired[CommitmentReminderVoice | None]
+class CommitmentReminderRouteReply(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
+class CommitmentReminderRouteSetRequest(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]
@@ -367,8 +382,6 @@ class StandingBlockView(TypedDict):
     world_ref: EntityId
     name: str
     token_floor: int
-class EmptyRequest(TypedDict):
-    ...
 class StandingBlockEditRequest(TypedDict):
     world_ref: EntityId
     field: str
@@ -3527,6 +3540,7 @@ class RetrievalRunRecord(TypedDict):
     policy_trace: NotRequired[RetrievalPolicyTrace | None]
     replay_inputs: NotRequired[RetrievalReplayInputs | None]
     turn: NotRequired[RetrievalTurn | None]
+    query_expander_id: NotRequired[str | None]
     signals: list[RetrievalSignal]
     result_ids: list[list[int]]
     score_breakdown: list[RetrievalScoreBreakdown]
@@ -5552,6 +5566,11 @@ class SkillHashRuleRequest(TypedDict):
     blocked: bool
 class SkillCodeAutoInstallRequest(TypedDict):
     enabled: bool
+SkillFitChoice = Literal["rule_fit", "owner_asked"]
+class SkillFitSetRequest(TypedDict):
+    setting: SkillFitChoice
+class SkillAdvisoryAskRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -7367,6 +7386,19 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
+class SyncHeldEditEvidence(TypedDict):
+    window_key: str
+    container: QuarantineContainer
+    crdt_key_hash: str
+    crdt_key_len: int
+    reason_code: str
+    payload_hash: str
+    quarantined_at: int
+RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
+class RetainedWorkWaitSetRequest(TypedDict):
+    queue: RetainedWorkQueue
+    secs: NotRequired[int | None]
 class ConnectWindow(TypedDict):
     pact: str
     epoch: int
@@ -8361,6 +8393,11 @@ class RecordEraseSweep(TypedDict):
     erase_complete_at: NotRequired[int | None]
     final_ref: NotRequired[str | None]
     custody: NotRequired[RecordEraseCustody | None]
+class OutboundCallRequestEraseRequest(TypedDict):
+    attempt: EntityId
+    call_seq: int
+class OutboundCallRequestErased(TypedDict):
+    erased: bool
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId
@@ -9930,6 +9967,22 @@ class CourtesyDeleteHold(TypedDict):
 class CourtesyDeleteRecordProgress(TypedDict):
     record: str
     state: str
+class CourtesyDeleteRetention(TypedDict):
+    records: list[str]
+    basis_code: str
+    retention_class: str
+class CourtesyDeleteRedactionRevision(TypedDict):
+    previous_revision: str
+    revision: str
+    body_changed: bool
+    short_hash_changed: bool
+class CourtesyDeleteLocalRedaction(TypedDict):
+    record: str
+    value_fields: list[str]
+    changed_history_rows: int
+    revisions: list[CourtesyDeleteRedactionRevision]
+    applied_by: str
+    applied: str
 class CourtesyDeleteChoice(TypedDict):
     choice: CooperativeDeletionDispositionKind
     reason_code: NotRequired[str | None]
@@ -9939,6 +9992,18 @@ class CourtesyDeleteChoice(TypedDict):
     holds: list[CourtesyDeleteHold]
     excluded: list[str]
     progress: list[CourtesyDeleteRecordProgress]
+    retention: NotRequired[CourtesyDeleteRetention | None]
+    restricted: list[str]
+    local_redactions: list[CourtesyDeleteLocalRedaction]
+class CourtesyDeleteRestriction(TypedDict):
+    record: str
+    since: str
+    reason_code: str
+    review: str
+class CourtesyDeleteRestrictionLift(TypedDict):
+    records: list[str]
+    attested_by: str
+    attested: str
 class CourtesyDeleteIncoming(TypedDict):
     request: str
     pact: str
@@ -9952,6 +10017,12 @@ class CourtesyDeleteIncoming(TypedDict):
     answer: NotRequired[CourtesyDeleteChoice | None]
     reply_status: NotRequired[str | None]
     holds: list[CourtesyDeleteHold]
+    restrictions: list[CourtesyDeleteRestriction]
+    restriction_lifts: list[CourtesyDeleteRestrictionLift]
+    local_redactions: list[CourtesyDeleteLocalRedaction]
+class CourtesyDeleteClaimValueRedaction(TypedDict):
+    record: str
+    value_fields: list[str]
 class CourtesyDeleteAnswerRequest(TypedDict):
     pact: str
     request: str
@@ -9960,6 +10031,10 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     review_at: NotRequired[int | None]
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
+    retention: NotRequired[CourtesyDeleteRetention | None]
+    restrict: NotRequired[list[str]]
+    restriction_notice_given: NotRequired[list[str]]
+    redact: NotRequired[list[CourtesyDeleteClaimValueRedaction]]
     reply_to: NotRequired[str | None]
 class VectorEvidenceFloors(TypedDict):
     floor: float
@@ -10023,7 +10098,7 @@ class SpaceMove(TypedDict):
     last_check: NotRequired[SpaceMoveCheck | None]
 SwitchOwner = str
 TrainingOwner = str
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
+ModelRole = Literal["retrieval_embedder", "media_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "decision_head", "decision_band", "decision_escalation", "policy_safeguard", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
 ModelTierRef = str
 ModelDisposition = Literal["offline", "served"]
 class ModelBinding(TypedDict):
@@ -11012,6 +11087,25 @@ class LearningSettingClear(TypedDict):
     goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class CodeRunSecretLiftDismiss(TypedDict):
+    handle: str
+    occurrence: str
+class CodeRunSecretLiftRequest(TypedDict):
+    dismiss: NotRequired[CodeRunSecretLiftDismiss | None]
+class CodeRunSecretLiftProposalView(TypedDict):
+    handle: str
+    occurrence: str
+    detector_reason: str
+    suggested_secret_name: str
+class CodeRunSecretLiftDismissal(TypedDict):
+    handle: str
+    occurrence: str
+    dismissed_by: str
+    dismissed_at: int
+    receipt: str
+class CodeRunSecretLiftStatus(TypedDict):
+    proposals: list[CodeRunSecretLiftProposalView]
+    dismissed: NotRequired[CodeRunSecretLiftDismissal | None]
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
 class SecretLiftClose(TypedDict):
     proposal: str
@@ -11943,6 +12037,7 @@ class GraphFsDirectoryView(TypedDict):
     path: str
     entries: list[GraphFsEntryView]
     next_cursor: NotRequired[str | None]
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 GraphFsEncoding = Literal["utf8", "base64"]
 GraphFsPlan = Literal["pushdown", "walk"]
 class GraphFsOutput(TypedDict):
@@ -11952,6 +12047,7 @@ class GraphFsOutput(TypedDict):
     encoding: GraphFsEncoding
     next_cursor: NotRequired[str | None]
     plan: GraphFsPlan
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 class GraphFsLinkRequest(TypedDict):
     mount: GraphFsMountRequest
     path: str
@@ -14940,6 +15036,10 @@ class DeckEmissionRequest(TypedDict):
     name: str
     run_ref: str
     trigger: NotRequired[MadeByTrigger | None]
+class CreatedInput(TypedDict):
+    source: ArtifactVersionRef
+    content_hash: list[int]
+    provenance_kind: str
 class CreatedSlide(TypedDict):
     part: str
     sld_id: int
@@ -14954,6 +15054,8 @@ class DeckCreationRecord(TypedDict):
     outline_hash: list[int]
     template: ArtifactVersionRef
     template_hash: list[int]
+    asset_inputs: dict[str, CreatedInput]
+    font_inputs: list[CreatedInput]
     run_ref: str
     made_by: NotRequired[EntityId | None]
     slides: list[CreatedSlide]
@@ -15352,6 +15454,7 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
+    read_rows: NotRequired[list[str]]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -16532,6 +16635,7 @@ class UnsupportedCapability(TypedDict):
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
+    code: NotRequired[str | None]
 class FatalLlmErrorInvalidRequestDetail(TypedDict):
     InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
@@ -20254,6 +20358,11 @@ class BlobVersionView(TypedDict):
     created_at: int
     artifact: NotRequired[RecordRef | None]
     claim: NotRequired[RecordRef | None]
+class BlobVersionAppendOutcomeLanded(TypedDict):
+    landed: BlobVersionView
+class BlobVersionAppendOutcomeProposed(TypedDict):
+    proposed: PendingProposalView
+BlobVersionAppendOutcome = BlobVersionAppendOutcomeLanded | BlobVersionAppendOutcomeProposed
 class ReadBlobVersionRequest(TypedDict):
     artifact_ref: str
     version: int

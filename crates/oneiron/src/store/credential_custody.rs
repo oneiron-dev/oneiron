@@ -31,8 +31,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, Requirement,
-    RetireCause, RetirementIntent, stage_retirement_in_txn,
+    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
+    Requirement, RetireCause, RetirementIntent, stage_retirement_in_txn,
 };
 
 pub(crate) use self::erase::{FenceLookup, credential_erases_staged};
@@ -151,6 +151,30 @@ pub(crate) fn credential_value_leaf_in(
 }
 
 impl Store {
+    /// Plans exactly the resume generation a retained carrier commits to.
+    pub(crate) fn plan_connector_resume(
+        plan: &mut CustodyPlan,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<Option<Requirement>> {
+        let Some(source) = plan.source() else {
+            return Ok(None);
+        };
+        let id = resume_subject(source, call_ref)?.at(u64::from(generation));
+        plan.require_exact_present(&id)
+    }
+
+    /// Reads a resume leaf from an activation's fork, never the old binding.
+    pub(crate) fn connector_resume_leaf_in(
+        binding: &CustodyBinding,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<CredentialLeaf> {
+        let id = resume_subject(binding, call_ref)?.at(u64::from(generation));
+        let secret = crate::store::key_custody::LocalCustody::at(binding).read(&id)?;
+        copy_leaf(CustodyKind::ConnectorResume, secret.expose())
+    }
+
     /// The key credential `credential`'s value at `generation` is sealed
     /// under, minted in `wtxn` when custody holds none there yet, the
     /// binding pinned in the same transaction: published, synced and its
@@ -203,6 +227,28 @@ impl Store {
             .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
         copy_leaf(CustodyKind::CredentialValue, custody.read(&id)?.expose())
+    }
+
+    /// Whether a credential value's key is missing or retired, without
+    /// reading key bytes or opening its value. The caller holds a writer,
+    /// or took the custody read guard before its snapshot. This takes no
+    /// second guard; false is not proof of value readability.
+    ///
+    /// # Errors
+    /// Custody faults, never absence.
+    pub(crate) fn credential_value_key_unavailable(
+        &self,
+        credential: &EntityId,
+        generation: u32,
+    ) -> Result<bool> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(true);
+        };
+        let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
+        Ok(matches!(
+            custody.state(&id)?,
+            EntryState::Missing | EntryState::Retired
+        ))
     }
 
     /// The key connector call `call_ref`'s resume state at `generation` is

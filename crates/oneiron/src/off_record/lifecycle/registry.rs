@@ -446,3 +446,16 @@ pub(super) fn live_session_entry(
             })
         })
 }
+
+impl super::session::OffRecordSession<'_> {
+    /// This exact instance's published liveness, without the session-state
+    /// mutex. Witness admission already holds the base writer; caller proof,
+    /// membership and the captured mode route are checked separately.
+    pub(crate) fn is_open_for_witness(&self) -> bool {
+        self.entry
+            .published_record
+            .load()
+            .as_ref()
+            .is_some_and(|record| !record.closing)
+    }
+}

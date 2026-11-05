@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
+use oneiron_llm_openai::EmbedShape;
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none
@@ -253,6 +254,7 @@ pub(super) struct ProviderFile {
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
+    embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
     model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
@@ -292,6 +294,10 @@ pub struct ProviderConfig {
     pub output_limit_field: OutputLimitField,
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
+    /// The shape the provider's embedding endpoint speaks (FIX 866):
+    /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
+    /// chat form.
+    pub embed_shape: EmbedShape,
     pub capabilities: Vec<LlmCapability>,
     /// One wire model's own capabilities, in place of `capabilities`, so two
     /// models on one provider can differ (one hears audio, one does not).
@@ -476,6 +482,7 @@ impl ProviderFile {
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
+            embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
             family: self.family.map(|family| family.trim().to_owned()),
