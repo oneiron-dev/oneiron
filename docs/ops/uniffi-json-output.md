@@ -43,6 +43,14 @@ as absent. Delivered and awaiting-input empty optional vectors still read
 as absent; held, refused and pending-delivery reasons remain required vectors.
 The top-level and nested narrowed-question arms stay first and distinct.
 
+`connector.call_status` uses that same owned reply lift for its settled and
+awaiting-input replies. Pending metadata stays intact; empty pending reasons
+and false `uncertain` still read as absent. The native `asked` count uses the
+existing checked width conversion to the generated `u64` field.
+`connector.schema` consumes a non-null optional input schema into `WireJson`;
+null still reads as absent, `destructive: Some(false)` remains present, and
+empty reasons still read as absent.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

@@ -4844,12 +4844,12 @@ export_facade! {
 "connector.schema" => fn connector_schema(&self, input: ConnectorSchemaRequest) -> ConnectorSchemaReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSchemaRequest = crate::codec::lower_record("connector.schema", input)?;
     let output = client.connector_schema(&input)?;
-    crate::codec::lift_record("connector.schema", &output)
+    Lift::lift(output)
 };
 "connector.call_status" => fn connector_call_status(&self, input: ConnectorCallStatusRequest) -> ConnectorCallStatus = |client| {
     let input: oneiron::task_verb::sdk::ConnectorCallStatusRequest = crate::codec::lower_record("connector.call_status", input)?;
     let output = client.connector_call_status(&input)?;
-    crate::codec::lift_record("connector.call_status", &output)
+    Lift::lift(output)
 };
 "vault.commit" => fn vault_commit(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
     let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.commit", input)?;

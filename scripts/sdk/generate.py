@@ -2164,6 +2164,8 @@ UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
     'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
+    'crate::task_verb::sdk::ConnectorCallStatus': 'ConnectorCallStatus',
+    'crate::task_verb::sdk::ConnectorSchemaReply': 'ConnectorSchemaReply',
     'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
     'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
 }
