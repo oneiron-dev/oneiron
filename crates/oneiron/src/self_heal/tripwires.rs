@@ -660,14 +660,6 @@ pub(super) fn signed(
     vault.accept_signed_detector_run(&run)
 }
 
-/// Gate receipts keep the original predicate, not the claim value. The fact
-/// survives ordinary claim edits and is cleared by receipt redaction.
-pub(crate) fn normal_baseline_token(predicate: &str) -> String {
-    format!("tripwire_normal_v2:{predicate}")
-}
-
-pub(crate) fn normal_baseline_predicate(token: &str) -> Option<&str> {
-    let predicate = token.strip_prefix("tripwire_normal_v2:")?;
-    crate::claim::validate_predicate(predicate, true).ok()?;
-    Some(predicate)
-}
+pub(crate) use crate::store::diagnostic_record::normal_baseline::{
+    normal_baseline_predicate, normal_baseline_token,
+};

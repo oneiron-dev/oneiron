@@ -2,6 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
+use super::super::store::load_script_context;
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -192,7 +193,12 @@ impl EngineNativeExecutor<'_> {
                 }))?,
             };
             let turn = CodeRunHistoryTurn {
-                code: load_context_output(&self.storage, record, &script_output_path(seq as u64))?,
+                code: load_script_context(
+                    &self.storage,
+                    record,
+                    &script_output_path(seq as u64),
+                    None,
+                )?,
                 console,
             };
             messages.push(LlmMessage {

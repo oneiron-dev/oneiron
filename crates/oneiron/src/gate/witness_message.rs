@@ -49,8 +49,7 @@ use super::resolution::PolicyManifestResolution;
 
 use crate::store::witness_message_body::witness_message_envelope_denial;
 pub(crate) use crate::store::witness_message_body::{
-    MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
 };
 
 /// One authorized MESSAGE write.
@@ -252,10 +251,10 @@ fn system_author_authorized(
             == Some(PolicyApprovalCeiling::Auto)
 }
 
+use crate::store::witness_message_body::validate_replicated_witness_message_body;
 pub(crate) use crate::store::witness_message_body::{
     WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
 };
-use crate::store::witness_message_body::validate_replicated_witness_message_body;
 
 /// TEST-ONLY: the canonical MESSAGE body for one envelope, through the SAME
 /// encoder every write door uses.

@@ -1,7 +1,7 @@
 //! Base-apply Delete arm: tears rows and graph state.
 
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_delete_arm(
@@ -60,7 +60,7 @@ pub(super) fn apply_delete_arm(
             origin,
         )?;
     }
-    let (_existed, had_vector, deleted_graph_state, neighbors) =
+    let (existed, had_vector, deleted_graph_state, neighbors) =
         deindex_entity_with_machine_history(store, wtxn, &id)?;
     claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
     if state.persist_gate_pending_consent {
@@ -70,6 +70,10 @@ pub(super) fn apply_delete_arm(
     #[cfg(feature = "sync")]
     state.pending_embedding_enqueue_priorities.remove(&id);
     ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
+    if existed || deleted_graph_state {
+        state.question_arrival_ids.insert(id);
+    }
+    state.question_arrival_ids.extend(neighbors.iter().copied());
     state.had_graph_mutation |= deleted_graph_state;
     state.had_vector_mutation |= had_vector;
     Ok(())

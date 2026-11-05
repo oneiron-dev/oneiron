@@ -89,6 +89,7 @@ impl ActionRegistry {
             owner_surface: Some(surface),
             live_run: None,
             planner: None,
+            slip_issuer: None,
         };
         self.execute(vault, actor, principal, call, binding)
     }
@@ -106,6 +107,7 @@ impl ActionRegistry {
             owner_surface,
             live_run,
             planner,
+            slip_issuer,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -147,9 +149,17 @@ impl ActionRegistry {
                 .map_or(Ok(()), |run| run.leased_record(vault).map(drop))
         };
         let previous = vault.get_code_run_replay_record(&run_id)?;
-        let frozen = previous.as_ref().map_or_else(
+        let determinism = previous
+            .as_ref()
+            .map(|record| {
+                record
+                    .determinism
+                    .ok_or_else(|| invalid("action record has unknown determinism"))
+            })
+            .transpose()?;
+        let frozen = determinism.map_or_else(
             || crate::unix_seconds_now().saturating_mul(1000),
-            |record| record.determinism.frozen_unix_ms,
+            |determinism| determinism.frozen_unix_ms,
         );
         let call = match registered.build {
             ActionBuild::Factory(factory) => factory(
@@ -172,7 +182,7 @@ impl ActionRegistry {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, proof)?;
         }
         if let Some(record) = previous {
-            if record.determinism.rng_seed != seed {
+            if record.determinism.map(|determinism| determinism.rng_seed) != Some(seed) {
                 return Err(invalid("idempotency key reused with changed action"));
             }
             if record.bridge_calls.is_empty() {
@@ -240,6 +250,10 @@ impl ActionRegistry {
             Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
+        let dispatcher = match slip_issuer {
+            Some(issuer) => dispatcher.with_slip_issuer(issuer),
+            None => dispatcher,
+        };
         let result = dispatcher
             .dispatch_for_executor_run(
                 super::ExecutorCallSite {
@@ -266,6 +280,7 @@ impl ActionRegistry {
             Err(error) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: error.to_string(),
+                code: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the
