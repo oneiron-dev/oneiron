@@ -69837,8 +69837,8 @@ pub struct MailInboxRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub include_source_deleted: Option<bool>,
-    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
-    pub before: Option<u64>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
@@ -69904,11 +69904,11 @@ pub struct MailInboxPage {
     #[serde(rename = "items")]
     pub items: Vec<MailInboxItem>,
     #[serde(
-        rename = "next_before",
+        rename = "next_cursor",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub next_before: Option<u64>,
+    pub next_cursor: Option<String>,
 }
 
 /// `oneiron::mail_pack::inbox::MailThreadRequest`.

@@ -180,10 +180,14 @@ impl Step<'_> {
     /// budget cut short keeps its anchor: the next step reads it again, and
     /// what landed already lands as the same.
     fn history(&mut self, pages: u32) -> MemoryResult<()> {
-        let Some(anchor) = self.state()?.anchor else {
+        let state = self.state()?;
+        let Some(anchor) = state.anchor else {
             return Ok(());
         };
-        let mut page: Option<String> = None;
+        // A feed longer than one step's budget goes on from its kept page.
+        let mut page = state
+            .history_page
+            .filter(|_| state.history_page_anchor.as_deref() == Some(anchor.as_str()));
         for _ in 0..pages {
             let read = self
                 .wire
@@ -192,6 +196,9 @@ impl Step<'_> {
                 let fresh = self.wire.current_anchor(&self.wire_source)?;
                 self.write_state(|state| {
                     state.anchor = Some(fresh);
+                    state.history_page = None;
+                    state.history_page_anchor = None;
+                    state.backfill_copy = None;
                     state.backfill_page = None;
                     state.backfill_done = false;
                     state.generation += 1;
@@ -221,10 +228,24 @@ impl Step<'_> {
                 }
             }
             match read.next_page {
-                Some(next) => page = Some(next),
+                Some(next) => {
+                    let from = anchor.clone();
+                    let kept = next.clone();
+                    self.write_state(|state| {
+                        if state.anchor.as_deref() == Some(from.as_str()) {
+                            state.history_page = Some(kept);
+                            state.history_page_anchor = Some(from);
+                        }
+                    })?;
+                    page = Some(next);
+                }
                 None => {
                     let reached = read.anchor;
-                    self.write_state(|state| state.anchor = Some(reached))?;
+                    self.write_state(|state| {
+                        state.anchor = Some(reached);
+                        state.history_page = None;
+                        state.history_page_anchor = None;
+                    })?;
                     return Ok(());
                 }
             }
@@ -233,20 +254,25 @@ impl Step<'_> {
     }
 
     /// The newest-first copy, `pages` pages at most; none for search only. A
-    /// changed cutoff starts it over.
+    /// listing runs under the copy setting and the cutoff it started with: a
+    /// changed setting (search only included) or an expired anchor starts
+    /// it over with a fresh cutoff.
     fn backfill(&mut self, pages: u32) -> MemoryResult<()> {
-        if self.row.copy == MailCopySetting::SearchOnly {
-            return Ok(());
-        }
-        let newer_than = self.newer_than;
-        if self.state()?.backfill_newer_than != newer_than {
+        let copy = self.row.copy;
+        if self.state()?.backfill_copy != Some(copy) {
+            let cutoff = self.newer_than;
             self.write_state(|state| {
-                state.backfill_newer_than = newer_than;
+                state.backfill_copy = Some(copy);
+                state.backfill_newer_than = cutoff;
                 state.backfill_page = None;
                 state.backfill_done = false;
                 state.generation += 1;
             })?;
         }
+        if copy == MailCopySetting::SearchOnly {
+            return Ok(());
+        }
+        let newer_than = self.state()?.backfill_newer_than;
         for _ in 0..pages {
             let state = self.state()?;
             if state.backfill_done {
