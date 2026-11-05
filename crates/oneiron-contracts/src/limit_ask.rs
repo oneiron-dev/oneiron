@@ -531,6 +531,10 @@ pub enum EngineLimit {
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Embedding vector dimensions one vault opened with, measured once
+    /// where its host serves it. Past it the row asks whether everything
+    /// is okay and the vault serves as opened.
+    EmbeddingDimensions,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

@@ -24,8 +24,6 @@ pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTI
 /// past it is written frame by frame, never refused for its size.
 pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
 
-pub(super) const MAX_NAPI_DIMENSIONS: usize = oneiron_remote::MAX_DIMENSIONS;
-
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
 /// Convert an oneiron error to a napi error.
@@ -282,16 +280,6 @@ pub(super) fn parse_fixed_hash<const N: usize>(
 /// Validate a JS file size before narrowing to u64.
 pub(super) fn parse_file_size(size: i64) -> BoundaryResult<u64> {
     u64::try_from(size).map_err(|_| format!("size_bytes must be >= 0, got {size}"))
-}
-
-/// Validate configured vector dimensions before opening a vault.
-pub(super) fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
-    if dimensions > MAX_NAPI_DIMENSIONS {
-        return Err(format!(
-            "dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}"
-        ));
-    }
-    Ok(())
 }
 
 /// Validate vector length before allocating the narrowed f32 copy.
