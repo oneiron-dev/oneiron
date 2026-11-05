@@ -137,4 +137,12 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `counterparty_contact::fold_party_opt_out_heads_for_store_in_txn`.
+    fn fold_party_opt_out_heads_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+    ) -> Result<()>;
 }

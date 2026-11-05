@@ -527,6 +527,17 @@ fn counterparty_contact_record_from_heads(
     decode_counterparty_contact_value(&Value::Map(entries))
 }
 
+fn fold_party_opt_out_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &mut CounterpartyContactRecord,
+) -> Result<()> {
+    vault
+        .store
+        .record_hooks
+        .fold_party_opt_out_heads_in_txn(vault, rtxn, record)
+}
+
 /// OR-folds every live `comm.opt_out` head for this record's party that COVERS
 /// this record's channel class into it.
 ///
@@ -547,7 +558,7 @@ fn counterparty_contact_record_from_heads(
 /// re-derives the row. A contact whose identity resolves to no class is UNKNOWN,
 /// and unknown matches EVERY head: the same CA-01 uncertainty rule
 /// [`counterparty_contact_matches_channel_class`] states, resolved restrictively.
-fn fold_party_opt_out_heads_in_txn(
+pub(crate) fn fold_party_opt_out_heads_for_store_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     record: &mut CounterpartyContactRecord,

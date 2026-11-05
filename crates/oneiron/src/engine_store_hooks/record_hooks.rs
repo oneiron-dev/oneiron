@@ -143,4 +143,13 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
+
+    fn fold_party_opt_out_heads_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+    ) -> Result<()> {
+        crate::counterparty_contact::fold_party_opt_out_heads_for_store_in_txn(vault, rtxn, record)
+    }
 }
