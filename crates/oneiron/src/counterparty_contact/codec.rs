@@ -78,37 +78,48 @@ pub(super) fn decode_counterparty_contact_value(
         return Err(invalid_contact());
     };
     validate_keys(entries, &COUNTERPARTY_CONTACT_BODY_KEYS)?;
+    decode_counterparty_contact_fields(|key| required_value(entries, key))
+}
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-        != Some(COUNTERPARTY_CONTACT_SCHEMA_VERSION)
-    {
+pub(super) fn decode_counterparty_contact_fields<'a>(
+    field: impl Fn(&str) -> Result<&'a Value>,
+) -> Result<CounterpartyContactRecord> {
+    if field(KEY_SCHEMA_VERSION)?.as_u64() != Some(COUNTERPARTY_CONTACT_SCHEMA_VERSION) {
         return Err(invalid_contact());
     }
 
-    let identity_ref = decode_entity_ref(required_value(entries, KEY_IDENTITY_REF)?)?;
-    let counterparty = required_string(entries, KEY_COUNTERPARTY)?.to_owned();
-    let first_touch = CounterpartyFirstTouch::parse(required_string(entries, KEY_FIRST_TOUCH)?)
-        .ok_or_else(invalid_contact)?;
-    let status = CounterpartyContactStatus::parse(required_string(entries, KEY_STATUS)?)
-        .ok_or_else(invalid_contact)?;
-    let created_at = required_value(entries, KEY_CREATED_AT)?
+    let identity_ref = decode_entity_ref(field(KEY_IDENTITY_REF)?)?;
+    let counterparty = field(KEY_COUNTERPARTY)?
+        .as_str()
+        .ok_or_else(invalid_contact)?
+        .to_owned();
+    let first_touch = CounterpartyFirstTouch::parse(
+        field(KEY_FIRST_TOUCH)?
+            .as_str()
+            .ok_or_else(invalid_contact)?,
+    )
+    .ok_or_else(invalid_contact)?;
+    let status =
+        CounterpartyContactStatus::parse(field(KEY_STATUS)?.as_str().ok_or_else(invalid_contact)?)
+            .ok_or_else(invalid_contact)?;
+    let created_at = field(KEY_CREATED_AT)?
         .as_u64()
         .ok_or_else(invalid_contact)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT)?
+    let updated_at = field(KEY_UPDATED_AT)?
         .as_u64()
         .ok_or_else(invalid_contact)?;
-    let revoked_value = required_value(entries, KEY_REVOKED_AT)?;
+    let revoked_value = field(KEY_REVOKED_AT)?;
     let revoked_at = if matches!(revoked_value, Value::Nil) {
         None
     } else {
         Some(revoked_value.as_u64().ok_or_else(invalid_contact)?)
     };
-    let opt_out = decode_opt_out(required_value(entries, KEY_OPT_OUT)?)?;
-    let promo_consent = match required_value(entries, KEY_PROMO_CONSENT)? {
+    let opt_out = decode_opt_out(field(KEY_OPT_OUT)?)?;
+    let promo_consent = match field(KEY_PROMO_CONSENT)? {
         Value::Boolean(value) => *value,
         _ => return Err(invalid_contact()),
     };
-    let notes = decode_notes(required_value(entries, KEY_NOTES)?)?;
+    let notes = decode_notes(field(KEY_NOTES)?)?;
 
     let record = CounterpartyContactRecord {
         identity_ref,
@@ -369,12 +380,6 @@ fn validate_non_empty_bounded(value: &str, max: usize, reason: &'static str) -> 
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = value.as_str().ok_or_else(invalid_contact)?;
     EntityId::from_hex(hex).map_err(|_| invalid_contact())
-}
-
-fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
-    required_value(entries, key)?
-        .as_str()
-        .ok_or_else(invalid_contact)
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {

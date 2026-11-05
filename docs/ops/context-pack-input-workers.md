@@ -49,14 +49,28 @@ projection door stays unchanged. History intermediates remain unadmitted; the
 final projected body owns its own post-allocation capacity lease. The original
 body keeps its own guard until it drops, including while a replacement is built.
 Contact reads retain only each live head's predicate index and value for the
-fold. Moving the value out releases that body's unused relationship set before
-its private lease, before the next claim read can wait. The fold still sees the
-first duplicate only after every claim has been read, so a later native read
-error retains its original precedence. Ignored heads release their own guard too.
-Before each admitted allocation, the memory floor includes the request controls
-still held by this worker. This is distinct pinned input, not a second ledger
-charge or a sum of other workers' leases. An impossible required peak returns
-the original typed floor. Channel-pair and voice-roster lookups stay unbound.
+fold. The value owns a separate post-allocation lease on the supplied line.
+The canonical decoder charges the current value's actual heap capacities before
+the relationship wait; a selected history projection records its own value too.
+Strings include both valid UTF-8 String backing and invalid UTF-8 byte backing,
+through the pinned rmpv capacity accessor. Arrays, maps, binary and extension
+buffers use their actual capacities; nested values are counted once by borrow.
+Moving the value out transfers only its value guard and releases that body's
+unused relationship set before its private relationship lease, before the next
+claim read can wait. Guarded values stay in the head array through the last
+borrow by the same canonical field decoder. No paid value is extracted to build
+an unguarded map. The stored-map decoder keeps its original key checks and uses
+that same field validator.
+
+The fold still sees the first duplicate only after every claim has been read,
+so a later native read error retains its original precedence. Ignored heads
+release their own guards too. Before each admitted allocation, the memory floor
+includes the request controls, earlier retained values and the current value
+still held by this worker. These are distinct pinned inputs, not second ledger
+charges or a sum of other workers' leases. An impossible required peak returns
+the original typed floor. This is an idle-floor check only: it does not resolve
+FIFO waits behind an earlier request that needs these retained inputs released.
+Channel-pair and voice-roster lookups stay unbound.
 
 Native store and validation errors retain their existing response mapping. A
 memory floor is `MEMORY_FLOOR` (507, with `needed` and `available`); a stopped
@@ -64,9 +78,9 @@ memory wait is `MEMORY_WAITED_OUT` (503, with `needed` and `waitedMs`). Both use
 the existing core error envelope and keep the original refusal distinct.
 
 This change does not complete contact-read or pinned-reference memory admission.
-MessagePack DOM decoding, retained claim values, history/projection scratch,
-other retained collections, other request storage, auth clones and response-byte
-custody still need their own
-physical-memory accounting. Future untimed memory waits must use this caller's
+MessagePack DOM decoding (including allocation before a value is charged),
+history/projection scratch, other retained collections, other request storage,
+auth clones and response-byte custody still need their own physical-memory
+accounting and admission. Retained-input FIFO progress remains open. Future untimed memory waits must use this caller's
 stop condition; the relationship-set wait above does so. There is no full-Q,
 runtime or throughput claim here.
