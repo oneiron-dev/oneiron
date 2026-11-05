@@ -3373,6 +3373,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 3 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
 | `src/inference_snapshot/store.rs` | src | m | 2 struct · 8 fn · 2 crate-vis | SnapshotPublish, SnapshotReconcile | The sealed snapshot store (DESIGN-V2 §7, V2-R3): each snapshot's body sealed under its own data key in a… |
 | `src/ingest/admission.rs` | src | m | 3 struct · 8 fn · 7 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
+| `src/ingest/ag_ui.rs` | src | s | 3 struct · 9 fn · 1 const | AgUiDecodedEvent, AgUiEventLinks, AgUiSource | Opt-in AG-UI event-dump normalization, without capture or outcome inference |
 | `src/ingest/audience.rs` | src | m | 2 struct · 2 enum · 5 fn · 3 const · 2 crate-vis | ImportAudience, ImportAudienceCluster, ImportAudienceOption, ImportAudienceState | Import audience topics (OF-492) |
 | `src/ingest/bulk_review.rs` | src | m | 3 struct · 4 fn | ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt | One import-time human act for the exact set of imported claim candidates |
 | `src/ingest/bulk_review_tests.rs` | test | s | — | — | — |
@@ -3425,7 +3426,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/tests/producer.rs` | test | s | — | — | — |
 | `src/ingest/meeting_audio/tests/support.rs` | test | m | 8 crate-vis | — | Synthetic callback fixtures only: no decoder or model runs in these tests |
 | `src/ingest/meeting_audio/types.rs` | src | m | 24 struct · 4 enum · 2 trait · 3 fn | AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest +22 | Typed host ports for file decoding, inference, routing and explicit import consent |
-| `src/ingest/mod.rs` | src | s | 4 mod · 17 re-export · 9 crate-vis | — | Ingest source registry and source-local normalization |
+| `src/ingest/mod.rs` | src | s | 4 mod · 18 re-export · 9 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
 | `src/ingest/pdf.rs` | src | s | 1 struct · 1 enum · 1 fn | PdfText, PdfTextError | A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: "The first adapter reads a… |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |

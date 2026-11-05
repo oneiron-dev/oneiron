@@ -41425,6 +41425,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgUiDecodedEvent",
+      "AgUiEventLinks",
+      "AgUiSource"
+     ],
+     "path": "src/ingest/ag_ui.rs",
+     "purpose": "Opt-in AG-UI event-dump normalization, without capture or outcome inference",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -42106,7 +42122,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 4,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -92262,7 +92278,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93069,7 +93085,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6511,
+   "source_files": 6512,
    "test_files": 895
   },
   "oneiron-android": {
