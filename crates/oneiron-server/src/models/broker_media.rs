@@ -85,13 +85,14 @@ pub(super) fn broker_media_backend(
                 wire_models,
             )))
         }
-        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => {
-            Ok(Arc::new(OpenAiMediaBackend::new(
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => Ok(Arc::new(
+            OpenAiMediaBackend::new(
                 BrokerMedia::new(name, provider, &provider.base_url, site, keys)?,
                 wire_models,
                 provider.base_url.clone(),
-            )))
-        }
+            )
+            .with_embed_shape(provider.embed_shape),
+        )),
         kind => anyhow::bail!(
             "a {kind:?} provider's media calls do not go through the credential broker"
         ),
@@ -227,44 +228,60 @@ impl BrokerMedia {
     /// An OpenAI-compatible media request as its broker shape takes it.
     fn openai(&self, request: OpenAiMediaHttpRequest) -> LlmResult<Exchange> {
         let OpenAiMediaHttpRequest { method, path, body } = request;
-        let segments: Vec<&str> = path
-            .strip_prefix("/v1/")
-            .ok_or_else(invalid)?
-            .split('/')
-            .collect();
-        let shape = match (method, segments.as_slice(), &body) {
-            (OpenAiMediaMethod::Post, ["images", "generations"], OpenAiMediaBody::Json(_)) => {
-                Shape::OpenAiImages
-            }
-            (OpenAiMediaMethod::Post, ["images", "edits"], OpenAiMediaBody::Multipart { .. }) => {
-                Shape::OpenAiImageEdits
-            }
-            (OpenAiMediaMethod::Post, ["audio", "speech"], OpenAiMediaBody::Json(_)) => {
-                Shape::OpenAiSpeech
-            }
+        // Cohere's v2 embed route has its own broker shape (FIX 11467 H7):
+        // exactly `POST /v2/embed` as JSON takes it, before the existing
+        // `/v1/` classification below, which is otherwise unchanged.
+        let shape = if matches!(
+            (&method, path.as_str(), &body),
             (
                 OpenAiMediaMethod::Post,
-                ["audio", "transcriptions"],
-                OpenAiMediaBody::Multipart { .. },
-            ) => Shape::OpenAiTranscriptions,
-            (OpenAiMediaMethod::Post, ["embeddings"], OpenAiMediaBody::Json(_)) => {
-                Shape::OpenAiEmbeddings
+                "/v2/embed",
+                OpenAiMediaBody::Json(_)
+            )
+        ) {
+            Shape::CohereEmbed
+        } else {
+            let segments: Vec<&str> = path
+                .strip_prefix("/v1/")
+                .ok_or_else(invalid)?
+                .split('/')
+                .collect();
+            match (method, segments.as_slice(), &body) {
+                (OpenAiMediaMethod::Post, ["images", "generations"], OpenAiMediaBody::Json(_)) => {
+                    Shape::OpenAiImages
+                }
+                (
+                    OpenAiMediaMethod::Post,
+                    ["images", "edits"],
+                    OpenAiMediaBody::Multipart { .. },
+                ) => Shape::OpenAiImageEdits,
+                (OpenAiMediaMethod::Post, ["audio", "speech"], OpenAiMediaBody::Json(_)) => {
+                    Shape::OpenAiSpeech
+                }
+                (
+                    OpenAiMediaMethod::Post,
+                    ["audio", "transcriptions"],
+                    OpenAiMediaBody::Multipart { .. },
+                ) => Shape::OpenAiTranscriptions,
+                (OpenAiMediaMethod::Post, ["embeddings"], OpenAiMediaBody::Json(_)) => {
+                    Shape::OpenAiEmbeddings
+                }
+                (
+                    OpenAiMediaMethod::Post,
+                    ["videos"],
+                    OpenAiMediaBody::Json(_) | OpenAiMediaBody::Multipart { .. },
+                ) => Shape::OpenAiVideoStart,
+                (OpenAiMediaMethod::Get, ["videos", _], OpenAiMediaBody::Empty) => {
+                    Shape::OpenAiVideoPoll
+                }
+                (OpenAiMediaMethod::Get, ["videos", _, "content"], OpenAiMediaBody::Empty) => {
+                    Shape::OpenAiVideoContent
+                }
+                (OpenAiMediaMethod::Delete, ["videos", _], OpenAiMediaBody::Empty) => {
+                    Shape::OpenAiVideoDelete
+                }
+                _ => return Err(invalid()),
             }
-            (
-                OpenAiMediaMethod::Post,
-                ["videos"],
-                OpenAiMediaBody::Json(_) | OpenAiMediaBody::Multipart { .. },
-            ) => Shape::OpenAiVideoStart,
-            (OpenAiMediaMethod::Get, ["videos", _], OpenAiMediaBody::Empty) => {
-                Shape::OpenAiVideoPoll
-            }
-            (OpenAiMediaMethod::Get, ["videos", _, "content"], OpenAiMediaBody::Empty) => {
-                Shape::OpenAiVideoContent
-            }
-            (OpenAiMediaMethod::Delete, ["videos", _], OpenAiMediaBody::Empty) => {
-                Shape::OpenAiVideoDelete
-            }
-            _ => return Err(invalid()),
         };
         let (content_type, body) = match body {
             OpenAiMediaBody::Empty => (None, Vec::new()),
