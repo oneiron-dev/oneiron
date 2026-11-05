@@ -305,6 +305,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.proactivity.digest.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::digest::DigestReadRequest,
+                >(),
+            ),
+            (
                 "vault.personas.preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
@@ -7117,6 +7123,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shape.groups",
     "vault.shape.groups.resolve",
     "vault.companions.access_requests.answer",
+    "vault.proactivity.digest.get",
     "vault.personas.preview",
     "vault.personas.export",
     "vault.personas.edit",
@@ -8033,6 +8040,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CompanionAccessRequestAnswered,
+        >(),
+        "vault.proactivity.digest.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>,
         >(),
         "vault.personas.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::PersonaSnapshotPreview,
@@ -10997,6 +11007,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.grants.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.proactivity.digest.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19443,6 +19460,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.grants.answer" => {
             let _input: crate::task_verb::sdk::GrantAnswerRequest = decode(value.clone())?;
         }
+        "vault.proactivity.digest.get" => {
+            let _input: crate::dreamer_runner::maintenance::digest::DigestReadRequest =
+                decode(value.clone())?;
+        }
         "vault.personas.preview" => {
             let _input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest =
                 decode(value.clone())?;
@@ -23679,6 +23700,9 @@ pub fn invoke(
             vault_companions_access_requests_answer(memory, decode(value)?)?,
         ),
         "self.grants.answer" => encode(self_grants_answer(memory, decode(value)?)?),
+        "vault.proactivity.digest.get" => {
+            encode(vault_proactivity_digest_get(memory, decode(value)?)?)
+        }
         "vault.personas.preview" => encode(vault_personas_preview(memory, decode(value)?)?),
         "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
         "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
@@ -26611,6 +26635,12 @@ pub fn self_grants_answer(
     input: crate::task_verb::sdk::GrantAnswerRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GrantAnswered> {
     crate::task_verb::sdk::host_only(memory, "self.grants.answer", &input)
+}
+pub fn vault_proactivity_digest_get(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::digest::DigestReadRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.proactivity.digest.get", &input)
 }
 pub fn vault_personas_preview(
     memory: &Memory<'_>,

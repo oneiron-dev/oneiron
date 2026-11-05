@@ -596,6 +596,12 @@ export class Oneiron {
         set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
       },
     },
+    proactivity: {
+      digest: {
+        /** Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant. */
+        get: (input: Facade.DigestReadRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigestGet(input) as Facade.ProactivityDigestView | null),
+      },
+    },
     personas: {
       /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
       preview: (input: Facade.PersonaSnapshotPreviewRequest): Facade.PersonaSnapshotPreview => this.#call(() => this.#client.vaultPersonasPreview(input) as Facade.PersonaSnapshotPreview),

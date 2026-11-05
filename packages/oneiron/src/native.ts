@@ -88,6 +88,7 @@ selfGrantsAsk(input: unknown): unknown
 selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
+vaultProactivityDigestGet(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown

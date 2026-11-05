@@ -122,6 +122,7 @@ pub(crate) fn mcp_agent_verb_input(
         "self.grants.asked" => a.spec.clone().ok_or_else(invalid),
         "vault.companions.access_requests.answer" => a.spec.clone().ok_or_else(invalid),
         "self.grants.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.proactivity.digest.get" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.export" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.edit" => a.spec.clone().ok_or_else(invalid),
@@ -1680,6 +1681,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.grants.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.proactivity.digest.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.personas.preview" => {
@@ -6364,6 +6368,24 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::self_grants_answer(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.proactivity.digest.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.proactivity.digest.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::maintenance::digest::DigestReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_proactivity_digest_get(server, auth, input),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
