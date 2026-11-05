@@ -14,6 +14,7 @@
 //! that meets its probation request out passes it to the next rung, or waits
 //! for that request to end. A request error ends the call.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(super) mod cache_warmth;
@@ -1583,7 +1584,7 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_released(run, request, selector, voices, None)
+        self.media_released(run, request, selector, voices, None, None)
             .await
     }
 
@@ -1594,8 +1595,9 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by_released(run, request, selector, voices, self.host_wait(), release)
+        self.media_by_released(run, request, selector, voices, self.host_wait(), release, admitted)
             .await
     }
 
@@ -1612,6 +1614,7 @@ impl OfferLadder {
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
         release: MediaDispatchRelease<'a>,
+        admitted: Option<&'a AtomicBool>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1644,6 +1647,7 @@ impl OfferLadder {
                                 false,
                                 voices,
                                 release.clone(),
+                                admitted,
                             )
                             .await;
                         if fell.is_err() {
@@ -1663,7 +1667,7 @@ impl OfferLadder {
                     }
                     sent[index] = true;
                     if let Some(answer) = self
-                        .send_media(call, index, &request, &mut walk, release.clone())
+                        .send_media(call, index, &request, &mut walk, release.clone(), admitted)
                         .await?
                     {
                         return Ok(answer);
@@ -1683,6 +1687,7 @@ impl OfferLadder {
         request: &MediaRequest,
         walk: &mut Walk,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1716,6 +1721,9 @@ impl OfferLadder {
         let permit = call
             .run
             .admit_media(selector, &bound, &rung.offer.binding)?;
+        if let Some(admitted) = admitted {
+            admitted.store(true, Ordering::Release);
+        }
         // The world's order is judged again beside it (FIX 11768).
         if !self.route_admitted(call.routes, index) {
             settle_failed(permit);
