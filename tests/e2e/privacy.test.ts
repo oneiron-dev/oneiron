@@ -470,6 +470,10 @@ async function expectReferenceGone(client: PublicHttpClient, reference: string, 
   }
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // PRIVACY-01. The real extraction response mints eligible PERSON records;
 // ordinary owner-created PERSONs have no extraction provenance and are not candidates.
 suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work", async () => {
@@ -490,6 +494,8 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
       { inputTokens: 128, outputTokens: 64 }),
   }] });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
     await grantExtraction(engine);
@@ -572,8 +578,18 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(receipts.filter(row => /delete|erase/i.test([row.kind, row.outcome, ...row.reason_codes].join(" "))))
       .toEqual([]);
     expect(providers.seenFixtureCalls).toHaveLength(1);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -607,6 +623,8 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       { inputTokens: 128, outputTokens: 48 }),
   }] });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
       initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
@@ -773,8 +791,18 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary")).toHaveLength(1);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -993,6 +1021,8 @@ suite.test(test, "PRIVACY-08", "Anonymous chat has no memory should work", async
     })),
   });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-08", profile, serverConfig: `
 [models.providers.privacy]
@@ -1094,7 +1124,17 @@ enabled = false
     expect(await allReceipts(engine.client)).toEqual(beforeRestartReceipts);
     expect(await engine.client.call("vault.retrieval.runs", { limit: 100 })).toEqual(beforeRestartTelemetry);
     await memoryAndExport();
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
