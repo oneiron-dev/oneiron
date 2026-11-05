@@ -136,15 +136,16 @@ pub(super) fn unavailable(
     refusal
 }
 
-/// The principal a diary query reads as.
+/// The principal a diary or sealed-pad host door reads as.
 pub(super) fn diary_reader(
     server: &SyncServer,
     auth: &CoreAuth,
+    verb: &str,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
     crate::api::facade::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            "self.memory.diary.query reads as the credential's own principal",
+            format!("{verb} reads as the credential's own principal"),
             &["Present a slip paired with a principal ref and an actor class."],
         )
     })
