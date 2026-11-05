@@ -2,7 +2,7 @@
 //! the plain-text conversation fallback, and their timestamp and time-label
 //! readers.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use serde_json::Value;
 
@@ -15,8 +15,9 @@ use super::verified_send::normalize_whitespace;
 pub(super) fn explicit_conversation_messages(
     thread_id: &str,
     message_values: &[Value],
-) -> Result<Vec<LinkedInConversationMessage>> {
-    let mut messages = Vec::new();
+    mut emit: impl FnMut(LinkedInConversationMessage) -> bool,
+) -> Result<bool> {
+    let mut found = false;
     let mut seen_message_ids = HashSet::new();
     for value in message_values {
         let Some(object) = value.as_object() else {
@@ -41,67 +42,89 @@ pub(super) fn explicit_conversation_messages(
             object,
             &["occurred_at", "timestamp", "created_at", "sent_at"],
         )?;
-        messages.push(LinkedInConversationMessage {
+        found = true;
+        if !emit(LinkedInConversationMessage {
             thread_id: thread_id.to_owned(),
             message_id,
             occurred_at,
             text,
-        });
+        }) {
+            break;
+        }
     }
-    Ok(messages)
+    Ok(found)
 }
 
 pub(super) fn fallback_conversation_messages(
     thread_id: &str,
     conversation_text: &str,
-) -> Result<Vec<LinkedInConversationMessage>> {
-    let lines = conversation_text
+    mut emit: impl FnMut(LinkedInConversationMessage) -> bool,
+) -> Result<bool> {
+    let mut lines = conversation_text
         .lines()
         .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    if lines.is_empty() {
-        return Ok(Vec::new());
+        .filter(|line| !line.is_empty());
+    let mut lookahead = lines.by_ref().take(3).collect::<VecDeque<_>>();
+    if lookahead.len() == 3
+        && lookahead[0] == lookahead[1]
+        && looks_like_linkedin_time(&lookahead[2])
+    {
+        pop_conversation_line(&mut lookahead, &mut lines);
     }
 
-    let mut start = 0;
-    if lines.len() >= 3 && lines[0] == lines[1] && looks_like_linkedin_time(&lines[2]) {
-        start = 1;
-    }
-
-    let mut messages = Vec::new();
-    let mut index = start;
-    while index < lines.len() {
-        if index + 2 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
-            let timestamp = &lines[index + 1];
-            index += 2;
-            let body_start = index;
-            while index < lines.len() {
-                if index + 1 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
+    let mut found = false;
+    while let Some(line) = pop_conversation_line(&mut lookahead, &mut lines) {
+        if lookahead.len() >= 2 && looks_like_linkedin_time(&lookahead[0]) {
+            let Some(timestamp) = pop_conversation_line(&mut lookahead, &mut lines) else {
+                break;
+            };
+            let mut body = String::new();
+            while !lookahead.is_empty() {
+                if lookahead.len() >= 2 && looks_like_linkedin_time(&lookahead[1]) {
                     break;
                 }
-                index += 1;
+                let Some(body_line) = pop_conversation_line(&mut lookahead, &mut lines) else {
+                    break;
+                };
+                if !body.is_empty() {
+                    body.push(' ');
+                }
+                body.push_str(&body_line);
             }
-            let body = lines[body_start..index].join(" ");
             if !body.is_empty() {
-                messages.push(fallback_message(
+                found = true;
+                if !emit(fallback_message(
                     thread_id,
-                    [timestamp.as_str(), body.as_str()].as_slice(),
+                    &[timestamp.as_str(), body.as_str()],
                     Some(body.clone()),
-                )?);
+                )?) {
+                    break;
+                }
             }
             continue;
         }
 
-        let body = lines[index].clone();
-        messages.push(fallback_message(
+        found = true;
+        if !emit(fallback_message(
             thread_id,
-            [body.as_str()].as_slice(),
-            Some(body.clone()),
-        )?);
-        index += 1;
+            &[line.as_str()],
+            Some(line.clone()),
+        )?) {
+            break;
+        }
     }
-    Ok(messages)
+    Ok(found)
+}
+
+fn pop_conversation_line(
+    lookahead: &mut VecDeque<String>,
+    lines: &mut impl Iterator<Item = String>,
+) -> Option<String> {
+    let line = lookahead.pop_front()?;
+    if let Some(next) = lines.next() {
+        lookahead.push_back(next);
+    }
+    Some(line)
 }
 
 fn fallback_message(

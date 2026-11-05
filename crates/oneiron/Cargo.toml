@@ -142,7 +142,7 @@ whichlang = "0.1.1"
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico"] }
 
 # CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
 # BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
@@ -309,6 +309,10 @@ required-features = ["sync"]
 name = "sync_memory"
 harness = false
 required-features = ["sync"]
+
+[[bench]]
+name = "result_search_overlap"
+harness = false
 
 [[bench]]
 name = "agent_verb_rows_replay"

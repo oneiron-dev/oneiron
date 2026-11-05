@@ -4006,6 +4006,22 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.advisory_ask.set",
+      "description": "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way.",
+      "input": "SkillAdvisoryAskRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_advisory_ask_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.advisory_ask.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",
@@ -7245,7 +7261,7 @@
       "name": "vault.coach.training_offers.answer",
       "description": "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice.",
       "input": "crate::skill_optimize::offer_doors::OfferAnswerRequest",
-      "output": "crate::skill_optimize::OfferAnswerRecord",
+      "output": "crate::skill_optimize::offer_doors::OfferAnswerReply",
       "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,

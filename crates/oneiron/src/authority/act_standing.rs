@@ -122,6 +122,19 @@ impl CausalPoints {
             },
         )
     }
+
+    /// Whether `act`'s carrier and owner stood at its signed heads (FIX
+    /// 4703, evidence-only): the `stood` behind [`Self::standing`], without
+    /// today's removal race. Historical Grant issuance is judged at its own
+    /// signed causal point, not invalidated by a later carrier removal.
+    /// `None` where this set was not built for `act` or holds no state for
+    /// its heads (pending/missing history).
+    pub(super) fn carrier_and_owner_stood_at_signed_heads(
+        &self,
+        act: &ExternalAct,
+    ) -> Option<bool> {
+        self.at.get(act)?.as_ref().map(|at| at.stood)
+    }
 }
 
 /// How this install counts `machine`'s chain under `admitter`, as its own
@@ -387,9 +400,10 @@ fn capture_in_txn(
 ) -> Result<Option<(ImageFold, Parents)>> {
     let posture = store.privacy_posture;
     let peers = crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
-    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    if let Some(adopted) =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
     {
-        match capture_past_adopted(store, txn, &adopted, heads, pin, &peers)? {
+        match capture_past_adopted(store, txn, adopted.as_ref(), heads, pin, &peers)? {
             (AdoptedImageFold::Captured { fold, .. }, parents) => {
                 return Ok(Some((*fold, parents)));
             }

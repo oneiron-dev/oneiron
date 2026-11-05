@@ -50,6 +50,7 @@ impl AiHandle {
                 ChatSettings {
                     history_turns: 0,
                     turn_budget_units: 0,
+                    turn_opener: crate::config::models::TurnOpener::default(),
                 },
                 |models| models.chat,
             ),
@@ -64,6 +65,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            coach_heal_wake: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
@@ -265,6 +267,38 @@ impl AiHandle {
         if let Err(error) = kept {
             tracing::warn!(?error, ?hint, "dreamer session hint not kept");
         }
+    }
+
+    /// Tells the Dreamer's session policy the app opened, and waits the
+    /// hint's ACTUAL apply before returning its effect (FIX 784): the
+    /// tracked enqueue and the apply wait run together inside ONE
+    /// [`crate::server::blocking`] closure, since the caller must wait
+    /// anyway — no fast path, no second scheduling decision. `None` without
+    /// a running Dreamer, or when the hint was not kept / the apply never
+    /// ran (warned, never a refusal): the caller continues its existing
+    /// witness derivation either way.
+    pub fn session_app_open_applied(
+        &self,
+        key: oneiron::session_lifecycle::SessionKey,
+        deadline: Option<std::time::Instant>,
+    ) -> Option<oneiron_driver::SessionHintEffect> {
+        let hints = self.hints.as_ref()?;
+        crate::server::blocking(|| {
+            let applied = match hints.push_app_open_tracked_waiting(key, None, deadline) {
+                Ok(handle) => handle.wait(),
+                Err(error) => {
+                    tracing::warn!(?error, "dreamer session AppOpen hint not kept");
+                    return None;
+                }
+            };
+            match applied {
+                Ok(effect) => Some(effect),
+                Err(error) => {
+                    tracing::warn!(?error, "dreamer session AppOpen apply wait ended");
+                    None
+                }
+            }
+        })
     }
 
     /// A turn landed: a due turn queues the running Dreamer's Micro wake

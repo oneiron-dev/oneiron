@@ -6,13 +6,12 @@ use super::types::{
     CounterpartyFirstTouch, CounterpartyOptOut, CounterpartyOptOutReason, KEY_COUNTERPARTY,
     KEY_CREATED_AT, KEY_FIRST_TOUCH, KEY_IDENTITY_REF, KEY_NOTES, KEY_OPT_OUT, KEY_OPT_OUT_REASON,
     KEY_OPT_OUT_RECEIPT_REASON, KEY_OPT_OUT_RECORDED_AT, KEY_PROMO_CONSENT, KEY_REVOKED_AT,
-    KEY_SCHEMA_VERSION, KEY_STATUS, KEY_UPDATED_AT, MAX_COUNTERPARTY_BYTES, MAX_NOTE_BYTES,
-    OPT_OUT_KEYS, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
-    PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT, PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH,
-    PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF, PREDICATE_COUNTERPARTY_CONTACT_NOTES,
-    PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT, PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT,
-    PREDICATE_COUNTERPARTY_CONTACT_REVOKED_AT, PREDICATE_COUNTERPARTY_CONTACT_STATUS,
-    PREDICATE_COUNTERPARTY_CONTACT_UPDATED_AT,
+    KEY_SCHEMA_VERSION, KEY_STATUS, KEY_UPDATED_AT, MAX_NOTE_BYTES, OPT_OUT_KEYS,
+    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY, PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH, PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+    PREDICATE_COUNTERPARTY_CONTACT_NOTES, PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT,
+    PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT, PREDICATE_COUNTERPARTY_CONTACT_REVOKED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_STATUS, PREDICATE_COUNTERPARTY_CONTACT_UPDATED_AT,
 };
 use crate::claim::{ClaimBody, ClaimSubject, MAX_PREDICATE_BYTES};
 use crate::entity_id::EntityId;
@@ -157,7 +156,6 @@ pub(crate) fn validate_counterparty_contact_claim_structure(body: &ClaimBody) ->
             .map_err(|_| Error::InvalidClaimBody("counterparty_contact identity_ref invalid")),
         PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY => validate_claim_string(
             &body.value,
-            MAX_COUNTERPARTY_BYTES,
             "counterparty_contact.counterparty value must be non-empty string",
         ),
         PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH => body
@@ -324,11 +322,13 @@ pub(super) fn normalize_counterparty(value: String) -> Result<String> {
 }
 
 pub(super) fn validate_counterparty(value: &str) -> Result<()> {
-    validate_non_empty_bounded(
-        value,
-        MAX_COUNTERPARTY_BYTES,
-        "counterparty must be non-empty and at most 512 bytes",
-    )
+    if value.trim().is_empty() || value.trim() != value {
+        Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
+            "counterparty must be non-empty and trimmed",
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn normalize_note(value: String) -> Result<String> {
@@ -345,11 +345,11 @@ fn validate_note(value: &str) -> Result<()> {
     )
 }
 
-fn validate_claim_string(value: &Value, max_bytes: usize, reason: &'static str) -> Result<()> {
+fn validate_claim_string(value: &Value, reason: &'static str) -> Result<()> {
     let Some(value) = value.as_str() else {
         return Err(Error::InvalidClaimBody(reason));
     };
-    if value.trim().is_empty() || value.trim() != value || value.len() > max_bytes {
+    if value.trim().is_empty() || value.trim() != value {
         Err(Error::InvalidClaimBody(reason))
     } else {
         Ok(())

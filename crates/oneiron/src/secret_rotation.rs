@@ -102,9 +102,8 @@ pub const SECRET_EXHAUST_TAINT_PREFIX: &str = "secret_exhaust_taint:v1:";
 /// unreadable-as-`true` means CLOSED: a publish gate defaults to refusing.
 pub const POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY: &str = "secret.taint.allow_stale_publish";
 
-/// Upper bound on a stored taint ref's secret name, mirroring the bounded
-/// text discipline the artifact bodies already keep.
-pub const SECRET_TAINT_REF_MAX_BYTES: usize = 512;
+/// The custody secret-name bound, also used for stored taint refs.
+pub const SECRET_TAINT_REF_MAX_BYTES: usize = crate::secret_record::SECRET_NAME_MAX_BYTES;
 
 fn invalid_body(reason: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretRotationBody(reason))
@@ -377,7 +376,7 @@ pub(crate) fn validate_taint_refs(refs: &[SecretTaintRef]) -> Result<()> {
     for (index, r) in refs.iter().enumerate() {
         if r.secret_ref.is_empty() || r.secret_ref.len() > SECRET_TAINT_REF_MAX_BYTES {
             return Err(invalid_body(
-                "taint ref secret_ref must be non-empty and at most 512 bytes",
+                "taint ref secret_ref must be non-empty and within the secret-name byte bound",
             ));
         }
         if refs[..index]
@@ -463,7 +462,7 @@ impl ArtifactTaintState {
 /// Reads the value-less admission projection, never the full record: a
 /// taint check has no business materializing plaintext.
 pub(crate) fn taint_state_for_refs_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     refs: &[SecretTaintRef],
 ) -> Result<ArtifactTaintState> {

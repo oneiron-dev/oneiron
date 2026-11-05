@@ -162,6 +162,14 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
         Some(&self.goal_revision)
     }
 
+    fn arm_record(&self, arm: AxisArm) -> Option<(EntityId, &SkillRecord)> {
+        let arm = match arm {
+            AxisArm::Incumbent => &self.incumbent,
+            AxisArm::Candidate => &self.candidate,
+        };
+        Some((arm.skill, &arm.record))
+    }
+
     fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
         let criterion = self
             .criteria

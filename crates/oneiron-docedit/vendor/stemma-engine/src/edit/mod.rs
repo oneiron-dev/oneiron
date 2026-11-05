@@ -5618,13 +5618,31 @@ fn validate_expect_on_block(
     semantic_hash: Option<&str>,
     step_index: usize,
 ) -> Result<(), EditError> {
+    validate_expect_on_block_with(
+        doc,
+        block_id,
+        expect,
+        semantic_hash,
+        step_index,
+        validate_block_is_editable,
+    )
+}
+
+fn validate_expect_on_block_with(
+    doc: &CanonDoc,
+    block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    step_index: usize,
+    validate: fn(&TrackedBlock, usize) -> Result<(), EditError>,
+) -> Result<(), EditError> {
     let block_idx =
         find_block_index(&doc.blocks, block_id).ok_or_else(|| EditError::BlockNotFound {
             block_id: block_id.clone(),
             step_index,
         })?;
     let tracked_block = &doc.blocks[block_idx];
-    validate_block_is_editable(tracked_block, step_index)?;
+    validate(tracked_block, step_index)?;
 
     let para = match &tracked_block.block {
         BlockNode::Paragraph(p) => p,
@@ -5732,6 +5750,51 @@ fn validate_delete_step(
     let (start, end) = normalize_block_range_indices(doc, from_block_id, to_block_id, step_index)?;
     for tracked_block in &doc.blocks[start..=end] {
         validate_block_is_editable(tracked_block, step_index)?;
+    }
+    Ok((start, end))
+}
+
+fn validate_block_for_tracked_delete(
+    block: &TrackedBlock,
+    step_index: usize,
+) -> Result<(), EditError> {
+    if crate::tracked_model::can_preserve_paragraph_delete(block) {
+        return Ok(());
+    }
+    validate_block_is_editable(block, step_index)
+}
+
+fn validate_tracked_delete_step(
+    doc: &CanonDoc,
+    from_block_id: &NodeId,
+    to_block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    step_index: usize,
+) -> Result<(usize, usize), EditError> {
+    let (start, end) = normalize_block_range_indices(doc, from_block_id, to_block_id, step_index)?;
+    if crate::tracked_model::document_final_paragraph_index(&doc.blocks)
+        .is_some_and(|last| start <= last && last <= end)
+    {
+        return validate_delete_step(
+            doc,
+            from_block_id,
+            to_block_id,
+            expect,
+            semantic_hash,
+            step_index,
+        );
+    }
+    validate_expect_on_block_with(
+        doc,
+        from_block_id,
+        expect,
+        semantic_hash,
+        step_index,
+        validate_block_for_tracked_delete,
+    )?;
+    for block in &doc.blocks[start..=end] {
+        validate_block_for_tracked_delete(block, step_index)?;
     }
     Ok((start, end))
 }
@@ -9833,6 +9896,26 @@ fn apply_delete_block_range(
     }
 }
 
+fn apply_delete_block_range_preserving_revisions(
+    doc: &mut CanonDoc,
+    start: usize,
+    end: usize,
+    revision: &RevisionInfo,
+    rev_counter: &mut u32,
+) {
+    for block in &mut doc.blocks[start..=end] {
+        if crate::tracked_model::can_preserve_paragraph_delete(block) {
+            crate::tracked_model::mark_paragraph_deleted_preserving_revisions(
+                block,
+                revision,
+                rev_counter,
+            );
+        } else {
+            crate::tracked_model::mark_whole_block_deleted(block, revision, rev_counter);
+        }
+    }
+}
+
 fn apply_delete_block_range_direct(doc: &mut CanonDoc, start: usize, end: usize) {
     doc.blocks.drain(start..=end);
 }
@@ -11232,16 +11315,28 @@ pub(crate) fn apply_transaction_with_notes(
                         step_index,
                     )?;
                 }
-                let (start, end) = validate_delete_step(
-                    &doc,
-                    from_block_id,
-                    to_block_id,
-                    expect,
-                    semantic_hash.as_deref(),
-                    step_index,
-                )?;
+                let (start, end) =
+                    if transaction.materialization_mode == MaterializationMode::TrackedChange {
+                        validate_tracked_delete_step(
+                            &doc,
+                            from_block_id,
+                            to_block_id,
+                            expect,
+                            semantic_hash.as_deref(),
+                            step_index,
+                        )
+                    } else {
+                        validate_delete_step(
+                            &doc,
+                            from_block_id,
+                            to_block_id,
+                            expect,
+                            semantic_hash.as_deref(),
+                            step_index,
+                        )
+                    }?;
                 if transaction.materialization_mode == MaterializationMode::TrackedChange {
-                    apply_delete_block_range(
+                    apply_delete_block_range_preserving_revisions(
                         &mut doc,
                         start,
                         end,
