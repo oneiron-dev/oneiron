@@ -20,6 +20,9 @@ mod remote_task;
 mod transition;
 mod validate;
 
+pub(crate) use self::transition::IntentCompletion;
+use self::transition::transition_record_with_outcome_and;
+
 pub(crate) use self::remote_task::defer_record;
 pub(crate) use self::validate::hash_frozen_payload;
 pub(super) use self::validate::validate_record;
@@ -708,46 +711,6 @@ fn transition_record_with_outcome(
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
         .map(|completion| completion.record)
-}
-
-pub(crate) struct IntentCompletion {
-    pub(crate) record: IntentLedgerRecord,
-    pub(crate) budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
-}
-
-fn transition_record_with_outcome_and(
-    vault: &Vault,
-    id: [u8; 32],
-    next: IntentState,
-    outcome: RecordedOutboundOutcome,
-    now_ms: u64,
-    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
-) -> IntentLedgerResult<IntentCompletion> {
-    let mut wtxn = vault.store.env.write_txn()?;
-    let (mut record, budget_events) =
-        match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
-            transition::Transitioned::Moved(record, budget_events) => (record, budget_events),
-            transition::Transitioned::Replayed(mut record) => {
-                open_payload_in_txn(vault, &wtxn, &mut record)?;
-                drop(wtxn);
-                return Ok(IntentCompletion {
-                    record,
-                    budget_events: Vec::new(),
-                });
-            }
-        };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
-    also(&mut wtxn, &record);
-
-    wtxn.commit().map_err(Error::from)?;
-    let synced = force_sync(vault);
-    // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
-    vault.wake_owner_shed();
-    synced?;
-    Ok(IntentCompletion {
-        record,
-        budget_events,
-    })
 }
 
 /// Writes `record`, which a read door may have opened, back over its row in the stored form the

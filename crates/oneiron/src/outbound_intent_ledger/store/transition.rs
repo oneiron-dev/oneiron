@@ -7,8 +7,9 @@ use super::super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
 };
-use super::{LEDGER, get_ledger_record};
+use super::{LEDGER, force_sync, get_ledger_record, open_payload_in_txn};
 use crate::Vault;
+use crate::error::Error;
 
 /// What one transition did in the caller's writer.
 pub(super) enum Transitioned {
@@ -76,4 +77,44 @@ pub(super) fn transition_record_in_txn(
     }
     let budget_events = super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
     Ok(Transitioned::Moved(record, budget_events))
+}
+
+pub(crate) struct IntentCompletion {
+    pub(crate) record: IntentLedgerRecord,
+    pub(crate) budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+}
+
+pub(super) fn transition_record_with_outcome_and(
+    vault: &Vault,
+    id: [u8; 32],
+    next: IntentState,
+    outcome: RecordedOutboundOutcome,
+    now_ms: u64,
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
+) -> IntentLedgerResult<IntentCompletion> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let (mut record, budget_events) =
+        match transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
+            transition::Transitioned::Moved(record, budget_events) => (record, budget_events),
+            transition::Transitioned::Replayed(mut record) => {
+                open_payload_in_txn(vault, &wtxn, &mut record)?;
+                drop(wtxn);
+                return Ok(IntentCompletion {
+                    record,
+                    budget_events: Vec::new(),
+                });
+            }
+        };
+    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    also(&mut wtxn, &record);
+
+    wtxn.commit().map_err(Error::from)?;
+    let synced = force_sync(vault);
+    // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
+    vault.wake_owner_shed();
+    synced?;
+    Ok(IntentCompletion {
+        record,
+        budget_events,
+    })
 }
