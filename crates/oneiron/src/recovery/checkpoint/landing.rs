@@ -94,7 +94,7 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
@@ -114,6 +114,9 @@ impl Vault {
         // takes its rows out (KS-2A).
         let (retired, retired_digests) =
             carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        if let Some(opened) = &mut opened {
+            opened.retire_message_results(&retired_digests)?;
+        }
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked

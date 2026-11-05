@@ -23,7 +23,9 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, bad_part};
+use crate::ports::checkpoint::EntityRowPlacement;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
+use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, Unresolved, bad_part};
 use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
@@ -156,16 +158,42 @@ pub(crate) fn root_entry(
     }
 }
 
-/// An entity's row bytes, placed by its kind as the registry places it.
+/// An entity's row bytes, placed by its kind as the registry places it. A
+/// CLAIM or a NOTE is placed from its own bytes, as its getter places the
+/// row (FIX 10279): an ordinary CLAIM and a NOTE that names no one are their
+/// tree's, a dreamer step's CLAIM is the response client's, and an origin
+/// CLAIM or a NOTE core with a live author stays whole, named.
 pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     let owner = OwnerRef::entity(&id);
-    let kind =
-        EntityMetadataHeader::parse(value).map(|header| owners.entity_kind(header.entity_type));
+    let header = EntityMetadataHeader::parse(value);
+    if header
+        .as_ref()
+        .is_some_and(|header| [ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE].contains(&header.entity_type))
+    {
+        return match crate::ports::checkpoint::entity_row_placement(value) {
+            EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
+            EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            EntityRowPlacement::Unclassified(reason) => {
+                Placement::unclassified(Some(owner), unclassified(reason))
+            }
+        };
+    }
+    let kind = header.map(|header| owners.entity_kind(header.entity_type));
     match kind {
         Some(KindPlacement::Owner) => Placement::owned(owner, Vec::new()),
         Some(KindPlacement::Other(client)) => Placement::Dispatched(client),
         Some(KindPlacement::Unclassified(reason)) => Placement::unclassified(Some(owner), reason),
         None => Placement::unclassified(Some(owner), SyncUnclassified::Undecodable),
+    }
+}
+
+/// The sync reason for a row the getter's rule leaves whole.
+fn unclassified(reason: Unresolved) -> SyncUnclassified {
+    match reason {
+        Unresolved::Undecodable => SyncUnclassified::Undecodable,
+        Unresolved::UnknownKind => SyncUnclassified::UnknownKind,
+        Unresolved::NoOwner | Unresolved::SharedOwners => SyncUnclassified::NoOwner,
+        Unresolved::ActorSplit(why) => SyncUnclassified::ActorSplit(why),
     }
 }
 
@@ -238,7 +266,8 @@ pub(super) struct WithheldKey {
 /// the edge with it, goes with that actor; a whole document pin's key, the
 /// digest of the pin naming no one, is its citer's, held while the message
 /// it quotes is, as the pin is. `None` for every other key: a part's digest
-/// is withheld under its manifests' holders ([`withheld_part_key`]), and any
+/// is withheld under its manifests' holders ([`withheld_part_key`]), a
+/// custody digest beside its client's copy ([`withheld_client_key`]), and any
 /// other keeps its window whole as [`key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
@@ -287,6 +316,19 @@ pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
                 | MESSAGE_DOCS_MAP
                 | REPO_MANIFESTS_MAP
         )
+}
+
+/// The client the skeleton withholds `key` of `root` for, beside that
+/// client's copy of its value (FIX 10278): a protected input, a witness part
+/// or a sealed copy in the custody map is filed under a digest of it, and the
+/// credential client's copy holds both. `None` for every other key.
+pub(super) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+    (root == CUSTODY_MAP
+        && matches!(
+            crate::sync::custody::checkpoint::key_class(key),
+            KeyClass::Digest
+        ))
+    .then_some(OtherClient::Credential)
 }
 
 /// The key `no_one`, a split of a withheld key of `root`, with each of

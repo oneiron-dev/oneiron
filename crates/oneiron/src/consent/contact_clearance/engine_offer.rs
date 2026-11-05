@@ -29,6 +29,30 @@ impl Vault {
         })
     }
 
+    /// Files the entry's automatic offer once, without changing the explicit
+    /// manual offer door. The original proposal stays frozen even after expiry
+    /// or settlement; replaying an entry never raises its question again.
+    pub(crate) fn file_person_entry_disclosure_offer_once_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        contact: EntityId,
+        room: &EntityId,
+        scope: Scope,
+        owner_ref: &str,
+    ) -> Result<()> {
+        let filer = EntityId::derive(ENGINE_OFFER_FILER, &[])?;
+        if self.person_entry_disclosure_offer_filed_in_txn(
+            txn,
+            filer,
+            contact,
+            &contact_disclosure_room_channel(room),
+        )? {
+            return Ok(());
+        }
+        self.file_person_entry_disclosure_offer_in_txn(txn, contact, room, scope, owner_ref)
+            .map(|_| ())
+    }
+
     /// Files, as the engine, the P5 offer for `contact`'s first entry into
     /// `room`: its clearance for `scope` on the room's channel, the contact
     /// the one party it reaches, for the owner `owner_ref` to answer at the

@@ -15,6 +15,10 @@ use oneiron_contracts::error::OffRecordError;
 pub(in crate::session_overlay) struct TxnSegment {
     pub(super) overlay: Arc<SessionOverlay>,
     pub(super) generation: u64,
+    /// This install's own number, never reused (FIX 10004): a view captured
+    /// from this segment's preview reads its later writes only while this
+    /// very segment stands.
+    pub(super) nonce: u64,
     pub(super) preview: Arc<OverlayState>,
     pub(in crate::session_overlay) mutations: Vec<OverlayMutation>,
     #[allow(
@@ -27,6 +31,9 @@ pub(in crate::session_overlay) struct TxnSegment {
 }
 
 pub(super) static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// The next write segment's install nonce (FIX 10004).
+static NEXT_SEGMENT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 /// RAII owner of the thread-local segment installed for one base write txn.
 #[allow(
@@ -109,6 +116,7 @@ impl SessionOverlay {
         let segment = TxnSegment {
             overlay: self.clone(),
             generation,
+            nonce: NEXT_SEGMENT_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             preview: snapshot,
             mutations: Vec::new(),
             journal: Vec::new(),

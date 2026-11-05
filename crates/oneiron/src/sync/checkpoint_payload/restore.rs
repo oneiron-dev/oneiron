@@ -21,7 +21,9 @@ use loro::checkpoint::{
 use loro::{LoroDoc, LoroValue};
 
 use super::operations::{export_slice, holds_slice};
-use super::owners::{key_fill, root_entry, root_fill, withheld_key, withheld_part_key};
+use super::owners::{
+    key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
+};
 use super::{
     KindPlacement, LoroCarrier, LoroSlot, LoroVerdict, OpenedAtom, OpenedSyncAtoms, Placement,
     SlotCopy, SyncCarrier, SyncPayloadOwners, SyncRestoreRows, SyncUnclassified, WINDOW_ROUND_TRIP,
@@ -226,7 +228,9 @@ fn open_key(
             (key, whole)
         };
         if key.starts_with(KEY_PLACEHOLDER_PREFIX)
-            || (withheld_key(root, &key).is_none() && !withheld_part_key(root, &key))
+            || (withheld_key(root, &key).is_none()
+                && !withheld_part_key(root, &key)
+                && withheld_client_key(root, &key).is_none())
         {
             return Err(bad_part());
         }

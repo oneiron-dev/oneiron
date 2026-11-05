@@ -297,6 +297,11 @@ pub const CLIPBOARD_WORLD: &[u8] = b"oneiron.clipboard.world.v1";
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 
+/// The incarnation of a record's lazy sync-text birth (`entity_doc::sync`,
+/// FIX 11795): every machine's lazy birth of one row is one document. Parts:
+/// the record's id.
+pub const SYNC_TEXT_BIRTH_INCARNATION: &[u8] = b"oneiron.sync-text.birth-incarnation.v1";
+
 /// A turn or message VAD annotation claim (`affect::vad_annotation_claim_id`,
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
