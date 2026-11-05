@@ -3261,6 +3261,8 @@ class Oneiron:
         def set(self, spec: Facade.OriginAuthoritySetRequest) -> Facade.OriginAuthorityView:
             """Cut over one existing served origin under the owner proof and expected authority epoch."""
     class _VaultCodeCheckoutVerbs:
+        @property
+        def holder(self) -> "Oneiron._VaultCodeCheckoutHolderVerbs": ...
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
@@ -3279,6 +3281,9 @@ class Oneiron:
             """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
         def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+    class _VaultCodeCheckoutHolderVerbs:
+        def bind(self, spec: Facade.RepoCheckoutBindInput) -> Facade.RepoCheckoutBindOutput:
+            """Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."""
     class _VaultCodeViewsVerbs:
         def materialize(self, spec: Facade.CodeViewMaterializeRequest) -> Facade.CodeWorkingView:
             """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
