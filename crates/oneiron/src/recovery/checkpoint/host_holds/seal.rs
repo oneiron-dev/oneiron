@@ -266,8 +266,8 @@ impl CheckpointKey {
     ///
     /// The artifact does not open with this key.
     pub fn host_holds_member(&self, path: &std::path::Path) -> Result<Option<Vec<u8>>> {
-        let (image, _, _) = crate::recovery::checkpoint::read_image(path, self)?;
-        Ok(image.host_holds.map(|member| member.0))
+        let image = crate::recovery::checkpoint::read_image(path, self)?;
+        Ok(image.into_host_holds_member().map(|member| member.0))
     }
 }
 

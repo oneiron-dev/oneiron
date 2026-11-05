@@ -121,7 +121,8 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
         }
-        let (_, checkpoint_id, _, required) = read_image_required(backup, key)?;
+        let (checkpoint_id, required) =
+            read_image_required(backup, key)?.into_identity_and_requirement();
         let (epoch, recorded) = match epoch {
             Some(epoch) => {
                 let recorded = epochs::epoch_at(self, epoch)?.ok_or_else(|| {

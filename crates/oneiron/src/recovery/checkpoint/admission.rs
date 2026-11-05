@@ -34,9 +34,7 @@ pub use self::reason::{
 };
 use super::{Custody, RestoreReason, RestoreReport, artifact, codec_error, image, write_budget};
 use crate::store::custody_protocol::CustodyPosition;
-use crate::store::{
-    CustodyRoute, PreparedTakeover, TakeoverRefusal, refuse_foreign_binding, route_custody,
-};
+use crate::store::{CustodyRoute, PreparedTakeover, TakeoverRefusal, refuse_foreign_binding};
 use crate::world_keys::{RecipientCustody, RestoreAdmissionCapability, refused};
 use crate::{Error, Vault};
 
@@ -130,7 +128,7 @@ impl Vault {
             .at(P::ArtifactOpen));
         }
         let checkpoint = opened.image_id();
-        let (mut image, checkpoint_id, bodies, required) = image::decode_image(opened)
+        let mut image = image::decode_image(opened)
             .map_err(|error| because(R::CodecInvalid)(error).at(P::ArtifactOpen))?;
         let source = source::verified(
             &evidence,
@@ -143,29 +141,25 @@ impl Vault {
         // The family the key carries from the artifact's member, taken
         // before the image is consumed and only where its tag names the
         // member this image carries (FIX 6817).
-        let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
+        let artifact_holds = image.artifact_host_holds(key);
         let rows = image
+            .image()
             .databases
-            .get_mut("vault_meta")
+            .get("vault_meta")
             .ok_or_else(|| because(R::CodecInvalid)(codec_error()).at(P::ArtifactOpen))?;
         let at_custody = |rejected: Rejected| rejected.at(P::CustodyAdmission);
-        refuse_foreign_binding(rows.as_slice(), required.as_ref()).map_err(at_custody)?;
-        let image_position = required
-            .as_ref()
+        refuse_foreign_binding(rows.as_slice(), image.required()).map_err(at_custody)?;
+        let image_position = image
+            .required()
             .and_then(|required| required.position().ok())
             .map(|position| position_fact(&position));
         let custody_source = recovery.source();
         let anchor = custody_source.anchor;
         let absolute = std::path::absolute(destination)
             .map_err(|error| because(R::StorageIo)(Error::from(error)).at(P::CustodyAdmission))?;
-        let route = route_custody(
-            rows,
-            required.as_ref(),
-            &absolute,
-            key.custody_wrap(),
-            Some(&custody_source),
-        )
-        .map_err(at_custody)?;
+        let route = image
+            .route_custody(&absolute, key, Some(&custody_source))
+            .map_err(at_custody)?;
         let (custody, mut landing, route_fact) = match route {
             CustodyRoute::Local => (Custody::Keep, None, CustodyRouteFact::Local),
             CustodyRoute::Landed(landing) => {
@@ -175,8 +169,6 @@ impl Vault {
         };
         let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
-            bodies,
             destination,
             config,
             RestoreReason::Restore,

@@ -68,38 +68,117 @@ impl CheckpointImage {
     }
 }
 
-/// Opens one sealed artifact with `key` and structurally checks its image;
-/// returns the image, its checkpoint id and the bodies it carries.
+/// One authenticated artifact's image and streams, owned through its restore.
+/// Only the verified artifact decoder constructs this value. Consuming its
+/// parts gives up that ownership; raw images cannot enter `restore_image`.
+pub(super) struct AuthenticatedCheckpoint<'k> {
+    image: CheckpointImage,
+    id: String,
+    bodies: artifact::SealedBodies<'k>,
+    required: Option<crate::store::CustodyRequirement>,
+}
+
+impl<'k> AuthenticatedCheckpoint<'k> {
+    pub(super) fn image(&self) -> &CheckpointImage {
+        &self.image
+    }
+
+    pub(super) fn required(&self) -> Option<&crate::store::CustodyRequirement> {
+        self.required.as_ref()
+    }
+
+    pub(super) fn drop_machine_identity(&mut self) {
+        self.image.drop_machine_identity();
+    }
+
+    pub(super) fn carry_host_holds(&mut self, live: &crate::store::LiveCustody) -> Result<()> {
+        super::host_holds::carry(&mut self.image.databases, live.host_holds())
+    }
+
+    pub(super) fn carry_current_authority(
+        &mut self,
+        current: &crate::Vault,
+    ) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
+        super::authority_plane::carry_current_authority(&mut self.image.databases, current)
+    }
+
+    pub(super) fn supersede_live_responses(&mut self, current: &crate::Vault) -> Result<()> {
+        super::response_rows::supersede_live(&mut self.image, current)
+    }
+
+    pub(super) fn carry_current_host_holds(&mut self, current: &crate::Vault) -> Result<()> {
+        super::host_holds::carry_current(&mut self.image.databases, current)
+    }
+
+    pub(super) fn artifact_host_holds(
+        &mut self,
+        key: &CheckpointKey,
+    ) -> Option<super::HostOrderHolds> {
+        super::host_holds::artifact_host_holds(&mut self.image, key)
+    }
+
+    pub(super) fn route_custody(
+        &mut self,
+        destination: &Path,
+        key: &CheckpointKey,
+        source: Option<&crate::store::CustodySourceAt<'_>>,
+    ) -> std::result::Result<crate::store::CustodyRoute, super::Rejected> {
+        crate::store::route_custody(
+            self.image
+                .databases
+                .get_mut("vault_meta")
+                .ok_or_else(codec_error)?,
+            self.required.as_ref(),
+            destination,
+            key.custody_wrap(),
+            source,
+        )
+    }
+
+    pub(super) fn into_identity_and_requirement(
+        self,
+    ) -> (String, Option<crate::store::CustodyRequirement>) {
+        (self.id, self.required)
+    }
+
+    pub(super) fn into_host_holds_member(self) -> Option<super::host_holds::HostHoldsMember> {
+        self.image.host_holds
+    }
+
+    pub(super) fn into_landing_parts(
+        self,
+    ) -> (
+        CheckpointImage,
+        String,
+        artifact::SealedBodies<'k>,
+        Option<crate::store::CustodyRequirement>,
+    ) {
+        (self.image, self.id, self.bodies, self.required)
+    }
+}
+
+/// Opens and structurally checks one authenticated artifact, retaining ownership
+/// of the image and all streams until restore or read-only consumption.
 pub(super) fn read_image<'k>(
     path: &Path,
     key: &'k CheckpointKey,
-) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
-    read_image_required(path, key).map(|(image, id, bodies, _)| (image, id, bodies))
+) -> Result<AuthenticatedCheckpoint<'k>> {
+    read_image_required(path, key)
 }
 
-/// [`read_image`], with what the image needs of its custody (KS-4).
+/// [`read_image`], retaining the image's custody requirement (KS-4).
 pub(super) fn read_image_required<'k>(
     path: &Path,
     key: &'k CheckpointKey,
-) -> Result<(
-    CheckpointImage,
-    String,
-    artifact::SealedBodies<'k>,
-    Option<crate::store::CustodyRequirement>,
-)> {
+) -> Result<AuthenticatedCheckpoint<'k>> {
     decode_image(artifact::open_artifact(path, key)?)
 }
 
-/// The image's structural read once its artifact opened: its checkpoint id,
-/// the bodies it carries and what it needs of its custody.
-pub(super) fn decode_image(
-    opened: artifact::OpenedArtifact<'_>,
-) -> Result<(
-    CheckpointImage,
-    String,
-    artifact::SealedBodies<'_>,
-    Option<crate::store::CustodyRequirement>,
-)> {
+/// The closed artifact's structural read. No raw image or caller-supplied
+/// body collection can construct its authenticated restore continuation.
+pub(super) fn decode_image<'k>(
+    opened: artifact::OpenedArtifact<'k>,
+) -> Result<AuthenticatedCheckpoint<'k>> {
     let mut image: CheckpointImage =
         rmp_serde::from_slice(opened.image()).map_err(|_| codec_error())?;
     image.checkpoint_sequence = Some(opened.sequence());
@@ -139,5 +218,10 @@ pub(super) fn decode_image(
     }
     let id = blake3::Hash::from(opened.image_id()).to_hex().to_string();
     let (bodies, custody) = opened.into_bodies_and_custody();
-    Ok((image, id, bodies, custody))
+    Ok(AuthenticatedCheckpoint {
+        image,
+        id,
+        bodies,
+        required: custody,
+    })
 }
