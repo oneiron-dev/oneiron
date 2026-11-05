@@ -189,7 +189,7 @@ fn settle_connector_calls(
         })
         .collect();
     if due.is_empty() {
-        return Ok(0);
+        return Ok(settle_approved_browser_waits(server));
     }
     let mut host = ServedConnectorCallHost::new(server)?;
     let deliveries = WaitDeliveries::canonical(vault);
@@ -246,6 +246,12 @@ fn settle_connector_calls(
         backoffs.0.remove(&call.call_ref);
         settled += 1;
     }
+    Ok(settled + settle_approved_browser_waits(server))
+}
+
+fn settle_approved_browser_waits(server: &SyncServer) -> usize {
+    let vault = server.vault();
+    let mut settled = 0;
     // A held browser act has no connector row, so the pass above never
     // visits it: an answered pass that failed before its admission (the
     // server stopping, a storage error) leaves it settling, and a second
@@ -276,7 +282,7 @@ fn settle_connector_calls(
         }
         Err(error) => tracing::warn!(%error, "browser code consent waits not listed"),
     }
-    Ok(settled)
+    settled
 }
 
 fn now_ms() -> u64 {
