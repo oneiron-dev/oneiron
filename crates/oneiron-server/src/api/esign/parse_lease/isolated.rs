@@ -1,13 +1,12 @@
-//! The anonymous geometry caller's input lease, region and isolated parse.
+//! The geometry callers' input lease, region and isolated parse.
 
 use std::time::Instant;
 
 use axum::response::Response;
 use oneiron::blob_artifact::esign::EsignSealerError;
 use oneiron::blob_artifact::esign::render::PageGeometry;
-use oneiron_organ_host::CallClass;
-use oneiron_organ_host::host::LentRegion;
 use oneiron_organ_host::seal::{PdfInspectionError, SealSettings, inspect_pdf_region_until};
+use oneiron_organ_host::{CallClass, LentRegion};
 
 use crate::machine::{MemoryLease, MemoryRefusal};
 use crate::server::SyncServer;
