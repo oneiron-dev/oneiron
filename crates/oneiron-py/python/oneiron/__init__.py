@@ -961,6 +961,18 @@ class Oneiron:
         def supersede(self, spec):
             """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
             return json.loads(_translate(lambda: self._client.vault_commitments_supersede(json.dumps(spec))))
+        @property
+        def reminder_route(self) -> "Oneiron._VaultCommitmentsReminderRouteVerbs":
+            return Oneiron._VaultCommitmentsReminderRouteVerbs(self._client)
+    class _VaultCommitmentsReminderRouteVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_reminder_route_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_reminder_route_set(json.dumps(spec))))
     class _VaultReportsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2780,8 +2792,17 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs":
+            return Oneiron._VaultSyncQuarantineVerbs(self._client)
+        @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
             return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+    class _VaultSyncQuarantineVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def held_edits(self, spec):
+            """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
+            return json.loads(_translate(lambda: self._client.vault_sync_quarantine_held_edits(json.dumps(spec))))
     class _VaultSyncRetainedWorkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3830,7 +3851,7 @@ class Oneiron:
         def body(self) -> "Oneiron._VaultArtifactsBodyVerbs":
             return Oneiron._VaultArtifactsBodyVerbs(self._client)
         def append(self, input: dict[str, Any]) -> Any:
-            """Appends one version of bytes to a blob artifact's append-only chain."""
+            """Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_append(json.dumps(input, allow_nan=False))))
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""

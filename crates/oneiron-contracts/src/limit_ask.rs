@@ -527,6 +527,20 @@ pub enum EngineLimit {
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Embedding vector dimensions one vault opened with, measured once
+    /// where its host serves it. Past it the row asks whether everything
+    /// is okay and the vault serves as opened.
+    EmbeddingDimensions,
+    /// Evidence rows one memory-reason question reads, measured where the
+    /// door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole
+    /// question is served.
+    MemoryReasonEvidenceRows,
+    /// Token budget offered for one memory-reason question, measured where
+    /// the door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole budget
+    /// is offered to the existing execution path.
+    MemoryReasonTokens,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

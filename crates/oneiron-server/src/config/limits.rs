@@ -405,6 +405,9 @@ impl LimitsConfig {
             community_cache_bytes,
             connector_manifest_entries,
             requested_result_rows,
+            embedding_dimensions,
+            memory_reason_evidence_rows,
+            memory_reason_tokens,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -655,6 +658,12 @@ impl LimitsConfig {
                 connector_manifest_entries,
             ),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::EmbeddingDimensions, embedding_dimensions),
+            (
+                EngineLimit::MemoryReasonEvidenceRows,
+                memory_reason_evidence_rows,
+            ),
+            (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
