@@ -2268,7 +2268,7 @@
      "purpose": "Read-only resolution of artifact pointers, snapshots, and served files",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -124911,7 +124911,7 @@
      "path": "src/models/worker_host/session/registry.rs",
      "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -136497,6 +136497,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactOrigin",
       "LedgerPage",
       "LedgerPageRequest",
       "LedgerPulledRequest",
@@ -136505,9 +136506,10 @@
       "LedgerReportHead"
      ],
      "path": "src/lib/ledger_pages.rs",
-     "purpose": "The wake ledger's report in bounded pages (FIX 9549): a ledger push and a frozen pull carry one complete…",
+     "purpose": "The wake ledger's report in bounded pages (FIX 9549): a ledger push and a frozen pull carry every wake…",
      "surface": {
-      "fn": 13,
+      "enum": 1,
+      "fn": 15,
       "struct": 6
      }
     },
