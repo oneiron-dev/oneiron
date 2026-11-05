@@ -16,6 +16,14 @@ Model-role authorization binds a new request to its configured route and host.
 The policy budget guard meters new spend. Neither is a read grant for retained
 answer bytes or their sources.
 
+## Claim status is not recording origin
+
+`ClaimReadStatus::Recorded` is the record-verb status mode. It includes
+proposed, closed and stale claims. `Surfaceable` keeps the retrieval status
+filter. Session origin is a separate property of the native read lane.
+Do not change this status flag to classify checkpoint inputs or route their
+bodies.
+
 ## Historical body sources
 
 A successful checkpoint publication records the actual actor, every known
