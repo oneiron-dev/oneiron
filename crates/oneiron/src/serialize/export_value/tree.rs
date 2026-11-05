@@ -1,19 +1,7 @@
-//! FIX 10097: an exported MessagePack value is kept whole at any depth. The
-//! export, the restore and the archive form each walk the value on a stack
-//! of their own, so no depth nulls a node and none spends the call stack.
-//! Each node is read for credentials as it is reached; only a nested text's
-//! own decoding spends depth ([`super::TEXT_DEPTH`]).
-//!
-//! The archive form is the value's nodes in postorder: a leaf as its typed
-//! value, a container after its items as the count of items it holds, and the
-//! root last. Map pairs keep their order, duplicate keys included, and numbers
-//! keep their width and bits.
-use std::fmt;
+//! Core half of `serialize::export_value::tree`: its store-layer items live in `oneiron_store::serialize::export_value::tree` and are
+//! re-exported here; the items below stay in the engine.
 
-use rmpv::Value as Mp;
-use serde::de::{self, SeqAccess, Visitor};
-use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+pub(crate) use oneiron_store::serialize::export_value::tree::*;
 
 use super::{
     ExportValue, byte_container_is_opaque_or_tainted, credential_key, exported_text, invalid,
@@ -21,6 +9,11 @@ use super::{
 };
 use crate::batch::secret_scan::{release_joined_messagepack, release_joined_strings};
 use crate::error::Result;
+use rmpv::Value as Mp;
+use serde::de::{self, SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
 
 /// `value` as the export carries it. Every node is judged where it sits:
 /// a credential field, a joined secret, an id slot and opaque bytes, at any
@@ -79,20 +72,6 @@ struct Open<'v> {
     depth: usize,
     /// The items exported so far; a map's keys and values in turn.
     out: Vec<ExportValue>,
-}
-
-enum Items<'v> {
-    Array(&'v [Mp]),
-    Map(&'v [(Mp, Mp)]),
-}
-
-/// What an open container reads next.
-enum Next<'v> {
-    /// An item, under the field name it holds.
-    Item(&'v Mp, &'v str),
-    /// A map value whose key was nulled: it goes as nil, unread.
-    Nil,
-    Closed,
 }
 
 impl Reader {
@@ -206,16 +185,6 @@ impl<'v> Open<'v> {
     }
 }
 
-/// The field name a map key gives its value: its text, or its binary's.
-fn field_name(key: &Mp) -> &str {
-    key.as_str()
-        .or_else(|| match key {
-            Mp::Binary(bytes) => std::str::from_utf8(bytes).ok(),
-            _ => None,
-        })
-        .unwrap_or("")
-}
-
 /// The MessagePack value an exported value restores, at any depth.
 pub(super) fn restore_value_tree(value: &ExportValue) -> Result<Mp> {
     let mut built: Vec<Mp> = Vec::new();
@@ -267,22 +236,6 @@ fn leaf_msgpack(value: &ExportValue) -> Result<Mp> {
             return Err(invalid("container node read as a leaf"));
         }
     })
-}
-
-/// The last `len` values built, in order; `None` when fewer were built.
-fn take_items<T>(built: &mut Vec<T>, len: usize) -> Option<Vec<T>> {
-    let at = built.len().checked_sub(len)?;
-    Some(built.split_off(at))
-}
-
-/// A map's items, key and value in turn, as its ordered pairs.
-fn pairs<T>(items: Vec<T>) -> Vec<(T, T)> {
-    let mut items = items.into_iter();
-    let mut entries = Vec::with_capacity(items.len() / 2);
-    while let (Some(key), Some(value)) = (items.next(), items.next()) {
-        entries.push((key, value));
-    }
-    entries
 }
 
 /// One node of a value in postorder.
@@ -356,28 +309,6 @@ impl<'v> NodeOut<'v> {
             },
         }
     }
-}
-
-/// One node as the archive reads it.
-#[derive(Deserialize)]
-#[serde(
-    tag = "type",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-enum NodeIn {
-    Boolean(bool),
-    Integer(String),
-    F32(u32),
-    F64(u64),
-    String(String),
-    EntityReference(Vec<u8>),
-    BinaryText(String),
-    Array(usize),
-    Map(usize),
-    #[serde(untagged)]
-    Nil,
 }
 
 impl Serialize for ExportValue {
