@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::{Backend, invalid};
 use crate::models::{SourceAdmission, SourceOffer};
 
+#[derive(Clone)]
 pub(super) struct Pin {
     pub(super) id: EntityId,
     pub(super) revision: oneiron::memory::RevisionRef,
