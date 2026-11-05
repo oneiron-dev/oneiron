@@ -94,7 +94,11 @@ credential.
   first boot of an image with guest runtime bindings, whose bootstrap imports
   both guest images before the engine starts; later boots import nothing.
   The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
-- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+- The outbox carrier (FIX 6683, FIX 11073): `Ping`'s `vm_outbox_revision`
+  is read live, and `vm_outbox_companion` names the last completed probe's
+  answer: `up` with the revision it reported, `down` when it answered
+  nothing. A `null` means no probe has completed yet, never that the
+  companion is healthy; `down` is not proof its process ended.
   The engine looks at the outbox companion every 5 s, with at most one
   status question in flight. A question that fails (the companion ended, or
   its socket errs) clears the revision, as a VM without one reads; a
@@ -151,6 +155,16 @@ credential.
   at the member's name is deleted. Other notices carry `action` `answered`.
   These frames are outbox wire revision 4, and each end refuses revision 3
   at the hello.
+- The host's retained member statuses, read only.
+  `managed::read_vm_outbox_member_statuses(&VmOutboxHostRoots)` (`managed/vm_outbox/host_status.rs`,
+  re-exported at `managed::` and `vm_outbox::`) projects the same `store` member records into
+  `VmOutboxHostMemberStatus` (`source_digest_mismatch`, `diverged_unagreed`, `kept_aside`) with
+  answer and removal-failure presence as booleans only. It wakes no guest, opens no carrier, and
+  creates or writes nothing: `None` only when the store root or its `members/` directory is missing,
+  `Some([])` only when a readable `members/` holds no such status, any other read or parse failure
+  is `Err`. What it returns is observed retained metadata (names, digests, lengths, aside names), not
+  live, current, drain, or physical-erase proof. The caller supplies the trusted host roots; there is
+  no new authenticated door.
 
 ## The channel
 
@@ -466,6 +480,39 @@ list the operator holds now, drop the entries they removed, and build the one
 drive an open and a restore both boot with. A RAM resume reads no file again,
 so a changed list takes effect at the next cold boot: drop a published snapshot
 first.
+
+## Descriptor-first outbox sets (FIX 11071 / 6685)
+
+VM outbox wire revision **5** sends every descriptor in a set as an `offer`
+frame, without body chunks. The existing `commit_set` flag marks the last
+offer. The receiver applies the same descriptor and root checks and creates
+the actual staging files for the complete set before answering.
+
+A `go` permits the put bodies, in offer order, but is **not** an ACK or a
+durability receipt. The sender keeps the same prepared file handles and
+recorded transfer identities. Only the existing ordered final `ack` frames
+report each transfer's outcome after the original whole-set commit. A set
+that already fails preflight instead gets those ACKs without sending bodies;
+other members retain the existing `set_incomplete` outcome and retry pacing.
+
+On filesystems with native allocation, each put's declared bytes are reserved
+in its own staging file before `go`. The same file owns that allocation
+through receive, digest checking, publication or drop. Preallocation is not
+received-byte proof: length and digest still count only actual body writes.
+`ENOSPC` and `EDQUOT` keep the existing capacity deferral. If allocation is
+unsupported (`EOPNOTSUPP` or `ENOSYS`), the original streamed-write path stays
+available; no working filesystem is newly refused. A `go` does not promise
+that later writes, publication, metadata or carrier records cannot fail.
+Those failures still receive the original final outcomes, so the full
+capacity-retry work remains partial.
+
+Both native ends and the matching guest companion must speak revision 5;
+the hello rejects other revisions, with no old reader. The matching image
+must advertise that revision and meet the engine commit that merges this
+change before a supervisor adopts it. No image is built, repinned or adopted
+by this source change. Shared contract version 3, the ledger's required
+artifact origins and counts, other protocol revisions, file/set limits,
+retry timing, custody and final ACK ownership are unchanged.
 
 ## RAM snapshot custody (FIX 9497)
 

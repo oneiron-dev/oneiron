@@ -11,8 +11,10 @@
 //! between here and the provider can find a part, or a `model` field, that
 //! the check did not.
 
+use std::io;
+
 use crate::Refusal;
-use crate::shape::ROUTE_OVERRIDES;
+use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The content type's spelling before the boundary.
 const PREFIX: &str = "multipart/form-data; boundary=";
@@ -239,7 +241,7 @@ impl FormData {
 
     /// The content type, with its boundary, and the body.
     #[must_use]
-    pub fn finish(&self) -> (String, Vec<u8>) {
+    pub fn finish(&self) -> io::Result<(String, Vec<u8>)> {
         let mut hasher = blake3::Hasher::new_derive_key(BOUNDARY_CONTEXT);
         for part in &self.parts {
             let (filename, media_type) = part
@@ -259,22 +261,48 @@ impl FormData {
             }
         }
         let boundary = format!("oneiron-{}", &hasher.finalize().to_hex().as_str()[..32]);
+        let boundary_bytes = boundary.as_bytes();
+        let chunks = || {
+            self.parts
+                .iter()
+                .flat_map(move |part| {
+                    let head: [&[u8]; 5] = [
+                        b"--",
+                        boundary_bytes,
+                        b"\r\nContent-Disposition: form-data; name=\"",
+                        part.name.as_bytes(),
+                        b"\"",
+                    ];
+                    let file = part
+                        .file
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|(filename, media_type)| {
+                            [
+                                b"; filename=\"".as_slice(),
+                                filename.as_bytes(),
+                                b"\"\r\nContent-Type: ".as_slice(),
+                                media_type.as_bytes(),
+                            ]
+                        });
+                    head.into_iter().chain(file).chain([
+                        b"\r\n\r\n".as_slice(),
+                        part.bytes.as_slice(),
+                        b"\r\n".as_slice(),
+                    ])
+                })
+                .chain([b"--".as_slice(), boundary_bytes, b"--\r\n".as_slice()])
+        };
+        let size = chunks().try_fold(0_usize, |size, chunk| {
+            size.checked_add(chunk.len())
+                .ok_or(io::ErrorKind::OutOfMemory)
+        })?;
         let mut body = Vec::new();
-        for part in &self.parts {
-            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-            body.extend_from_slice(
-                format!("Content-Disposition: form-data; name=\"{}\"", part.name).as_bytes(),
-            );
-            if let Some((filename, media_type)) = &part.file {
-                body.extend_from_slice(
-                    format!("; filename=\"{filename}\"\r\nContent-Type: {media_type}").as_bytes(),
-                );
-            }
-            body.extend_from_slice(b"\r\n\r\n");
-            body.extend_from_slice(&part.bytes);
-            body.extend_from_slice(b"\r\n");
+        body.try_reserve_exact(size)
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+        for chunk in chunks() {
+            body.extend_from_slice(chunk);
         }
-        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-        (format!("{PREFIX}{boundary}"), body)
+        Ok((format!("{PREFIX}{boundary}"), body))
     }
 }

@@ -242,6 +242,7 @@ pub fn fork_executor_run(
 ) -> Result<PreparedExecutorContinuation, ContinuationRefusal> {
     let successor = attempt_key(leased_successor.id)?;
     let (row, proved) = {
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let Some(row) = run_continuation_in_txn(vault, &txn, successor)? else {
             return Err(ContinuationRefusal::SourceMissing);
@@ -270,7 +271,9 @@ pub fn fork_executor_run(
         model_locality: body.model_locality,
         seat_effort: body.seat_effort,
         global_tier: body.global_tier,
-        determinism: prefix.determinism,
+        determinism: prefix
+            .determinism
+            .ok_or(ContinuationRefusal::SourceMissing)?,
         limits: EngineExecutorLimits {
             soft_steps: body.soft_steps,
         },
@@ -345,7 +348,7 @@ impl ChildSeed<'_> {
         storage: &ExecutorStorage<'_>,
         child: &CodeRunReplayRecord,
     ) -> Result<(), ContinuationRefusal> {
-        if child.determinism != self.config.determinism {
+        if child.determinism != Some(self.config.determinism) {
             return Err(ContinuationRefusal::Occupied);
         }
         match validate_executor_config_marker(

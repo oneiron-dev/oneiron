@@ -13,6 +13,12 @@ use crate::side_table::{self, Named, SideTable};
 
 const DIRECT: SideTable<[u8; 32], DirectReceipt, Named> =
     SideTable::new(&side_table::OUTBOUND_DIRECT_RECEIPT);
+/// Whether a masked copy of a `OUTBOUND_DIRECT_RECEIPT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn outbound_direct_receipt_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DirectReceipt, Named>(bytes)
+}
+
 const VERSION: u8 = 2;
 /// Where the side-row wall says it found a secret in a direct receipt (OF-067).
 const DIRECT_PLACE: &str = "side:OUTBOUND_DIRECT_RECEIPT";

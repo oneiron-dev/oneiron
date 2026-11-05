@@ -16,9 +16,9 @@ use std::str::FromStr;
 use clap::Args;
 use serde::Deserialize;
 
-use super::EmbedderDevice;
 use super::lookup::lookup_parse;
 use super::models::RequestCodec;
+use super::{EmbedderDevice, EmbedderLocality};
 
 mod runtime;
 
@@ -38,7 +38,7 @@ pub enum OneironerProvider {
     /// In-process on this machine, using the configured native runtime.
     #[default]
     Local,
-    /// A tagger server on this machine speaking the slot's contract
+    /// A host-configured tagger server speaking the slot's contract
     /// (`GET /v1/model`, `POST /v1/extract`).
     Endpoint,
     /// No tagger and no marker.
@@ -182,8 +182,10 @@ pub struct OneironerConfig {
     /// Named local tagger candidates, by label.
     pub tiers: BTreeMap<String, OneironerTier>,
     /// Base URL of the tagger server; the slot appends `/v1/model` and
-    /// `/v1/extract`. Loopback only in this build.
+    /// `/v1/extract`. Network endpoints require HTTPS and per-call egress admission.
     pub url: Option<String>,
+    /// The endpoint's host-declared locality; local models always run on-device.
+    pub locality: EmbedderLocality,
     /// The codec the tagger decodes request bodies in (`"zstd"` or
     /// `"gzip"`): an extract body of 16 KiB or more goes in it when that is
     /// smaller (OF-604). Unset sends plain.
@@ -224,6 +226,11 @@ pub struct OneironerConfig {
     pub trace_history_per_turn: u32,
     /// Store-clock seconds a trace is kept. Defaults to seven days.
     pub trace_history_max_age_secs: u64,
+    /// The configured processing language as a lowercase ISO 639 code,
+    /// when the host names one (`language = "ja"`, say). It is sent with
+    /// every vault turn and feedback filter input; unset sends no configured
+    /// language. Leave it unset when the vault's language is unknown or mixed.
+    pub language: Option<String>,
 }
 
 impl Default for OneironerConfig {
@@ -239,6 +246,7 @@ impl Default for OneironerConfig {
             tier: None,
             tiers: BTreeMap::new(),
             url: None,
+            locality: EmbedderLocality::OnDevice,
             request_compression: None,
             checkpoint_sha16: None,
             stack_sha16: None,
@@ -252,6 +260,7 @@ impl Default for OneironerConfig {
             live_window_tokens: oneiron::tagging::DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history_per_turn: oneiron::tagging::DEFAULT_TRACES_PER_TURN,
             trace_history_max_age_secs: oneiron::tagging::DEFAULT_TRACE_MAX_AGE_SECS,
+            language: None,
         }
     }
 }
@@ -272,8 +281,8 @@ impl OneironerConfig {
     }
 
     /// The vault's marker configuration, when markers are on: the checkpoint
-    /// and pinned stack, the live window, the trace history, the mode and the
-    /// label table.
+    /// and pinned stack, the live window, the trace history, the mode, the
+    /// label table and the configured language.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
@@ -286,6 +295,7 @@ impl OneironerConfig {
                 OneironerMode::Shadow => oneiron::tagging::TaggingMode::Shadow,
             },
             labels: self.label_kinds(),
+            language: self.language.clone(),
         })
     }
 
@@ -330,6 +340,9 @@ impl OneironerConfig {
         if over.url.is_some() {
             self.url = over.url;
         }
+        if let Some(locality) = over.locality {
+            self.locality = locality;
+        }
         if over.request_compression.is_some() {
             self.request_compression = over.request_compression;
         }
@@ -368,6 +381,9 @@ impl OneironerConfig {
         }
         if let Some(value) = over.trace_history_max_age_secs {
             self.trace_history_max_age_secs = value;
+        }
+        if over.language.is_some() {
+            self.language = over.language;
         }
         // Last, so a layer that names a tier serves its row's bundle.
         let reselect = over.tier.is_some() || over.tiers.is_some();
@@ -533,6 +549,7 @@ pub struct OneironerConfigOverride {
     pub tier: Option<String>,
     pub tiers: Option<BTreeMap<String, OneironerTier>>,
     pub url: Option<String>,
+    pub locality: Option<EmbedderLocality>,
     pub request_compression: Option<RequestCodec>,
     pub checkpoint_sha16: Option<String>,
     pub stack_sha16: Option<String>,
@@ -546,6 +563,7 @@ pub struct OneironerConfigOverride {
     pub live_window_tokens: Option<u32>,
     pub trace_history_per_turn: Option<u32>,
     pub trace_history_max_age_secs: Option<u64>,
+    pub language: Option<String>,
 }
 
 impl OneironerConfigOverride {
@@ -582,9 +600,12 @@ pub struct OneironerArgs {
     /// The named tier to serve, from the file's `[oneironer.tiers]`.
     #[arg(long = "oneironer-tier")]
     pub oneironer_tier: Option<String>,
-    /// Base URL of a loopback tagger server.
+    /// Base URL of a tagger server (HTTPS off loopback).
     #[arg(long = "oneironer-url")]
     pub oneironer_url: Option<String>,
+    /// Endpoint locality: on-device (default), owner-server or third-party.
+    #[arg(long = "oneironer-locality")]
+    pub oneironer_locality: Option<EmbedderLocality>,
     /// The checkpoint the tagger must report (16 lowercase hex digits).
     #[arg(long = "oneironer-checkpoint-sha16")]
     pub oneironer_checkpoint_sha16: Option<String>,
@@ -614,6 +635,7 @@ impl From<&OneironerArgs> for OneironerConfigOverride {
             max_input_tokens: args.oneironer_max_input_tokens,
             tier: args.oneironer_tier.clone(),
             url: args.oneironer_url.clone(),
+            locality: args.oneironer_locality,
             checkpoint_sha16: args.oneironer_checkpoint_sha16.clone(),
             stack_sha16: args.oneironer_stack_sha16.clone(),
             label_count: args.oneironer_label_count,
@@ -653,6 +675,7 @@ pub(super) fn lookup_oneironer_override(
         tier: lookup("ONEIRON_ONEIRONER_TIER"),
         tiers: None,
         url: lookup("ONEIRON_ONEIRONER_URL"),
+        locality: lookup_parse(lookup, "ONEIRON_ONEIRONER_LOCALITY")?,
         request_compression: None,
         checkpoint_sha16: lookup("ONEIRON_ONEIRONER_CHECKPOINT_SHA16"),
         stack_sha16: lookup("ONEIRON_ONEIRONER_STACK_SHA16"),
@@ -671,6 +694,7 @@ pub(super) fn lookup_oneironer_override(
             lookup,
             "ONEIRON_ONEIRONER_TRACE_HISTORY_MAX_AGE_SECS",
         )?,
+        language: lookup("ONEIRON_ONEIRONER_LANGUAGE"),
     };
     Ok((!over.is_empty()).then_some(over))
 }
