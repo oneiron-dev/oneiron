@@ -284,6 +284,7 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        commitment_reminder_wording::spawn(&vault, &host.handle, models);
         // An attached host's worker starts once its server is bound
         // (FIX 6920), so it alone takes up the queue.
         if attached.is_none() {

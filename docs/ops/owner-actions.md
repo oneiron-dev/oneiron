@@ -1053,10 +1053,12 @@ archived until you accept, and the engine refuses the automatic posture.
 
 The per-item `vault.cleanup.review` answer reads each record through the owner's native
 `vault.get` admission and projection in the same snapshot as its eligibility, evidence and
-revision. Completed-attempt content also shares that snapshot. NOTE document text still reads
-through `vault.notes.read` after it, with the existing room and diary handling. The review keeps
-its three-read bound and marks a slot that continues changing; that NOTE text can still be newer
-than the facts beside it. The record snapshot change does not add an archive or delete action.
+revision. Completed-attempt content and native NOTE document reads also share that snapshot.
+A bound room's NOTE reads use one overlay view captured before the snapshot, with their own
+native NOTE versions; the cleanup revision still binds the base bytes the decision changes.
+Native diary completion runs after the snapshot closes. The review keeps its three-read bound
+and marks a slot that continues changing; its content remains from the snapshot beside its
+facts, not a newer read. The snapshot change does not add an archive or delete action.
 
 ## Review NOTE tombstones
 
