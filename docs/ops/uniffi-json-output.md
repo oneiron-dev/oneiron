@@ -104,6 +104,13 @@ inspection field and each scoped-read receipt remain intact. Finite report,
 working-set and receipt fields keep the existing record codec. Native scoped
 reads, diagnostic filtering and fenced untrusted text are unchanged.
 
+`vault.settings.wake_policy.set`, `vault.settings.inference_defaults` and
+`vault.settings.inference_defaults.replace` consume the policy action's
+required outcome directly into `WireJson`. Null stays present. JSON text held
+inside outcome strings stays opaque text; it is not parsed or validated again.
+The same native action, owner/ceiling checks and typed client calls still
+complete before conversion.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
