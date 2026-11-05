@@ -9,7 +9,9 @@
 use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture, ScopeOpeningKey};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
-use oneiron::federation::{FederationDirectionScope, FederationPactScope};
+use oneiron::federation::{
+    ConnectMemberLeaveConsent, FederationDirectionScope, FederationPactScope,
+};
 use oneiron::policy_model::{
     ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest, WorldPrivacyRequest,
 };
@@ -131,7 +133,10 @@ pub(crate) fn mint_grant(
             peer,
             request.authority_scope.clone(),
             request.expires_at,
-            detach_vault,
+            detach_vault.map(|shared_vault_id| ConnectMemberLeaveConsent {
+                shared_vault_id,
+                member: owner,
+            }),
         )
         .map_err(|error| refused(vault, owner, error))?;
     Ok(ConnectGrant {

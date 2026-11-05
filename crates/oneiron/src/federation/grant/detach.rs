@@ -1,11 +1,11 @@
 //! The `detach_on_member_leave` key of the FEDERATION_GRANT body (FIX 12555):
-//! the owner's local release setting on a Connect guest grant. When the named
+//! the member's local release setting on an Owner-authorized Connect grant. When the named
 //! person genuinely leaves the named shared vault, this vault withdraws the
 //! grant here; the binding only selects which grants that leave releases. It
 //! proves no peer-vault kind, no remote identity and no new authority: the
-//! mint writer revalidates the actual owner and their live Owner standing in
-//! the same transaction. Only a Connect guest grant carries the key, and only
-//! when the minting owner chose it; every other body encodes exactly as before.
+//! mint writer revalidates the original Owner and the consenting person's
+//! membership in the same transaction. Only a Connect guest grant carries the
+//! key; every other body encodes exactly as before.
 
 use rmpv::Value;
 
@@ -23,14 +23,14 @@ pub(super) const KEY_DETACH_ON_MEMBER_LEAVE: &str = "detach_on_member_leave";
 
 const DETACH_VALUE_KEYS: [&str; 2] = ["shared_vault_id", "person_ref"];
 
-/// The owner's local release setting on a Connect guest grant: the shared
-/// logical vault whose genuine member leave releases this grant, and the
-/// actual owner person the mint writer revalidated. A selector, never proof.
+/// The member's local release setting on an Owner-authorized Connect grant:
+/// the shared logical vault whose genuine member leave releases this grant,
+/// and the actual person the mint writer revalidated. A selector, never proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectMemberLeaveBinding {
     /// The shared logical vault id, nonzero.
     pub shared_vault_id: u64,
-    /// The actual owner person, canonical EntityId.
+    /// The actual consenting person, canonical EntityId.
     pub person_ref: EntityId,
 }
 
