@@ -92,8 +92,10 @@ Authority-log rows and non-payload links stay intact.
 An unpromoted residence read cache also leaves the automatic image when its blob exactly
 matches a core row already proved all-Off and its native opened window, document frame and
 touch row are valid. Its two payload rows, opened marker and touch row leave together, so a
-later open can refetch rather than fail on a marker with no bytes. A cache with no core row,
-stale or malformed bytes, mixed or unknown placement, or a promoted window stays unchanged.
+later open can refetch rather than fail on a marker with no bytes. A WORLD cache with no core
+row leaves by the same native checks when that world's sealed-copy setting is Off: a WORLD
+row's words belong to that world alone. Other kinds with no core row, stale or malformed
+bytes, mixed or unknown placement, or a promoted window stay unchanged.
 The thin index, live cache, pending journals and promotion markers are not pruned by a backup.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
