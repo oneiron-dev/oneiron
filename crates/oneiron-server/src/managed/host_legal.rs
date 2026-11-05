@@ -137,9 +137,6 @@ async fn serve(
         }
     };
     cancelled.store(true, Ordering::Release);
-    if let Err(error) = vault.stop_pending_host_legal_captures() {
-        tracing::warn!(%error, "HOST legal pending captures did not stop");
-    }
     drop(channel);
     // Close every accepted socket before joining any worker: one can hold the
     // native source writer while another waits for that writer.
