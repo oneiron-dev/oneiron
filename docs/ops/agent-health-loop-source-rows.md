@@ -22,6 +22,16 @@ attribution fold also clears the local union. Erasing an actual entity member
 clears the whole union, not a remaining subset. This does not remove the
 card's evidence, numbers or existing draft.
 
+Saved Weave cards carry the same numeric witness. Each known member joins the
+saved period's existing erase index, even when the card has no Coach draft or
+its draft was already scrubbed. Deleting a numeric member clears the whole
+saved union, rebuilds the period's index and drops its saved render without
+changing draft text, evidence or the draft-erased flag. If that member is also a draft source,
+the existing draft scrub still runs. The served copy checks every numeric
+member's deletion or stale state in the same read snapshot before checking the
+draft. This also covers saved periods whose index lacks numeric membership;
+there is no backfill or new index family. The period and card still serve.
+
 The Coach brief combines the stored card union with loaded-skill, current-TASK,
 observed-brief and actual logged-pad-read rows. All five contributors must be
 known. Other pad outcomes remain unknown; they keep their existing model
