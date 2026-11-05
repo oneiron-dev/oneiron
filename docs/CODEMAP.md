@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6499 | 895 | 147 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6501 | 895 | 147 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -46,21 +46,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 6 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 52 | 6 | 0 |
-| [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 28 | 1 | 2 |
+| [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 29 | 1 | 3 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 45 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 19 | 2 | 0 |
 | [oneiron-policy-vocabulary](codemap/oneiron-policy-vocabulary.md) | Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the… | 5 | 0 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
-| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 22 | 8 | 1 |
+| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 23 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 20 | 5 | 0 |
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 2 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1558 | 182 | 48 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1559 | 182 | 48 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 159 | 4 | 0 |
-| [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
+| [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 13 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 52 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 13 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
@@ -79,7 +79,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 23 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 14 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 77 | L | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 248 | L | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 250 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 24 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 193 | XL | yes | — |
 | `blob_artifact` | dir | 88 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -688,7 +688,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `expression_preference` | file | 1 | s | JS bindings for the typed `companion.expression.*` doors |
 | `facade` | dir | 19 | XL | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
-| `lib` | dir | 7 | m | The raw N-API addon root: module registrations and the crate-level native exports |
+| `lib` | dir | 8 | L | The raw N-API addon root: module registrations and the crate-level native exports |
 | `types` | file | 1 | s | Legacy `NapiVault` DTOs: edges, scored entities, subtrees, batches, codebase snapshots, email |
 
 ## oneiron-organ-host
@@ -760,6 +760,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `invocation` | file | 1 | s | Client invocation ids (ARCH-0080 §3, OF-580) |
 | `lens_frames` | file | 1 | s | A host-rendered lens card's events and its close (OF-181), over the server routes `POST… |
 | `llm` | file | 1 | s | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
+| `native_limit_questions` | file | 1 | s | Native SDK host snapshots of the shared vault's engine-limit crossings |
 | `remote` | dir | 10 | m | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 
 ## oneiron-retrieval
@@ -804,7 +805,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
-| `ai_host` | dir | 110 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `ai_host` | dir | 111 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `api` | dir | 664 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 15 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file+dir | 4 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
@@ -951,6 +952,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `error` | file | 1 | s | The single exported error type for the UniFFI head-contract surface |
 | `generated` | dir (no mod.rs) | 2 | XL | — |
 | `host_root` | file | 1 | s | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
+| `native_limit_questions` | file | 1 | s | `Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from… |
 | `pairing` | file | 1 | s | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
 | `receipt_page` | file | 1 | s | `vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, and the… |
 
