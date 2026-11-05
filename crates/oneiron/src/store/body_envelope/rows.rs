@@ -167,7 +167,12 @@ impl BodyKeyRow {
             (None, KeyScope::Vault) => true,
             (Some(wrapped), KeyScope::OffRecord) => {
                 Envelope::parse(wrapped)
-                    .map_err(|_| corrupt())?
+                    .map_err(|error| match error {
+                        oneiron_crypto::Error::OutOfMemory => {
+                            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                        }
+                        _ => corrupt(),
+                    })?
                     .header()
                     .recipient
                     == KeyScope::OffRecord.recipient()
@@ -192,7 +197,12 @@ impl BodyKeyRow {
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
         let opened = Envelope::parse(wrapped)
-            .map_err(|_| corrupt())?
+            .map_err(|error| match error {
+                oneiron_crypto::Error::OutOfMemory => {
+                    std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                }
+                _ => corrupt(),
+            })?
             .open(OpenKey::SymmetricKek(&seal_key.wrap), &policy)
             .map_err(|_| {
                 crate::key_material::refused(
