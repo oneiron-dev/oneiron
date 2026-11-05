@@ -8622,7 +8622,7 @@ export type MailProviderDeleteSetting = "keep_in_memory" | "forget_too"
 /** `oneiron::mail_pack::source::CalendarDetailSetting` */
 export type CalendarDetailSetting = "busy_free_only" | "shared"
 /** `oneiron::mail_pack::doors::MailSourceConnectRequest` */
-export type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null }
+export type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; for_person?: string | null; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null }
 /** `oneiron::mail_pack::source::MailSourceStatus` */
 export type MailSourceStatus = "active" | "paused" | "disconnected"
 /** `oneiron::mail_pack::source::MailSourceView` */

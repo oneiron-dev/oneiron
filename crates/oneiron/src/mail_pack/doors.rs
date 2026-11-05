@@ -3,7 +3,10 @@
 //!
 //! Who may do what (owner MAIL-SHARE = A): a personal mailbox and a
 //! calendar are connected, and their settings set, by their own person; a
-//! group address by the vault's Owner or an Admin, who name its members. A
+//! group address by the vault's Owner or an Admin, who name its members.
+//! The Owner stores each credential; a credential is one person's, or
+//! group addresses', and one no source names yet is named by an Owner or
+//! an Admin, for themselves or for the person it belongs to. A
 //! source someone may not see answers as an unknown source: a list shows a
 //! reader the personal mailboxes they read, the group addresses they read
 //! or manage, and every calendar (busy and free are the vault's), never the
@@ -13,6 +16,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::credential::{CredentialHolder, credential_refusal_in};
 use super::pack::require_pack_active_in;
 use super::source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
@@ -43,6 +47,11 @@ pub struct MailSourceConnectRequest {
     /// mailbox and a calendar read to the person who connects them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<String>,
+    /// An Owner or an Admin only: the PERSON, 32-hex, whose personal
+    /// mailbox or calendar this is, connected for them with the credential
+    /// stored for them. Absent, the source is the caller's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_person: Option<String>,
     /// The delegated channel identity the source reads through, 32-hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_identity_ref: Option<String>,
@@ -165,10 +174,7 @@ impl Memory<'_> {
     /// The PERSON the bound actor is, or acts for (a pen through its
     /// subject anchor; the embedded owner of a vault with no authority root
     /// through the owner it stands for), in `txn`.
-    pub(super) fn mail_caller_person_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> MemoryResult<EntityId> {
+    pub(super) fn mail_caller_person_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
         let vault = self.vault();
         let actor = self.actor();
         let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
@@ -266,13 +272,46 @@ impl Memory<'_> {
         }))
     }
 
+    /// The source a connect answers with: as the caller sees it, or, for a
+    /// mailbox an Owner or an Admin connected for another person, its bare
+    /// facts, no address or members.
+    fn connected_view_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &MailSourceRow,
+    ) -> MemoryResult<MailSourceView> {
+        if let Some(view) = self.mail_source_view_in(txn, id, row)? {
+            return Ok(view);
+        }
+        Ok(MailSourceView {
+            source_ref: id.to_hex(),
+            provider: row.provider,
+            kind: row.kind,
+            address: None,
+            owner_ref: row.owner.map(|owner| owner.to_hex()),
+            reads: false,
+            members: Vec::new(),
+            copy: row.copy,
+            on_provider_delete: row.on_provider_delete,
+            calendar_details: row.calendar_details,
+            status: row.status,
+            connected_at: row.connected_at,
+            updated_at: row.updated_at,
+        })
+    }
+
     /// Connects a mailbox, a group address or a calendar (FIX 12559): a
     /// personal mailbox or a calendar as the caller's own, read by them
-    /// alone (a calendar busy and free to the vault); a group address by an
-    /// Owner or an Admin, read by the members it names. The same provider,
-    /// kind, account and address resume the source connected before, with
-    /// its rows and audience: its own person reconnects a personal mailbox
-    /// or a calendar, and no one else. Needs the pack installed Active.
+    /// alone (a calendar busy and free to the vault), or by an Owner or an
+    /// Admin for the person it belongs to; a group address by an Owner or
+    /// an Admin, read by the members it names. A credential backs one
+    /// person's sources, or group addresses': one that no source of its
+    /// holder names yet is named by an Owner or an Admin, who store
+    /// credentials. The same provider, kind, account and address resume the
+    /// source connected before, with its rows and audience: its own person
+    /// reconnects a personal mailbox or a calendar, and no one else. Needs
+    /// the pack installed Active.
     pub fn mail_sources_connect(
         &self,
         input: &MailSourceConnectRequest,
@@ -318,6 +357,11 @@ impl Memory<'_> {
             }
             let (owner, readers) = match input.kind {
                 MailSourceKind::GroupAddress => {
+                    if input.for_person.is_some() {
+                        return Err(MemoryError::bad_request(
+                            "a group address reads to the members it names, not to one person",
+                        ));
+                    }
                     if !self.mail_caller_manages_in(txn)? {
                         return Err(MemoryError::bad_request(
                             "a group address is connected by the vault's Owner or an Admin",
@@ -331,7 +375,23 @@ impl Memory<'_> {
                             "only a group address names members: a personal mailbox or a calendar reads to the person who connects it",
                         ));
                     }
-                    let person = self.mail_caller_person_in(txn)?;
+                    let person = match &input.for_person {
+                        None => self.mail_caller_person_in(txn)?,
+                        Some(person) => {
+                            if !self.mail_caller_manages_in(txn)? {
+                                return Err(MemoryError::bad_request(
+                                    "an Owner or an Admin connects a source for another person",
+                                ));
+                            }
+                            let person = EntityId::from_hex(person)?;
+                            if !live_person_in(vault, txn, &person)? {
+                                return Err(MemoryError::bad_request(
+                                    "for_person names no live PERSON",
+                                ));
+                            }
+                            person
+                        }
+                    };
                     (Some(person), BTreeSet::from([person]))
                 }
             };
@@ -344,7 +404,25 @@ impl Memory<'_> {
             );
             let open = input.kind == MailSourceKind::Calendar
                 && input.calendar_details == Some(CalendarDetailSetting::Shared);
-            if let Some(id) = SOURCE_INDEX.get(&vault.store, txn, &key)?
+            let resumed = SOURCE_INDEX.get(&vault.store, txn, &key)?;
+            // The credential is the holder's: a member names only one their
+            // own sources name already (REVIEW-5883).
+            let holder = match owner {
+                None => CredentialHolder::Group,
+                Some(person) => CredentialHolder::Person(person),
+            };
+            let manages = self.mail_caller_manages_in(txn)?;
+            if let Some(refusal) = credential_refusal_in(
+                vault,
+                txn,
+                &input.custody_ref,
+                holder,
+                resumed.as_ref(),
+                manages,
+            )? {
+                return Err(MemoryError::bad_request(refusal));
+            }
+            if let Some(id) = resumed
                 && let Some(mut row) = SOURCES.get(&vault.store, txn, &id)?
             {
                 if row.kind != MailSourceKind::GroupAddress && row.owner != owner {
@@ -386,7 +464,7 @@ impl Memory<'_> {
                 }
                 row.updated_at = at;
                 SOURCES.put(&vault.store, txn, &id, &row)?;
-                let source = self.mail_source_view_in(txn, &id, &row)?.ok_or_else(unknown_source)?;
+                let source = self.connected_view_in(txn, &id, &row)?;
                 return Ok(MailSourceConnectReceipt {
                     source,
                     resumed: true,
@@ -414,7 +492,7 @@ impl Memory<'_> {
             };
             SOURCES.put(&vault.store, txn, &id, &row)?;
             SOURCE_INDEX.put(&vault.store, txn, &key, &id)?;
-            let source = self.mail_source_view_in(txn, &id, &row)?.ok_or_else(unknown_source)?;
+            let source = self.connected_view_in(txn, &id, &row)?;
             Ok(MailSourceConnectReceipt {
                 source,
                 resumed: false,

@@ -4416,7 +4416,7 @@ declare namespace Sdk {
   type MailCopySetting = "all" | { recent_months: { months: number } } | "search_only";
   type MailProviderDeleteSetting = "keep_in_memory" | "forget_too";
   type CalendarDetailSetting = "busy_free_only" | "shared";
-  type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
+  type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; for_person?: string | null; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
   type MailSourceStatus = "active" | "paused" | "disconnected";
   type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
   type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean };
@@ -6531,7 +6531,7 @@ declare const vault: Sdk.VaultHost & {
     sources: {
       /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */
       audience_events(input: Sdk.MailSourceRef): Promise<Sdk.SourceAudienceEventView[] | StoredResult>;
-      /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+      /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
       connect(input: Sdk.MailSourceConnectRequest): Promise<Sdk.MailSourceConnectReceipt | StoredResult>;
       /** The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place. */
       import_mbox(input: Sdk.MailMboxImportRequest): Promise<Sdk.MailMboxImportReport | StoredResult>;

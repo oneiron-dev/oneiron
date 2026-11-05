@@ -22426,6 +22426,7 @@ class MailSourceConnectRequest(TypedDict):
     provider_account: str
     custody_ref: str
     members: NotRequired[list[str]]
+    for_person: NotRequired[str | None]
     channel_identity_ref: NotRequired[str | None]
     copy: NotRequired[MailCopySetting | None]
     on_provider_delete: NotRequired[MailProviderDeleteSetting | None]

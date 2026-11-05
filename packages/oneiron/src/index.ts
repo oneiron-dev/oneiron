@@ -3229,7 +3229,7 @@ export class Oneiron {
         install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
       },
       sources: {
-        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
         connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
         /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
         list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
