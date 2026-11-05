@@ -70,6 +70,7 @@ use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
 
 mod owner;
+mod status;
 pub(crate) use owner::press_owner_consent;
 use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
 
