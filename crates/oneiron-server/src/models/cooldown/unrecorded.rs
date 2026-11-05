@@ -24,7 +24,7 @@ impl OfferCooldowns {
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::super::ladder::cache_warmth::CacheWarmth::default(),
-            budgets: self.budgets.clone(),
+            budgets: self.budgets.unrecorded_view(),
         })
     }
 
