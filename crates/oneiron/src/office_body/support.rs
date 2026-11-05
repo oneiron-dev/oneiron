@@ -257,13 +257,18 @@ pub(super) fn land_moved_xlsx(
 /// local time, seeded by the projected package, so the result is
 /// deterministic in all three and no vault frontier reaches the file
 /// (OF-491). A workbook the engine refuses is marked to recalculate when it
-/// is opened instead.
+/// is opened instead, with the engine's typed reason beside the marked
+/// bytes. Recording the reason does not change either path's bytes.
 pub(super) fn recalc_xlsx(
     bytes: &[u8],
     limits: Limits,
     at: u64,
     zone: &OfficeRecalcZone,
-) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
+) -> Result<(
+    Vec<u8>,
+    Option<CalcEngineStamp>,
+    Option<OfficeRecalcFailure>,
+)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
     let clock = RecalcClock::new(
@@ -285,13 +290,21 @@ pub(super) fn recalc_xlsx(
                 report.engine.engine,
                 report.engine.version,
             )?),
-        )),
-        Err(_) => Ok((
-            mark_full_calc(bytes, limits, &crate::office_body::document_resources()).map_err(
-                |_| invalid("the projected workbook could not be marked to recalculate"),
-            )?,
             None,
         )),
+        Err(error) => {
+            let failure = OfficeRecalcFailure {
+                code: error.code().to_owned(),
+                detail: error.to_string(),
+            };
+            Ok((
+                mark_full_calc(bytes, limits, &crate::office_body::document_resources()).map_err(
+                    |_| invalid("the projected workbook could not be marked to recalculate"),
+                )?,
+                None,
+                Some(failure),
+            ))
+        }
     }
 }
 

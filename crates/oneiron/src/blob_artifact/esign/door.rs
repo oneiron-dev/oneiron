@@ -44,7 +44,10 @@ use serde::{Deserialize, Serialize};
 
 mod draft;
 mod links;
+mod preview;
 mod read;
+
+pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 /// A signing document to draft on an existing artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

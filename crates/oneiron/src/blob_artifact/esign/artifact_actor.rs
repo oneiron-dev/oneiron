@@ -39,3 +39,33 @@ pub(crate) fn actor(
         crate::edge::EdgeActorClass::System,
     ))
 }
+
+/// A separate, policy-nameable writer for verified SealJob outputs only.
+pub(crate) fn seal_actor(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> Result<crate::write_envelope::WriteActor> {
+    let id = EntityId::derive(crate::entity_id::derived_domains::ESIGN_SEAL_ACTOR, &[])?;
+    match vault.get_entity_type_in_txn(txn, &id)? {
+        None => vault
+            .batch_in()
+            .put_internal(
+                &id,
+                crate::registry::ENTITY_TYPE_MACHINE,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                b"esign verified seal producer",
+            )
+            .apply(txn)?,
+        Some(crate::registry::ENTITY_TYPE_MACHINE) => {}
+        Some(_) => return Err(invalid("seal actor is unavailable")),
+    }
+    Ok(crate::write_envelope::WriteActor::new(
+        id,
+        crate::edge::EdgeActorClass::System,
+    ))
+}

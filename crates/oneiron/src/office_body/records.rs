@@ -165,6 +165,21 @@ impl OfficeRecalcZone {
     }
 }
 
+/// Why an XLSX export or preview kept its cached values: the formula
+/// engine's own stable reason and display words. These fields do not add a
+/// vault frontier to the exported file. Mutually exclusive with `recalc`
+/// on XLSX paths: success sets the
+/// stamp and leaves this `None`, fallback sets this and leaves the stamp
+/// `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeRecalcFailure {
+    /// The engine's stable reason (`FormulaError::code()`), such as
+    /// `engine-error` or `unsupported-workbook`.
+    pub code: String,
+    /// The engine's display string for this failure.
+    pub detail: String,
+}
+
 /// An export version and the exact body it projects. The version keeps a
 /// pointer to its body frontier, not a second body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +208,9 @@ pub struct OfficeBodyExportRecord {
     /// The engine that recalculated an XLSX export and the local time it
     /// read; `None` when the file recalculates on open, and for DOCX.
     pub recalc: Option<String>,
+    /// Why an XLSX export kept its cached values instead; `None` on
+    /// success, and for DOCX and deck exports.
+    pub recalc_failure: Option<OfficeRecalcFailure>,
     /// The zone its caller named for TODAY() and NOW(); `None` for a deck
     /// export (FIX 12183).
     pub recalc_zone: Option<OfficeRecalcZone>,
@@ -235,9 +253,14 @@ pub struct XlsxPreview {
     pub frontier: Vec<u8>,
     pub book: XlsxBook,
     /// The engine that recalculated it and the local time it read; `None`
-    /// when it could not, and formula values are blank until the file is
+    /// when it could not, and then `recalc_failure` names why while formula
+    /// values stay the projected package's cached values until the file is
     /// opened.
     pub recalc: Option<String>,
+    /// Why this preview kept its cached values instead; `None` when it
+    /// recalculated. On fallback each computed cell of `book` carries
+    /// `CachedAfterFailure`.
+    pub recalc_failure: Option<OfficeRecalcFailure>,
 }
 
 /// One `vault.artifacts.body.read` projection (OF-067, FIX 2939): the view,

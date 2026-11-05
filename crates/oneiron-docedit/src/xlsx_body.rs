@@ -63,9 +63,9 @@ pub use crate::a1::{A1, parse_cell};
 pub use crate::xlsx_error::XlsxBodyError;
 use model::{MAX_COLUMN, MAX_ROW, cell_ref, column_span, free_column_names};
 pub use model::{
-    MAX_FORMULA_CHARS, MAX_TEXT_CHARS, XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxLock,
-    XlsxName, XlsxProjection, XlsxSheet, XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable,
-    XlsxTableShift, XlsxValue, a1, check_cell, check_name, check_sheet_name, parse_a1,
+    MAX_FORMULA_CHARS, MAX_TEXT_CHARS, XlsxArea, XlsxBook, XlsxCell, XlsxCellRecalc, XlsxChange,
+    XlsxLock, XlsxName, XlsxProjection, XlsxSheet, XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle,
+    XlsxTable, XlsxTableShift, XlsxValue, a1, check_cell, check_name, check_sheet_name, parse_a1,
     shift_axis_formula,
 };
 pub use project::{mark_full_calc, project_xlsx};

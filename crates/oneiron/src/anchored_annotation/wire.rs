@@ -31,6 +31,10 @@ pub enum AnnotationLocator {
         char_start: u64,
         char_end: u64,
     },
+    File {
+        char_start: u64,
+        char_end: u64,
+    },
 }
 
 impl TryFrom<&AnnotationLocator> for Locator {
@@ -50,6 +54,10 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 char_start,
                 char_end,
             } => Self::html(part_id.clone(), *char_start, *char_end),
+            AnnotationLocator::File {
+                char_start,
+                char_end,
+            } => Self::file(*char_start, *char_end),
         }
     }
 }
@@ -80,6 +88,13 @@ impl From<&Locator> for AnnotationLocator {
                 char_end,
             } => Self::Html {
                 part_id: part_id.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
+            },
+            Locator::File {
+                char_start,
+                char_end,
+            } => Self::File {
                 char_start: *char_start,
                 char_end: *char_end,
             },

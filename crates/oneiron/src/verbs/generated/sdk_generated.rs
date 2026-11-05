@@ -5876,6 +5876,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.esign.signing.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningPreviewRequest,
+                >(),
+            ),
+            (
                 "vault.esign.seal.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::esign::EsignSealGetRequest,
@@ -7900,6 +7906,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.esign.signing.pdf",
     "vault.esign.signing.image",
     "vault.esign.signing.signature",
+    "vault.esign.signing.preview",
     "vault.esign.seal.get",
     "vault.consolidation.status",
     "vault.consolidation.wake.status",
@@ -10241,6 +10248,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.esign.signing.signature" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::esign::EsignSigningSignatureView,
+        >(),
+        "vault.esign.signing.preview" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningPreviewView,
         >(),
         "vault.esign.seal.get" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::esign::EsignSealView,
@@ -18070,6 +18080,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.signing.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.esign.seal.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23037,6 +23054,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::blob_artifact::esign::EsignSigningSignatureRequest =
                 decode(value.clone())?;
         }
+        "vault.esign.signing.preview" => {
+            let _input: crate::blob_artifact::esign::EsignSigningPreviewRequest =
+                decode(value.clone())?;
+        }
         "vault.esign.seal.get" => {
             let _input: crate::blob_artifact::esign::EsignSealGetRequest = decode(value.clone())?;
         }
@@ -25819,6 +25840,9 @@ pub fn invoke(
         "vault.esign.signing.image" => encode(vault_esign_signing_image(memory, decode(value)?)?),
         "vault.esign.signing.signature" => {
             encode(vault_esign_signing_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.signing.preview" => {
+            encode(vault_esign_signing_preview(memory, decode(value)?)?)
         }
         "vault.esign.seal.get" => encode(vault_esign_seal_get(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
@@ -35259,6 +35283,12 @@ pub fn vault_esign_signing_signature(
     input: crate::blob_artifact::esign::EsignSigningSignatureRequest,
 ) -> MemoryResult<crate::blob_artifact::esign::EsignSigningSignatureView> {
     memory.esign_signing_signature(&input)
+}
+pub fn vault_esign_signing_preview(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningPreviewRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningPreviewView> {
+    memory.esign_signing_preview(&input)
 }
 pub fn vault_esign_seal_get(
     memory: &Memory<'_>,

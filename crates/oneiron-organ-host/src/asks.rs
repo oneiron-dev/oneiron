@@ -199,6 +199,8 @@ impl<'a> CallAsks<'a> {
             organ: &self.spec.name,
             call_verb: self.call_verb,
             grant: self.grant,
+            call: ask.call,
+            id: ask.id,
             deadline: clock.deadline(),
             clock,
             max_bytes: self.spec.max_ask_bytes.saturating_sub(self.lent),

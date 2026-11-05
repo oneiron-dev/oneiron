@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1248 facade rows, 4523 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1200.
+// UniFFI census: 1249 facade rows, 4531 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1201.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -33716,6 +33716,12 @@ pub struct SourceTrustRow {
     pub max_auto_sensitivity: Option<SensitivityBand>,
     #[serde(rename = "auto", default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(
+        rename = "auto_checker",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub auto_checker: Option<String>,
     #[serde(rename = "receipted", default, skip_serializing_if = "Option::is_none")]
     pub receipted: Option<bool>,
     #[serde(rename = "warned", default, skip_serializing_if = "Option::is_none")]
@@ -37701,6 +37707,13 @@ pub enum AnnotationLocator {
     Html {
         #[serde(rename = "part_id")]
         part_id: String,
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
+    #[serde(rename = "file")]
+    File {
         #[serde(rename = "char_start")]
         char_start: u64,
         #[serde(rename = "char_end")]
@@ -43106,6 +43119,8 @@ pub struct ArtifactExportFile {
     pub born_with: std::collections::HashMap<String, String>,
     #[serde(rename = "content_base64")]
     pub content_base64: String,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentSkillInput`.
@@ -46628,6 +46643,12 @@ pub struct ArtifactAskOutcome {
     pub abstained: Vec<UnitAbstention>,
     #[serde(rename = "refused")]
     pub refused: Vec<UnitRefusal>,
+    #[serde(
+        rename = "next_sheet_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `ArtifactAskOutcome`.
@@ -56070,6 +56091,12 @@ pub struct ArtifactAskRecord {
     pub details_omitted: Option<bool>,
     #[serde(rename = "units", default, skip_serializing_if = "Option::is_none")]
     pub units: Option<Vec<ArtifactUnitReceipt>>,
+    #[serde(
+        rename = "next_sheet_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.
@@ -59862,6 +59889,111 @@ pub struct EsignSigningSignatureView {
     pub image_base64: String,
 }
 
+/// `oneiron::blob_artifact::esign::door::preview::EsignSigningPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPreviewRequest {
+    #[serde(rename = "token")]
+    pub token: String,
+    #[serde(rename = "item")]
+    pub item: u64,
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::PageGeometry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PageGeometry {
+    #[serde(rename = "crop")]
+    pub crop: Vec<f64>,
+    #[serde(rename = "rotation")]
+    pub rotation: u16,
+    #[serde(rename = "user_unit")]
+    pub user_unit: f64,
+}
+
+/// `oneiron::blob_artifact::esign::render::PdfFieldRect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PdfFieldRect {
+    #[serde(rename = "x")]
+    pub x: f64,
+    #[serde(rename = "y")]
+    pub y: f64,
+    #[serde(rename = "width")]
+    pub width: f64,
+    #[serde(rename = "height")]
+    pub height: f64,
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::FieldMark`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum FieldMark {
+    #[serde(rename = "text")]
+    Text {
+        #[serde(rename = "value")]
+        value: String,
+        #[serde(rename = "x")]
+        x: f64,
+        #[serde(rename = "y")]
+        y: f64,
+        #[serde(rename = "size")]
+        size: f64,
+    },
+    #[serde(rename = "rectangle")]
+    Rectangle {
+        #[serde(rename = "x")]
+        x: f64,
+        #[serde(rename = "y")]
+        y: f64,
+        #[serde(rename = "width")]
+        width: f64,
+        #[serde(rename = "height")]
+        height: f64,
+    },
+    #[serde(rename = "line")]
+    Line {
+        #[serde(rename = "x1")]
+        x1: f64,
+        #[serde(rename = "y1")]
+        y1: f64,
+        #[serde(rename = "x2")]
+        x2: f64,
+        #[serde(rename = "y2")]
+        y2: f64,
+    },
+    #[serde(rename = "signature")]
+    Signature {
+        #[serde(rename = "image_ref")]
+        image_ref: String,
+        #[serde(rename = "rect")]
+        rect: PdfFieldRect,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::FieldLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FieldLayout {
+    #[serde(rename = "presentation")]
+    pub presentation: FieldPresentation,
+    #[serde(rename = "rect")]
+    pub rect: PdfFieldRect,
+    #[serde(rename = "marks")]
+    pub marks: Vec<FieldMark>,
+}
+
+/// `oneiron::blob_artifact::esign::door::preview::EsignSigningPreviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPreviewView {
+    #[serde(rename = "pages")]
+    pub pages: Vec<PageGeometry>,
+    #[serde(rename = "fields")]
+    pub fields: Vec<FieldLayout>,
+}
+
 /// `oneiron::blob_artifact::esign::door::EsignSealGetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -62619,6 +62751,15 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// `oneiron::office_body::records::OfficeRecalcFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeRecalcFailure {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
 /// `oneiron::office_body::records::OfficeRecalcZone`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeRecalcZone {
@@ -62662,6 +62803,12 @@ pub struct OfficeBodyExportRecord {
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
     #[serde(
+        rename = "recalc_failure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recalc_failure: Option<OfficeRecalcFailure>,
+    #[serde(
         rename = "recalc_zone",
         default,
         skip_serializing_if = "Option::is_none"
@@ -62700,6 +62847,13 @@ pub struct OfficeBodyPreviewRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// `oneiron_docedit::xlsx_body::model::XlsxCellRecalc`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum XlsxCellRecalc {
+    #[serde(rename = "cached_after_failure")]
+    CachedAfterFailure,
+}
+
 /// `oneiron_docedit::xlsx_body::model::XlsxCell`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxCell {
@@ -62715,6 +62869,8 @@ pub struct XlsxCell {
     pub style: Option<u32>,
     #[serde(rename = "locked", default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<XlsxLock>,
+    #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
+    pub recalc: Option<XlsxCellRecalc>,
 }
 
 /// `oneiron_docedit::xlsx_body::model::XlsxSheet`.
@@ -62773,6 +62929,12 @@ pub struct XlsxPreview {
     pub book: XlsxBook,
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
+    #[serde(
+        rename = "recalc_failure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recalc_failure: Option<OfficeRecalcFailure>,
 }
 
 /// `oneiron_docedit::live::pptx::NodeMove`.

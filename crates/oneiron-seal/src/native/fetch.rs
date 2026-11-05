@@ -470,7 +470,7 @@ mod http {
 
     #[async_trait]
     impl SealFetcher for SsrfGuardedHttpFetcher {
-        async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
+        async fn fetch(&self, mut request: FetchRequest) -> Result<FetchResponse, FetchError> {
             let key = Self::cache_key(&request);
             let deadline =
                 tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
@@ -489,6 +489,14 @@ mod http {
                         .and_then(|v| v.to_str().ok())
                         .and_then(|l| url.join(l).ok())
                         .ok_or(FetchError::InvalidResponse)?;
+                    // The cache key above still names the original request.
+                    if matches!(resp.status().as_u16(), 301 | 302 | 303)
+                        && request.method == FetchMethod::Post
+                    {
+                        request.method = FetchMethod::Get;
+                        request.request_body.clear();
+                        request.content_type = None;
+                    }
                     url = location; // next loop iteration re-runs the full policy
                     continue;
                 }

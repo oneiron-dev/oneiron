@@ -218,6 +218,7 @@ fn trust_row_narrows(before: &SourceTrustRow, after: &SourceTrustRow) -> bool {
         && after.max_auto_sensitivity <= before.max_auto_sensitivity
         && (before.receipted || !after.receipted)
         && (before.warned || !after.warned)
+        && (after.auto_checker.is_none() || after.auto_checker == before.auto_checker)
 }
 
 /// Source trust on its folded slots: each slot stays and narrows, and a new

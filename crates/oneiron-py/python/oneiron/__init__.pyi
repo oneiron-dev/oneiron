@@ -3345,6 +3345,8 @@ class Oneiron:
             """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
         def signature(self, spec: Facade.EsignSigningSignatureRequest) -> Facade.EsignSigningSignatureView:
             """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+        def preview(self, spec: Facade.EsignSigningPreviewRequest) -> Facade.EsignSigningPreviewView:
+            """The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."""
     class _VaultEsignSealVerbs:
         def get(self, spec: Facade.EsignSealGetRequest) -> Facade.EsignSealView:
             """Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."""

@@ -2,7 +2,7 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PageGeometry {
     pub crop: [f64; 4],
@@ -129,7 +129,7 @@ impl FieldPresentation {
 
 /// Device-independent marks in PDF-point coordinates. This is the drawing
 /// program for both browser SVG overlays and the sealed PDF, not a screenshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldMark {
     Text {
@@ -227,7 +227,8 @@ pub(super) fn encoded_text(value: &str) -> Result<Vec<u8>> {
     Ok(bytes.into_owned())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FieldLayout {
     pub presentation: FieldPresentation,
     pub rect: PdfFieldRect,

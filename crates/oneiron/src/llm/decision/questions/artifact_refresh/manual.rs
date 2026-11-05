@@ -17,11 +17,11 @@ use super::super::refresh::standing_asker;
 use super::super::saved_reader::{SavedArtifactReads, saved_artifact_reads};
 use super::super::store::{QUESTION_VERSION, VersionKey, owned_head};
 use super::{
-    ASK_DEADLINE, ASKED, ArtifactAskRecord, Asking, Selection, artifact_ask_records, ask_selection,
-    baseline,
+    ASK_DEADLINE, ASKED, ArtifactAskRecord, Asking, Selection, artifact_ask_records,
+    artifact_selection_ref, ask_selection, baseline,
 };
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
-use crate::edit_roundtrip::{ArtifactAsk, UnitDecider};
+use crate::edit_roundtrip::{ArtifactAsk, SheetRowSelection, UnitDecider};
 use crate::llm::decision::questions::{ARTIFACT_ADAPTER, ArtifactUnits, QuestionRecord};
 use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
@@ -91,6 +91,13 @@ impl Asking<'_> {
         let vault = self.vault;
         let artifact = units.artifact;
         let selection = Selection::resolve(&units.selection)?;
+        let selection_ref = artifact_selection_ref(&units.selection)?;
+        let selected_rows = match &selection {
+            Selection::SheetRows { rows, .. } => {
+                Some(SheetRowSelection::range(rows.start.row, rows.end.row))
+            }
+            _ => None,
+        };
         let mut files = selection.files();
         let mut observed = Vec::with_capacity(files.len() + 1);
         let stamp = {
@@ -126,21 +133,37 @@ impl Asking<'_> {
         // authorised role for a unit, never stops at big (FIX 9912).
         let dial = definition.dial;
         let budget = definition.deadline(vault)?;
-        self.ask_recorded(artifact, observed, "manual", |reference| {
-            let ask = ArtifactAsk {
-                question: &definition.question,
-                principal,
-                dial,
-                policy: self.policy,
-                reversibility: Reversibility::ReversibleRead,
-                decider: self.decider,
-                evidence: &[],
-                budget,
-                deadline: Instant::now() + ASK_DEADLINE,
-                run_ref: reference,
-            };
-            ask_selection(vault, artifact, &selection, &files, None, ask, sight)
-        })?;
+        self.ask_recorded(
+            artifact,
+            observed,
+            "manual",
+            selection_ref,
+            selected_rows,
+            |reference, selected_rows| {
+                let ask = ArtifactAsk {
+                    question: &definition.question,
+                    principal,
+                    dial,
+                    policy: self.policy,
+                    reversibility: Reversibility::ReversibleRead,
+                    decider: self.decider,
+                    evidence: &[],
+                    budget,
+                    deadline: Instant::now() + ASK_DEADLINE,
+                    run_ref: reference,
+                };
+                ask_selection(
+                    vault,
+                    artifact,
+                    &selection,
+                    &files,
+                    None,
+                    selected_rows,
+                    ask,
+                    sight,
+                )
+            },
+        )?;
         Ok(())
     }
 }

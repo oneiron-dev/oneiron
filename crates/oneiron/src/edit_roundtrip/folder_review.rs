@@ -218,6 +218,7 @@ impl Vault {
             abstained,
             refused,
             read_rows,
+            next_sheet_row: None,
         })
     }
 }

@@ -189,6 +189,7 @@ impl Memory<'_> {
             content_hash.clone(),
             &self.actor(),
             &file.born_with,
+            Vec::new(),
         )?;
         Ok(LensPackExport {
             pack_json,

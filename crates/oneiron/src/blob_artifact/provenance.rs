@@ -32,6 +32,10 @@ pub enum BlobVersionProvenance {
     AgentRun {
         run_ref: String,
     },
+    /// Verified native seal output. Auto requires its private producer guard.
+    SealJob {
+        job_ref: String,
+    },
 }
 
 impl BlobVersionProvenance {
@@ -41,6 +45,7 @@ impl BlobVersionProvenance {
             Self::UserUpload => PROVENANCE_USER_UPLOAD,
             Self::CapabilityUpload => "capability_upload",
             Self::AgentRun { .. } => PROVENANCE_AGENT_RUN,
+            Self::SealJob { .. } => "seal_job",
         }
     }
 
@@ -49,6 +54,7 @@ impl BlobVersionProvenance {
         match self {
             Self::UserUpload | Self::CapabilityUpload => None,
             Self::AgentRun { run_ref } => Some(run_ref),
+            Self::SealJob { job_ref } => Some(job_ref),
         }
     }
 
@@ -57,8 +63,9 @@ impl BlobVersionProvenance {
             (PROVENANCE_USER_UPLOAD, None) => Ok(Self::UserUpload),
             ("capability_upload", None) => Ok(Self::CapabilityUpload),
             (PROVENANCE_AGENT_RUN, Some(run_ref)) => Ok(Self::AgentRun { run_ref }),
+            ("seal_job", Some(job_ref)) => Ok(Self::SealJob { job_ref }),
             _ => Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "provenance must be user_upload without run_ref or agent_run with run_ref",
+                "provenance must be user_upload/capability_upload without run_ref or agent_run/seal_job with run_ref",
             ))),
         }
     }
@@ -66,7 +73,7 @@ impl BlobVersionProvenance {
     pub(super) fn claim_source(&self) -> ClaimSource {
         match self {
             Self::UserUpload | Self::CapabilityUpload => ClaimSource::UserStated,
-            Self::AgentRun { .. } => ClaimSource::Generated,
+            Self::AgentRun { .. } | Self::SealJob { .. } => ClaimSource::Generated,
         }
     }
 
@@ -75,14 +82,16 @@ impl BlobVersionProvenance {
     /// OF-320 code-run dispatcher for first-party generated effects.
     pub(super) fn approval_status(&self) -> ClaimApprovalStatus {
         match self {
-            Self::UserUpload => ClaimApprovalStatus::Auto,
+            Self::UserUpload | Self::SealJob { .. } => ClaimApprovalStatus::Auto,
             Self::CapabilityUpload | Self::AgentRun { .. } => ClaimApprovalStatus::Proposed,
         }
     }
 }
 
 pub(super) fn validate_provenance(provenance: &BlobVersionProvenance) -> Result<()> {
-    if let BlobVersionProvenance::AgentRun { run_ref } = provenance {
+    if let BlobVersionProvenance::AgentRun { run_ref }
+    | BlobVersionProvenance::SealJob { job_ref: run_ref } = provenance
+    {
         validate_text_field(
             run_ref,
             BLOB_ARTIFACT_RUN_REF_MAX_BYTES,
