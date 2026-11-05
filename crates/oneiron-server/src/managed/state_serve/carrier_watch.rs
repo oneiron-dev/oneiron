@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron_vault_contract::VmOutboxCompanionState as CompanionState;
 use oneiron_vault_contract::restore::{EscrowRole, FreshRecipient};
 use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
 use tokio::task::JoinHandle;
@@ -63,21 +64,6 @@ pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
 enum RecipientSource {
     Carrier,
     Argv,
-}
-
-/// How the outbox companion stands, as the engine last heard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompanionState {
-    /// It answered with its carrier's wire revision.
-    Up { revision: u32 },
-    /// It did not answer: it never came up, it ended, or its endpoint went.
-    Down,
-}
-
-impl CompanionState {
-    fn of(revision: Option<u32>) -> Self {
-        revision.map_or(Self::Down, |revision| Self::Up { revision })
-    }
 }
 
 /// What the watch has taken of each recipient the watched files hold.
@@ -238,8 +224,8 @@ async fn look_at_diverged(
 /// Keeps the companion's answer for `Ping`, and says when it went down or
 /// came up.
 fn note_companion(state: &ManagedState, revision: Option<u32>) {
-    let was = CompanionState::of(state.set_vm_outbox_revision(revision));
-    match CompanionState::of(revision) {
+    let was = CompanionState::from(state.set_vm_outbox_revision(revision));
+    match CompanionState::from(revision) {
         now if now == was => {}
         CompanionState::Down => tracing::warn!(
             reason = "vm_outbox_companion_down",
