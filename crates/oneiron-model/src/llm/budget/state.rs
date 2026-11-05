@@ -15,6 +15,7 @@ use oneiron_contracts::entity_id::EntityId;
 #[derive(Debug)]
 pub(super) struct BudgetState {
     pub(super) guard_identity: Arc<()>,
+    pub(super) provider_token_generation: [u8; 16],
     pub(super) attempt_id: String,
     pub(super) limit_units: u64,
     pub(super) reserve_units: u64,
@@ -52,6 +53,7 @@ impl BudgetState {
         let row_horizons = row_horizons(&policy, limit_units, total_floor_units);
         Self {
             guard_identity: Arc::new(()),
+            provider_token_generation: *EntityId::now().as_bytes(),
             attempt_id,
             limit_units,
             reserve_units,

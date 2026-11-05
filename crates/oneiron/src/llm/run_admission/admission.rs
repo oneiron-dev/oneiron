@@ -336,6 +336,13 @@ impl RunAdmission {
         self.inner.guard.provider_token_observation()
     }
 
+    /// The shared meter's current reports, named by its actual guard
+    /// generation rather than an attempt or restart-reusable lease string.
+    #[must_use]
+    pub fn provider_token_snapshot(&self) -> super::super::ProviderTokenSnapshot {
+        self.inner.guard.provider_token_snapshot()
+    }
+
     #[must_use]
     pub fn revision(&self) -> u32 {
         self.inner.lock_declaration().revision

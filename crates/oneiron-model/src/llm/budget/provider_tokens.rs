@@ -19,7 +19,29 @@ pub struct ProviderTokenObservation {
     pub output: Option<u64>,
 }
 
+/// One guard generation's current provider reports. Clones of the guard
+/// keep the same generation; a fresh guard, including a restarted one,
+/// has a new generation even when its attempt and lease strings repeat.
+/// The generation is opaque observation data, not an entity reference,
+/// authority or proof that every guard on a spend scope was covered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderTokenSnapshot {
+    pub generation: [u8; 16],
+    pub observation: ProviderTokenObservation,
+}
+
 impl BudgetGuard {
+    /// Reads the current reports with their immutable guard generation.
+    /// This does not persist, finalize or prove coverage of a spend scope.
+    #[must_use]
+    pub fn provider_token_snapshot(&self) -> ProviderTokenSnapshot {
+        let generation = self.lock_state().provider_token_generation;
+        ProviderTokenSnapshot {
+            generation,
+            observation: self.provider_token_observation(),
+        }
+    }
+
     /// Records the final provider report on its actual started lease. This
     /// changes no budget charge, reservation, policy or lease state. Replacing
     /// one lease's report cannot charge or count that call a second time.
