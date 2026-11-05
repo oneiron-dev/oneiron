@@ -10,17 +10,23 @@
 //! it, and the home stores and relays each update to the owner's other
 //! machines. This machine takes every update after its cursor, opens those of
 //! the worlds it reads, and imports each through its own-device window import.
-//! Anything the relay cannot carry still rides the daily sealed bundle.
+//! A message past one part comes in parts, joined and checked whole against
+//! its digest before it is taken. An update whose history this machine lacks
+//! makes it ask the world's other readers for the window's snapshot, which it
+//! installs as a window replacement that keeps its own writes. Anything the
+//! relay cannot carry still rides the daily sealed bundle.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use futures_util::{Sink, SinkExt};
 use tokio_tungstenite::tungstenite::Message;
+use zeroize::Zeroizing;
 
 use super::SyncClient;
 use crate::EntityId;
 use crate::authority::{EffectiveRead, EffectiveWorldPrivacy, PeerMachine, SealedCopies};
+use crate::sync::SyncEvent;
 use crate::sync::residence::{
     SealedUpdateEpoch, SealedUpdateId, drop_sealed_update_outbox, put_sealed_update_cursor,
     put_sealed_update_outbox, sealed_update_cursor, sealed_update_outbox,
@@ -30,8 +36,10 @@ use crate::sync::transport::{
     decode_sealed_update_frame, encode_sealed_update_frame,
 };
 use crate::sync::types::WindowKey;
+use crate::sync::window::{ReplacementByteBound, Withhold, export_window_replacement_for};
 use crate::world_keys::{
-    SealedUpdateKind, WorldKey, open_world_update, seal_world_update, sealed_update_id,
+    OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, WorldKey, open_world_update,
+    seal_world_message,
 };
 
 /// How long this connection reuses the world keys it opened for sealed
@@ -45,14 +53,27 @@ const KEY_REFRESH_FLOOR: Duration = Duration::from_secs(1);
 const SINCE_EVERY: Duration = Duration::from_secs(300);
 /// How long a catch-up may go unanswered before a gap may ask again.
 const CATCH_UP_PATIENCE: Duration = Duration::from_secs(60);
-/// The most outbox updates one send offers.
+/// The most outbox parts one send offers.
 const OUTBOX_SEND_BATCH: usize = 64;
-/// Room a sealed update leaves in its frame for the frame's own fields.
-const FRAME_ROOM: usize = 64;
+/// The most sealed bytes one send offers, past its first part.
+const OUTBOX_SEND_BYTES: usize = 16 * 1024 * 1024;
+/// How long a window's snapshot want waits for an answer before an update
+/// that still lacks its history may ask again.
+const WANT_PATIENCE: Duration = Duration::from_secs(300);
+/// The most bytes of unfinished multipart messages this machine holds at
+/// once; a part past it drops its message (Engine call CLIP-SYNC relay
+/// multipart bound, CALLS.md).
+const SEALED_ASSEMBLY_MAX_BYTES: usize = 1024 * 1024 * 1024;
+/// How long an unfinished multipart message waits for its other parts.
+const SEALED_ASSEMBLY_PATIENCE: Duration = Duration::from_secs(600);
+
+// A part, its envelope and its frame's own fields fit one frame.
+const _: () = assert!(SEALED_UPDATE_PART_BYTES + 4096 <= MAX_DECODED_PAYLOAD_BYTES);
 
 /// This connection's place in the relay: whether and under which epoch its
 /// home offered, what it sent, a catch-up in flight, and the world keys it
-/// opened. Started again at every connect.
+/// opened, started again at every connect; and, kept across connects, the
+/// snapshots this machine asked for and the multipart messages it is joining.
 #[derive(Default)]
 pub(super) struct SealedUpdateSession {
     offered: Option<SealedUpdateEpoch>,
@@ -60,9 +81,43 @@ pub(super) struct SealedUpdateSession {
     catching_up: Option<Instant>,
     last_since: Option<Instant>,
     keys: Option<(Instant, Vec<WorldKey>)>,
-    /// Windows whose snapshot this connection asked the world's other
-    /// readers for.
-    wanted: HashSet<String>,
+    /// Windows whose snapshot this machine asked the world's other readers
+    /// for, and when.
+    wanted: HashMap<String, Instant>,
+    /// Multipart messages this machine holds some parts of.
+    parted: HashMap<PartedMessage, PartAssembly>,
+}
+
+impl SealedUpdateSession {
+    /// Starts a connection's place again, keeping the snapshot wants and the
+    /// messages being joined: a part the last connection took has passed the
+    /// cursor, so it comes no second time.
+    pub(super) fn restart(&mut self) {
+        *self = Self {
+            wanted: std::mem::take(&mut self.wanted),
+            parted: std::mem::take(&mut self.parted),
+            ..Self::default()
+        };
+    }
+}
+
+/// One multipart message: its kind, window and digest.
+type PartedMessage = (SealedUpdateKind, String, [u8; 32]);
+
+/// The parts of one message this machine holds.
+struct PartAssembly {
+    count: u32,
+    chunks: BTreeMap<u32, Zeroizing<Vec<u8>>>,
+    bytes: usize,
+    started: Instant,
+}
+
+/// One whole message the relay carried, joined from its parts.
+struct SealedMessage {
+    world: EntityId,
+    kind: SealedUpdateKind,
+    window_key: String,
+    bytes: Zeroizing<Vec<u8>>,
 }
 
 /// Whether `privacy` sends a world's updates sealed through a home that may
@@ -118,16 +173,10 @@ impl SyncClient {
         }
         let key = self.vault.world_key(world)?;
         let vault_id = self.vault.sealed_update_vault_id()?;
-        let sealed = seal_world_update(
-            &vault_id,
-            &key,
-            kind,
-            window_key,
-            bytes,
-            MAX_DECODED_PAYLOAD_BYTES - FRAME_ROOM,
-        )?;
-        let id = sealed_update_id(&vault_id, &key, kind, window_key, bytes);
-        put_sealed_update_outbox(&self.vault, &id, world, &sealed)
+        for part in seal_world_message(&vault_id, &key, kind, window_key, bytes)? {
+            put_sealed_update_outbox(&self.vault, &part.id, world, &part.sealed)?;
+        }
+        Ok(())
     }
 
     /// One sealed update frame from the home, the bytes after its tag: the
@@ -153,10 +202,8 @@ impl SyncClient {
                 }
                 // The catch-up and the outbox go at the steady loop's first
                 // housekeeping tick, never inside the connect's first burst.
-                self.sealed_updates = SealedUpdateSession {
-                    offered: Some(epoch),
-                    ..SealedUpdateSession::default()
-                };
+                self.sealed_updates.restart();
+                self.sealed_updates.offered = Some(epoch);
                 Ok(Vec::new())
             }
             SealedUpdateFrame::Entry { epoch, seq, sealed } => {
@@ -236,9 +283,10 @@ impl SyncClient {
         }
     }
 
-    /// Opens `sealed` under a key of a world this machine reads and imports
-    /// its update; an update of a world it does not read is passed over. A
-    /// fault is logged: the daily sealed bundle still carries the world.
+    /// Opens `sealed` under a key of a world this machine reads and takes
+    /// its message once whole; a part of a world it does not read is passed
+    /// over. A fault is logged: the daily sealed bundle still carries the
+    /// world, and an update that still lacks its history asks again.
     fn take_sealed_update(&mut self, sealed: &[u8]) {
         if let Err(error) = self.import_sealed_update(sealed) {
             tracing::warn!(%error, "sealed world update not taken");
@@ -263,33 +311,123 @@ impl SyncClient {
         let Some(opened) = opened else {
             return Ok(());
         };
-        let world = opened.world();
-        let window_key = opened.window_key.as_str();
-        if WindowKey::try_new(window_key).and_then(|key| key.world()) != Some(world) {
+        if WindowKey::try_new(&opened.window_key).and_then(|key| key.world())
+            != Some(opened.world())
+        {
             return Err("a sealed update's window is not its key's world".to_owned());
         }
-        match opened.kind {
+        let Some(message) = self.join_sealed_part(opened)? else {
+            return Ok(());
+        };
+        let SealedMessage {
+            world,
+            kind,
+            window_key,
+            bytes,
+        } = message;
+        let window_key = window_key.as_str();
+        match kind {
+            // A want this machine made itself, back from the home's page, is
+            // left for the world's other readers.
+            SealedUpdateKind::Want if self.sealed_updates.wanted.contains_key(window_key) => Ok(()),
             SealedUpdateKind::Want => self.answer_sealed_want(world, window_key),
-            SealedUpdateKind::Snapshot => self.import_sealed_window(window_key, &opened.update),
+            SealedUpdateKind::Snapshot => self.install_sealed_snapshot(window_key, &bytes),
             SealedUpdateKind::Update => {
                 // An update whose history this machine lacks waits for a
                 // reader's snapshot instead: imported out of order it would
                 // stay pending and hold back the window's later updates.
-                if !self.sealed_update_ready(window_key, &opened.update)? {
+                if !self.sealed_update_ready(window_key, &bytes)? {
                     self.want_sealed_snapshot(world, window_key);
                     return Ok(());
                 }
-                self.import_sealed_window(window_key, &opened.update)
+                self.import_sealed_window(window_key, &bytes)
                     .inspect_err(|_| self.want_sealed_snapshot(world, window_key))
             }
         }
     }
 
-    /// Imports one opened update or snapshot of `window_key`. The relay
-    /// proves the sealer held the world's key, not which machine it was: the
-    /// bytes take the import a tier with no connection takes. Bytes the
-    /// import refused stay nowhere, so no later world import on this
-    /// connection waits behind them.
+    /// Joins `part` with the other parts of its message: the whole message
+    /// once every part is here and the parts hash to its digest, `None` while
+    /// some are missing. A message whose parts disagree on their count, or
+    /// that would take this machine past [`SEALED_ASSEMBLY_MAX_BYTES`] of
+    /// unfinished messages, is dropped.
+    fn join_sealed_part(
+        &mut self,
+        part: OpenedWorldUpdate,
+    ) -> Result<Option<SealedMessage>, String> {
+        let world = part.world();
+        let OpenedWorldUpdate {
+            kind,
+            window_key,
+            digest,
+            index,
+            count,
+            chunk,
+            ..
+        } = part;
+        let whole = |bytes: Zeroizing<Vec<u8>>, window_key: String| {
+            if blake3::hash(&bytes).as_bytes() != &digest {
+                return Err("a sealed message does not hash to its digest".to_owned());
+            }
+            Ok(Some(SealedMessage {
+                world,
+                kind,
+                window_key,
+                bytes,
+            }))
+        };
+        if count == 1 {
+            return whole(chunk, window_key);
+        }
+        let parted = &mut self.sealed_updates.parted;
+        parted.retain(|_, held| held.started.elapsed() < SEALED_ASSEMBLY_PATIENCE);
+        let held: usize = parted.values().map(|held| held.bytes).sum();
+        let message = (kind, window_key, digest);
+        let assembly = parted
+            .entry(message.clone())
+            .or_insert_with(|| PartAssembly {
+                count,
+                chunks: BTreeMap::new(),
+                bytes: 0,
+                started: Instant::now(),
+            });
+        if assembly.chunks.contains_key(&index) {
+            return Ok(None);
+        }
+        let refused = if assembly.count != count {
+            Some("a sealed message's parts disagree on their count")
+        } else if held + chunk.len() > SEALED_ASSEMBLY_MAX_BYTES {
+            Some("a sealed message past the bound of unfinished messages")
+        } else {
+            assembly.bytes += chunk.len();
+            assembly.chunks.insert(index, chunk);
+            None
+        };
+        if let Some(reason) = refused {
+            parted.remove(&message);
+            return Err(reason.to_owned());
+        }
+        if parted
+            .get(&message)
+            .is_none_or(|assembly| assembly.chunks.len() < count as usize)
+        {
+            return Ok(None);
+        }
+        let Some(assembly) = parted.remove(&message) else {
+            return Ok(None);
+        };
+        let mut bytes = Zeroizing::new(Vec::with_capacity(assembly.bytes));
+        for chunk in assembly.chunks.values() {
+            bytes.extend_from_slice(chunk);
+        }
+        whole(bytes, message.1)
+    }
+
+    /// Imports one opened update of `window_key`. The relay proves the sealer
+    /// held the world's key, not which machine it was: the bytes take the
+    /// import a tier with no connection takes. Bytes the import refused stay
+    /// nowhere, so no later world import on this connection waits behind
+    /// them.
     fn import_sealed_window(&mut self, window_key: &str, bytes: &[u8]) -> Result<(), String> {
         let imported =
             self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
@@ -299,6 +437,67 @@ impl SyncClient {
             });
         }
         imported.map_err(|error| error.to_string())
+    }
+
+    /// Installs a reader's snapshot of `window_key` as the window's
+    /// replacement, which keeps this machine's own writes past it: when this
+    /// machine asked for it, or when it holds operations this machine lacks.
+    /// A snapshot cannot be merged into a window that holds operations: each
+    /// change past its shallow root would wait on the history it leaves out.
+    /// The want ends once the replacement is in.
+    fn install_sealed_snapshot(&mut self, window_key: &str, snapshot: &[u8]) -> Result<(), String> {
+        let asked = self.sealed_updates.wanted.contains_key(window_key);
+        if !asked && !self.sealed_snapshot_is_news(window_key, snapshot)? {
+            return Ok(());
+        }
+        let key = WindowKey::try_new(window_key)
+            .ok_or_else(|| "a sealed snapshot of no window".to_owned())?;
+        let evidence = self
+            .staged_entity_evidence()
+            .map_err(|error| error.to_string())?;
+        // Judged again once no demotion holds the window closed.
+        let (window, conflicts) = self
+            .manager
+            .replace_window_bounded(
+                &key,
+                snapshot,
+                &evidence,
+                || {
+                    self.full_window_exchange_allowed(window_key)
+                        .unwrap_or(false)
+                },
+                ReplacementByteBound::NetworkFrame,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+        drop(window);
+        if !conflicts.is_empty() {
+            let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
+                window_key: window_key.to_owned(),
+                conflicts,
+            });
+        }
+        // What the home held of the old window witnesses nothing about the
+        // new one.
+        self.server_vvs.remove(window_key);
+        self.sealed_updates.wanted.remove(window_key);
+        Ok(())
+    }
+
+    /// Whether `snapshot` holds an operation this machine's copy of
+    /// `window_key` lacks.
+    fn sealed_snapshot_is_news(
+        &mut self,
+        window_key: &str,
+        snapshot: &[u8],
+    ) -> Result<bool, String> {
+        let Ok(meta) = loro::LoroDoc::decode_import_blob_meta(snapshot, true) else {
+            return Ok(false);
+        };
+        let window = self
+            .ensure_window(window_key)
+            .map_err(|error| error.to_string())?;
+        Ok(!window.doc.oplog_vv().includes_vv(&meta.partial_end_vv))
     }
 
     /// Whether this machine's copy of `window_key` holds every operation
@@ -316,13 +515,21 @@ impl SyncClient {
         Ok(window.doc.oplog_vv().includes_vv(&meta.partial_start_vv))
     }
 
-    /// Asks the world's other readers, once per connection, for
-    /// `window_key`'s snapshot: a sealed want, unique per ask so the home
-    /// stores and relays each one.
+    /// Asks the world's other readers for `window_key`'s snapshot: a sealed
+    /// want, unique per ask so the home stores and relays each one. A want
+    /// waits [`WANT_PATIENCE`] for its answer before the window asks again.
     fn want_sealed_snapshot(&mut self, world: EntityId, window_key: &str) {
-        if !self.sealed_updates.wanted.insert(window_key.to_owned()) {
+        let waiting = self
+            .sealed_updates
+            .wanted
+            .get(window_key)
+            .is_some_and(|at| at.elapsed() < WANT_PATIENCE);
+        if waiting {
             return;
         }
+        self.sealed_updates
+            .wanted
+            .insert(window_key.to_owned(), Instant::now());
         let mut ask = [0u8; 16];
         let kept = match crate::key_material::os_fill(&mut ask) {
             Ok(()) => self.keep_sealed_message(world, SealedUpdateKind::Want, window_key, &ask),
@@ -333,19 +540,27 @@ impl SyncClient {
         }
     }
 
-    /// Answers another reader's want with this machine's snapshot of
-    /// `window_key`, when it holds any of the window.
+    /// Answers another reader's want with this machine's replacement snapshot
+    /// of `window_key`, the history-free one its home would send a peer
+    /// behind the floor, after the same scrubs, when it holds any of the
+    /// window. Only a holder of the world's key opens it, so it withholds no
+    /// world the grant covers.
     fn answer_sealed_want(&mut self, world: EntityId, window_key: &str) -> Result<(), String> {
+        let key = WindowKey::try_new(window_key)
+            .ok_or_else(|| "a sealed want of no window".to_owned())?;
         let window = self
             .ensure_window(window_key)
             .map_err(|error| error.to_string())?;
         if window.doc.oplog_vv().iter().next().is_none() {
             return Ok(());
         }
-        let snapshot = window
-            .doc
-            .export(loro::ExportMode::Snapshot)
-            .map_err(|error| error.to_string())?;
+        let snapshot =
+            export_window_replacement_for(&self.vault, &key, &window.doc, None, Withhold::Nothing)
+                .map_err(|error| error.to_string())?;
+        drop(window);
+        let Some(snapshot) = snapshot else {
+            return Ok(());
+        };
         self.keep_sealed_message(world, SealedUpdateKind::Snapshot, window_key, &snapshot)
             .map_err(|error| error.to_string())
     }
@@ -390,8 +605,11 @@ impl SyncClient {
             }
         };
         let mut frames = Vec::new();
+        let mut bytes = 0usize;
         for row in rows {
-            if frames.len() >= OUTBOX_SEND_BATCH {
+            if frames.len() >= OUTBOX_SEND_BATCH
+                || (!frames.is_empty() && bytes + row.sealed.len() > OUTBOX_SEND_BYTES)
+            {
                 break;
             }
             if self.sealed_updates.sent.contains(&row.id) {
@@ -410,6 +628,7 @@ impl SyncClient {
                     continue;
                 }
             }
+            bytes += row.sealed.len();
             frames.push(frame(&SealedUpdateFrame::Put {
                 id: row.id,
                 sealed: &row.sealed,

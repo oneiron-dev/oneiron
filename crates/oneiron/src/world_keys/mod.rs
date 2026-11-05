@@ -138,7 +138,8 @@ pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, Root
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
 pub(crate) use self::sealed_update::{
-    SealedUpdateKind, open_world_update, seal_world_update, sealed_update_id,
+    OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, open_world_update,
+    seal_world_message,
 };
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
