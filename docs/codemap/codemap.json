@@ -36987,6 +36987,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/triage/sweep_pending.rs",
+     "purpose": "One accepted run-now that joined a running feedback sweep (FIX 7552)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -61777,7 +61787,17 @@
      "path": "src/room_codec.rs",
      "purpose": "Room row part codecs without the sync feature (FIX 12405)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/room_codec/document_pins.rs",
+     "purpose": "Document pin spelling and multipart joining shared by sync and recovery",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -69230,7 +69250,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -91253,7 +91273,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91757,7 +91777,7 @@
      "purpose": "ONE-207: the retrieval half of the effort dial"
     },
     "room_codec": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file+dir",
@@ -92193,7 +92213,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6436,
+   "source_files": 6438,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100191,7 +100211,7 @@
       "const": 1,
       "enum": 5,
       "fn": 7,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -100207,6 +100227,23 @@
      "surface": {
       "crate-vis": 3,
       "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxHeaderFooterBand",
+      "DocxRead",
+      "DocxStory",
+      "DocxStoryScope"
+     ],
+     "path": "src/docx_body/stories.rs",
+     "purpose": "Native non-body stories, kept separate from the document body's id space",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
       "struct": 2
      }
     },
@@ -102198,7 +102235,7 @@
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
     "docx_body": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -102333,7 +102370,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 168,
+   "source_files": 169,
    "test_files": 14
   },
   "oneiron-driver": {
