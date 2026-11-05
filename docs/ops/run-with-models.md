@@ -240,6 +240,18 @@ These are engine flags; the supervisor must supply paths reachable by the child.
 They do not add a vault VM broker transport. Plain serve keeps its file-based
 `[models.broker]` configuration.
 
+The supervisor can name the vault's explicit host allocation on managed argv
+with `--host-memory-bytes <bytes>` and `--host-cpu-millis <millis>`. Each flag
+is optional and managed-only; absent is unbounded for that field, and no
+capacity is inferred from the machine. The values are the operator's explicit
+per-vault allocation, carried as `HostLimits` and reported through the managed
+host; they are not an OS quota, they do not route through the embedded memory
+clamp, and they add no capacity refusal. A vault VM's constructor takes no
+allocation from this carrier: its guest limits come from its existing separate
+source, and these flags add no VM transport. An engine from before these flags
+refuses them, so a supervisor passes them only to engines at or after the merge
+that added them.
+
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
 names the field and never its value:
