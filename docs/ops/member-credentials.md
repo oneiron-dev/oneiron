@@ -10,6 +10,9 @@ Verification meets an ordinary member's authenticated effective Scope with
 the current membership grant on all six axes: worlds, facets, bands,
 audience, verbs and sensitivity. This changes only the verifier's effective
 view, not the signed token, holder transfers, record bounds or channel bounds.
+The current member bound recognizes `read` and `core:read` as the same read
+permission for both the meet and cached-scope comparison. The effective view
+keeps the authenticated request's spelling; other verbs are unchanged.
 A role change that rewrites the same grant id therefore cannot leave fresh
 requests carrying the old role's authority.
 

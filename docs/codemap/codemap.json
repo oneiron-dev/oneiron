@@ -40809,6 +40809,7 @@
      "path": "src/inference_snapshot/seal.rs",
      "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "re-export": 1,
       "struct": 1
