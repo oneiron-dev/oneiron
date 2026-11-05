@@ -20,7 +20,9 @@ mod secret_lift;
 pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+mod session_checkpoint;
 mod session_heal_count;
+pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
 mod spawn_erase;
 mod speech_identity;
