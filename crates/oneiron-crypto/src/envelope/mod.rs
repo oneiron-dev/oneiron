@@ -159,6 +159,10 @@ pub enum Purpose {
     /// host's hybrid recipient (FIX 6598). The owner binds the member's
     /// binding digest in `key_id` and the binding again inside the plaintext.
     CheckpointHostOrderHoldsKey = 28,
+    /// One private-world side-table row, sealed under its exact world key. The
+    /// caller binds the world key id in `key_id`, its row family as the recipient,
+    /// and its native row identity and revisions as extra associated data.
+    WorldSideRow = 29,
 }
 
 impl Purpose {
@@ -192,6 +196,7 @@ impl Purpose {
             26 => Self::ErasableKey,
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
+            29 => Self::WorldSideRow,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
