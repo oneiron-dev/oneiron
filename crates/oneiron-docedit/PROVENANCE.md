@@ -186,6 +186,8 @@ read view's joined multi-paragraph cell text as that first paragraph. Header,
 footer, and note cells land tracked; comment cells land as Normal annotation
 text in both outer modes via a text-only settle of the target paragraph only,
 with the note/comment whole-story hash recomputed. Story structure
-insert/delete stays unbuilt; no whole-594 claim. No contract schema bump, no
-new error, format, default, cap, or Loro change. No Word-runtime comparison is
-claimed.
+insert/delete stays unbuilt; no whole-594 claim. The native contract moves
+from 4 to 5 because `set_story_cell` extends the typed `docx.project` arguments;
+it serves only the current version, with no old reader or migration. Nested
+transaction and Loro versions stay unchanged. No new error, default, cap or
+Word-runtime comparison is claimed.

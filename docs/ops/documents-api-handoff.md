@@ -13,7 +13,7 @@ Documents edit in-engine through docedit and the formula engine. They need no or
 
 | The crate (`oneiron_docedit::contract`) | The cloud service (oneiron-cloud) |
 |---|---|
-| The op table, its version (`CONTRACT_SCHEMA = 4`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
+| The op table, its version (`CONTRACT_SCHEMA = 5`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
 | Every native read, edit, check and projection | Metering and billing units |
 | Refusals with a closed code and bounded detail | Hosting, scaling, timeouts, queues and async jobs |
 | The checks that every op runs against the caller's limits | Per-plan limits: the values it passes in each call |
@@ -36,7 +36,7 @@ let done = execute_json(call_json, &[&docx_bytes], Ports { recalc: Some(&engine)
 let manifest = done.manifest(); // name, media type, size and BLAKE3 of each output
 ```
 
-- **A call** is `{"schema": 4, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
+- **A call** is `{"schema": 5, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
   args name each input by its index in that list. The hosted API maps its multipart parts or
   upload handles to that list, in order.
 - **A reply** is `Done { reply, outputs }`. `reply` is a typed `Reply`, tagged by `"reply"`.
@@ -48,7 +48,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
   and port. It also returns `call_schema`, `reply_schema` and `error_schema`, generated with
   schemars 0.8. The hosted API serves this reply as its discovery document.
 
-## Ops, schema 4
+## Ops, schema 5
 
 | Op | Inputs | Args besides inputs | Reply | Output | Native door |
 |---|---|---|---|---|---|
@@ -200,7 +200,7 @@ where work moves to another runtime, and that runtime (the session image) is the
   the reply lists it. Passing those back as `slide_creation_ids` replays the same bytes; a mint the
   edits do not need, or one they need and the list lacks, refuses as `bad_request`.
 
-## Not on schema 4
+## Not on schema 5
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
   OF-510). They are vault state, not a stateless file op.
