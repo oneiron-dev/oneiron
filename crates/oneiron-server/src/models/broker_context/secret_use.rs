@@ -19,6 +19,7 @@ use crate::config::models::{ModelsConfig, ProviderKind};
 struct Provider {
     origin: String,
     path: String,
+    shape: Shape,
     headers: Vec<(String, String)>,
     wire_model: String,
     client: Result<BrokerClient, String>,
@@ -56,13 +57,27 @@ impl BrokerContext {
             if provider.key_secret.is_none()
                 || !matches!(
                     provider.kind,
-                    ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+                    ProviderKind::OpenaiCompat
+                        | ProviderKind::LocalOpenaiCompat
+                        | ProviderKind::Gemini
                 )
             {
                 continue;
             }
             let Ok(url) = reqwest::Url::parse(&provider.base_url) else {
                 continue;
+            };
+            let prefix = url.path().trim_end_matches('/');
+            let (shape, path) = if provider.kind == ProviderKind::Gemini {
+                (
+                    Shape::GeminiModels,
+                    join(
+                        prefix.strip_suffix("/v1beta").unwrap_or(prefix),
+                        "/v1beta/models",
+                    ),
+                )
+            } else {
+                (Shape::OpenAiModels, join(prefix, "/v1/models"))
             };
             let timeout = Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN;
             let client = self
@@ -75,7 +90,8 @@ impl BrokerContext {
                 name.clone(),
                 Provider {
                     origin: url.origin().ascii_serialization(),
-                    path: join(url.path().trim_end_matches('/'), "/v1/models"),
+                    path,
+                    shape,
                     headers: provider
                         .headers
                         .iter()
@@ -107,12 +123,12 @@ impl BrokerModelListingHost for ListingHost {
         call: &str,
     ) -> Result<Box<dyn BrokerModelListingCall>, String> {
         let provider = self.providers.get(provider).ok_or_else(|| {
-            "name a configured broker-backed OpenAI-compatible provider with a model rung"
+            "name a configured broker-backed OpenAI-compatible or Gemini provider with a model rung"
                 .to_owned()
         })?;
         let header = CallHeader::new(
             call.to_owned(),
-            Shape::OpenAiModels,
+            provider.shape,
             provider.origin.clone(),
             provider.path.clone(),
             provider.headers.clone(),
