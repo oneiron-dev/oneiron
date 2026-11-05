@@ -5,8 +5,8 @@ its subjects are live. Each stored row carries the actual actor, credited
 skill and both ends of a used edge as typed erase subjects. This is erase
 ownership, not a grant or model-call admission policy.
 
-Fork receipt identifiers and response paths are opaque ULIDs from the start.
-They do not derive from a target, the request or the pair digest. The response
+Fork receipt identifiers and response paths use independent opaque ULIDs from the start.
+They do not derive from each other, a target, the request or the pair digest. The response
 body, its actual receipt and its erase ownership commit in one writer, so an
 erase cannot miss a published response between publication and registration.
 The normal custody admission, result marks, body spill and run ownership remain

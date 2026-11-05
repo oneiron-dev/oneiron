@@ -506,8 +506,9 @@ impl Runner<'_> {
         };
         let capsule = &prepared.capsule;
         // The receipt and path are opaque, not descendants of any target id.
-        let digest = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
-        let path = format!("replay/contribution/{digest}.response.json");
+        let receipt_id = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
+        let path_id = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
+        let path = format!("replay/contribution/{path_id}.response.json");
         // Publication and its discoverable erase ownership commit together.
         let stored = store_fork_response(
             self.vault,
@@ -518,7 +519,7 @@ impl Runner<'_> {
             &path,
             &response,
             |response_ref| ContributionForkReceipt {
-                receipt: format!("{FORK_RECEIPT_PREFIX}{digest}"),
+                receipt: format!("{FORK_RECEIPT_PREFIX}{receipt_id}"),
                 treatment,
                 attempt: capsule.attempt,
                 lease_generation: capsule.lease_generation,
