@@ -11,6 +11,7 @@ use crate::{Result, Vault};
 
 const ERASED_CHECKPOINT: &str = "workflow_tool_checkpoint_erased";
 const UNAVAILABLE_CHECKPOINT: &str = "workflow_tool_checkpoint_unavailable";
+const UNREADABLE_CHECKPOINT: &str = "workflow_tool_checkpoint_source_unreadable";
 
 /// The caller selected this active leaf from its native workflow record in
 /// this writer. The erased row is a fence, never permission for a fresh call.
@@ -36,10 +37,18 @@ pub(crate) fn settle_erased_in_txn(
                     "workflow checkpoint settlement has foreign generation",
                 ));
             }
-            if row.content.is_some() {
-                return Ok(false);
-            }
-            if row.retained.is_some() {
+            if let Some(content) = &row.content {
+                if crate::agent_dispatch::AgentDispatcher::new(vault)
+                    .workflow_tool_sources_readable_in_txn(
+                        txn,
+                        active,
+                        &content.progress.known_sources,
+                    )?
+                {
+                    return Ok(false);
+                }
+                UNREADABLE_CHECKPOINT
+            } else if row.retained.is_some() {
                 UNAVAILABLE_CHECKPOINT
             } else {
                 ERASED_CHECKPOINT

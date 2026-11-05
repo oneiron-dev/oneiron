@@ -75,6 +75,7 @@ impl AgentDispatcher<'_> {
         &self,
         leased: &AttemptRecord,
     ) -> Result<Option<WorkflowToolContinuation>> {
+        self.vault.store.authorization_now()?;
         let _custody = self.vault.store.gate_custody_read_guard()?;
         let k = key(leased.id)?;
         let expected = {
@@ -94,6 +95,13 @@ impl AgentDispatcher<'_> {
             };
         };
         let content = checked_content(self.vault, &txn, &actual, &row)?;
+        if !self.workflow_tool_sources_readable_in_txn(
+            &txn,
+            &actual,
+            &content.progress.known_sources,
+        )? {
+            return Err(invalid("workflow checkpoint source is no longer readable"));
+        }
         if expected != Some(content.body) {
             return Err(invalid("workflow checkpoint body changed during its read"));
         }
@@ -175,6 +183,7 @@ impl AgentDispatcher<'_> {
     /// A wake hint never authorizes the body: the retained caller must still
     /// cross the required-saved hook boundary with a fresh actual HostBinding.
     pub fn resume_workflow_tool(&self, root: AttemptId, now: u64) -> Result<bool> {
+        self.vault.store.authorization_now()?;
         let queue = AttemptQueue::new(self.vault);
         let retained = {
             let mut txn = self.vault.store.env.write_txn()?;

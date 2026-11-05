@@ -120,6 +120,7 @@ impl AgentDispatcher<'_> {
             Option<AttemptConfession>,
         )>,
     {
+        self.vault.store.authorization_now()?;
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
         let wrapper = queue
