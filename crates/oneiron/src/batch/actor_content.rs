@@ -254,6 +254,27 @@ pub(crate) fn apply_actor_ops(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    apply_actor_ops_collecting(
+        vault,
+        txn,
+        actor,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+    )
+    .map(|_| ())
+}
+
+pub(super) fn apply_actor_ops_collecting(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &WriteActor,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<(super::base_apply::PendingNativeSkillBatch, ContentWriteSet)> {
     if !matches!(origin, BaseWriteOrigin::Ordinary) {
         return Err(Error::InvariantViolation(
             "actor content cannot be replay origin",
@@ -267,7 +288,7 @@ pub(crate) fn apply_actor_ops(
     #[cfg(not(feature = "sync"))]
     let native_target = None;
     let mut effects = ContentWriteSet::before(vault, txn, actor, &ops, native_target)?;
-    apply_ops_with_authority_beside(
+    let pending = super::base_apply::apply_ops_with_authority_beside_collecting(
         &vault.store,
         &vault.config,
         &vault.analyzer,
@@ -285,5 +306,5 @@ pub(crate) fn apply_actor_ops(
         }),
     )?;
     effects.after(vault, txn, actor)?;
-    Ok(())
+    Ok((pending, effects))
 }
