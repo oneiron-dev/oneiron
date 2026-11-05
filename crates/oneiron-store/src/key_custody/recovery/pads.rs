@@ -24,7 +24,7 @@ use crate::restore_admission::because;
 use oneiron_contracts::entity_id::EntityId;
 
 /// A world pad's full id: world (16) | generation (8, big-endian) | mint (16).
-type PadItem = [u8; 40];
+pub type PadItem = [u8; 40];
 
 /// One lineage's world pads as the head admitted gives them: each live pad of
 /// a compartment the opener opened, by world and full id, and every pad the
