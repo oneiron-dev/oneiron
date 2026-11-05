@@ -8,10 +8,10 @@ use super::super::EntityDoc;
 use super::register::read_fact;
 use crate::error::{Error, Result};
 
-/// The caller has already admitted this document's native witnesses. This
-/// reads only that document, including when it is a retained historical fork.
-/// It never substitutes a current Store value for a historical one.
-pub(super) fn project_state(doc: &EntityDoc, body: &mut Value) -> Result<()> {
+/// Read only this document, including a retained historical fork. A proposed
+/// body's projection is data, not admission; durable readers rely on the native
+/// source invariant. Never substitute current Store state for a historical one.
+pub(in crate::entity_doc) fn project_state(doc: &EntityDoc, body: &mut Value) -> Result<()> {
     let Some(fact) = read_fact(doc)? else {
         return Ok(());
     };
