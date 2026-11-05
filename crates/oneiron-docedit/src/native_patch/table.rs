@@ -413,7 +413,11 @@ pub(super) fn set_cell(
         None => (
             rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
             within(&tree, body)
-                .filter(|(_, node)| node.is(DML, "fld"))
+                .filter(|(_, node)| {
+                    node.is(DML, "fld")
+                        && node.span.start >= first_node.span.start
+                        && node.span.end <= last_node.span.end
+                })
                 .filter_map(|(_, node)| node.attr("type").map(str::to_owned))
                 .collect(),
         ),
