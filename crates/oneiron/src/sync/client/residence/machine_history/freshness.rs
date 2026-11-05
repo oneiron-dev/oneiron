@@ -1,6 +1,6 @@
 //! Freshness for local pins whose history is no longer owed.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -59,7 +59,7 @@ fn home_reads_target(vault: &Vault, home: PeerMachine, target: EntityId) -> crat
     let mut ids =
         crate::claim::history_store::machine_history_ids_for_target(&vault.store, &txn, target)?;
     ids.push(target);
-    let mut windows = BTreeSet::new();
+    let mut windows = HashSet::new();
     for id in ids {
         let window = vault.store.port_entity_with_raw(&txn, &id, |raw| {
             if !EntityMetadataHeader::parse(raw)
