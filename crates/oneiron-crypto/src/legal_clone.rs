@@ -273,6 +273,7 @@ fn open_bound(
     let namespace = blake3::hash(capture.scope().as_slice());
     let key_id = blake3::hash(aad);
     Envelope::parse(sealed)?.open_with_aad(
+        OpenKey::Hybrid(secret),
         &OpenPolicy {
             purpose: Purpose::LegalClone,
             vault_id: namespace.as_bytes(),
@@ -284,7 +285,6 @@ fn open_bound(
             min_epoch: EPOCH,
             argon2_max: Argon2Cost::RFC9106_SECOND,
         },
-        OpenKey::Hybrid(secret),
         aad,
     )
 }
