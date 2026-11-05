@@ -190,6 +190,31 @@ pub struct MDB_envinfo {
     #[doc = "< max reader slots used in the environment"]
     pub me_numreaders: ::libc::c_uint,
 }
+// ONEIRON FORK: exact native page-buffer accounting callbacks.
+pub type MDB_page_acquire_func = Option<unsafe extern "C" fn(
+    context: *mut ::libc::c_void,
+    bytes: usize,
+    ticket: *mut *mut ::libc::c_void,
+) -> ::libc::c_int>;
+pub type MDB_page_materialized_func = Option<unsafe extern "C" fn(
+    ticket: *mut ::libc::c_void,
+    bytes: usize,
+)>;
+pub type MDB_page_release_func = Option<unsafe extern "C" fn(
+    ticket: *mut ::libc::c_void,
+    bytes: usize,
+    allocated: ::libc::c_int,
+)>;
+extern "C" {
+    pub fn mdb_txn_set_page_account(
+        txn: *mut MDB_txn,
+        acquire: MDB_page_acquire_func,
+        materialized: MDB_page_materialized_func,
+        release: MDB_page_release_func,
+        context: *mut ::libc::c_void,
+    ) -> ::libc::c_int;
+}
+
 extern "C" {
     #[doc = "Return the LMDB library version information.\n\n # Arguments\n\n* `major` (direction out) - if non-NULL, the library major version number is copied here\n * `minor` (direction out) - if non-NULL, the library minor version number is copied here\n * `patch` (direction out) - if non-NULL, the library patch version number is copied here\n # Returns\n\n* `\"version` - string\" The library version as a string"]
     pub fn mdb_version(
