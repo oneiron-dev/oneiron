@@ -32,6 +32,15 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
         Self { vault, wtxn, actor }
     }
 
+    /// Removes only this hard-erased target's frozen pattern revision witness.
+    pub(crate) fn erase_planned_pack_revision(&mut self) -> Result<()> {
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &self.vault.store,
+            self.wtxn,
+            &self.actor,
+        )
+    }
+
     pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, EntityId) {
         (self.vault, &mut *self.wtxn, self.actor)
     }
@@ -58,9 +67,9 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
 /// (Engine 10-22); a delete writes no marker and keeps the text. Under
-/// `act`, the owner act the erase carries out, the blocked reports' rows go
-/// first, so each custody record their scrub revokes is carried to his other
-/// machines (FIX 11883); their declared scrub then finds none.
+/// `act`, the owner act the erase carries out, the blocked reports' and
+/// model-call rows go first, so each custody record their scrubs revoke is
+/// carried to his other machines; their declared scrubs then find none.
 pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
@@ -76,13 +85,21 @@ pub(super) fn erase_actor_fields_in_txn(
     if hard {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &vault.store,
+            wtxn,
+            actor,
+        )?;
     }
     if act.is_some() {
         crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
             vault, wtxn, actor, act,
         )?;
+        crate::code_run::erase_model_call_actor_as_in_txn(vault, wtxn, actor, act)?;
     }
-    if hard && !names_no_actor(vault, wtxn, actor)? {
+    // The accepted hard erase must reach reply bodies before the actor scrub
+    // removes their authenticated author. Its marker may be written later.
+    if !names_no_actor(vault, wtxn, actor)? {
         crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(
             vault,
             wtxn,
@@ -129,17 +146,7 @@ fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<(
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the rows that record actors. Each lane's actor scrub asks it (FIX 8908).
 pub(crate) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
+    crate::ports::names_no_actor_in_txn(&vault.store, txn, id)
 }
 
 /// Every id `vault`'s hard-delete markers name: each hard-erased id, actor or
@@ -151,18 +158,7 @@ pub(crate) fn hard_erased_ids_in(vault: &Vault) -> Result<BTreeSet<EntityId>> {
 }
 
 fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
-    let mut ids = BTreeSet::new();
-    for row in HARD_DELETE_MARKER.iter_raw_from(&vault.store, rtxn, &[])? {
-        let (key, _) = row?;
-        // A key that spells no id names no actor.
-        if let Some(id) = std::str::from_utf8(&key)
-            .ok()
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-        {
-            ids.insert(id);
-        }
-    }
-    Ok(ids)
+    crate::ports::hard_erased_ids_in_txn(&vault.store, rtxn)
 }
 
 /// The authenticated image writer's actual erase targets, derived while
@@ -208,6 +204,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     for actor in &erased {
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
+            erase.erase_planned_pack_revision()?;
             scrub_actor_fields_in_txn(&mut erase)?;
         }
         // The image's cleanup rows name it again; they go once more (FIX 7517).

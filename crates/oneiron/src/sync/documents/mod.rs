@@ -9,8 +9,10 @@
 
 mod destination;
 mod entity;
+mod held_copy;
 mod note_requests;
 pub(crate) mod note_state;
+pub use super::selector::secret_projection::RepoCopyEditReview;
 pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
@@ -235,6 +237,28 @@ impl DocumentRegistry {
             }
         }
         Ok(out)
+    }
+
+    /// Rebuild one current subscription's REQUEST after its remote open waited.
+    /// The stored key is the wire id, including a copy alias; never replace it
+    /// with the source id the server uses only to open the document.
+    pub(crate) fn retry_request_frame(&self, id: EntityId) -> Result<Option<Vec<u8>>> {
+        let bytes = {
+            let txn = self.vault.store.env.read_txn()?;
+            DS_E.get(&self.vault.store, &txn, &HexId(id))?
+        };
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        if self.vault.get_raw(&id)?.is_none() {
+            return Ok(None);
+        }
+        if bytes.is_empty() {
+            self.owner_request_frame(id).map(Some)
+        } else {
+            let selector = super::selector::decode_sync_selector(&bytes)?;
+            self.request_frame(id, &selector).map(Some)
+        }
     }
 
     fn request_frame(

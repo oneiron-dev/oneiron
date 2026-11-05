@@ -65,6 +65,7 @@ mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod planner_live;
+pub(crate) use planner_live::seat_model_rates_in_txn;
 mod project_conversation;
 mod project_proposal;
 mod requester;
@@ -76,6 +77,7 @@ pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+mod skill_default;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
@@ -145,6 +147,7 @@ pub use self::task_type_tree::{
 pub(crate) use self::task_type_tree::{
     load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,
 };
+pub(crate) use self::team_shape::team_shape_root_in_txn;
 pub use self::team_shape::{
     CoordinationPattern, TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, team_shape_skill,
 };
@@ -203,5 +206,6 @@ mod resident_tests;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::widen_record::agent_dispatch_widen_intent_accepts_masked;
 pub(crate) use self::widen_record::agent_dispatch_widen_slice_accepts_masked;
 pub(crate) use self::workflow_record::agent_workflow_record_accepts_masked;

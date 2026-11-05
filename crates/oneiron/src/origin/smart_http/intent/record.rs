@@ -79,8 +79,12 @@ impl Vault {
                 .iter()
                 .enumerate()
                 .map(|(index, update)| {
-                    let pointers = door.ref_lfs_pointers.get(index).cloned();
-                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
+                    let pointers = door
+                        .ref_lfs_pointers
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| (0..door.lfs_pointers.len()).collect());
+                    held_by_ref(&door.lfs_pointers, Some(pointers.as_slice()))
                         .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
                     Ok(ReceivePackIntentRef {
                         name: update.name.clone(),
