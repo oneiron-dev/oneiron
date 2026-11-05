@@ -38,6 +38,7 @@ mod coach_health;
 pub(crate) mod coach_host;
 mod coach_site_skills;
 mod code_fix;
+mod commitment_reminder_wording;
 mod confession_wording;
 mod connector_event;
 pub(crate) use connector_event::{repair_connector_reply_witnesses, run_connector_reply_job};

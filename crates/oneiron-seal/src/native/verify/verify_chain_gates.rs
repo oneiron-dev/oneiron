@@ -16,7 +16,7 @@ use super::evidence_time::{
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_report_build::{classify_signature, signature_report};
 use super::verify_revisions;
-use super::verify_sig_pipeline::{Checks, SigEntry, collect_signatures, evaluate_envelope};
+use super::verify_sig_pipeline::{Checks, collect_signatures, evaluate_envelope};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
@@ -34,7 +34,7 @@ pub(super) fn malformed_input() -> SealError {
 
 /// Memory a verification's decode was refused: the verification's error,
 /// never a verdict on the PDF.
-fn memory_refused(refusal: SealMemoryRefusal) -> SealError {
+pub(super) fn memory_refused(refusal: SealMemoryRefusal) -> SealError {
     refusal.seal_error(SealStage::Verification)
 }
 
@@ -192,7 +192,8 @@ fn classify_missing_material_root(
     covered: &[EmbeddedCert],
     at: u64,
     memory: &MemoryLedger,
-    checks: &mut Checks,
+    limits: &SealResourceLimits,
+    checks: &mut Checks<'_>,
 ) -> Result<(), SealMemoryRefusal> {
     let unresolved = checks.list.iter().any(|c| {
         c.status == VerifyCheckStatus::NotRun
@@ -208,7 +209,7 @@ fn classify_missing_material_root(
     {
         return Ok(());
     }
-    let mut probe = Checks::new();
+    let mut probe = Checks::new(limits);
     verify_dss(doc, covered, covered, at, memory, &mut probe)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
         && let Some(check) = checks
@@ -261,23 +262,27 @@ pub(crate) fn verify_document(
             code: InputInvalidCode::ObjectLimitExceeded,
         });
     }
-    let mut checks = Checks::new();
+    let mut checks = Checks::new(limits);
     // The refuse-to-seal gate and output verifier share this object/security
     // scan. An output may have signatures; neither path accepts active content.
-    checks.record(
-        VerifyCheckKind::PdfRevision,
-        pdf::analyze_security(&doc, false).is_ok(),
-        VerifyFindingCode::InvalidPdfRevision,
-    );
+    checks
+        .record(
+            VerifyCheckKind::PdfRevision,
+            pdf::analyze_security(&doc, false).is_ok(),
+            VerifyFindingCode::InvalidPdfRevision,
+        )
+        .map_err(memory_refused)?;
     // The same structural xref/EOF analysis used by prepared admission
     // accepts any final run of CR/LF bytes. Do not keep a competing
     // single-newline predicate on the verify side.
     let revision_ends = pdf::revision_ends(bytes, &doc, limits).map_err(memory_refused)?;
-    checks.record(
-        VerifyCheckKind::PdfRevision,
-        revision_ends.is_some(),
-        VerifyFindingCode::InvalidPdfRevision,
-    );
+    checks
+        .record(
+            VerifyCheckKind::PdfRevision,
+            revision_ends.is_some(),
+            VerifyFindingCode::InvalidPdfRevision,
+        )
+        .map_err(memory_refused)?;
     let anchors = anchors(ctx.config);
     // Every certificate copy below is held on the verification's ledger
     // until it drops (FIX 12260).
@@ -291,18 +296,7 @@ pub(crate) fn verify_document(
     // Stage 1: bind every envelope to the already-proven xref chain and
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
-    let sigs = collect_signatures(&doc)?;
-    // Each signature's copied `/Contents` (the CMS the stages below parse)
-    // and field name, charged as soon as they are built (FIX 12260).
-    let sigs_bytes = sigs.iter().fold(
-        sigs.capacity()
-            .saturating_mul(std::mem::size_of::<SigEntry>()),
-        |sum, sig| {
-            sum.saturating_add(sig.contents.capacity())
-                .saturating_add(sig.field_name.capacity())
-        },
-    );
-    let _sigs_held = memory.hold(sigs_bytes).map_err(memory_refused)?;
+    let sigs = collect_signatures(&doc, limits)?;
     let envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
@@ -319,7 +313,7 @@ pub(crate) fn verify_document(
         })
         .collect::<Result<_, _>>()
         .map_err(memory_refused)?;
-    let dss_end = dss_revision_end(&doc, bytes);
+    let dss_end = dss_revision_end(&doc, bytes, limits).map_err(memory_refused)?;
     let mut covered = Vec::new();
     for envelope in &envelopes {
         EmbeddedCert::extend_admitted(
@@ -344,12 +338,15 @@ pub(crate) fn verify_document(
     });
     if trust_pending {
         // Include the typed pending check solely as a reason for the probe.
-        checks.not_run(VerifyCheckKind::TimestampCertificatePath);
+        checks
+            .not_run(VerifyCheckKind::TimestampCertificatePath)
+            .map_err(memory_refused)?;
         classify_missing_material_root(
             &doc,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
             &memory,
+            limits,
             &mut checks,
         )
         .map_err(memory_refused)?;
@@ -372,12 +369,15 @@ pub(crate) fn verify_document(
             signer_validation_time(&envelopes[index], &envelopes, ctx.clock_ms / 1000);
         let archival = archival_coverage(&envelopes[index], &envelopes, dss_end);
         if let Some(chain) = &envelopes[index].signer_chain {
-            let mut path = Checks::new();
+            let mut path = Checks::new(limits);
             path.record_status(
                 VerifyCheckKind::CertificatePath,
                 signer_path_status(chain, &anchors, validation_time.at),
                 VerifyFindingCode::CertificatePathInvalid,
-            );
+            )
+            .map_err(memory_refused)?;
+            pdf::admitted::reserve(limits, &mut envelopes[index].checks, path.list.len())
+                .map_err(memory_refused)?;
             envelopes[index].checks.extend(path.list);
         }
         let mut material = Vec::new();
@@ -400,7 +400,7 @@ pub(crate) fn verify_document(
             )
             .map_err(memory_refused)?;
         }
-        let mut material_checks = Checks::new();
+        let mut material_checks = Checks::new(limits);
         let decoded = verify_dss(
             &doc,
             &anchor_certs,
@@ -417,7 +417,9 @@ pub(crate) fn verify_document(
             c.kind == VerifyCheckKind::TimestampCertificatePath
                 && c.status == VerifyCheckStatus::NotRun
         }) {
-            material_checks.not_run(VerifyCheckKind::TimestampCertificatePath);
+            material_checks
+                .not_run(VerifyCheckKind::TimestampCertificatePath)
+                .map_err(memory_refused)?;
             classify_missing_material_root(
                 &doc,
                 &material,
@@ -428,6 +430,7 @@ pub(crate) fn verify_document(
                     ctx.clock_ms / 1000,
                 ),
                 &memory,
+                limits,
                 &mut material_checks,
             )
             .map_err(memory_refused)?;
@@ -436,6 +439,12 @@ pub(crate) fn verify_document(
                 .retain(|c| c.kind != VerifyCheckKind::TimestampCertificatePath);
         }
         let dss_ok = material_checks.passed(VerifyCheckKind::ValidationMaterial);
+        pdf::admitted::reserve(
+            limits,
+            &mut envelopes[index].checks,
+            material_checks.list.len(),
+        )
+        .map_err(memory_refused)?;
         envelopes[index].checks.extend(material_checks.list);
         profiles.push(classify_signature(
             &envelopes[index],
@@ -474,6 +483,7 @@ pub(crate) fn verify_document(
             VerifyFindingCode::ModificationNotAllowed,
         ),
     }
+    .map_err(memory_refused)?;
     let signatures = envelopes
         .into_iter()
         .zip(profiles)
