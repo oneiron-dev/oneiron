@@ -20,6 +20,13 @@
 //! held is dropped, never sent. A flow and its alias end together; a later
 //! Initial of its connection opens under no flow's keys and is refused. The
 //! table lock covers no DNS lookup, no policy check and no remote receive.
+//!
+//! A flow ends on its deadline whether or not another datagram comes: while
+//! the table holds a flow, one sweeper thread, holding the table only
+//! weakly, drops each ended flow at its deadline, so what a pending or
+//! admitted flow holds on the host-net byte floor goes back without another
+//! QUIC call. A table that cannot start its sweeper holds nothing: the
+//! datagram is refused.
 
 use super::EgressDatagramNameRefusal;
 use super::initial::Version;
@@ -27,7 +34,7 @@ use super::reassembly::{self, BEYOND_FLOOR, CryptoStream};
 use oneiron_container::{HostNetFloor, HostNetPermit};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 /// One QUIC connection as its opening Initial names it: the target, the
@@ -67,6 +74,8 @@ pub(in crate::code_sandbox::egress) struct FlowTable {
 struct FlowMaps {
     flows: HashMap<FlowKey, Flow>,
     aliases: HashMap<FlowKey, FlowKey>,
+    /// A sweeper thread ends this table's flows on their deadlines.
+    sweeping: bool,
 }
 
 struct Flow {
@@ -184,7 +193,7 @@ impl FlowTable {
     /// none, and holds `datagram` while the flow's ClientHello is not
     /// whole. Bytes are held on `floor`.
     pub(super) fn ingest(
-        &self,
+        self: &Arc<Self>,
         opened: Opened,
         datagram: &[u8],
         floor: &dyn HostNetFloor,
@@ -204,6 +213,11 @@ impl FlowTable {
                 return Step::Refused(unverifiable("the gate's flow table is poisoned"));
             }
         };
+        if !self.sweep_on_deadlines(&mut maps) {
+            return Step::Refused(unverifiable(
+                "the gate cannot end its QUIC flows on their deadlines",
+            ));
+        }
         let flow = maps.flows.entry(key.clone()).or_insert_with(|| Flow {
             expires: after(self.lifetime),
             largest: number,
@@ -251,6 +265,26 @@ impl FlowTable {
                 Step::Refused(refusal)
             }
         }
+    }
+
+    /// Starts the thread that ends this table's flows on their deadlines,
+    /// unless one runs: true once one runs. It is started under the table
+    /// lock, so the flow its caller adds next is there when it first looks.
+    fn sweep_on_deadlines(self: &Arc<Self>, maps: &mut FlowMaps) -> bool {
+        if maps.sweeping {
+            return true;
+        }
+        let table = Arc::downgrade(self);
+        let started = std::thread::Builder::new()
+            .name("egress-quic-flows".to_owned())
+            .spawn(move || end_flows_on_deadlines(&table));
+        match started {
+            Ok(_) => maps.sweeping = true,
+            Err(error) => {
+                tracing::warn!(%error, "the QUIC flow deadline sweeper did not start");
+            }
+        }
+        maps.sweeping
     }
 
     /// The maps, swept of ended flows, once `key`'s flow is not being
@@ -309,6 +343,37 @@ impl FlowMaps {
         {
             other.alias = None;
         }
+    }
+}
+
+/// Ends `table`'s flows on their deadlines until it holds none or is gone.
+/// It sleeps until the earliest deadline holding no lock and no strong
+/// reference, so a dropped proxy ends it at its next wake.
+fn end_flows_on_deadlines(table: &Weak<FlowTable>) {
+    loop {
+        let Some(strong) = table.upgrade() else {
+            return;
+        };
+        let wait = {
+            let Ok(mut maps) = strong.maps.lock() else {
+                return;
+            };
+            maps.sweep();
+            if maps.flows.is_empty() {
+                maps.sweeping = false;
+                return;
+            }
+            // A flow some call is releasing has no deadline of its own until
+            // its release settles: look again after one lifetime.
+            maps.flows
+                .values()
+                .filter(|flow| !matches!(flow.state, FlowState::Releasing))
+                .map(|flow| flow.expires.saturating_duration_since(Instant::now()))
+                .min()
+                .unwrap_or(strong.lifetime)
+        };
+        drop(strong);
+        std::thread::sleep(wait);
     }
 }
 

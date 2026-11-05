@@ -168,7 +168,7 @@ pub struct OpenEgressProxy {
     fixture_forward: Option<FixtureForward>,
     /// The QUIC flows whose opening ClientHello the datagram name gate
     /// holds or judged (FIX 8991).
-    quic_flows: quic::FlowTable,
+    quic_flows: Arc<quic::FlowTable>,
 }
 impl OpenEgressProxy {
     #[must_use]
@@ -176,7 +176,7 @@ impl OpenEgressProxy {
         Self {
             vault,
             run_id,
-            quic_flows: quic::FlowTable::new(config.request_timeout),
+            quic_flows: Arc::new(quic::FlowTable::new(config.request_timeout)),
             config,
             bindings: Mutex::new(HashMap::new()),
             fixture: None,
