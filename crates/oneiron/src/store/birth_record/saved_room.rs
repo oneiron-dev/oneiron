@@ -26,7 +26,7 @@ impl SavedRoomBirth {
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-        grant: &crate::off_record::promote::PromoteReplayGrant,
+        grant: &crate::off_record::PromoteReplayGrant,
     ) -> Result<()> {
         if !grant.exempts(&self.row) || grant.selected_saver().is_none() {
             return Err(Error::InvariantViolation(

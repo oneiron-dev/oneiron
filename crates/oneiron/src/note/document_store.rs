@@ -77,7 +77,7 @@ pub(super) fn persist_saved_authoritative(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
-    grant: &crate::off_record::promote::PromoteReplayGrant,
+    grant: &crate::off_record::PromoteReplayGrant,
 ) -> Result<()> {
     persist_structural_with_origin(vault, txn, doc, true, Some(grant))?;
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
@@ -121,7 +121,7 @@ fn persist_structural_with_origin(
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
     masks: bool,
-    grant: Option<&crate::off_record::promote::PromoteReplayGrant>,
+    grant: Option<&crate::off_record::PromoteReplayGrant>,
 ) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;

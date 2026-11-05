@@ -295,7 +295,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         saver: crate::WriteActor,
-        grant: &crate::off_record::promote::PromoteReplayGrant,
+        grant: &crate::off_record::PromoteReplayGrant,
         edges: Vec<BatchOp>,
     ) -> Result<()> {
         if !grant.exempts(id) || grant.selected_saver() != Some(saver) {

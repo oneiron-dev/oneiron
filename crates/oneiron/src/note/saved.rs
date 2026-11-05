@@ -3,7 +3,7 @@
 use super::document::NoteDocument;
 use super::documents::invalid;
 use crate::batch::{BatchBuilder, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::off_record::promote::PromoteReplayGrant;
+use crate::off_record::PromoteReplayGrant;
 use crate::ports::EntityStoreRead;
 use crate::scan_check::PendingScanChecks;
 use crate::session_overlay::{OverlayKeyspace, OverlaySnapshot};
