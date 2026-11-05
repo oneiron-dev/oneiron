@@ -32,6 +32,8 @@ pub mod esign_delivery;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+/// HOST-private segregated legal-clone capture stream, never tenant ctl.
+pub mod host_legal;
 mod ledger;
 /// The wake ledger's report in bounded pages (FIX 9549).
 mod ledger_pages;
