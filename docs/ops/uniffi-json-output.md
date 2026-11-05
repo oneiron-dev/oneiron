@@ -176,3 +176,24 @@ shape fields and custom serde behavior, including present empty body strings,
 default booleans, decimal vault identifiers and reach metadata. Missing or null
 optional manifest JSON stays absent. Hex-encoded manifest bodies remain opaque
 strings. The native plan, input, authority and typed client call do not change.
+
+
+The shared result-card shape also crosses by ownership in
+`self.off_record.results.list` and `vault.results.read`. A list consumes every
+card shape before returning a conversion error. The same finite card,
+occurrence manifest, refusal, count and cursor fields retain their existing
+record codec. Optional null shapes still read as absent.
+
+All other shape-manifest output paths use the same owned leaf conversion:
+`vault.shape.read`, `vault.shape.plan`, `vault.shape.apply`,
+`vault.shape.items.receipt`, `vault.shape.groups`,
+`vault.shape.groups.resolve`, `vault.inbox.groups` and
+`vault.inbox.groups.resolve`. Stored and live seed rows, every apply item,
+every group member, plan items and undeclared rows keep their original order
+and cardinality. Every manifest JSON value is consumed before a finite error
+can return, including across all groups in a page. An absent item receipt
+stays absent. Unified Dreamer groups and resolutions keep the original finite
+record codec, including omitted empty collections and checked count widths.
+Native reads, applies, owner proof, release checks, public records, typed client
+calls and input conversions remain unchanged. This completes these selected
+output families only, not the general input, depth, heap or runtime work.

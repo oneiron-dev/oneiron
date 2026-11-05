@@ -2165,6 +2165,14 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::OffRecordResultCards': 'OffRecordResultCards',
+    'crate::memory::result_doors::ResultReadView': 'ResultReadView',
+    'crate::vault_shape::ShapeRead': 'ShapeRead',
+    'crate::vault_shape::ShapePlan': 'ShapePlan',
+    'crate::vault_shape::ShapeApplyReceipt': 'ShapeApplyReceipt',
+    'crate::memory::ShapeItemReceipt': 'ShapeItemReceipt',
+    'crate::inbox::UnifiedInboxGroupPage': 'UnifiedInboxGroupPage',
+    'crate::inbox::InboxGroupResolution': 'InboxGroupResolution',
     'crate::task_verb::sdk::FeedbackSubjectPreview': 'FeedbackSubjectPreview',
     'crate::task_verb::sdk::OffRecordResultRead': 'OffRecordResultRead',
     'crate::memory::ShapePlanCardView': 'ShapePlanCardView',
@@ -2320,7 +2328,9 @@ def uniffi_export(row, types, census):
             if owned and owned != mirror:
                 raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
             output = mirror
-            if owned:
+            if row['output'] == 'Vec<crate::vault_shape::ShapeInboxGroup>':
+                result = 'crate::codec::lift_shape_groups(output)'
+            elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
                 nested_voice = ''
