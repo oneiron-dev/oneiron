@@ -70,6 +70,7 @@ pub use compliance::{
     MailComplianceSearchRequest, MailComplianceSetRequest, MailComplianceSettingView,
 };
 pub(crate) use doors::erase_source_actor_in_txn;
+pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
