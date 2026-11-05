@@ -83,8 +83,11 @@ file still travels when another included row names it; its digest is never a wor
 The selection also leaves out known Off worlds' window snapshots and durable window updates.
 It leaves out valid queued updates for those windows only when their exact sequence has no
 delete-bearing sidecar. Any matching sidecar, including an undecodable one, keeps the update
-and marker unchanged so pending deletes can still replay after restore. Shared document
-proposals keep their other owners' fragments. Authority-log rows and non-payload links stay intact.
+and marker unchanged so pending deletes can still replay after restore. Pending document
+edit journals (`qd:e:`) and semantic NOTE requests (`qn:e:`) also stay intact: they are durable
+unacknowledged work, not disposable cache rows. Their world projection must preserve replay,
+not just drop a queued payload. Shared document proposals keep their other owners' fragments.
+Authority-log rows and non-payload links stay intact.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
 Unknown or mixed world placement keeps its existing behavior. Other body or response references,
