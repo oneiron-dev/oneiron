@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The op table's version. A call naming another refuses before any op runs.
-pub const CONTRACT_SCHEMA: u32 = 2;
+pub const CONTRACT_SCHEMA: u32 = 3;
 
 /// Error detail ceiling in bytes, as an organ's error detail.
 pub const MAX_DETAIL_BYTES: usize = 512;
@@ -43,7 +43,7 @@ pub const PPTX_MEDIA_TYPE: &str =
 pub const JSON_MEDIA_TYPE: &str = "application/json";
 
 /// One call: the contract schema, the op and its args.
-/// `{"schema": 2, "op": "docx.read", "args": {...}}`.
+/// `{"schema": 3, "op": "docx.read", "args": {...}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Call {
     pub schema: u32,
@@ -51,7 +51,7 @@ pub struct Call {
     pub op: Op,
 }
 
-/// The schema-2 op table. Each op names its byte inputs by index into the
+/// The schema-3 op table. Each op names its byte inputs by index into the
 /// call's inputs, and every op that reads a package takes the caller's limits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", content = "args")]
@@ -88,7 +88,7 @@ pub enum Op {
     /// The slides and shapes a deck transaction addresses, and the id marks.
     #[serde(rename = "deck.read")]
     DeckRead(DeckReadArgs),
-    /// One checked deck transaction (schema 1) over a base deck.
+    /// One checked deck transaction (schema 2) over a base deck.
     #[serde(rename = "deck.transaction")]
     DeckTransaction(DeckTransactionArgs),
     /// A new deck from a kept brief over a template.
@@ -273,7 +273,7 @@ pub struct DeckReadArgs {
 #[serde(deny_unknown_fields)]
 pub struct DeckTransactionArgs {
     pub deck: u32,
-    /// The deck transaction grammar (schema 1). Its `base` is the BLAKE3 of
+    /// The deck transaction grammar (schema 2). Its `base` is the BLAKE3 of
     /// the deck input; another base refuses `stale`.
     pub transaction: Value,
     /// The pictures a `set_picture` step names, by artifact and version.
@@ -408,7 +408,7 @@ pub enum AssetMedia {
 }
 
 /// Where a held asset came from. A generated image carries adapter receipts
-/// the engine keeps; schema 2 has no door for them.
+/// the engine keeps; schema 3 has no door for them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetOrigin {
@@ -464,7 +464,7 @@ pub enum Reply {
     },
     Deck(DeckRead),
     DeckTransaction {
-        /// The deck transaction report (schema 1): candidate hash, part diff,
+        /// The deck transaction report (schema 2): candidate hash, part diff,
         /// per-step effects, the marks after the run and the handoff hash.
         report: Value,
     },
@@ -1022,7 +1022,7 @@ pub fn reply_schema() -> Value {
     schema_value::<Reply>()
 }
 
-/// The schema-2 op table, as `contract.describe` answers it.
+/// The schema-3 op table, as `contract.describe` answers it.
 #[must_use]
 pub fn describe() -> Description {
     Description {

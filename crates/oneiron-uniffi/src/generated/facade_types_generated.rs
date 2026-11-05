@@ -47944,6 +47944,8 @@ pub enum StepSequence {
     Categories,
     #[serde(rename = "values")]
     Values,
+    #[serde(rename = "size")]
+    Size,
 }
 
 /// `oneiron_docedit::edit::transaction::StepCell`.
