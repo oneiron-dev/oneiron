@@ -4,6 +4,7 @@ use super::{EFFECT_AUTHORIZED, EffectBinding, LinearEffectRequest, binding, effe
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::gate::ExternalEffectGateInput;
 use crate::linear_sync::{
     LinearEffectKind, LinearSyncDirection, LinearSyncError, linear_operation_id,
 };
