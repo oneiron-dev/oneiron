@@ -56,6 +56,12 @@ impl OneironClient {
                 "vault.commitments.supersede" => remote_agent_verb_output::<
                     oneiron::memory::commitment_doors::CommitmentView,
                 >(client, verb, &input),
+                "vault.commitments.reminder_route.get" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentReminderRouteReply,
+                >(client, verb, &input),
+                "vault.commitments.reminder_route.set" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentReminderRouteReply,
+                >(client, verb, &input),
                 "fetch" => remote_agent_verb_output::<oneiron::web_fetch::FetchResult>(
                     client, verb, &input,
                 ),
@@ -780,6 +786,9 @@ impl OneironClient {
                 "vault.skills.fit.set" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
+                "vault.skills.advisory_ask.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
@@ -1137,6 +1146,9 @@ impl OneironClient {
                 "vault.federation.burst.policy.set" => remote_agent_verb_output::<
                     oneiron::sync::federation_burst::FederationBurstPolicy,
                 >(client, verb, &input),
+                "vault.sync.quarantine.held_edits" => remote_agent_verb_output::<
+                    Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>,
+                >(client, verb, &input),
                 "vault.sync.retained_work.wait.set" => {
                     remote_agent_verb_output::<u64>(client, verb, &input)
                 }
@@ -1438,7 +1450,7 @@ impl OneironClient {
                     Option<oneiron::skill_optimize::offer_doors::OfferPassResult>,
                 >(client, verb, &input),
                 "vault.coach.training_offers.answer" => remote_agent_verb_output::<
-                    oneiron::skill_optimize::OfferAnswerRecord,
+                    oneiron::skill_optimize::offer_doors::OfferAnswerReply,
                 >(client, verb, &input),
                 "vault.coach.training_offers.undo" => remote_agent_verb_output::<
                     oneiron::skill_optimize::offer_doors::OfferUndoReceipt,
@@ -3321,7 +3333,7 @@ impl OneironClient {
                     oneiron::office_body::DeckPreview,
                 >(client, verb, &input),
                 "vault.artifacts.append" => remote_agent_verb_output::<
-                    oneiron::memory::BlobVersionView,
+                    oneiron::memory::BlobVersionAppendOutcome,
                 >(client, verb, &input),
                 "vault.artifacts.read" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::BlobContent>,
@@ -3924,6 +3936,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.commitments.supersede", value)
+    }
+    pub fn vault_commitments_reminder_route_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentReminderRouteReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.reminder_route.get", value)
+    }
+    pub fn vault_commitments_reminder_route_set(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentReminderRouteReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.reminder_route.set", value)
     }
     pub fn fetch(
         &self,
@@ -6906,6 +6942,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.skills.fit.set", value)
     }
+    pub fn vault_skills_advisory_ask_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillAdvisoryAskRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.advisory_ask.set", value)
+    }
     pub fn vault_skills_permissions_approve(
         &self,
         input: &oneiron::task_verb::sdk::HubSkillPermissionRequest,
@@ -8314,6 +8362,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.federation.burst.policy.set", value)
     }
+    pub fn vault_sync_quarantine_held_edits(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.quarantine.held_edits", value)
+    }
     pub fn vault_sync_retained_work_wait_set(
         &self,
         input: &oneiron::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -9498,7 +9558,7 @@ impl OneironClient {
     pub fn vault_coach_training_offers_answer(
         &self,
         input: &oneiron::skill_optimize::offer_doors::OfferAnswerRequest,
-    ) -> Result<oneiron::skill_optimize::OfferAnswerRecord, MemoryError> {
+    ) -> Result<oneiron::skill_optimize::offer_doors::OfferAnswerReply, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16996,7 +17056,7 @@ impl OneironClient {
     pub fn vault_artifacts_append(
         &self,
         input: &oneiron::task_verb::sdk::AppendBlobVersionRequest,
-    ) -> Result<oneiron::memory::BlobVersionView, MemoryError> {
+    ) -> Result<oneiron::memory::BlobVersionAppendOutcome, MemoryError> {
         if input.content_base64.len() > oneiron::memory::caps::MAX_BLOB_BASE64_LEN {
             return Err(MemoryError::bad_request(
                 "blob base64 exceeds the content ceiling",

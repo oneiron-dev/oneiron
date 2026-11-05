@@ -42,6 +42,7 @@ mod root_doors;
 mod root_issue;
 mod root_work;
 mod session;
+mod side_row;
 mod state;
 mod vault_doors;
 mod vault_key;
@@ -113,8 +114,8 @@ pub use self::pads::PromotedWorldPad;
 pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
-    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
-    pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, legal_hold_pad_world_in_txn,
+    note_world_deleted_in_txn, pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
     reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
     world_pad_windows_in_txn,
 };
@@ -137,6 +138,7 @@ pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
+pub(crate) use self::side_row::{WorldSideRowBinding, open_side_row, seal_side_row};
 pub use self::state::{WorldPadAvailability, WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
