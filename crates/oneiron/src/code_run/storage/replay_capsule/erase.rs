@@ -211,7 +211,17 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
 pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let gone = crate::ports::owner_gone_in_txn(&vault.store, txn, actor);
+    actor_gone_in_store(&vault.store, txn, actor)
+}
+
+/// [`actor_gone_in_txn`] on the vault's canonical store `store`, for a
+/// reader that holds only a room session's composed view, whose base it is.
+pub(crate) fn actor_gone_in_store(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> bool {
+    let gone = crate::ports::owner_gone_in_txn(store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),
