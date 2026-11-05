@@ -56,7 +56,7 @@ fn changed(
         let Some(current) = after.objects.get(id) else {
             return Ok(None);
         };
-        let equal = current.eq_admitted(old, &ledger).map_err(|error| {
+        let equal = current.eq_admitted(old, ledger.as_ref()).map_err(|error| {
             ledger
                 .refusal_of(&lopdf::Error::DecodeAdmission(error))
                 .expect("a DecodeAdmission error always carries a memory refusal")
