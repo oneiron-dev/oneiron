@@ -1425,10 +1425,7 @@ struct MDB_txn {
 
 	MDB_env		*mt_env;		/**< the DB environment */
 	/* ONEIRON: inherited by children; callbacks never wait in the writer. */
-	MDB_page_acquire_func *mt_page_acquire;
-	MDB_page_materialized_func *mt_page_materialized;
-	MDB_page_release_func *mt_page_release;
-	void *mt_page_context;
+	MDB_page_account mt_page_account;
 	/** The list of pages that became unused during this transaction.
 	 */
 	MDB_IDL		mt_free_pgs;
@@ -2255,22 +2252,22 @@ mdb_rpage_malloc(MDB_txn *txn, size_t size)
 	if (size > (size_t)-1 - sizeof(MDB_rpage_buffer))
 		return NULL;
 	bytes = sizeof(MDB_rpage_buffer) + size;
-	if (txn->mt_page_acquire &&
-		txn->mt_page_acquire(txn->mt_page_context, bytes, &ticket))
+	if (txn->mt_page_account.acquire &&
+		txn->mt_page_account.acquire(txn->mt_page_account.context, bytes, &ticket))
 		return NULL;
 	buffer = malloc(bytes);
 	if (!buffer) {
-		if (txn->mt_page_release)
-			txn->mt_page_release(ticket, bytes, 0);
+		if (txn->mt_page_account.release)
+			txn->mt_page_account.release(ticket, bytes, 0);
 		return NULL;
 	}
 	buffer->account.bytes = bytes;
 	buffer->account.ticket = ticket;
-	buffer->account.release = txn->mt_page_release;
+	buffer->account.release = txn->mt_page_account.release;
 	buffer->account.references = 1;
 	buffer->account.retired = NULL;
-	if (txn->mt_page_materialized)
-		txn->mt_page_materialized(ticket, bytes);
+	if (txn->mt_page_account.materialized)
+		txn->mt_page_account.materialized(ticket, bytes);
 	return (char *)(buffer + 1);
 }
 
@@ -2316,21 +2313,21 @@ mdb_page_malloc(MDB_txn *txn, unsigned num, int init)
 	if (sz > (size_t)-1 - sizeof(MDB_page_buffer))
 		goto fail;
 	bytes = sz + sizeof(MDB_page_buffer);
-	if (txn->mt_page_acquire &&
-		txn->mt_page_acquire(txn->mt_page_context, bytes, &ticket))
+	if (txn->mt_page_account.acquire &&
+		txn->mt_page_account.acquire(txn->mt_page_account.context, bytes, &ticket))
 		goto fail;
 	buffer = malloc(bytes);
 	if (!buffer) {
-		if (txn->mt_page_release)
-			txn->mt_page_release(ticket, bytes, 0);
+		if (txn->mt_page_account.release)
+			txn->mt_page_account.release(ticket, bytes, 0);
 		goto fail;
 	}
 	buffer->account.bytes = bytes;
 	buffer->account.ticket = ticket;
-	buffer->account.release = txn->mt_page_release;
+	buffer->account.release = txn->mt_page_account.release;
 	ret = (MDB_page *)(buffer + 1);
-	if (txn->mt_page_materialized)
-		txn->mt_page_materialized(ticket, bytes);
+	if (txn->mt_page_account.materialized)
+		txn->mt_page_account.materialized(ticket, bytes);
 	VGMEMP_ALLOC(env, ret, sz);
 init:
 	if (init && !(env->me_flags & MDB_NOMEMINIT)) {
@@ -2505,7 +2502,8 @@ mdb_page_loose(MDB_cursor *mc, MDB_page *mp)
 		txn->mt_loose_count++;
 		mp->mp_flags |= P_LOOSE;
 	} else {
-		rc = mdb_midl_append(&txn->mt_free_pgs, mp->mp_pgno);
+		rc = mdb_midl_append_accounted(&txn->mt_free_pgs, mp->mp_pgno,
+			&txn->mt_page_account);
 	}
 
 	return rc;
@@ -2644,7 +2642,7 @@ mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data)
 		return MDB_SUCCESS;
 
 	if (!txn->mt_spill_pgs) {
-		txn->mt_spill_pgs = mdb_midl_alloc(MDB_IDL_UM_MAX);
+		txn->mt_spill_pgs = mdb_midl_alloc_accounted(MDB_IDL_UM_MAX, &txn->mt_page_account);
 		if (!txn->mt_spill_pgs)
 			return ENOMEM;
 	} else {
@@ -2697,7 +2695,8 @@ mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data)
 			if (tx2)
 				continue;
 		}
-		if ((rc = mdb_midl_append(&txn->mt_spill_pgs, pn)))
+		if ((rc = mdb_midl_append_accounted(&txn->mt_spill_pgs, pn,
+				&txn->mt_page_account)))
 			goto done;
 		need--;
 	}
@@ -2912,12 +2911,14 @@ mdb_page_alloc(MDB_cursor *mc, int num, MDB_page **mp)
 		idl = (MDB_ID *) data.mv_data;
 		i = idl[0];
 		if (!mop) {
-			if (!(env->me_pghead = mop = mdb_midl_alloc(i))) {
+			if (!(env->me_pghead = mop = mdb_midl_alloc_accounted(i,
+				&txn->mt_page_account))) {
 				rc = ENOMEM;
 				goto fail;
 			}
 		} else {
-			if ((rc = mdb_midl_need(&env->me_pghead, i)) != 0)
+			if ((rc = mdb_midl_need_accounted(&env->me_pghead, i,
+				&txn->mt_page_account)) != 0)
 				goto fail;
 			mop = env->me_pghead;
 		}
@@ -3106,7 +3107,8 @@ mdb_page_touch(MDB_cursor *mc)
 
 	if (!IS_MUTABLE(txn, mp)) {
 		/* Page from an older snapshot */
-		if ((rc = mdb_midl_need(&txn->mt_free_pgs, 1)) ||
+		if ((rc = mdb_midl_need_accounted(&txn->mt_free_pgs, 1,
+			&txn->mt_page_account)) ||
 			(rc = mdb_page_alloc(mc, 1, &np)))
 			goto fail;
 		pgno = np->mp_pgno;
@@ -3455,10 +3457,10 @@ mdb_txn_renew0(MDB_txn *txn)
 		if (txn->mt_txnid == mdb_debug_start)
 			mdb_debug = MDB_DBG_INFO;
 #endif
-		txn->mt_page_acquire = NULL;
-		txn->mt_page_materialized = NULL;
-		txn->mt_page_release = NULL;
-		txn->mt_page_context = NULL;
+		txn->mt_page_account.acquire = NULL;
+		txn->mt_page_account.materialized = NULL;
+		txn->mt_page_account.release = NULL;
+		txn->mt_page_account.context = NULL;
 		txn->mt_child = NULL;
 		txn->mt_rdonly_child_count = 0;
 		pthread_mutex_init(&txn->mt_child_mutex, NULL);
@@ -3629,6 +3631,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 	if (parent) {
 		unsigned int i;
 		txnid_t workid = parent->mt_last_workid + MDB_PGTXNID_STEP;
+		txn->mt_page_account = parent->mt_page_account;
 		if (!workid) /* wraparound after lots of previous children */
 			workid = mdb_workid_rewind(parent) + MDB_PGTXNID_STEP;
 		txn->mt_workid = txn->mt_last_workid = workid;
@@ -3641,7 +3644,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 		} else {
 			txn->mt_u.dirty_list = malloc(sizeof(MDB_ID2)*MDB_IDL_UM_SIZE);
 			if (!txn->mt_u.dirty_list ||
-				!(txn->mt_free_pgs = mdb_midl_alloc(MDB_IDL_UM_MAX)))
+				!(txn->mt_free_pgs = mdb_midl_alloc_accounted(MDB_IDL_UM_MAX, &txn->mt_page_account)))
 			{
 				free(txn->mt_u.dirty_list);
 				free(txn);
@@ -3663,10 +3666,6 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 			parent->mt_rdonly_child_count++;
 		}
 		pthread_mutex_unlock(&parent->mt_child_mutex);
-		txn->mt_page_acquire = parent->mt_page_acquire;
-		txn->mt_page_materialized = parent->mt_page_materialized;
-		txn->mt_page_release = parent->mt_page_release;
-		txn->mt_page_context = parent->mt_page_context;
 		txn->mt_parent = parent;
 		txn->mt_numdbs = parent->mt_numdbs;
 #if MDB_RPAGE_CACHE
@@ -3684,7 +3683,8 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 			/* Do not copy parent me_pghead when nested and RDONLY */
 			if (env->me_pghead) {
 				size = MDB_IDL_SIZEOF(env->me_pghead);
-				env->me_pghead = mdb_midl_alloc(env->me_pghead[0]);
+				env->me_pghead = mdb_midl_alloc_accounted(env->me_pghead[0],
+					&txn->mt_page_account);
 				if (env->me_pghead)
 					memcpy(env->me_pghead, ntxn->mnt_pgstate.mf_pghead, size);
 				else
@@ -3728,13 +3728,13 @@ mdb_txn_set_page_account(MDB_txn *txn, MDB_page_acquire_func *acquire,
 {
 	if (!txn || txn->mt_parent ||
 		(txn->mt_flags & (MDB_TXN_RDONLY | MDB_TXN_BLOCKED | MDB_WRITEMAP)) ||
-		txn->mt_u.dirty_list[0].mid || txn->mt_page_acquire ||
+		txn->mt_u.dirty_list[0].mid || txn->mt_page_account.acquire ||
 		!acquire || !materialized || !release)
 		return EINVAL;
-	txn->mt_page_acquire = acquire;
-	txn->mt_page_materialized = materialized;
-	txn->mt_page_release = release;
-	txn->mt_page_context = context;
+	txn->mt_page_account.acquire = acquire;
+	txn->mt_page_account.materialized = materialized;
+	txn->mt_page_account.release = release;
+	txn->mt_page_account.context = context;
 	return MDB_SUCCESS;
 }
 
@@ -3842,7 +3842,7 @@ mdb_txn_end(MDB_txn *txn, unsigned mode)
 		mdb_mid2l_free(txn->mt_dirty_ovs);
 #endif
 		if (!txn->mt_parent) {
-			mdb_midl_shrink(&txn->mt_free_pgs);
+			mdb_midl_shrink_accounted(&txn->mt_free_pgs, &txn->mt_page_account);
 			env->me_free_pgs = txn->mt_free_pgs;
 			/* me_pgstate: */
 			env->me_pghead = NULL;
@@ -3860,6 +3860,7 @@ mdb_txn_end(MDB_txn *txn, unsigned mode)
 			env->me_pgstate = ((MDB_ntxn *)txn)->mnt_pgstate;
 			mdb_midl_free(txn->mt_free_pgs);
 			free(txn->mt_u.dirty_list);
+			txn->mt_u.dirty_list = NULL;
 		}
 
 		mdb_midl_free(pghead);
@@ -3960,7 +3961,8 @@ mdb_freelist_save(MDB_txn *txn)
 		MDB_page *mp = txn->mt_loose_pgs;
 		MDB_ID2 *dl = txn->mt_u.dirty_list;
 		unsigned x;
-		if ((rc = mdb_midl_need(&txn->mt_free_pgs, txn->mt_loose_count)) != 0)
+		if ((rc = mdb_midl_need_accounted(&txn->mt_free_pgs, txn->mt_loose_count,
+			&txn->mt_page_account)) != 0)
 			return rc;
 		for (; mp; mp = NEXT_LOOSE_PAGE(mp)) {
 			mdb_midl_xappend(txn->mt_free_pgs, mp->mp_pgno);
@@ -4106,7 +4108,8 @@ mdb_freelist_save(MDB_txn *txn)
 		unsigned count = txn->mt_loose_count;
 		MDB_IDL loose;
 		/* Room for loose pages + temp IDL with same */
-		if ((rc = mdb_midl_need(&env->me_pghead, 2*count+1)) != 0)
+		if ((rc = mdb_midl_need_accounted(&env->me_pghead, 2*count+1,
+			&txn->mt_page_account)) != 0)
 			return rc;
 		lost_loose += count;
 		mop = env->me_pghead;
@@ -4473,7 +4476,8 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		unsigned x, y, len, ps_len;
 
 		/* Append our free list to parent's */
-		rc = mdb_midl_append_list(&parent->mt_free_pgs, txn->mt_free_pgs);
+		rc = mdb_midl_append_list_accounted(&parent->mt_free_pgs, txn->mt_free_pgs,
+			&parent->mt_page_account);
 		if (rc)
 			goto fail;
 		mdb_midl_free(txn->mt_free_pgs);
@@ -4574,7 +4578,8 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		if (txn->mt_spill_pgs) {
 			if (parent->mt_spill_pgs) {
 				/* TODO: Prevent failure here, so parent does not fail */
-				rc = mdb_midl_append_list(&parent->mt_spill_pgs, txn->mt_spill_pgs);
+				rc = mdb_midl_append_list_accounted(&parent->mt_spill_pgs, txn->mt_spill_pgs,
+					&parent->mt_page_account);
 				if (rc)
 					parent->mt_flags |= MDB_TXN_ERROR;
 				mdb_midl_free(txn->mt_spill_pgs);
@@ -4641,7 +4646,7 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 
 	mdb_midl_free(env->me_pghead);
 	env->me_pghead = NULL;
-	mdb_midl_shrink(&txn->mt_free_pgs);
+	mdb_midl_shrink_accounted(&txn->mt_free_pgs, &txn->mt_page_account);
 
 #if (MDB_DEBUG) > 2
 	mdb_audit(txn);
@@ -7777,7 +7782,8 @@ mdb_ovpage_free(MDB_cursor *mc, MDB_page *mp)
 		unsigned i, j;
 		pgno_t *mop;
 		MDB_ID2 *dl, ix, iy;
-		rc = mdb_midl_need(&env->me_pghead, ovpages);
+		rc = mdb_midl_need_accounted(&env->me_pghead, ovpages,
+			&txn->mt_page_account);
 		if (rc)
 			return rc;
 		if (!IS_DIRTY_NW(txn, mp)) { /* spilled or WRITEMAP */
@@ -7822,7 +7828,8 @@ release:
 			mop[j--] = pg++;
 		mop[0] += ovpages;
 	} else {
-		rc = mdb_midl_append_range(&txn->mt_free_pgs, pg, ovpages);
+		rc = mdb_midl_append_range_accounted(&txn->mt_free_pgs, pg, ovpages,
+			&txn->mt_page_account);
 		if (rc)
 			return rc;
 	}
@@ -12167,8 +12174,8 @@ mdb_drop0(MDB_cursor *mc, int subs)
 					if (ni->mn_flags & F_BIGDATA) {
 						MDB_ovpage ovp;
 						memcpy(&ovp, NODEDATA(ni), sizeof(ovp));
-						rc = mdb_midl_append_range(&txn->mt_free_pgs,
-							ovp.op_pgno, ovp.op_pages);
+						rc = mdb_midl_append_range_accounted(&txn->mt_free_pgs,
+							ovp.op_pgno, ovp.op_pages, &txn->mt_page_account);
 						if (rc)
 							goto done;
 						mc->mc_db->md_overflow_pages -= ovp.op_pages;
@@ -12184,7 +12191,8 @@ mdb_drop0(MDB_cursor *mc, int subs)
 				if (!subs && !mc->mc_db->md_overflow_pages)
 					goto pop;
 			} else {
-				if ((rc = mdb_midl_need(&txn->mt_free_pgs, n)) != 0)
+				if ((rc = mdb_midl_need_accounted(&txn->mt_free_pgs, n,
+					&txn->mt_page_account)) != 0)
 					goto done;
 				for (i=0; i<n; i++) {
 					pgno_t pg;
@@ -12214,7 +12222,8 @@ pop:
 			}
 		}
 		/* free it */
-		rc = mdb_midl_append(&txn->mt_free_pgs, mc->mc_db->md_root);
+		rc = mdb_midl_append_accounted(&txn->mt_free_pgs, mc->mc_db->md_root,
+			&txn->mt_page_account);
 done:
 		if (rc)
 			txn->mt_flags |= MDB_TXN_ERROR;

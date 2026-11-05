@@ -223,7 +223,7 @@ above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
 
-## FIX 8125: transaction-scoped dirty-page heap account
+## FIX 8125: transaction-scoped native heap account
 
 The earlier upstream inventories describe the vendor before this extension.
 The package versions, features, dependencies and on-disk page format remain
@@ -264,12 +264,32 @@ account's implementation must preserve exactly-once tickets and the actual
 cache/free lifetime; the generic callback supplier does not prove that a
 caller does so.
 
-The retained-call driver does not yet install this account. Its grouped
-nested child and final parent commit need an explicit root-account and
-commit-phase integration before replay can be safe. This supplier is not
-complete FIX8125, native disk accounting or runtime proof. IDL, transaction
-control, decrypted-read stash, rpage and mmap costs are not charged by this
-page-buffer callback.
+The retained-call driver installs the account on a fresh root after preceding
+grouped writes settle. Its nested child and final root commit share the encoder's
+lease. An own-commit witness prevents replay after a successful root commit,
+even if later postcommit work reports an error. Admission waits and retries
+remain outside the whole writer door.
+
+Encrypted read-cache buffers also have one physical ticket and explicit cache
+references. Replacements retain old cursor plaintext until the final owner
+releases it. Final disposal zeros its own allocation, physically frees it, then
+releases its charge, including during environment close.
+
+`midl.h` holds the private current-transaction callback struct and the accounted
+single-ID-list variants. `midl.c` gives every owned IDL, including unaccounted
+ones, the same native-aligned heap prefix while preserving `ids[-1]`, count
+and ID ordering. It admits a full replacement beside the old allocation,
+materializes before copying every surviving payload byte, then frees the old
+buffer before releasing its original ticket. Failed replacements preserve the
+old list; shrink remains best-effort. Cached prefixes retain only physical
+bytes, ticket and release callback. Growth always receives the current
+transaction account, never a cached acquire context. Child initialization,
+parent merges and root commit/abort use that current account. Lists allocated
+before account attachment are not retroactively charged.
+
+This is not complete FIX8125, native disk accounting, whole-heap coverage or
+runtime proof. ID2/ID3 control arrays, transaction control, decrypted-read
+stash, mmap and other metadata copies remain outside this allocation scope.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

@@ -101,65 +101,140 @@ int mdb_midl_insert( MDB_IDL ids, MDB_ID id )
 }
 #endif
 
+/* ONEIRON: heap-only physical owner; IDL[-1]/[0] remain capacity/count.
+ * Growth borrows the CURRENT transaction account, never a cached context.
+ */
+typedef union MDB_IDL_buffer {
+	MDB_ID alignment;
+	struct {
+		size_t bytes;
+		void *ticket;
+		MDB_page_release_func *release;
+	} account;
+} MDB_IDL_buffer;
+
+static MDB_IDL
+mdb_midl_new(MDB_ID num, const MDB_page_account *account)
+{
+	MDB_IDL_buffer *buffer;
+	MDB_IDL ids;
+	void *ticket = NULL;
+	size_t bytes;
+	if (num > ((size_t)-1 - sizeof(MDB_IDL_buffer)) / sizeof(MDB_ID) - 2)
+		return NULL;
+	bytes = sizeof(MDB_IDL_buffer) + (num + 2) * sizeof(MDB_ID);
+	if (account && account->acquire &&
+		account->acquire(account->context, bytes, &ticket))
+		return NULL;
+	buffer = malloc(bytes);
+	if (!buffer) {
+		if (account && account->release)
+			account->release(ticket, bytes, 0);
+		return NULL;
+	}
+	buffer->account.bytes = bytes;
+	buffer->account.ticket = ticket;
+	buffer->account.release = account ? account->release : NULL;
+	if (account && account->materialized)
+		account->materialized(ticket, bytes);
+	ids = (MDB_IDL)(buffer + 1);
+	*ids++ = num;
+	*ids = 0;
+	return ids;
+}
+
+MDB_IDL
+mdb_midl_alloc_accounted(int num, const MDB_page_account *account)
+{
+	return num < 0 ? NULL : mdb_midl_new(num, account);
+}
+
 MDB_IDL mdb_midl_alloc(int num)
 {
-	MDB_IDL ids = malloc((num+2) * sizeof(MDB_ID));
-	if (ids) {
-		*ids++ = num;
-		*ids = 0;
-	}
-	return ids;
+	return mdb_midl_alloc_accounted(num, NULL);
 }
 
 void mdb_midl_free(MDB_IDL ids)
 {
-	if (ids)
-		free(ids-1);
-}
-
-void mdb_midl_shrink( MDB_IDL *idp )
-{
-	MDB_IDL ids = *idp;
-	if (*(--ids) > MDB_IDL_UM_MAX &&
-		(ids = realloc(ids, (MDB_IDL_UM_MAX+2) * sizeof(MDB_ID))))
-	{
-		*ids++ = MDB_IDL_UM_MAX;
-		*idp = ids;
+	if (ids) {
+		MDB_IDL_buffer *buffer = (MDB_IDL_buffer *)(ids - 1) - 1;
+		size_t bytes = buffer->account.bytes;
+		void *ticket = buffer->account.ticket;
+		MDB_page_release_func *release = buffer->account.release;
+		free(buffer);
+		if (release)
+			release(ticket, bytes, 1);
 	}
 }
 
-static int mdb_midl_grow( MDB_IDL *idp, int num )
+static int
+mdb_midl_resize(MDB_IDL *idp, MDB_ID num, const MDB_page_account *account)
 {
-	MDB_IDL idn = *idp-1;
-	/* grow it */
-	idn = realloc(idn, (*idn + num + 2) * sizeof(MDB_ID));
-	if (!idn)
+	MDB_IDL old = *idp, ids = mdb_midl_new(num, account);
+	MDB_IDL_buffer *buffer = (MDB_IDL_buffer *)(old - 1) - 1;
+	size_t old_bytes = buffer->account.bytes - sizeof(MDB_IDL_buffer);
+	size_t new_bytes;
+	if (!ids)
 		return ENOMEM;
-	*idn++ += num;
-	*idp = idn;
+	new_bytes = (num + 2) * sizeof(MDB_ID);
+	/* Preserve all surviving payload bytes, including spare IDL slices. */
+	memcpy(ids - 1, old - 1, old_bytes < new_bytes ? old_bytes : new_bytes);
+	ids[-1] = num;
+	*idp = ids;
+	mdb_midl_free(old);
 	return 0;
 }
 
-int mdb_midl_need( MDB_IDL *idp, unsigned num )
+void
+mdb_midl_shrink_accounted(MDB_IDL *idp, const MDB_page_account *account)
+{
+	if ((*idp)[-1] > MDB_IDL_UM_MAX)
+		(void)mdb_midl_resize(idp, MDB_IDL_UM_MAX, account);
+}
+
+void mdb_midl_shrink(MDB_IDL *idp)
+{
+	mdb_midl_shrink_accounted(idp, NULL);
+}
+
+static int
+mdb_midl_grow(MDB_IDL *idp, int num, const MDB_page_account *account)
+{
+	if (num < 0 || (MDB_ID)num > MDB_SIZE_MAX - (*idp)[-1])
+		return ENOMEM;
+	return mdb_midl_resize(idp, (*idp)[-1] + num, account);
+}
+
+int
+mdb_midl_need_accounted(MDB_IDL *idp, unsigned num,
+	const MDB_page_account *account)
 {
 	MDB_IDL ids = *idp;
+	if (ids[0] > UINT_MAX - num)
+		return ENOMEM;
 	num += ids[0];
 	if (num > ids[-1]) {
-		num = (num + num/4 + (256 + 2)) & -256;
-		if (!(ids = realloc(ids-1, num * sizeof(MDB_ID))))
+		if (num > UINT_MAX - num/4 - (256 + 2))
 			return ENOMEM;
-		*ids++ = num - 2;
-		*idp = ids;
+		num = (num + num/4 + (256 + 2)) & -256;
+		return mdb_midl_resize(idp, num - 2, account);
 	}
 	return 0;
 }
 
-int mdb_midl_append( MDB_IDL *idp, MDB_ID id )
+int mdb_midl_need(MDB_IDL *idp, unsigned num)
+{
+	return mdb_midl_need_accounted(idp, num, NULL);
+}
+
+int
+mdb_midl_append_accounted(MDB_IDL *idp, MDB_ID id,
+	const MDB_page_account *account)
 {
 	MDB_IDL ids = *idp;
 	/* Too big? */
 	if (ids[0] >= ids[-1]) {
-		if (mdb_midl_grow(idp, MDB_IDL_UM_MAX))
+		if (mdb_midl_grow(idp, MDB_IDL_UM_MAX, account))
 			return ENOMEM;
 		ids = *idp;
 	}
@@ -168,12 +243,19 @@ int mdb_midl_append( MDB_IDL *idp, MDB_ID id )
 	return 0;
 }
 
-int mdb_midl_append_list( MDB_IDL *idp, MDB_IDL app )
+int mdb_midl_append(MDB_IDL *idp, MDB_ID id)
+{
+	return mdb_midl_append_accounted(idp, id, NULL);
+}
+
+int
+mdb_midl_append_list_accounted(MDB_IDL *idp, MDB_IDL app,
+	const MDB_page_account *account)
 {
 	MDB_IDL ids = *idp;
 	/* Too big? */
 	if (ids[0] + app[0] >= ids[-1]) {
-		if (mdb_midl_grow(idp, app[0]))
+		if (mdb_midl_grow(idp, app[0], account))
 			return ENOMEM;
 		ids = *idp;
 	}
@@ -182,12 +264,19 @@ int mdb_midl_append_list( MDB_IDL *idp, MDB_IDL app )
 	return 0;
 }
 
-int mdb_midl_append_range( MDB_IDL *idp, MDB_ID id, unsigned n )
+int mdb_midl_append_list(MDB_IDL *idp, MDB_IDL app)
+{
+	return mdb_midl_append_list_accounted(idp, app, NULL);
+}
+
+int
+mdb_midl_append_range_accounted(MDB_IDL *idp, MDB_ID id, unsigned n,
+	const MDB_page_account *account)
 {
 	MDB_ID *ids = *idp, len = ids[0];
 	/* Too big? */
 	if (len + n > ids[-1]) {
-		if (mdb_midl_grow(idp, n | MDB_IDL_UM_MAX))
+		if (mdb_midl_grow(idp, n | MDB_IDL_UM_MAX, account))
 			return ENOMEM;
 		ids = *idp;
 	}
@@ -196,6 +285,11 @@ int mdb_midl_append_range( MDB_IDL *idp, MDB_ID id, unsigned n )
 	while (n)
 		ids[n--] = id++;
 	return 0;
+}
+
+int mdb_midl_append_range(MDB_IDL *idp, MDB_ID id, unsigned n)
+{
+	return mdb_midl_append_range_accounted(idp, id, n, NULL);
 }
 
 void mdb_midl_xmerge( MDB_IDL idl, MDB_IDL merge )
