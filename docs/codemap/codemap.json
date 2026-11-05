@@ -56314,7 +56314,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/pack.rs",
@@ -74342,7 +74342,7 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 11,
       "re-export": 1,
@@ -92083,7 +92083,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 142,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6427,
    "test_files": 895
