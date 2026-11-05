@@ -338,7 +338,7 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context, continuation);
+                    let ran = runner.run(runtime, step, context, continuation);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
                     if !matches!(&ran, Err(fault) if fault.hook_wait) {

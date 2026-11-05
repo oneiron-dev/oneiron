@@ -28,7 +28,7 @@
 //! and a step that ran before must still run.
 
 use oneiron::actor_claims::craft_message_entries;
-use oneiron::agent_dispatch::{WorkflowToolCursor, WorkflowToolWait};
+use oneiron::agent_dispatch::{SpendScopeId, WorkflowToolCursor, WorkflowToolWait};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
@@ -175,6 +175,7 @@ impl<'a> StepSecretUse<'a> {
         ladder: &OfferLadder,
         run: &RunAdmission,
         lease: &LiveLease<'_>,
+        scope: Option<&SpendScopeId>,
         mut request: LlmRequest,
         continuation: Option<(WorkflowToolCursor, Option<WorkflowToolWait>)>,
         mut save: impl FnMut(
@@ -219,6 +220,14 @@ impl<'a> StepSecretUse<'a> {
                     None,
                     &may_send,
                 ));
+                if let Some(scope) = scope {
+                    crate::models::record_scoped_model_return(
+                        self.vault,
+                        scope,
+                        run,
+                        Some(self.attempt.id),
+                    );
+                }
                 let (response, binding) = match generated {
                     Ok(answer) => answer,
                     Err(error) => {

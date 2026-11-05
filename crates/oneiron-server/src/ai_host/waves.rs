@@ -211,7 +211,6 @@ impl WavePlanner for ModelWavePlanner<'_> {
                 .runner
                 .generate(
                     self.runtime,
-                    self.vault,
                     ModelStep {
                         definition: &definition,
                         attempt: self.attempt,
