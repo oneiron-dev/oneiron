@@ -17,8 +17,13 @@ A floor refusal is an out-of-memory I/O error. Temporary pressure is a
 would-block I/O error. Neither acknowledges, imports, settles or deletes work.
 Existing grant, expiry, erase and review rules still apply.
 
+Retaining or scrubbing a review measures its named MessagePack output with
+that same serializer before allocation. Its separate output lease covers the
+actual vector capacity and stays held through the queue write. The review
+record, its payload bytes, and its selected erase entries are unchanged.
+
 This does not close all federation memory accounting. Isolation copies,
-retained review encoding and public review-result ownership remain separate
+review input decoding and public review-result ownership remain separate
 work. Selector, container and shared-owner metadata allocations are not covered
 by the original-payload lease. The existing logical payload checks remain in
 place. There is no new numeric limit, timer, configuration or stored format.
