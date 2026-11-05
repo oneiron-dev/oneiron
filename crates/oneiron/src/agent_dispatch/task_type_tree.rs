@@ -32,7 +32,10 @@ use self::validation::validate_tree;
 use super::team_shape::team_shape_root_in_txn;
 use super::widen_record::invalid;
 
+mod sources;
 mod validation;
+
+pub(crate) use sources::{SourcedTeamTypeTree, load_team_type_tree_with_sources_in_txn};
 
 pub use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 
