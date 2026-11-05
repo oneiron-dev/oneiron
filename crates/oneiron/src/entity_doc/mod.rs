@@ -33,7 +33,7 @@ mod registry;
 mod summary;
 pub(crate) use summary::{
     birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn, summary_meta_in_txn,
-    summary_read_in_txn, summary_text_in_txn,
+    summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
 mod side_keys;
@@ -110,6 +110,32 @@ pub(crate) fn source_frontier_in_txn(
     let mut pin = head.incarnation.into_bytes();
     pin.extend_from_slice(&doc.frontier());
     Ok(Some(pin))
+}
+
+/// Capture the actual document and oplog frontier in the caller's snapshot.
+/// Unmigrated rows and builds without document materialization retain no pin.
+pub(crate) fn source_document_pin_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<Option<(crate::EntityId, Vec<u8>)>> {
+    #[cfg(feature = "sync")]
+    {
+        if !storage::has_record_head(store, txn, entity)? {
+            return Ok(None);
+        }
+        let head = storage::head(store, txn, entity)?;
+        let doc = storage::load(store, txn, &head)?;
+        Ok(Some((
+            crate::EntityId::from_hex(&head.document)?,
+            doc.frontier(),
+        )))
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        let _ = (store, txn, entity);
+        Ok(None)
+    }
 }
 
 /// Resolve an active document's incarnation id in a caller-owned

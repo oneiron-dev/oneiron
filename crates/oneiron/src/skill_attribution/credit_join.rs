@@ -399,7 +399,8 @@ fn masses(direct: &[Option<EntityId>], shares: &[LateCreditShare]) -> BTreeMap<E
 /// the win and mass of the latest adjustment beside the sealed credit, or
 /// the sealed projection's own when no adjustment landed. `None` when the
 /// credit currently credits `subject` nothing. A failed credit is never
-/// adjusted, so its direct subjects stand whole at the failure. The
+/// adjusted, so its direct subjects stand whole at the failure unless every
+/// judgment that seated a subject was explicitly displaced. The
 /// anchored-amendment join (FIX 10148) restores to exactly this, never to
 /// the sealed projection alone.
 ///
@@ -413,10 +414,12 @@ pub(crate) fn standing_credit_observation_in_txn(
     subject: &EntityId,
 ) -> Result<Option<(bool, f64)>> {
     if !credit.succeeded {
-        return Ok(credit
-            .direct_subjects
-            .contains(&Some(*subject))
-            .then_some((false, 1.0)));
+        if !credit.direct_subjects.contains(&Some(*subject))
+            || failed_credit_subject_displaced_in_txn(vault, txn, credit, subject)?
+        {
+            return Ok(None);
+        }
+        return Ok(Some((false, 1.0)));
     }
     let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
     let (direct, shares) = match chain.last() {
@@ -426,6 +429,48 @@ pub(crate) fn standing_credit_observation_in_txn(
     Ok(masses(direct, shares)
         .get(subject)
         .map(|mass| (true, *mass)))
+}
+
+/// An explicit displacement removes a failed credit's seated loss only
+/// when its actual routing has no live seating judgment left.
+fn failed_credit_subject_displaced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    subject: &EntityId,
+) -> Result<bool> {
+    let sequences: BTreeSet<_> = super::codec::evidence_after_in_txn(vault, txn, 0)?
+        .into_iter()
+        .filter(|(_, row)| row.receipt_ref == credit.attempt_receipt)
+        .map(|(sequence, _)| sequence)
+        .collect();
+    let judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
+        .into_iter()
+        .map(|judgment| (judgment.sequence, judgment))
+        .collect();
+    let mut seated = false;
+    for sequence in sequences {
+        let Some(judgment) = judgments.get(&sequence) else {
+            return Ok(false);
+        };
+        if !matches!(
+            judgment.verdict,
+            super::AttributionVerdict::SkillDefect | super::AttributionVerdict::ExecutionLapse
+        ) {
+            continue;
+        }
+        let Some(seated_subject) = judgment.subject else {
+            return Ok(false);
+        };
+        if seated_subject != *subject {
+            continue;
+        }
+        if !super::judgment_displaced_in_txn(vault, txn, sequence)? {
+            return Ok(false);
+        }
+        seated = true;
+    }
+    Ok(seated)
 }
 
 /// The observation a credit write for `subject` lands under `credit`'s
@@ -442,7 +487,6 @@ pub(super) fn effective_observation_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
-    fields: &PackAttributionFields,
     subject: &EntityId,
     success: bool,
     weight: f64,
@@ -451,7 +495,6 @@ pub(super) fn effective_observation_in_txn(
         vault,
         txn,
         subject,
-        Some(fields.executor.as_str()),
         &credit.attempt_receipt,
     )? {
         Some(share) => Ok((false, f64::from(share))),
@@ -549,7 +592,7 @@ fn reconcile_in_txn(
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
             let (success, weight) =
-                effective_observation_in_txn(vault, txn, credit, &fields, subject, true, *weight)?;
+                effective_observation_in_txn(vault, txn, credit, subject, true, *weight)?;
             let evidence = credit_evidence(credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
         }
@@ -566,7 +609,6 @@ fn reconcile_in_txn(
             vault,
             txn,
             subject,
-            Some(fields.executor.as_str()),
             &credit.attempt_receipt,
         )? {
             Some(share) => {

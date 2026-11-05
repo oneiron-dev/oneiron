@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
-    WorkerStatus,
+    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind,
+    WorkerMode, WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
@@ -105,6 +105,16 @@ impl Hosted {
             None
         }
     }
+}
+
+/// An external chat worker bound at construction (FIX 9296): the actual
+/// worker and its row's operator-pinned manifest digest, captured together
+/// from the same validated hosted row, so a later reconfiguration cannot
+/// retarget the evidence.
+#[derive(Clone)]
+pub(super) struct ExternalWorker {
+    pub(super) worker: InferenceWorker,
+    pub(super) launch_manifest_sha256: Option<CacheDigest>,
 }
 
 /// A managed EXL3 worker's native route: its supervisor, and the slot its
@@ -670,13 +680,14 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
 
 /// The external chat workers on `provider_name` bound at construction: for
 /// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker, keyed by wire model. Endpoint-split and media rows
-/// are left out. The map holds workers only, never configs or secrets.
+/// the actual worker and its row's manifest pin, keyed by wire model.
+/// Endpoint-split and media rows are left out. The map holds bound workers
+/// and their pins only, never secrets.
 pub(super) fn external_workers(
     provider_name: &str,
     provider: &ProviderConfig,
     rows: &[WorkerConfig],
-) -> BTreeMap<String, InferenceWorker> {
+) -> BTreeMap<String, ExternalWorker> {
     let Some(host) = HOST.get() else {
         return BTreeMap::new();
     };
@@ -696,7 +707,13 @@ pub(super) fn external_workers(
         if hosted.row != *row || hosted.provider != *provider {
             continue;
         }
-        bound.insert(row.binding.model.clone(), hosted.worker.clone());
+        bound.insert(
+            row.binding.model.clone(),
+            ExternalWorker {
+                worker: hosted.worker.clone(),
+                launch_manifest_sha256: hosted.row.launch_manifest_sha256.clone(),
+            },
+        );
     }
     bound
 }
@@ -749,6 +766,56 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         }
     };
     route.launch().is_some().then_some(route)
+}
+
+/// What an HTTP answer from a managed EXL3 worker must echo to keep a
+/// verified-artifacts claim (FIX 9296): the manifest digest of the launch
+/// this host started and the epoch the worker qualified with, each absent
+/// when that fact has no current record. Outer `None` is only a call no
+/// managed EXL3 worker is bound to.
+#[derive(Clone, Debug)]
+pub(super) struct ManagedLaunchEvidence {
+    pub(super) manifest_sha256: Option<String>,
+    pub(super) backend_epoch: Option<String>,
+}
+
+/// The managed EXL3 worker bound to `provider` calling `wire_model`, as its
+/// slot and readiness stand now, without waiting: `None` only when no
+/// managed EXL3 worker is bound there. A bound worker with no launch record
+/// or no ready epoch still returns `Some`, with those facts `None`, so its
+/// answers downgrade verification instead of passing unfiltered. Two
+/// snapshots racing only lose verification, never a refusal.
+pub(super) fn managed_http_evidence(
+    provider: &str,
+    wire_model: &str,
+) -> Option<ManagedLaunchEvidence> {
+    let host = HOST.get()?;
+    let (worker, slot) = {
+        let workers = host.lock();
+        let hosted = workers.values().find(|hosted| {
+            hosted.native_slot().is_some()
+                && hosted.row.binding.provider == provider
+                && hosted.row.binding.model == wire_model
+        })?;
+        (hosted.worker.clone(), Arc::clone(hosted.native_slot()?))
+    };
+    let manifest_sha256 = slot
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .map(|record| record.manifest_sha256.clone());
+    let backend_epoch = match worker.status().readiness {
+        oneiron::llm::WorkerReadiness::Ready { observed } => observed
+            .identity
+            .backend_epoch
+            .as_ref()
+            .map(|epoch| epoch.as_str().to_owned()),
+        _ => None,
+    };
+    Some(ManagedLaunchEvidence {
+        manifest_sha256,
+        backend_epoch,
+    })
 }
 
 impl WorkerHost {
