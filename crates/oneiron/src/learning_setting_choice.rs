@@ -397,6 +397,7 @@ pub(crate) fn owner_spawn_model_pin_in_txn(
             _ => None,
         }))
 }
+
 /// Lays the owner's choices under one spawn's need: each field takes the
 /// first row in [`rows_in_order`] it admits. A field the call pinned keeps
 /// the call's pin; a field the call seeded keeps its seed unless an owner
