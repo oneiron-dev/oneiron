@@ -178,7 +178,7 @@ impl DecisionProvider for Shown<'_> {
         )?;
         captured.result = captured
             .result
-            .map(|decision| canonical(call.question, &shown, decision));
+            .map(|outcome| outcome.map(|decision| canonical(call.question, &shown, decision)));
         Some(captured)
     }
 
@@ -208,9 +208,20 @@ impl DecisionProvider for Shown<'_> {
             },
             context,
         )?;
-        captured.result = captured
-            .result
-            .map(|decisions| canonical_pack(pack.questions, &questions, decisions));
+        captured.result = captured.result.map(|decisions| {
+            decisions
+                .into_iter()
+                .enumerate()
+                .map(|(index, outcome)| {
+                    outcome.map(|decision| {
+                        match (pack.questions.get(index), questions.get(index)) {
+                            (Some(question), Some(shown)) => canonical(question, shown, decision),
+                            _ => decision,
+                        }
+                    })
+                })
+                .collect()
+        });
         Some(captured)
     }
 

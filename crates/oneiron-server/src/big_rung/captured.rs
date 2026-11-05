@@ -3,7 +3,8 @@
 use super::{Answerer, BigModel, PURPOSE, abstained, failed, typed};
 use crate::models::CallDeadline;
 use oneiron::llm::decision::{
-    DecisionCall, DecisionCallContext, DecisionPack, ProviderDecision, ProviderPin,
+    DecisionCall, DecisionCallContext, DecisionPack, DecisionReadOutcome, ProviderDecision,
+    ProviderPin,
 };
 use oneiron::{ContentPart, EntityId};
 
@@ -12,20 +13,28 @@ impl BigModel {
         &self,
         pack: &DecisionPack<'_>,
         context: Option<&DecisionCallContext<'_>>,
-    ) -> oneiron::Result<Vec<ProviderDecision>> {
-        (0..pack.questions.len())
-            .filter_map(|index| pack.call(index))
-            .map(|call| self.decide_with_context(&call, context))
-            .collect()
+    ) -> oneiron::Result<Vec<DecisionReadOutcome<ProviderDecision>>> {
+        let mut decisions = Vec::new();
+        let mut stopped = false;
+        for call in (0..pack.questions.len()).filter_map(|index| pack.call(index)) {
+            let outcome = if stopped {
+                DecisionReadOutcome::NotStarted
+            } else {
+                self.decide_with_context(&call, context)?
+            };
+            stopped = matches!(&outcome, DecisionReadOutcome::NotStarted);
+            decisions.push(outcome);
+        }
+        Ok(decisions)
     }
 
     pub(super) fn decide_with_context(
         &self,
         call: &DecisionCall<'_>,
         context: Option<&DecisionCallContext<'_>>,
-    ) -> oneiron::Result<ProviderDecision> {
+    ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
         if call.question.contract.locates() {
-            return Ok(abstained());
+            return Ok(DecisionReadOutcome::Answered(abstained()));
         }
         let route = self.resolve_decision_route()?;
         let joint = self.joint_read(call, &route);
@@ -46,8 +55,8 @@ impl BigModel {
         if left.is_zero() {
             return Err(failed("admitted after the work time"));
         }
-        if let Some(context) = context {
-            context.admit_generation()?;
+        if context.is_some_and(|context| !context.admit_generation()) {
+            return Ok(DecisionReadOutcome::NotStarted);
         }
         // Inside a verdict, the caller's own line (FIX 1123), billing the
         // payer its run binds (FIX 3574).
@@ -159,26 +168,43 @@ impl BigModel {
             let decision = joint
                 .decision(&call.question.contract, response.token_scores.as_ref())
                 .unwrap_or_else(abstained);
-            return Ok(ProviderDecision { served, ..decision });
+            return Ok(DecisionReadOutcome::Answered(ProviderDecision {
+                served,
+                ..decision
+            }));
         }
         let Some((answer, probability)) = self.reply.read(&text) else {
-            return Ok(ProviderDecision {
+            return Ok(DecisionReadOutcome::Answered(ProviderDecision {
                 served,
                 ..abstained()
-            });
+            }));
         };
-        Ok(match typed(&call.question.contract, &answer) {
-            Some(answer) => ProviderDecision {
-                answer,
-                probability: Some(probability),
-                paired: None,
-                person: None,
-                served,
+        Ok(DecisionReadOutcome::Answered(
+            match typed(&call.question.contract, &answer) {
+                Some(answer) => ProviderDecision {
+                    answer,
+                    probability: Some(probability),
+                    paired: None,
+                    person: None,
+                    served,
+                },
+                None => ProviderDecision {
+                    served,
+                    ..abstained()
+                },
             },
-            None => ProviderDecision {
-                served,
-                ..abstained()
-            },
-        })
+        ))
+    }
+}
+
+/// An ordinary call carries no generation gate, so every returned outcome is an answer.
+pub(super) fn ordinary_decision(
+    outcome: DecisionReadOutcome<ProviderDecision>,
+) -> ProviderDecision {
+    match outcome {
+        DecisionReadOutcome::Answered(decision) => decision,
+        DecisionReadOutcome::NotStarted => {
+            unreachable!("an ordinary decision has no generation gate")
+        }
     }
 }

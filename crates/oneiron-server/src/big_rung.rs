@@ -477,10 +477,16 @@ impl DecisionModel for BigModel {
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
-        self.decide_pack_with_context(pack, None)
+        self.decide_pack_with_context(pack, None).map(|decisions| {
+            decisions
+                .into_iter()
+                .map(captured::ordinary_decision)
+                .collect()
+        })
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         self.decide_with_context(call, None)
+            .map(captured::ordinary_decision)
     }
 }
