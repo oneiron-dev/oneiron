@@ -1203,7 +1203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/predicate_validators.rs` | src | m | 1 fn · 1 re-export · 6 crate-vis | — | Structural validators for the predicates this module owns itself, rather than delegating to a domain module… |
 | `src/claim/projection_index.rs` | src | s | 2 crate-vis | — | Claim-policy traversal over the store's rebuildable projections |
 | `src/claim/projection_index/tests.rs` | test | s | — | — | — |
-| `src/claim/put.rs` | src | m | 1 fn · 6 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |
+| `src/claim/put.rs` | src | m | 1 fn · 7 crate-vis | — | `Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the… |
 | `src/claim/reaction_record.rs` | src | s | 2 struct · 1 fn · 2 const · 10 crate-vis | ReactionExternalId, ReactionValue | The `conversation.reaction` value and its provider-echo binding value |
 | `src/claim/read.rs` | src | m | 3 fn · 12 crate-vis | — | `Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection… |
 | `src/claim/relationship_predicates.rs` | src | s | 3 const | — | Claim predicates and label bounds for member-to-person relationships |
@@ -2006,10 +2006,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/actor_fields.rs` | src | s | 2 enum · 2 const · 10 crate-vis | CarrierActorMerge, CarrierEraseSource | An erased actor's name, out of the rows that record it outside its own record (FIX 3520) |
 | `src/deletion/archive_role.rs` | src | s | 2 crate-vis | — | The role an archive delete was admitted under, as a delete's receipts and gate reason codes name it |
 | `src/deletion/checkpoint_payload.rs` | src | s | 2 crate-vis | — | The deletion side of the checkpoint payload compartments (KS7-4, FIX 5688): which compartments a deleted… |
-| `src/deletion/coop_delivery.rs` | src | L | 5 struct · 4 enum · 12 fn · 4 const · 1 re-export · 2 crate-vis | CooperativeDeletionAnswer, CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice, CooperativeDeletionTry +1 | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle) |
-| `src/deletion/coop_delivery/answer.rs` | src | m | 1 fn | — | The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2) |
+| `src/deletion/coop_delivery.rs` | src | m | 2 struct · 3 enum · 11 fn · 4 const · 1 re-export · 2 crate-vis | CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionIngress, CooperativeDeletionNotice, CooperativeDeletionTry | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle) |
+| `src/deletion/coop_delivery/answer.rs` | src | m | 1 fn · 1 crate-vis | — | The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2) |
+| `src/deletion/coop_delivery/redact.rs` | src | s | 1 crate-vis | — | The selected local A9 slice of a courtesy Redact answer |
 | `src/deletion/coop_delivery/refresh.rs` | src | s | 3 crate-vis | — | A courtesy try across this vault's own host re-root (FIX 5088; Engine 10-19 15:0x) |
-| `src/deletion/coop_delivery/types.rs` | src | s | 2 struct · 1 enum · 2 fn · 5 crate-vis | CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState | What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records… |
+| `src/deletion/coop_delivery/restrict.rs` | src | s | 2 crate-vis | — | User-selected Art18 restriction and truthful prior-external-notice attestation |
+| `src/deletion/coop_delivery/types.rs` | src | s | 9 struct · 2 enum · 3 fn · 5 crate-vis | CooperativeClaimValueRedaction, CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind, CooperativeDeletionRetention +3 | What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records… |
 | `src/deletion/coop_reply.rs` | src | s | 2 struct · 1 enum · 5 fn · 3 const | CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply | The recipient's one-line answer to a courtesy deletion ask (OF-273): its owner acted on the ask, or declined… |
 | `src/deletion/coop_request.rs` | src | m | 2 struct · 6 fn · 4 const · 9 crate-vis | CooperativeDeletionRequest, SignedCooperativeDeletionRequest | One-way authenticated courtesy deletion requests |
 | `src/deletion/coop_succession.rs` | src | m | 1 struct · 2 fn · 2 const · 1 crate-vis | CooperativeDeletionSuccession | Courtesy asks and answers across a former peer's host re-root (FIX 3014) |
@@ -2043,7 +2045,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/legal_hold/mod.rs` | src | m | 13 fn · 2 re-export · 5 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
 | `src/deletion/legal_hold/pending_delete.rs` | src | s | 1 fn · 1 crate-vis | — | The owner's plain delete of a record only secret orders keep (OF-470 C2, C4, FIX 1465): "erase confirmed… |
 | `src/deletion/legal_hold/types.rs` | src | m | 6 struct · 8 enum · 4 fn · 7 const | ErasePendingReason, EraseWithdrawal, HostOrderHold, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind +6 | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 13 re-export · 41 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 14 re-export · 41 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/owed_window_compaction.rs` | src | s | 4 crate-vis | — | Window-compaction obligations written by an erase |
 | `src/deletion/publish.rs` | src | L | 5 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 23 crate-vis | — | — |
@@ -5884,10 +5886,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/known_value_index/writer_index.rs` | src | s | 4 crate-vis | — | One known-value index per write (FIX 12210): the index a write the group commit runs loads is kept, on the… |
 | `src/store/l2_evidence.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
 | `src/store/legal_hold/events.rs` | src | s | 5 crate-vis | — | The two hold logs (C2, C3): customer holds' and the host-only one |
-| `src/store/legal_hold/mod.rs` | src | L | 37 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
+| `src/store/legal_hold/mod.rs` | src | m | 35 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
 | `src/store/legal_hold/notice.rs` | src | s | 5 crate-vis | — | What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03) |
 | `src/store/legal_hold/pending.rs` | src | s | 12 crate-vis | — | An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's… |
 | `src/store/legal_hold/settlement.rs` | src | s | 11 crate-vis | — | A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435) |
+| `src/store/legal_hold/use_limit.rs` | src | s | 11 crate-vis | — | Shared storage-only admission, with legal holds and a recipient's cooperative review restriction kept as… |
 | `src/store/linear_pull_cursor.rs` | src | s | 1 crate-vis | — | The lift sweep's typed acceptance for the tracker pull-page cursor row (`LINEAR_PULL_CURSOR`) |
 | `src/store/linear_task_revision.rs` | src | s | 7 crate-vis | — | The tracker mirror's revision rows for a typed TASK (`LINEAR_TASK_REVISION`, `LINEAR_TASK_DIRTY`… |
 | `src/store/live_speaker_calls.rs` | src | s | 4 crate-vis | — | Per-room live voice-call registration index |
@@ -6747,15 +6750,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_refs.rs` | src | s | 1 fn · 1 crate-vis | — | Resolve stored short ids and report durable hard-delete markers |
 | `src/vault/entity_revision/citations.rs` | src | m | 6 fn · 1 crate-vis | — | Revision-pinned short references and Loro cursor citations |
 | `src/vault/entity_revision/idle.rs` | src | m | 6 fn · 3 crate-vis | — | Idle debounce and atomic BM25/vector/frontier publication |
-| `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 11 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
+| `src/vault/entity_revision/mod.rs` | src | s | 2 re-export · 12 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
 | `src/vault/entity_revision/pending_index.rs` | src | s | 10 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
 | `src/vault/entity_revision/pending_index/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint rows of the staged index inputs (KS7-2): the caller's fields, vector and token waiting for… |
 | `src/vault/entity_revision/phonetic.rs` | src | s | 6 crate-vis | — | Supplied and generated name codes publish with the indexed text frontier |
 | `src/vault/entity_revision/phonetic/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint rows of the staged phonetic codes (KS7-2): the codes waiting to publish with the indexed text… |
 | `src/vault/entity_revision/repo_projection.rs` | src | s | 6 crate-vis | — | Idle publication and refill of a record whose text is a repo blob's (FIX 7608 slice 3): what the embedder… |
-| `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 29 crate-vis | — | Transactional revision ledger |
+| `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 1 re-export · 30 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/storage/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers… |
 | `src/vault/entity_revision/storage/checkpoint/document.rs` | src | m | 8 crate-vis | — | A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE… |
+| `src/vault/entity_revision/storage/redact.rs` | src | m | 2 struct · 3 crate-vis | ClaimValueRedactionBinding, LocalClaimValueRedaction | Exact-field transforms for CLAIM revision artifacts (BIZ-LEGAL-0004 A9) |
 | `src/vault/entity_revision/storage/retained.rs` | src | s | 3 crate-vis | — | The revisions a row retains, read for a TURN's text revision search |
 | `src/vault/entity_revision/tests.rs` | test | L | — | — | Acceptance laws exercise the existing put/index/read engines, not a side store |
 | `src/vault/entity_revision/turn_text.rs` | src | m | 6 crate-vis | — | A TURN's text revision: the revision that pins the words a turn serves |
@@ -6859,7 +6863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/connector_slate_revision.rs` | src | m | 13 struct · 2 enum · 7 fn | ConnectorBindingDependentView, ConnectorCredentialBindingView, ConnectorIssuerReaskRequest, ConnectorRevisionGrantView, ConnectorRevisionSnoozeView, ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorScopeSignalView +7 | FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change… |
 | `src/verbs/connector_witness_read_grant.rs` | src | s | 4 struct · 2 fn | ConnectorWitnessReadGrantRequest, ConnectorWitnessReadGrantRevokeRequest, ConnectorWitnessReadGrantRevoked, ConnectorWitnessReadGranted | `vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a… |
 | `src/verbs/coreference.rs` | src | s | 6 struct · 5 fn | CoreferenceLinkReceipt, CoreferenceLinkRequest, CoreferencePairRequest, CoreferenceShareConsentReceipt, CoreferenceShareConsentRequest, CoreferenceUnlinkReceipt | Typed cross-vault identity links |
-| `src/verbs/courtesy_delete.rs` | src | m | 8 struct · 7 fn | CourtesyDeleteAnswerRequest, CourtesyDeleteAskedWorld, CourtesyDeleteChoice, CourtesyDeleteHold, CourtesyDeleteIncoming, CourtesyDeleteRecordProgress, CourtesyDeleteSendRequest, CourtesyDeleteSent | The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)… |
+| `src/verbs/courtesy_delete.rs` | src | m | 14 struct · 7 fn | CourtesyDeleteAnswerRequest, CourtesyDeleteAskedWorld, CourtesyDeleteChoice, CourtesyDeleteClaimValueRedaction, CourtesyDeleteHold, CourtesyDeleteIncoming, CourtesyDeleteLocalRedaction, CourtesyDeleteRecordProgress +6 | The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)… |
 | `src/verbs/credential.rs` | src | s | 4 struct · 1 fn | CredentialAttenuated, CredentialAttenuationRequest, CredentialCaveat, CredentialPactCeiling | Holder-owned attenuation of the credential a transport admitted |
 | `src/verbs/custody_drain.rs` | src | s | 5 struct · 4 fn | CustodyDrainCommitRequest, CustodyDrainTicketView, CustodyMemberReenrolRequest, CustodyMemberRef, CustodySetRevision | The owner's custody member drain as typed rows (FIX 11274; the doors ruled 10-20, FIX 5843)… |
 | `src/verbs/describe.rs` | src | s | 3 fn · 1 re-export | — | `describe`'s typed input and the checks every door runs over it: one target per call (FIX 3256), and whether… |
@@ -7188,7 +7192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/pad_custody/reference.rs` | src | m | 9 crate-vis | — | A world key pad row as its reference alone, for the bytes that persist (KS-5, the 02A projector agreed with… |
 | `src/world_keys/pad_erase.rs` | src | s | 1 crate-vis | — | A local hard erase of one world key pad row alone (KS-5, FIX 7192): its key's custody entry retires, as a… |
 | `src/world_keys/pad_image.rs` | src | m | 12 crate-vis | — | A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1… |
-| `src/world_keys/pads.rs` | src | m | 1 struct · 2 fn · 2 re-export · 19 crate-vis | PromotedWorldPad | A world key's erasable half, and the world erase that destroys it (world privacy fix 7) |
+| `src/world_keys/pads.rs` | src | m | 1 struct · 2 fn · 2 re-export · 20 crate-vis | PromotedWorldPad | A world key's erasable half, and the world erase that destroys it (world privacy fix 7) |
 | `src/world_keys/page_seal.rs` | src | m | 10 fn · 1 const · 3 re-export · 18 crate-vis | — | The maximum tier (OF-570): every LMDB page of a vault sealed under a page key |
 | `src/world_keys/page_seal/creation.rs` | src | s | 3 fn · 3 crate-vis | — | The creation record of a sealed vault (OF-570 maximum tier; FIX 1942, 2546) |
 | `src/world_keys/page_seal/mirror_rewrite.rs` | src | s | 7 crate-vis | — | The page-seal mirror's rewrite at a sealed open and after a wrap change, kept off the disk when the mirror… |
