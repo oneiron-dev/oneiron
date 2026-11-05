@@ -217,6 +217,27 @@ pub fn prepare_esign_pdf_within(
     request: PdfPreparation<'_>,
     stream_decode_bytes: u64,
 ) -> Result<PreparedEsignPdf> {
+    prepare_in(original, &request, stream_decode_bytes, None)
+}
+
+/// The same trusted preparation with the audit the seal task already
+/// replayed, so retaining engine-side preparation never replays it twice.
+pub fn prepare_esign_pdf_with_replayed_audit(
+    original: &[u8],
+    request: &PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+    chain: [u8; 32],
+    trail: Vec<String>,
+) -> Result<PreparedEsignPdf> {
+    prepare_in(original, request, stream_decode_bytes, Some((chain, trail)))
+}
+
+fn prepare_in(
+    original: &[u8],
+    request: &PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+    replayed: Option<([u8; 32], Vec<String>)>,
+) -> Result<PreparedEsignPdf> {
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
     }
@@ -253,7 +274,10 @@ pub fn prepare_esign_pdf_within(
     if input_pages.is_empty() {
         return Err(PdfPreparationError::MalformedPdf);
     }
-    let (audit_chain_sha256, trail) = evidence(&request)?;
+    let (audit_chain_sha256, trail) = match replayed {
+        Some(replayed) => replayed,
+        None => evidence(request)?,
+    };
     if request
         .state
         .document

@@ -4,7 +4,10 @@
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
-    render::{PdfPreparation, PdfPreparationError, SignatureRaster, replay_esign_audit},
+    render::{
+        PdfPreparation, PdfPreparationError, SignatureRaster,
+        prepare_esign_pdf_with_replayed_audit, replay_esign_audit,
+    },
     sealer::{
         EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
         SealProfile, SealVerdict,
@@ -193,7 +196,16 @@ impl Vault {
                 signature_images: &images,
             };
             let (chain, trail) = replay_esign_audit(&prep)?;
-            let prepared = sealer.prepare_esign_pdf(original, &prep, chain, trail)?;
+            let prepared = match sealer.prepare_esign_pdf(original, &prep, chain, &trail)? {
+                Some(prepared) => prepared,
+                None => prepare_esign_pdf_with_replayed_audit(
+                    original,
+                    &prep,
+                    self.esign_stream_decode_bytes(),
+                    chain,
+                    trail,
+                )?,
+            };
             // The seal holds the item whole, however large: past the `[limits]
             // esign_pdf_bytes` row it asks whether everything is okay, and
             // seals it anyway (OF-520).

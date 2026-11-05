@@ -30,17 +30,26 @@ impl HostedSealer<'_> {
         lent: Vec<LentInput>,
         handlers: &AskHandlers<'_>,
     ) -> Result<(Value, OrganOutcome), EsignSealerError> {
+        self.sized_call_measured(call, lent, handlers, &mut CallMeasure::default())
+    }
+
+    pub(super) fn sized_call_measured(
+        &self,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        handlers: &AskHandlers<'_>,
+        measure: &mut CallMeasure,
+    ) -> Result<(Value, OrganOutcome), EsignSealerError> {
         let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
-        let mut measure = CallMeasure::default();
         let called = self.host.call_sized_with(
             self.vault,
             call,
             lent,
             handlers,
             call_size(lent_bytes),
-            &mut measure,
+            measure,
         );
-        measure_frames(self.vault, &measure);
+        measure_frames(self.vault, measure);
         let mut outcome = called.map_err(super::host_failure)?;
         let report = std::mem::replace(&mut outcome.report, Value::Nil);
         let (reply, observed) = Observed::split(report);
