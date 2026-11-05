@@ -55,7 +55,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::store::drafter_custody::drafter_artifact_retained_in_txn;
 use crate::training_pack::SourcePin;
