@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
-    WorkerStatus,
+    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind,
+    WorkerMode, WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
@@ -107,6 +107,16 @@ impl Hosted {
             None
         }
     }
+}
+
+/// An external chat worker bound at construction (FIX 9296): the actual
+/// worker and its row's operator-pinned manifest digest, captured together
+/// from the same validated hosted row, so a later reconfiguration cannot
+/// retarget the evidence.
+#[derive(Clone)]
+pub(super) struct ExternalWorker {
+    pub(super) worker: InferenceWorker,
+    pub(super) launch_manifest_sha256: Option<CacheDigest>,
 }
 
 /// A managed EXL3 worker's native route: its supervisor, and the slot its
@@ -426,6 +436,9 @@ pub(super) fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
 /// Takes a device ticket for one bound call before its worker acquire. No
 /// device means the route keeps its existing unmediated path. `envelope` is
 /// the call's incremental charge beyond the worker's steady declaration.
+/// Only the row's hosted instance takes a ticket (FIX 13845): a replaced
+/// row's old clone takes none, so its booking never lands on the
+/// replacement's device.
 pub(super) fn admit_bound_work(
     worker: &InferenceWorker,
     context: WorkContext,
@@ -433,7 +446,9 @@ pub(super) fn admit_bound_work(
 ) -> BoundWork {
     let ticket = HOST.get().and_then(|host| {
         let hosted = host.lock();
-        let hosted = hosted.get(&worker.spec().worker_id)?;
+        let hosted = hosted
+            .get(&worker.spec().worker_id)
+            .filter(|hosted| hosted.worker.same_instance(worker))?;
         let device = hosted.row.launch.as_ref()?.device.as_deref()?;
         let admission = host.admission(device);
         let mut request = WorkRequest::new(
@@ -480,17 +495,24 @@ pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCal
 
 /// Registers or refreshes one executor's idle row. Managed custody exists
 /// only when this process may launch that worker; other work is recorded as
-/// external and is never an unload target.
-pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
+/// external and is never an unload target. Only the row's hosted instance
+/// registers (FIX 13845): a replaced row's old clone registers nothing.
+pub(super) fn register_device_executor(worker: &InferenceWorker, idle: bool) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let Some((device, external)) = host.lock().get(worker_id).and_then(|hosted| {
-        let device = hosted.row.launch.as_ref()?.device.clone()?;
-        let managed =
-            hosted.row.mode == WorkerMode::Managed && host.launch_permitted.load(Ordering::SeqCst);
-        Some((device, !managed))
-    }) else {
+    let worker_id = worker.spec().worker_id.as_str();
+    let workers = host.lock();
+    let Some((device, external)) = workers
+        .get(worker_id)
+        .filter(|hosted| hosted.worker.same_instance(worker))
+        .and_then(|hosted| {
+            let device = hosted.row.launch.as_ref()?.device.clone()?;
+            let managed = hosted.row.mode == WorkerMode::Managed
+                && host.launch_permitted.load(Ordering::SeqCst);
+            Some((device, !managed))
+        })
+    else {
         return;
     };
     host.admission(&device)
@@ -504,20 +526,24 @@ pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
 /// Publishes one worker-reported activity snapshot to both admission and
 /// the supervisor without deriving either side from the other.
 pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
-    register_device_executor(&worker.spec().worker_id, activity.is_idle());
+    register_device_executor(worker, activity.is_idle());
     worker.report(activity);
 }
 
 /// Cross-checks a worker's own device capacity report with the pre-load
 /// query. The first valid report fills an unknown; a mismatch keeps the
-/// device query and logs rather than silently rewriting capacity.
-pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
+/// device query and logs rather than silently rewriting capacity. Only the
+/// row's hosted instance reports (FIX 13884): a replaced row's old clone
+/// fills nothing.
+pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let Some(device) = host
-        .lock()
+    let worker_id = worker.spec().worker_id.as_str();
+    let workers = host.lock();
+    let Some(device) = workers
         .get(worker_id)
+        .filter(|hosted| hosted.worker.same_instance(worker))
         .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
     else {
         return;
@@ -682,13 +708,14 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
 
 /// The external chat workers on `provider_name` bound at construction: for
 /// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker, keyed by wire model. Endpoint-split and media rows
-/// are left out. The map holds workers only, never configs or secrets.
+/// the actual worker and its row's manifest pin, keyed by wire model.
+/// Endpoint-split and media rows are left out. The map holds bound workers
+/// and their pins only, never secrets.
 pub(super) fn external_workers(
     provider_name: &str,
     provider: &ProviderConfig,
     rows: &[WorkerConfig],
-) -> BTreeMap<String, InferenceWorker> {
+) -> BTreeMap<String, ExternalWorker> {
     let Some(host) = HOST.get() else {
         return BTreeMap::new();
     };
@@ -708,7 +735,13 @@ pub(super) fn external_workers(
         if hosted.row != *row || hosted.provider != *provider {
             continue;
         }
-        bound.insert(row.binding.model.clone(), hosted.worker.clone());
+        bound.insert(
+            row.binding.model.clone(),
+            ExternalWorker {
+                worker: hosted.worker.clone(),
+                launch_manifest_sha256: hosted.row.launch_manifest_sha256.clone(),
+            },
+        );
     }
     bound
 }
