@@ -429,8 +429,12 @@ impl SyncClient {
     /// nowhere, so no later world import on this connection waits behind
     /// them.
     fn import_sealed_window(&mut self, window_key: &str, bytes: &[u8]) -> Result<(), String> {
-        let imported =
-            self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
+        // A deferred sealed update this import lets in whose pads do not
+        // install schedules their repair; this relay sends no answer for it
+        // (FIX 10474).
+        let imported = self
+            .import_own_device_window_update(window_key, bytes, PeerMachine::Unknown)
+            .map(drop);
         if imported.is_err() {
             self.staged_world_updates.retain(|(key, staged, _)| {
                 key.as_str() != window_key || staged.as_slice() != bytes
