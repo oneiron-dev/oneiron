@@ -304,6 +304,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         &self,
         request: MediaRequest,
         lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
     ) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let PreparedTranscribe {
@@ -327,11 +328,12 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             files: vec![file],
         };
         let reply = self
-            .send(
+            .send_released(
                 OpenAiMediaMethod::Post,
                 "/v1/audio/transcriptions".into(),
                 body,
                 lease,
+                release,
             )
             .await?;
         let mut reply = reply.json();
@@ -657,7 +659,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
             match request.operation {
                 AiOperation::Image => self.image(request, lease).await,
                 AiOperation::Speech => self.speech(request, lease, None).await,
-                AiOperation::Transcribe => self.transcribe(request, lease).await,
+                AiOperation::Transcribe => self.transcribe(request, lease, None).await,
                 AiOperation::Embed => self.embed(request, lease).await,
                 // Text rides the chat wire; a video is a job.
                 AiOperation::Text | AiOperation::Video => Err(FatalLlmError::InvalidRequest.into()),
@@ -671,19 +673,22 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         lease: &'a BudgetLease,
         release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> MediaProgressFuture<'a> {
-        if !matches!(request.operation, AiOperation::Embed | AiOperation::Speech) {
+        if !matches!(
+            request.operation,
+            AiOperation::Embed | AiOperation::Speech | AiOperation::Transcribe
+        ) {
             return self.run_progress(request, lease);
         }
         Box::pin(async move {
-            let answer = if request.operation == AiOperation::Speech {
-                self.speech(request, lease, release).await
-            } else {
-                if request.voice.is_some() {
-                    return Err(InterruptedMediaCall::nothing(
-                        FatalLlmError::InvalidRequest.into(),
-                    ));
-                }
-                self.embed_released(request, lease, release).await
+            if request.operation != AiOperation::Speech && request.voice.is_some() {
+                return Err(InterruptedMediaCall::nothing(
+                    FatalLlmError::InvalidRequest.into(),
+                ));
+            }
+            let answer = match request.operation {
+                AiOperation::Speech => self.speech(request, lease, release).await,
+                AiOperation::Transcribe => self.transcribe(request, lease, release).await,
+                _ => self.embed_released(request, lease, release).await,
             };
             answer.map_err(InterruptedMediaCall::nothing)
         })

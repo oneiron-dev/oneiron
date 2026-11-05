@@ -615,6 +615,35 @@ impl ProviderHttp {
         })
     }
 
+    pub(super) async fn send_multipart_released(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<BytesReply, HttpReleaseError> {
+        let url = self.url(path);
+        let request = self.client.post(url.as_str()).multipart(form);
+        release().map_err(HttpReleaseError::Release)?;
+        lease.begin_physical_attempt();
+        let response = request
+            .send()
+            .await
+            .map_err(HttpFailure::from)
+            .map_err(HttpReleaseError::Transport)?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        })
+    }
+
     /// [`Self::send_media`], its 2xx reply's body left for the caller to
     /// take as it arrives ([`MediaStream::chunk`]), never held whole here
     /// (FIX 6122). Any other status's body is read whole, as `send_media`
