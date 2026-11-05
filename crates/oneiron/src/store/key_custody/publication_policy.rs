@@ -12,7 +12,9 @@
 //! unopened, which every head carries (PAD-3, FIX 11133). A pass holds the
 //! policy lock from before it reads the folded policy until its pass ends,
 //! so no pass seals an older policy at a newer position than another pass
-//! recorded.
+//! recorded. A pass the lock did not take is bound by the log itself (FIX
+//! 11783): the record names the position its policy is proven through, and
+//! a head is sealed only where no other policy's frame came after that.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -23,13 +25,14 @@ use crate::store::Store;
 
 use super::files::{open_dir, read_whole, replace_file};
 use super::head::{CustodyRecipients, PadRecipients, carried_set_digest};
-use super::log::LogEntry;
+use super::log::{CustodyPosition, LogEntry, POSITION_LEN};
 use super::platform;
 use super::protocol::{TargetKind, TargetSpec};
 use super::publish::custody_empty;
 
 /// The digest of the policy the last `PublicationPolicy` frame recorded,
-/// in the journal: written only once its frame is.
+/// then the log position it is proven the policy in force through (FIX
+/// 11783), in the journal: written only once its frame is.
 const POLICY: &str = "policy";
 /// The lock a pass holds from its policy read to its pass's end.
 const POLICY_LOCK: &str = "policy.lock";
@@ -135,6 +138,57 @@ fn policy_digest(
     *hasher.finalize().as_bytes()
 }
 
+/// The policy a pass read, and the log position through which it is proven
+/// the policy in force (FIX 11783): its own frame's, or the record's carried
+/// on through every frame since. `None` when nothing proves it (a frame that
+/// did not append): the pass then seals as FIX 7314 rules, and the next pass
+/// journals the policy again.
+#[derive(Default)]
+pub(crate) struct PolicyStanding {
+    digest: [u8; 32],
+    through: Option<CustodyPosition>,
+}
+
+impl PolicyStanding {
+    /// Whether a head sealed at `position` follows the policy in force
+    /// there: no other policy's frame came after this pass's proof. A
+    /// standing nothing proved does not bind.
+    ///
+    /// # Errors
+    ///
+    /// A frame that does not open.
+    pub(super) fn holds_at(
+        &self,
+        journal: &super::log::Journal,
+        position: &CustodyPosition,
+    ) -> Result<bool> {
+        match &self.through {
+            Some(through) => journal.policy_unchanged(&self.digest, through, position),
+            None => Ok(true),
+        }
+    }
+}
+
+/// The policy record: its digest, then the position it is proven through.
+fn encode_record(digest: &[u8; 32], through: &CustodyPosition) -> Vec<u8> {
+    let mut record = Vec::with_capacity(32 + POSITION_LEN);
+    record.extend_from_slice(digest);
+    record.extend_from_slice(&through.to_bytes());
+    record
+}
+
+/// A record that does not decode, an empty one included, proves no policy.
+fn decode_record(bytes: &[u8]) -> Option<([u8; 32], CustodyPosition)> {
+    if bytes.len() != 32 + POSITION_LEN {
+        return None;
+    }
+    let (digest, through) = bytes.split_at(32);
+    Some((
+        digest.try_into().ok()?,
+        CustodyPosition::from_bytes(through)?,
+    ))
+}
+
 /// The policy lock, held for a pass: none while nothing is in custody.
 pub(crate) struct PolicyGuard {
     _lock: Option<File>,
@@ -190,17 +244,20 @@ impl Store {
         })
     }
 
-    /// Journals `recipients`' policy as one `PublicationPolicy` frame when
-    /// it is not the one the last frame recorded, then records it. A record
-    /// missing, undecodable or unread proves no policy: the frame is
-    /// journaled again, so no head acknowledged under an older policy stays
-    /// current (KS-5). The record is a cache: a fault reading or writing it is
-    /// warned and never stops the pass. Neither does a frame that does not
-    /// append (FIX 7314): it is warned, nothing is recorded, and the pass
-    /// seals under the policy it read, so the next pass journals the frame
-    /// again. A pass run without the policy lock (`guard`) records a policy
-    /// no pass matches, for the same end. The caller holds the policy guard
-    /// from before it read the policy.
+    /// Journals `recipients`' policy as one `PublicationPolicy` frame unless
+    /// the record proves it the policy in force now, then records it with
+    /// the position it is proven through (FIX 11783). The record proves a
+    /// policy only through its position; every frame journaled since is read,
+    /// and one recording another policy proves none. A record missing,
+    /// undecodable or unread proves no policy: the frame is journaled again,
+    /// so no head acknowledged under an older policy stays current (KS-5).
+    /// The record is a cache: a fault reading or writing it is warned and
+    /// never stops the pass. Neither does a frame that does not append (FIX
+    /// 7314): it is warned, nothing is recorded, and the pass seals under the
+    /// policy it read, so the next pass journals the frame again. A pass run
+    /// without the policy lock (`guard`) records a policy no pass matches,
+    /// for the same end. The caller holds the policy guard from before it
+    /// read the policy, and seals under the standing this returns.
     ///
     /// # Errors
     ///
@@ -209,16 +266,16 @@ impl Store {
         &self,
         recipients: &TargetRecipients,
         guard: &PolicyGuard,
-    ) -> Result<()> {
+    ) -> Result<PolicyStanding> {
         let Some(custody) = self.core.key_custody.local() else {
-            return Ok(());
+            return Ok(PolicyStanding::default());
         };
         if self.archived_in_txn(&self.env.read_txn()?)? {
-            return Ok(());
+            return Ok(PolicyStanding::default());
         }
         let journal = custody.journal()?;
         if custody_empty(self, custody, &journal)? {
-            return Ok(());
+            return Ok(PolicyStanding::default());
         }
         let carried = {
             let _guard = self.core.key_custody.read_guard()?;
@@ -226,7 +283,7 @@ impl Store {
         };
         let policy = recipients.policy(carried);
         let recorded = match read_whole(&journal.dir().join(POLICY)) {
-            Ok(bytes) => bytes.and_then(|bytes| <[u8; 32]>::try_from(bytes).ok()),
+            Ok(bytes) => bytes.as_deref().and_then(decode_record),
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -236,28 +293,50 @@ impl Store {
                 None
             }
         };
-        if recorded == Some(policy) && !guard.unlocked {
-            return Ok(());
-        }
-        if recorded != Some(policy)
-            && let Err(error) = custody.journal_entry(&LogEntry::PublicationPolicy(policy))
-        {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "the custody publication policy frame did not append; the pass seals under \
-                 the policy it read and the next pass journals the frame again"
-            );
-            return Ok(());
-        }
+        let now = journal.position()?;
+        let proven = match &recorded {
+            Some((digest, through)) if *digest == policy => {
+                journal.policy_unchanged(&policy, through, &now)?
+            }
+            _ => false,
+        };
+        let through = if proven {
+            now
+        } else {
+            match custody.journal_entry(&LogEntry::PublicationPolicy(policy)) {
+                Ok(position) => position,
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the custody publication policy frame did not append; the pass seals \
+                         under the policy it read and the next pass journals the frame again"
+                    );
+                    return Ok(PolicyStanding {
+                        digest: policy,
+                        through: None,
+                    });
+                }
+            }
+        };
+        let standing = PolicyStanding {
+            digest: policy,
+            through: Some(through),
+        };
         // Unlocked, an empty record: it decodes as no policy (FIX 7314).
-        let record: &[u8] = if guard.unlocked { &[] } else { &policy };
-        if let Err(error) = replace_file(journal.dir(), POLICY, record) {
+        let record = if guard.unlocked {
+            Vec::new()
+        } else if recorded == Some((policy, through)) {
+            return Ok(standing);
+        } else {
+            encode_record(&policy, &through)
+        };
+        if let Err(error) = replace_file(journal.dir(), POLICY, &record) {
             tracing::warn!(
                 kind = ?error.kind(),
                 "the custody publication policy record was not written; the next pass \
                  journals it again"
             );
         }
-        Ok(())
+        Ok(standing)
     }
 }
