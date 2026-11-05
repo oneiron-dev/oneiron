@@ -161,6 +161,13 @@ custody-decode allocation message. A stopped wait keeps body-not-whole, not disk
 capacity. The later serde reader's key scratch space, generic DTOs and native
 decoded rows remain unpriced; this is not whole-endpoint heap admission.
 
+## Proposal filing
+
+Filing a new widen proposal moves its original owned proposal into the stored row
+for the existing transaction write, then returns that same proposal. It does not
+clone the canonical byte vector or proposal strings into a second row first.
+Stored-row output encoding and the other native allocations below remain separate.
+
 ## Native answers
 
 Native acceptance checks the holder credential before validating the reference's

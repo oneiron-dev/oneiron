@@ -464,13 +464,13 @@ impl Vault {
             self.store.append_gate_decision_in_txn(txn, &record)?;
             let row = StoredProposal {
                 version: 1,
-                proposal: proposal.clone(),
+                proposal,
                 resolved: false,
                 settlement: None,
                 opener_lineage,
             };
             WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
-            Ok(proposal)
+            Ok(row.proposal)
         }
     }
     /// Resolve one frozen proposal. An approve-once receipt cannot be supplied
