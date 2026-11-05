@@ -336,7 +336,9 @@ fn attempt_request(
     if let Some(capsule) = capsule {
         // An erased capsule's request went with its actor (FIX 6144): no
         // other copy stands in for it.
-        if capsule.content.actor().is_none() {
+        if capsule.content.actor().is_none()
+            || matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. })
+        {
             return Ok((ExactReplay::Erased, None));
         }
         // The copy kept is the request as sent unless the wall masked a
@@ -385,7 +387,10 @@ fn attempt_request(
         .find(|again| {
             again.lease_generation == capsule.lease_generation && again.step == capsule.step
         })
-        .is_some_and(|again| again.content.actor().is_none());
+        .is_some_and(|again| {
+            again.content.actor().is_none()
+                || matches!(&again.request, CapsuleRequest::Kept { erased: true, .. })
+        });
     if erased {
         return Ok((ExactReplay::Erased, None));
     }
@@ -462,7 +467,9 @@ fn pinned_attempt_request(
     let Some(again) = pinned_capsule(vault, attempt, chosen)? else {
         return Ok(ExactReplay::NotKept);
     };
-    if again.content.actor().is_none() {
+    if again.content.actor().is_none()
+        || matches!(&again.request, CapsuleRequest::Kept { erased: true, .. })
+    {
         return Ok(ExactReplay::Erased);
     }
     let as_sent = again.as_sent();
@@ -478,8 +485,10 @@ fn pinned_attempt_request(
         None => None,
     };
     // Read again after the step's row, before its copy stands in.
-    let erased =
-        pinned_capsule(vault, attempt, chosen)?.is_some_and(|once| once.content.actor().is_none());
+    let erased = pinned_capsule(vault, attempt, chosen)?.is_some_and(|once| {
+        once.content.actor().is_none()
+            || matches!(&once.request, CapsuleRequest::Kept { erased: true, .. })
+    });
     if erased {
         return Ok(ExactReplay::Erased);
     }

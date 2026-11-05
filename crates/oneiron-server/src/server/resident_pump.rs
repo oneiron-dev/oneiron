@@ -463,6 +463,7 @@ impl SyncServer {
                 matches!(outcome.status, EngineExecutorStatus::Waiting(_))
             }
             Ok(BoundRun::Library(_)) => false,
+            Ok(BoundRun::Trapped) => true,
             Err(error) => parks_on_outage(error),
         };
         let completed_run = match &ran {
@@ -541,6 +542,7 @@ fn claim(
 enum BoundRun {
     Agent(EngineExecutorOutcome),
     Library(EntityId),
+    Trapped,
 }
 
 /// What a project conversation run's task puts before its skill's body.
