@@ -18355,6 +18355,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/task_settlement.rs",
+     "purpose": "Native task-decline outcomes captured by a code run",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TeamSubmitAnswer",
       "TeamSubmitInput"
@@ -91839,7 +91849,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 179,
+     "files": 180,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93150,7 +93160,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6518,
+   "source_files": 6519,
    "test_files": 895
   },
   "oneiron-android": {
