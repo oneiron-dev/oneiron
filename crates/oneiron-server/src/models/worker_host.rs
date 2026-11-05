@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
-    WorkerStatus,
+    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind,
+    WorkerMode, WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
@@ -105,6 +105,16 @@ impl Hosted {
             None
         }
     }
+}
+
+/// An external chat worker bound at construction (FIX 9296): the actual
+/// worker and its row's operator-pinned manifest digest, captured together
+/// from the same validated hosted row, so a later reconfiguration cannot
+/// retarget the evidence.
+#[derive(Clone)]
+pub(super) struct ExternalWorker {
+    pub(super) worker: InferenceWorker,
+    pub(super) launch_manifest_sha256: Option<CacheDigest>,
 }
 
 /// A managed EXL3 worker's native route: its supervisor, and the slot its
@@ -687,13 +697,14 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
 
 /// The external chat workers on `provider_name` bound at construction: for
 /// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker, keyed by wire model. Endpoint-split and media rows
-/// are left out. The map holds workers only, never configs or secrets.
+/// the actual worker and its row's manifest pin, keyed by wire model.
+/// Endpoint-split and media rows are left out. The map holds bound workers
+/// and their pins only, never secrets.
 pub(super) fn external_workers(
     provider_name: &str,
     provider: &ProviderConfig,
     rows: &[WorkerConfig],
-) -> BTreeMap<String, InferenceWorker> {
+) -> BTreeMap<String, ExternalWorker> {
     let Some(host) = HOST.get() else {
         return BTreeMap::new();
     };
@@ -713,7 +724,13 @@ pub(super) fn external_workers(
         if hosted.row != *row || hosted.provider != *provider {
             continue;
         }
-        bound.insert(row.binding.model.clone(), hosted.worker.clone());
+        bound.insert(
+            row.binding.model.clone(),
+            ExternalWorker {
+                worker: hosted.worker.clone(),
+                launch_manifest_sha256: hosted.row.launch_manifest_sha256.clone(),
+            },
+        );
     }
     bound
 }
