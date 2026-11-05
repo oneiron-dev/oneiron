@@ -11,6 +11,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "benches/result_search_overlap.rs",
+     "purpose": "FIX 1189 overlap bench: a paged `search` scan over one ~24 MiB result body at an 8 MiB scan bound, following…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -17389,7 +17397,7 @@
      "path": "src/code_run/result_read/query.rs",
      "purpose": "`query`: the values a JSON path picks out of a result, or the rows of a line table (JSON lines, CSV, TSV)…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 9
      }
     },
     {
@@ -17409,7 +17417,7 @@
      "path": "src/code_run/result_read/shape.rs",
      "purpose": "The shape a result's head shows of its format, for its card and for the way `query` reads it",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -17923,7 +17931,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
@@ -50402,7 +50410,7 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -50494,7 +50502,7 @@
      "path": "src/merge_queue/source.rs",
      "purpose": "The served queue source's one resolver (FIX 6869): which root a queue opens at the owner's doors, the driver…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -51738,7 +51746,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 42,
       "fn": 12,
       "struct": 2
      }
@@ -70171,7 +70179,7 @@
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -70272,7 +70280,7 @@
      "path": "src/store/body_envelope/spill.rs",
      "purpose": "Writing body files (FIX 5348, KS-2A): a body spilled as it streams as one minted instance, sealed chunk by…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -74143,13 +74151,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/result_body_pins.rs",
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
@@ -92174,7 +92182,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6434,
+   "source_files": 6435,
    "test_files": 895
   },
   "oneiron-android": {
