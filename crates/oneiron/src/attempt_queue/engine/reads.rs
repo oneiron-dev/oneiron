@@ -453,8 +453,12 @@ impl AttemptQueue<'_> {
                 return Err(Error::CorruptedIndex("attempt run index"));
             };
             let record = decode_record(&raw_record, id)?;
-            if record.run_id.as_deref() != Some(run_id) {
-                return Err(Error::CorruptedIndex("attempt run index"));
+            if !crate::store::hashed_string_index_matches(
+                record.run_id.as_deref(),
+                run_id,
+                "attempt run index",
+            )? {
+                continue;
             }
             records.push(record);
         }
