@@ -104,7 +104,8 @@ pub(crate) fn erase_gone_actors_in_live_overlays(vault: &Vault, ids: &[EntityId]
 }
 
 /// The keys of the rows `overlay` stages under `prefix`, as one snapshot
-/// reads them; deletions over base are none of them.
+/// reads them; deletions over base are none of them. Under this thread's
+/// installed segment the snapshot is that segment's view.
 fn staged_keys(overlay: &Arc<SessionOverlay>, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
     let snapshot = overlay.snapshot()?;
     let plan = snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(prefix));
@@ -121,22 +122,11 @@ fn staged_keys(overlay: &Arc<SessionOverlay>, prefix: &[u8]) -> Result<Vec<Vec<u
         .collect())
 }
 
+/// One room's sweep. The keys are read only once this writer holds the vault
+/// writer and the overlay's segment permit: the permit waits for any room
+/// write still publishing its segment, and the snapshot taken under it
+/// shows that write, so no record of an in-flight put is missed.
 fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityId]) -> Result<()> {
-    let record_prefix = REPLAY_RECORDS.decl().prefix;
-    let holder_prefix = HOLDERS.decl().prefix;
-    let records: Vec<EntityId> = staged_keys(overlay, record_prefix)?
-        .iter()
-        .filter_map(|key| key.strip_prefix(record_prefix))
-        .filter_map(<EntityId as SideKey>::decode_key)
-        .collect();
-    let holders: Vec<(EntityId, EntityId, u64)> = staged_keys(overlay, holder_prefix)?
-        .iter()
-        .filter_map(|key| key.strip_prefix(holder_prefix))
-        .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
-        .collect();
-    if records.is_empty() && holders.is_empty() {
-        return Ok(());
-    }
     let gone_in = |txn: &heed::RoTxn<'_>| -> BTreeSet<EntityId> {
         ids.iter()
             .copied()
@@ -146,12 +136,27 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
     if gone_in(&vault.store.env.read_txn()?).is_empty() {
         return Ok(());
     }
+    let record_prefix = REPLAY_RECORDS.decl().prefix;
+    let holder_prefix = HOLDERS.decl().prefix;
     let segment = vault.with_write_txn_grouped(|wtxn| {
         let gone = {
             let txn: &heed::RoTxn<'_> = wtxn;
             gone_in(txn)
         };
         let segment = overlay.install_txn_segment()?;
+        let records: Vec<EntityId> = staged_keys(overlay, record_prefix)?
+            .iter()
+            .filter_map(|key| key.strip_prefix(record_prefix))
+            .filter_map(<EntityId as SideKey>::decode_key)
+            .collect();
+        let holders: Vec<(EntityId, EntityId, u64)> = staged_keys(overlay, holder_prefix)?
+            .iter()
+            .filter_map(|key| key.strip_prefix(holder_prefix))
+            .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
+            .collect();
+        if records.is_empty() && holders.is_empty() {
+            return Ok(segment);
+        }
         let view = vault.store.session_view(overlay.clone())?;
         let dbs = RoutedDbs::Session(&view);
         for record_id in &records {
