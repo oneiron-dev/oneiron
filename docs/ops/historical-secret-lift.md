@@ -44,6 +44,15 @@ manifest-defined object's source. Missing, deleted or undecodable object records
 unknown. Booked contribution sources survive the object's deletion, but a proposal has no
 stored source: once its object record is gone, even a closed proposal passes as unknown.
 No historical source is reconstructed from a hash, attachment owner or aggregate count.
+A message-stream seed's source is its live MESSAGE continuation in the same transaction:
+the stored seed must carry the continuation flag and its message id must resolve to a
+live MESSAGE-typed row in the census, outcome, retry or proposal projection snapshot.
+A pre-admission (fresh) seed, a missing or undecodable seed, a seed whose message id
+names no row or a non-MESSAGE row, and a terminal-deleted seed (finished, erased,
+abandoned or retired) remain unknown. Booked message-stream contribution sources survive
+the seed's deletion, but a proposal has no stored source: once its seed row is gone, even
+a closed proposal passes as unknown. No historical source is reconstructed from a stream
+receipt, saved text or run totals.
 The same verified mapping projects pending retry counts and newly booked
 contribution rows. Existing unmapped contributions are not reattributed. Other attempt, side-row and carrier
 sources remain unmapped and pass unchanged; this is not a complete source

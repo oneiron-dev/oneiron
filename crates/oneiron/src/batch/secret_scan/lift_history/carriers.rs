@@ -176,6 +176,15 @@ fn source_of_in_txn(
         };
         return vault.lfs_object_source_in_txn(txn, oid);
     }
+    if std::ptr::eq(decl, &t::MESSAGE_STREAM_ACTIVE) {
+        let Some(message) = row_key
+            .strip_prefix(decl.prefix)
+            .and_then(<EntityId as SideKey>::decode_key)
+        else {
+            return Ok(None);
+        };
+        return vault.message_stream_continuation_source_in_txn(txn, &message);
+    }
     Ok(source_of(decl, row_key))
 }
 
