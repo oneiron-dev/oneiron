@@ -1,5 +1,10 @@
 //! Typed Vault doors for SKILL records.
 
+#[cfg(feature = "sync")]
+mod native_state;
+#[cfg(feature = "sync")]
+pub(crate) use native_state::{SkillStateWrite, SkillSupersessionRead};
+
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
