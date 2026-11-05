@@ -75,6 +75,12 @@ pub(crate) fn withdraw_grant_row_in_txn(
     else {
         return Ok(());
     };
+    crate::deletion::tombstone_scope::capture_deleted_scope_for_store_in_txn(
+        store,
+        wtxn,
+        &grant,
+        Some(grant.as_bytes()),
+    );
     mark_withdrawn_grant_in_txn(store, wtxn, grant)?;
     let withdrawn_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::deletion::stage_engine_row_hard_erasure_in_txn(
