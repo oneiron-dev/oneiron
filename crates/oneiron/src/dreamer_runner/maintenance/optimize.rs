@@ -382,7 +382,11 @@ fn pending_proposal_sourced(
             }
             let (verdict, verdict_rows) =
                 crate::skill_optimize::skill_edit_verdict_sourced(vault, id)?;
-            sources.extend(verdict_rows);
+            if let Some(rows) = verdict_rows {
+                sources.extend(rows);
+            } else {
+                sources_known = false;
+            }
             if let Some(verdict) = verdict {
                 if verdict.disposition.admits() {
                     continue;
