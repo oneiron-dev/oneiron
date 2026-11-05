@@ -15,7 +15,8 @@ use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 use super::cell::{LearningCell, TypeRef};
 use super::estimate::{Estimate, Prior, PriorOrigin};
 use super::evidence::{CELL, cells_for_subject_in_txn};
-use super::prior::{cell_prior_in_txn, prior_for_cell_in_txn};
+use super::frozen::{FrozenFold, StoredPrior};
+use super::prior::{cell_prior_in_txn, prior_for_cell_in_txn, stored_prior_for_cell_in_txn};
 use super::project::{StoredEstimateClaim, active_heads_in_txn, window_in_txn};
 
 /// One reading of a cell.
@@ -52,7 +53,8 @@ pub fn learning_estimate_with_sources(
     cell: &LearningCell,
 ) -> Result<Option<(Estimate, Vec<EntityId>)>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(own_head_in_txn(vault, &rtxn, cell)?.map(|(estimate, _, claim, _)| (estimate, vec![claim])))
+    Ok(own_head_in_txn(vault, &rtxn, cell)?
+        .map(|(estimate, _, claim, _, _)| (estimate, vec![claim])))
 }
 
 /// [`learning_estimate`] inside the caller's transaction. With two heads
@@ -62,7 +64,7 @@ pub(crate) fn own_estimate_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<Estimate>> {
-    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _, _, _)| estimate))
+    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _, _, _, _)| estimate))
 }
 
 /// The head [`own_estimate_in_txn`] reads, with the time it was projected,
@@ -71,16 +73,53 @@ fn own_head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
-) -> Result<Option<(Estimate, u64, EntityId, Option<(f64, f64)>)>> {
+) -> Result<
+    Option<(
+        Estimate,
+        u64,
+        EntityId,
+        Option<(f64, f64)>,
+        Option<FrozenFold>,
+    )>,
+> {
     Ok(active_heads_in_txn(vault, txn, cell)?
         .into_iter()
         .filter_map(|(claim, body, at)| {
             StoredEstimateClaim::from_value(&body.value)
                 .ok()
-                .map(|stored| (stored.estimate, at, claim, stored.donor_tally))
+                .map(|stored| {
+                    (
+                        stored.estimate,
+                        at,
+                        claim,
+                        stored.donor_tally,
+                        stored.frozen,
+                    )
+                })
         })
-        .filter(|(estimate, _, _, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
+        .filter(|(estimate, _, _, _, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
         .max_by(|a, b| a.0.runs.total_cmp(&b.0.runs)))
+}
+
+/// Copies the selected head's frozen inputs, never its current evidence.
+/// A vault twin's stored prior is copied under the same seed precedence.
+pub(crate) fn stored_prior_from_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &LearningRead,
+) -> Result<StoredPrior> {
+    let mut prior = StoredPrior::plain(read.estimate.prior.clone());
+    if let Some(source) = &read.borrowed_from {
+        prior.fold = if let Some((_, _, _, _, frozen)) = own_head_in_txn(vault, txn, source)? {
+            frozen.map(Box::new)
+        } else if let Some(row) = CELL.get(&vault.store, txn, &source.digest())? {
+            stored_prior_for_cell_in_txn(vault, txn, source, row.form, &row.of, &source.digest())?
+                .fold
+        } else {
+            None
+        };
+    }
+    Ok(prior)
 }
 
 /// The measured success and failure mass behind `cell`'s own head, with no
@@ -96,7 +135,7 @@ pub(crate) fn measured_outcomes_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<(f64, f64)>> {
-    let Some((_, _, _, donor)) = own_head_in_txn(vault, txn, cell)? else {
+    let Some((_, _, _, donor, _)) = own_head_in_txn(vault, txn, cell)? else {
         return Ok(None);
     };
     Ok(donor)

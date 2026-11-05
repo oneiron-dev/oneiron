@@ -209,7 +209,9 @@ pub(super) fn stage_skill_index_rows(
         record.content_hash,
     )?;
     // All put doors share this reverse index, including hub import and sync replay.
-    crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
+    crate::store::skill_source_index::maintain_skill_source_index_for_put(
+        store, wtxn, id, previous, record,
+    )
 }
 
 /// Keeps CLAIM-derived thread, Dreamer and counterparty-identity indexes on
@@ -563,7 +565,7 @@ pub(super) fn stage_local_proposal_observation(
             None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
                 .proposal_check_threshold_source(&scope),
         };
-        crate::gate::proposal_observation::observe_submission_in_txn(
+        store.gate_hooks.observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
