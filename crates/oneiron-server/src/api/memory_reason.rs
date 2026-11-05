@@ -399,12 +399,12 @@ pub(crate) async fn companion_memory_reason(
     server.vault.measure_limit_for(
         oneiron::limit_ask::EngineLimit::MemoryReasonEvidenceRows,
         limit as u64,
-        auth.actor,
+        auth.principal_entity(),
     );
     server.vault.measure_limit_for(
         oneiron::limit_ask::EngineLimit::MemoryReasonTokens,
         token_budget as u64,
-        auth.actor,
+        auth.principal_entity(),
     );
     let depth_request = DepthSearchRequest {
         deadline: None,
