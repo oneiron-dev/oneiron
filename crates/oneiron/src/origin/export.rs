@@ -250,10 +250,25 @@ impl Vault {
         if let Err(refused) = judge(&oid)? {
             return Ok(Err(refused));
         }
+        // A refused publication must not release the stable projection's root.
+        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
+        let keep_outcome = git.write_keep_ref(repo, &oid, revision.finalized_at)?;
+        if !keep_outcome.is_applied() {
+            return Err(Error::InvariantViolation(
+                "origin keep-ref could not be written",
+            ));
+        }
         let projected = self.with_write_txn_grouped(|txn| {
             if let Err(refused) = check(txn)? {
                 return Ok(Err(refused));
             }
+            self.keep_engine_export_in_txn(
+                txn,
+                &repo_id,
+                &oid,
+                revision.revision_id,
+                revision.finalized_at,
+            )?;
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
                 if old != oid.as_str() {
@@ -269,7 +284,6 @@ impl Vault {
         if let Err(refused) = projected {
             return Ok(Err(refused));
         }
-        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
         let intent = entity_id_from_hash_material(
             b"oneiron:engine-export-intent:v1",
             &[
