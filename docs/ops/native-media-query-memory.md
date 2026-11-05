@@ -38,11 +38,12 @@ with their separate owners. The view drops before its local lease on both
 success and error, including unwinding. An unbound adapter remains usable.
 
 Opt-in replay capture also records the actual backing capacities of its
-temporary media-list and kind-override `Vec<Value>` buffers. Each temporary
-stays alive through its existing JSON serialization and drops before its local
-lease. These charges use the same supplied line and leave an unbound capture
-usable. They cover vector slots only, not the temporary objects' inner storage
-or the retained replay JSON.
+temporary media-list, kind-override, BM25-field and vector-evidence
+`Vec<Value>` buffers. Each temporary stays alive through its existing JSON
+serialization and drops before its local lease, including the vector-evidence
+buffer moved into the existing serialization expression. These charges use the
+same supplied line and leave an unbound capture usable. They cover vector slots
+only, not the temporary objects' inner storage or the retained replay JSON.
 
 The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
