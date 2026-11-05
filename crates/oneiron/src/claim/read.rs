@@ -168,13 +168,16 @@ impl Vault {
                     rows.push(actor);
                 }
             },
-        )? || {
-            let ids = super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?;
-            let has_ids = !ids.is_empty();
-            if let Some(rows) = sources.as_deref_mut() {
-                rows.extend(ids);
+        )? || match sources.as_deref_mut() {
+            Some(rows) => super::history_store::machine_history_present_for_target_observing(
+                &self.store,
+                rtxn,
+                *id,
+                |control| rows.push(control),
+            )?,
+            None => {
+                super::history_store::machine_history_present_for_target(&self.store, rtxn, *id)?
             }
-            has_ids
         } || self
             .store
             .vault_meta
