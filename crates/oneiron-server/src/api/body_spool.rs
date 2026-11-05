@@ -5,7 +5,7 @@
 //! says capacity (`disk_capacity`). The sealed custody change also judges its
 //! spool against the server's disk floor as it goes (`transfers.disk`, kept
 //! at `limits.disk_reserve_bytes`, FIX 5674) and keeps the transfers' idle
-//! bound on its body; no other route does either.
+//! bound on its body. Widen answers opt into the same transfer policy.
 //!
 //! [`OwnerJsonBody`] is every owner JSON route's body. [`json`] decodes a
 //! spooled document whole while its bulk string members stream to sinks, so
@@ -113,7 +113,7 @@ pub(super) fn declared_length(headers: &HeaderMap) -> Option<u64> {
 /// How a spool reads its body: the disk floor it is judged against, and the
 /// longest the client may go quiet between frames. Every owner route reads
 /// with neither, so only the listener's own body policy ends a quiet body;
-/// the custody change keeps both ([`Self::custody`]).
+/// the custody change and widen answers keep both ([`Self::custody`]).
 #[derive(Default)]
 pub(super) struct SpoolPolicy {
     floor: Option<DiskFloor>,
