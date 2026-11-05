@@ -21,15 +21,26 @@ pub(super) fn stage_put_projections(
     evicted_shell_sources: BTreeSet<EntityId>,
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    #[cfg(feature = "sync")]
+    installed_record_document: Option<&crate::entity_doc::InstalledRecordDocument<'_>>,
 ) -> Result<AppliedPut> {
-    crate::store::skill_refinement_origin::stage_refinement_origin(
-        store,
-        wtxn,
-        &fixed.id,
-        dispatch.decoded_claim_body.as_ref(),
-        dispatch.new_skill_record.as_ref(),
-        data,
-    )?;
+    #[cfg(feature = "sync")]
+    let source_origin = match installed_record_document {
+        Some(installed) => installed.require_in_txn(store, wtxn, &fixed.id, data)?,
+        None => false,
+    };
+    #[cfg(not(feature = "sync"))]
+    let source_origin = false;
+    if !source_origin {
+        crate::store::skill_refinement_origin::stage_refinement_origin(
+            store,
+            wtxn,
+            &fixed.id,
+            dispatch.decoded_claim_body.as_ref(),
+            dispatch.new_skill_record.as_ref(),
+            data,
+        )?;
+    }
     super::super::put_staging::stage_local_proposal_observation(
         store,
         wtxn,

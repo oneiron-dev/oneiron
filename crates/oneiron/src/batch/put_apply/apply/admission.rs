@@ -107,6 +107,8 @@ pub(super) struct Admission<'a> {
     pub(super) incoming_claim_body: Option<ClaimBody>,
     pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    #[cfg(feature = "sync")]
+    pub(super) record_refinement: Option<crate::skill_hub::RecordRefinementAdmission<'a, 'a, 'a>>,
 }
 
 /// P1: admit the put — unpack the request, run the carrier guards and claim
@@ -243,6 +245,24 @@ pub(super) fn admit_put<'a>(
     if !replicated {
         crate::tagging::refuse_held_id_in_txn(store, wtxn, &id)?;
     }
+    #[cfg(feature = "sync")]
+    let record_refinement = if let Some(candidate) = record_document {
+        Some(crate::skill_hub::admit_record_document_refinement(
+            store,
+            wtxn,
+            &id,
+            data,
+            candidate,
+            refinement_admission,
+            transition,
+        )?)
+    } else {
+        validate_refinement_admission(
+            store, wtxn, &id, entity_type, data, refinement_admission, transition,
+        )?;
+        None
+    };
+    #[cfg(not(feature = "sync"))]
     validate_refinement_admission(
         store,
         wtxn,
@@ -332,5 +352,7 @@ pub(super) fn admit_put<'a>(
         incoming_claim_body,
         project_revisions,
         portable_agent_source,
+        #[cfg(feature = "sync")]
+        record_refinement,
     })
 }
