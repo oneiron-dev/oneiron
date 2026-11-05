@@ -738,6 +738,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultOffRecordDiscard
         | Row::VaultOffRecordRecall
         | Row::VaultOffRecordNotesCreate
+        | Row::VaultOffRecordArtifactsSave
         | Row::VaultOffRecordClaimsUpsert
         | Row::SelfOffRecordExecute
         | Row::SelfOffRecordResultsList
