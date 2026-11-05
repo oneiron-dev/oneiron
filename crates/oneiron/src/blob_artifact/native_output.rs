@@ -13,16 +13,31 @@ pub struct NativeOutput {
     /// Must equal the artifact's media type: an export is a version of its kind.
     pub media_type: String,
     pub bytes: Vec<u8>,
-    /// The organ's structured report (JSON), kept with the proposal.
-    pub report: serde_json::Value,
+    /// The organ's structured report as encoded JSON text, kept with the
+    /// proposal verbatim (FIX 12431).
+    pub report: String,
     /// The kept version's envelope; `None` gives the writer's own.
     pub made_by: Option<MadeBy>,
 }
 
 impl NativeOutput {
-    /// An organ's MessagePack report as the JSON report a native output keeps.
-    #[must_use]
-    pub fn report_from_msgpack(report: &rmpv::Value) -> serde_json::Value {
-        serde_json::to_value(report).unwrap_or(serde_json::Value::Null)
+    /// JSON text for one finite 32-bit float, via the engine's JSON writer,
+    /// for the organ landing (which holds no JSON writer). `None` when the
+    /// float is not finite.
+    pub fn json_f32_text(value: f32) -> Option<String> {
+        if !value.is_finite() {
+            return None;
+        }
+        serde_json::to_string(&value).ok()
+    }
+
+    /// JSON text for one finite 64-bit float, via the engine's JSON writer,
+    /// for the organ landing (which holds no JSON writer). `None` when the
+    /// float is not finite.
+    pub fn json_f64_text(value: f64) -> Option<String> {
+        if !value.is_finite() {
+            return None;
+        }
+        serde_json::to_string(&value).ok()
     }
 }
