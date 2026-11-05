@@ -803,6 +803,7 @@ impl Vault {
         by: SetupDoor<'_>,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes, versions) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &rtxn)?)?;
@@ -1058,6 +1059,7 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<()> {
         let check = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, candidate)? else {
