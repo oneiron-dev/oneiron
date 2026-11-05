@@ -145,7 +145,8 @@ pub(super) fn path(key: &[u8]) -> String {
 /// source entity; a typed-body fork pairs that entity with its fork id.
 /// A note proposal pairs its owning NOTE with its fork head; its source is
 /// the first. An office-body fork pairs its artifact with its fork id; its
-/// source is the first. No source is inferred for other carrier formats.
+/// source is the first. A repo-mutation proposal's key is its own admitted
+/// journal claim. No source is inferred for other carrier formats.
 pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
     let (decl, row_key) = carrier_of(key)?;
     source_of(decl, row_key)
@@ -160,7 +161,10 @@ fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::E
     if std::ptr::eq(decl, &t::NOTE_PROPOSAL_DOC) {
         return note_proposal_source(row_key.strip_prefix(decl.prefix)?);
     }
-    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT) {
+    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC)
+        && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT)
+        && !std::ptr::eq(decl, &t::REPO_MUTATION_PROPOSAL)
+    {
         return None;
     }
     super::records::record_id(row_key.strip_prefix(decl.prefix)?)

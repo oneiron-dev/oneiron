@@ -58,7 +58,8 @@ pub fn secret_lift_as_owner_toward(
 /// id. A typed-body fork pairs its source entity with its fork id. A note
 /// proposal pairs its owning NOTE with its fork head; the path's outer hex
 /// decodes to that ASCII key and the first id is the source. An office-body fork
-/// pairs its artifact with its fork id; the first is the source.
+/// pairs its artifact with its fork id; the first is the source. A repo-mutation
+/// proposal's key is its own admitted journal claim entity id.
 /// Other carrier and side-row keys remain unknown.
 fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     let path = &proposal.proposal.path;
@@ -80,6 +81,7 @@ fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     }
     if table != crate::side_table::TYPED_BODY_DOC.name
         && table != crate::side_table::CODEBASE_SNAPSHOT.name
+        && table != crate::side_table::REPO_MUTATION_PROPOSAL.name
     {
         return None;
     }
