@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 4;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -204,6 +204,10 @@ pub struct ExportRunResults {
 #[serde(deny_unknown_fields)]
 pub struct ExportRun {
     pub run_id: String,
+    /// Host-witnessed birth world, or required `null` when unknown. Not a
+    /// residence receipt or a complete served-world capture.
+    #[serde(deserialize_with = "Option::<String>::deserialize")]
+    pub birth_world: Option<String>,
     pub outputs: Vec<ExportRunOutput>,
     /// The run's live result names. A binding whose occurrence was withheld
     /// keeps its name and reason but no handle.

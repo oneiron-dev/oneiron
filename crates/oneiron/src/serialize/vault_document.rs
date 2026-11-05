@@ -273,6 +273,7 @@ impl<'v> DocumentWriter<'v> {
                 })
                 .collect(),
             run_id: run.run_id.to_hex(),
+            birth_world: run.birth_world.map(|world| world.to_hex()),
             outputs: run
                 .outputs
                 .into_iter()
