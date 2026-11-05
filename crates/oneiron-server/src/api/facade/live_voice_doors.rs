@@ -159,6 +159,14 @@ pub(crate) async fn ai_voice_tool(
     };
     // The session reads what it read before: the rows the call's reads
     // listed.
+    let wait_for_delivery = matches!(
+        &reply,
+        ConnectorCallReply::Held { .. }
+            | ConnectorCallReply::PendingDelivery {
+                call_ref: Some(_),
+                ..
+            }
+    );
     let result = match &reply {
         ConnectorCallReply::Delivered {
             result: Some(result),
@@ -178,6 +186,7 @@ pub(crate) async fn ai_voice_tool(
                 call_ref.clone(),
                 listed.clone(),
                 interest,
+                wait_for_delivery,
             )
             .and_then(|()| session.processed())
         }
@@ -201,6 +210,7 @@ pub(crate) async fn ai_voice_tool(
                 call_ref,
                 listed.clone(),
                 interest,
+                false,
             )
             .and_then(|()| session.processed())
         }

@@ -52,6 +52,7 @@ pub(super) fn follow(
     call_ref: String,
     listed: Vec<EntityId>,
     interest: Option<ConnectorResultInterest>,
+    wait_for_delivery: bool,
 ) -> MemoryResult<()> {
     let work = observe(
         Arc::clone(server),
@@ -61,6 +62,7 @@ pub(super) fn follow(
         call_ref.clone(),
         listed,
         interest,
+        wait_for_delivery,
     );
     session.follow_tool(server, call_ref, carrying_calling_run(work))
 }
@@ -73,6 +75,7 @@ async fn observe(
     call_ref: String,
     listed: Vec<EntityId>,
     interest: Option<ConnectorResultInterest>,
+    wait_for_delivery: bool,
 ) {
     let mut delivered = None;
     loop {
@@ -94,10 +97,45 @@ async fn observe(
                 "connector.call_status",
                 move |_, _, memory| {
                     let _admission = admission;
-                    oneiron::verbs::connector_call_status_read(&memory, input)
+                    let status = oneiron::verbs::connector_call_status_read(
+                        &memory,
+                        ConnectorCallStatusRequest {
+                            call_ref: input.call_ref.clone(),
+                        },
+                    )?;
+                    if wait_for_delivery
+                        && matches!(
+                            &status,
+                            ConnectorCallStatus::Settled {
+                                reply: ConnectorCallReply::Delivered { result: None, .. },
+                                ..
+                            }
+                        )
+                    {
+                        // Authorization above precedes this publication check.
+                        let call_ref = EntityId::from_hex(&input.call_ref)
+                            .map_err(|_| MemoryError::bad_request("call_ref must be 32 hex"))?;
+                        let published =
+                            oneiron::code_run::WaitDeliveries::canonical(memory.vault())
+                                .settled(call_ref)
+                                .map_err(MemoryError::from)?
+                                .is_some();
+                        if published {
+                            // Publication raced the first read: re-read through
+                            // the native door for its actual reply and sources.
+                            return oneiron::verbs::connector_call_status_read(&memory, input)
+                                .map(|status| (status, true));
+                        }
+                        return Ok((status, false));
+                    }
+                    Ok((status, true))
                 },
             )
             .await;
+            let (status, published) = match status {
+                Ok((status, published)) => (Ok(status), published),
+                Err(error) => (Err(error), false),
+            };
             match status {
                 Ok(ConnectorCallStatus::Settled {
                     reply:
@@ -117,13 +155,15 @@ async fn observe(
                 }) => {
                     // The worker retained its cleared live result before the
                     // receipt became visible. Durable rows still keep no body.
-                    let Some(result) = interest.as_ref().and_then(|interest| interest.result())
-                    else {
+                    if let Some(result) = interest.as_ref().and_then(|interest| interest.result()) {
+                        let mut sources = listed.clone();
+                        sources.extend(rows);
+                        delivered = Some(((*result).clone(), sources));
+                    } else if published {
                         return;
-                    };
-                    let mut sources = listed.clone();
-                    sources.extend(rows);
-                    delivered = Some(((*result).clone(), sources));
+                    }
+                    // A held/pending receipt can precede WaitDeliveries. Keep
+                    // this observer for the existing next poll, not a resend.
                 }
                 Ok(ConnectorCallStatus::Settled {
                     reply:

@@ -19,6 +19,13 @@ foreign and accepts it only when the session is idle. A busy session retains the
 result for another attempt. A successful attachment ends the observer. The
 session follows each call ref at most once, including after its observer ends.
 Terminal refusals and deliveries with no retained result attach nothing.
+For a held or pending call, a receipt-only row may be visible before the settler
+publishes its WaitDeliveries reply. That provisional receipt does not end the
+observer. After an authorized status read, it checks publication and re-reads
+through the native status door if publication raced the read, so both the body
+and its listed source rows come from the actual publication. An unpublished
+reply waits for the existing next poll. A published reply with no retained body
+is terminal as before.
 
 Before a generic connector call dispatches or reads a replayed call's row, the
 credential-bound blocking caller registers interest in its exact native call ref.
