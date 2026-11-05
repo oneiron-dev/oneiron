@@ -36,7 +36,7 @@ pub use self::execution::{
     execute_contribution_fork,
 };
 use self::execution::{ProgramStep, fork_evidence};
-use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
+use super::replay_capsule::{CapsuleRequest, CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
 use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
     ForkProvenance, ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,
@@ -76,6 +76,8 @@ pub enum ContributionReplayUnavailable {
     /// The capsule's or a fork's body is gone, withheld or no longer its
     /// hash, or its exposure no longer sits where it was captured.
     Unreadable,
+    /// An erase retired the capsule's request or a fork's response body.
+    Erased,
     /// No knowledge exposure of the target in a captured step: the skill's
     /// body, or the edge's source's, as the host put it in the run's task. A
     /// callable or result-only use, and an ancestor the run read through a
@@ -116,6 +118,7 @@ impl ContributionReplayUnavailable {
             Self::NoCapsule => "no_capsule",
             Self::CapsuleNotFinalized => "capsule_not_finalized",
             Self::Unreadable => "unreadable",
+            Self::Erased => "erased",
             Self::NoExposure => "no_exposure",
             Self::SiteObservation => "site_observation",
             Self::AmbiguousExposure => "ambiguous_exposure",
@@ -224,6 +227,8 @@ pub struct ContributionForkReceipt {
     /// The fork's answer, by its body ref.
     pub response: crate::compaction::output::OutputRef,
     pub response_path: String,
+    /// Whether restore explicitly marked this response body as erased.
+    pub response_erased: bool,
     /// The anchor both forks are scored against, by hash.
     pub anchor: [u8; 32],
     /// The frozen scoring identity both forks were scored under.
@@ -469,7 +474,13 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::SkillRevisionMoved));
         }
         let Some(with_skill) = capsule_request(self.vault, &capsule)? else {
-            return Ok(Err(Unavailable::Unreadable));
+            return Ok(Err(
+                if matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. }) {
+                    Unavailable::Erased
+                } else {
+                    Unavailable::Unreadable
+                },
+            ));
         };
         let Some(without_skill) = without_exposure(&with_skill, &slots) else {
             return Ok(Err(Unavailable::Unreadable));
@@ -605,6 +616,7 @@ impl Runner<'_> {
                 seed_unsupported: capsule.seed.is_none(),
                 response: response_ref,
                 response_path: path.clone(),
+                response_erased: false,
                 anchor: prepared.anchor_hash,
                 anchor_scoring: prepared.anchor_scoring,
                 scoring: ForkScoring::of(self.candidate),
@@ -631,7 +643,11 @@ impl Runner<'_> {
             return Ok(Ok(fork));
         }
         let Some(response) = fork_response(self.vault, prepared.capsule.run, &fork)? else {
-            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+            return Ok(Err(if fork.response_erased {
+                ContributionReplayUnavailable::Erased
+            } else {
+                ContributionReplayUnavailable::Unreadable
+            }));
         };
         let executed = match self.executed_view(prepared, &fork)? {
             Ok(executed) => executed,
