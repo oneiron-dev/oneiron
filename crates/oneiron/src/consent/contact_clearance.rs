@@ -40,6 +40,7 @@ use oneiron_authority::federation::Scope;
 use oneiron_authority::federation::scope_codec::{decode_scope_value, encode_scope_value};
 
 mod engine_offer;
+mod once_digest;
 mod standing;
 
 /// Pinned label of the typed contact-disclosure widen payload.
@@ -227,15 +228,7 @@ impl ContactDisclosureProposal {
     /// exactly this contact, Scope, channel, beneficiary and ask. The
     /// assembly that discloses under it recomputes and spends it.
     pub fn once_digest(&self, proposal_ref: &str) -> Result<EffectDigest> {
-        let mut payload = Vec::new();
-        rmpv::encode::write_value(&mut payload, &self.to_value()?).map_err(|_| invalid_offer())?;
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(ONCE_DIGEST_DOMAIN);
-        for field in [proposal_ref.as_bytes(), payload.as_slice()] {
-            hasher.update(&(field.len() as u64).to_be_bytes());
-            hasher.update(field);
-        }
-        Ok(EffectDigest::from_bytes(*hasher.finalize().as_bytes()))
+        once_digest::digest(self, proposal_ref)
     }
 }
 
