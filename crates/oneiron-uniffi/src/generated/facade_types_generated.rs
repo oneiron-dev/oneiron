@@ -18723,6 +18723,12 @@ pub struct ConnectorPackQualifyRequest {
     pub kit: ConnectorQualificationKit,
     #[serde(rename = "runtime", default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<PackRuntimeRecipe>,
+    #[serde(
+        rename = "activate_candidate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub activate_candidate: Option<bool>,
 }
 
 /// `oneiron::verbs::connector_pack::ConnectorPackAcceptRequest`.

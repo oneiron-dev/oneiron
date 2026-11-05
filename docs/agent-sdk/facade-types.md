@@ -2370,7 +2370,7 @@ export type QualificationPlan = { reads: QualificationCase[]; unanswerable: Qual
 /** `oneiron::connector_key::qualification::ConnectorQualificationKit` */
 export type ConnectorQualificationKit = { plan: QualificationPlan; sources?: Record<string, string>; claims?: Record<string, string[]>; effect_state_uri: string }
 /** `oneiron::verbs::connector_pack::ConnectorPackQualifyRequest` */
-export type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null }
+export type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null; activate_candidate?: boolean }
 /** `oneiron::verbs::connector_pack::ConnectorPackAcceptRequest` */
 export type ConnectorPackAcceptRequest = { basis: ConnectorPackBasis; rows?: Record<string, SlateDisposition>; facets?: string[] | null; all_manual?: boolean }
 /** `oneiron::verbs::connector_pack::ConnectorPackUpdateRequest` */

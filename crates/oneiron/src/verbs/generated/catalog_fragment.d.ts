@@ -1202,7 +1202,7 @@ declare namespace Sdk {
   type QualificationLimits = { tokens: number; latency_ms: number; budget_units: number };
   type QualificationPlan = { reads: QualificationCase[]; unanswerable: QualificationCase; injections: QualificationInjection[]; scope_escape: QualificationCase[]; write?: QualificationCase | null; timeout_retry?: QualificationCase | null; handled_result_types: string[]; limits: QualificationLimits };
   type ConnectorQualificationKit = { plan: QualificationPlan; sources?: Record<string, string>; claims?: Record<string, string[]>; effect_state_uri: string };
-  type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null };
+  type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null; activate_candidate?: boolean };
   type ConnectorPackAcceptRequest = { basis: ConnectorPackBasis; rows?: Record<string, SlateDisposition>; facets?: string[] | null; all_manual?: boolean };
   type ConnectorPackUpdateRequest = { prior: ConnectorPackBasis; source: SlatePackSource; protocol_revision: string; manifest: SlateManifest };
   type ConnectorPackDelta = { prior: ConnectorPackBasis; current: ConnectorPackView; changed: boolean; reask: string[]; carried: string[]; dropped: string[] };

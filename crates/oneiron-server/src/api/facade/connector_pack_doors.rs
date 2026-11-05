@@ -486,11 +486,18 @@ pub(crate) async fn vault_packs_connector_qualify(
                         advisory_accepted: true,
                         advisory: &advisory,
                     };
-                    // The existing put validates the engine-created qualification token and
-                    // persists the source-bound receipt. A caller cannot submit a grade.
+                    // Both paths validate the engine-created qualification token.
+                    // A caller chooses source provenance, never submits a grade.
                     reviewed(server, &input.basis)?;
-                    let installed =
-                        vault.put_qualified_pack(owner, source.files().to_vec(), &qualifier)?;
+                    let installed = if input.activate_candidate {
+                        vault.activate_qualified_connector_pack_candidate(
+                            owner,
+                            id(&input.basis.source.source_ref)?,
+                            &qualifier,
+                        )?
+                    } else {
+                        vault.put_qualified_pack(owner, source.files().to_vec(), &qualifier)?
+                    };
                     if !matches!(
                         installed,
                         oneiron::skill_hub::pack_catalog::PackInstallDisposition::Installed(_)
