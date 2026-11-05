@@ -38,7 +38,11 @@ After the one payload flush, the accepted actor or restore writer joins the exac
 owned source subsets to that capture. Before releasing references, it inventories
 all native chain and replicated-claim hashes, the actual ASSET descriptors, and
 current and remembered governed body instances. It stages source-attributed body
-erase notes, then marks the artifact hard-erased before one native full purge.
+erase notes, then marks a newly selected artifact hard-erased before one native
+full purge. If that artifact's original native purge is already running in the
+same writer, its before-release inventory is retained and the family joins its
+actual completion instead of purging it twice. The original caller's marker
+order stays unchanged. Transaction-local context is cleared on success and error.
 Historical artifact versions, signed claims, shared ASSET retention, statutory
 holds and custody retirement retain their existing rules. A hold on an artifact,
 its ASSET or a retained version claim keeps the family whole and owed.
