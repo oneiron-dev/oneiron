@@ -340,9 +340,10 @@ impl AgentDispatcher<'_> {
     ///
     /// # Errors
     ///
-    /// `continuation_unfunded` when the failed scope has no parent, its
-    /// parent is gone or closed with no open ancestor, the reservation is
-    /// refused, or the join no longer holds; storage errors.
+    /// `continuation_unfunded` when the failed ordinary scope has no parent,
+    /// its funding scope is gone or closed with no open ancestor (except a
+    /// parentless pinned reservation), the reservation is refused, or the
+    /// join no longer holds; storage errors.
     fn renew_continuation_spend_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -369,7 +370,11 @@ impl AgentDispatcher<'_> {
                 .ok_or_else(|| refused(CONTINUATION_UNFUNDED))?
         };
         let funded = match SCOPE.get(&self.vault.store, txn, &parent.0)? {
-            Some(row) if reservation_bound || row.state == SpendState::Open => true,
+            Some(row)
+                if row.state == SpendState::Open || (reservation_bound && row.parent.is_none()) =>
+            {
+                true
+            }
             // FIX 10541: a child keeps a closed parent, which books at its
             // nearest open ancestor; one with none open is unfunded.
             Some(_) => self.effective_scope_in_txn(txn, parent)?.state == SpendState::Open,

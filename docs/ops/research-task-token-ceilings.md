@@ -19,10 +19,12 @@ still engineering work; this change does not claim to implement it.
 
 A closed task scope remains a boundary for its descendants. Continuations in that
 reservation's scope family keep the original boundary in their ancestry, rather
-than receiving the same RSI allowance again. Ordinary continuations outside this
-new reservation class keep their existing fresh-scope behavior. Only the unused
-**actual hold** is released when a task ends; an unfunded ceiling is not money to
-refund. Home handoffs carry the exact ceiling in spend-tree schema 5.
+than receiving the same RSI allowance again. A closed parented scope needs an open
+funding ancestor: its released hold is not fresh funding. Only a parentless pinned
+reservation can fund a continuation from its own closed scope. Ordinary
+continuations outside this new reservation class keep their existing fresh-scope
+behavior. Only the unused **actual hold** is released when a task ends; an unfunded
+ceiling is not money to refund. Home handoffs carry the exact ceiling in spend-tree schema 5.
 
 Native guard charges already incurred are always recorded whole, even past the
 ceiling. The ceiling limits future room; it never truncates history. These native
