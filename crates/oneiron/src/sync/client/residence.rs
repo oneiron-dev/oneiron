@@ -32,6 +32,7 @@ pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
 pub(crate) use media_vectors::request_media_vectors;
+pub use search::ResidenceSearchPage;
 
 use serde::Deserialize;
 
