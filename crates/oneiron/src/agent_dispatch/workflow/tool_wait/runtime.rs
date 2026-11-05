@@ -3,8 +3,9 @@
 use heed::{RoTxn, RwTxn};
 
 use super::{
-    CheckpointRow, TABLE, WorkflowToolProgress, WorkflowToolTranscript, check_progress_in_txn,
-    fence, identity_in_txn, invalid, key, prepare, put_in_txn, release_in_txn, transcript_in_txn,
+    TABLE, WorkflowToolProgress, WorkflowToolTranscript, check_progress_in_txn, fence,
+    identity_in_txn, invalid, key, prepare, put_in_txn, release_in_txn,
+    session::{LocatedCheckpoint, locate_in_txn},
 };
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{
@@ -23,7 +24,11 @@ pub struct WorkflowToolContinuation {
     pub progress: WorkflowToolProgress,
 }
 
-fn leased_row(vault: &Vault, txn: &RoTxn<'_>, leased: &AttemptRecord) -> Result<AttemptRecord> {
+pub(super) fn leased_row(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    leased: &AttemptRecord,
+) -> Result<AttemptRecord> {
     let actual = AttemptQueue::new(vault)
         .get_in_txn(txn, leased.id)?
         .ok_or_else(|| invalid("workflow checkpoint leaf is missing"))?;
@@ -41,9 +46,10 @@ fn checked_content<'a>(
     vault: &Vault,
     txn: &RoTxn<'_>,
     actual: &AttemptRecord,
-    row: &'a CheckpointRow,
+    located: &'a LocatedCheckpoint<'_>,
 ) -> Result<&'a super::CheckpointContent> {
-    if row.attempt != actual.id || row.generation != actual.attempt_count {
+    let row = &located.row;
+    if !located.generation_matches(actual) {
         return Err(invalid("workflow checkpoint generation is stale"));
     }
     fence::require(&vault.store, txn, actual.id, actual.attempt_count)?;
@@ -77,24 +83,23 @@ impl AgentDispatcher<'_> {
     ) -> Result<Option<WorkflowToolContinuation>> {
         self.vault.store.authorization_now()?;
         let _custody = self.vault.store.gate_custody_read_guard()?;
-        let k = key(leased.id)?;
         let expected = {
             let txn = self.vault.store.env.read_txn()?;
-            TABLE
-                .get(&self.vault.store, &txn, &k)?
-                .and_then(|row| row.content.map(|content| content.body))
+            let actual = leased_row(self.vault, &txn, leased)?;
+            locate_in_txn(self.vault, &txn, &actual)?
+                .and_then(|located| located.row.content.map(|content| content.body))
         };
         let _pin = expected.map(|body| self.vault.pin_result_body(body.hash));
         let txn = self.vault.store.env.read_txn()?;
         let actual = leased_row(self.vault, &txn, leased)?;
-        let Some(row) = TABLE.get(&self.vault.store, &txn, &k)? else {
+        let Some(located) = locate_in_txn(self.vault, &txn, &actual)? else {
             return if expected.is_none() && !fence::check(&self.vault.store, &txn, &actual)? {
                 Ok(None)
             } else {
                 Err(invalid("workflow checkpoint changed during its read"))
             };
         };
-        let content = checked_content(self.vault, &txn, &actual, &row)?;
+        let content = checked_content(self.vault, &txn, &actual, &located)?;
         if !self.workflow_tool_sources_readable_in_txn(
             &txn,
             &actual,
@@ -105,7 +110,8 @@ impl AgentDispatcher<'_> {
         if expected != Some(content.body) {
             return Err(invalid("workflow checkpoint body changed during its read"));
         }
-        let transcript = transcript_in_txn(self.vault, &txn, &row)?
+        let transcript = located
+            .transcript_in_txn(self.vault, &txn)?
             .ok_or_else(|| invalid("workflow checkpoint body is unavailable"))?;
         Ok(Some(WorkflowToolContinuation {
             transcript,
@@ -124,7 +130,8 @@ impl AgentDispatcher<'_> {
         if progress.wait.is_some() {
             return Err(invalid("a pending workflow tool must park its leaf"));
         }
-        self.write_workflow_tool_progress(leased, transcript, progress, None)
+        self.workflow_tool_checkpoint_writer(leased)?
+            .save(transcript, progress, None)
     }
 
     /// Publish the full transcript and its exact invocation pause in one
@@ -137,26 +144,28 @@ impl AgentDispatcher<'_> {
         progress: WorkflowToolProgress,
         now: u64,
     ) -> Result<()> {
-        let invocation = progress
-            .wait
-            .as_ref()
-            .ok_or_else(|| invalid("workflow tool park has no pending invocation"))?
-            .invocation;
-        self.write_workflow_tool_progress(leased, transcript, progress, Some((invocation, now)))
+        if progress.wait.is_none() {
+            return Err(invalid("workflow tool park has no pending invocation"));
+        }
+        self.workflow_tool_checkpoint_writer(leased)?
+            .save(transcript, progress, Some(now))
     }
 
-    fn write_workflow_tool_progress(
+    pub(super) fn write_workflow_tool_progress(
         &self,
         leased: &AttemptRecord,
         transcript: &WorkflowToolTranscript,
         progress: WorkflowToolProgress,
-        park: Option<([u8; 16], u64)>,
+        park: Option<u64>,
     ) -> Result<()> {
+        let progress_wait = progress.wait.as_ref().map(|wait| wait.invocation);
         let prepared = prepare(self.vault, transcript)?;
         let mut txn = self.vault.store.env.write_txn()?;
         let actual = leased_row(self.vault, &txn, leased)?;
         put_in_txn(self.vault, &mut txn, &actual, progress, prepared)?;
-        if let Some((invocation, now)) = park {
+        if let Some(now) = park {
+            let invocation =
+                progress_wait.ok_or_else(|| invalid("workflow tool park has no wait"))?;
             AttemptQueue::new(self.vault).hold_for_hook_in_txn(
                 &mut txn,
                 HoldAttemptForHook {
@@ -201,10 +210,10 @@ impl AgentDispatcher<'_> {
                 self.vault.store.notify_notification_updates();
                 return Ok(false);
             }
-            let Some(row) = TABLE.get(&self.vault.store, &txn, &key(active.id)?)? else {
+            let Some(located) = locate_in_txn(self.vault, &txn, &active)? else {
                 return Ok(false);
             };
-            let Some(content) = &row.content else {
+            let Some(content) = &located.row.content else {
                 return Ok(false);
             };
             let Some(wait) = &content.progress.wait else {
@@ -213,10 +222,10 @@ impl AgentDispatcher<'_> {
             if !active.hook_wait_for(wait.invocation) {
                 return Ok(false);
             }
-            checked_content(self.vault, &txn, &active, &row)?;
+            checked_content(self.vault, &txn, &active, &located)?;
             (
                 active.id,
-                row.generation,
+                active.attempt_count,
                 content.actor,
                 content.actor_class,
                 wait.clone(),
@@ -234,12 +243,17 @@ impl AgentDispatcher<'_> {
             return Ok(true);
         }
         let mut txn = self.vault.store.env.write_txn()?;
-        let Some(row) = TABLE.get(&self.vault.store, &txn, &key(attempt)?)? else {
+        let Some(actual) = queue.get_in_txn(&txn, attempt)? else {
             return Ok(false);
         };
+        let Some(located) = locate_in_txn(self.vault, &txn, &actual)? else {
+            return Ok(false);
+        };
+        let row = &located.row;
         // Recheck the exact metadata after observing the ask outside the
         // writer. The boundary, not this hint, settles any answer race.
-        if row.generation != generation
+        if actual.attempt_count != generation
+            || !located.generation_matches(&actual)
             || row
                 .content
                 .as_ref()
@@ -267,22 +281,25 @@ pub(crate) fn adopt_claim_in_txn(
     claimed: &AttemptRecord,
 ) -> Result<()> {
     let k = key(before.id)?;
-    let Some(mut row) = TABLE.get(&vault.store, txn, &k)? else {
+    let Some(located) = locate_in_txn(vault, txn, before)? else {
         return if fence::check(&vault.store, txn, before)? {
             Err(invalid("workflow checkpoint payload is unavailable"))
         } else {
             Ok(())
         };
     };
-    checked_content(vault, txn, before, &row)?;
+    checked_content(vault, txn, before, &located)?;
     if claimed.id != before.id
         || before.attempt_count.checked_add(1) != Some(claimed.attempt_count)
         || claimed.state != AttemptState::Leased
     {
         return Err(invalid("workflow checkpoint claim has foreign generation"));
     }
-    row.generation = claimed.attempt_count;
-    TABLE.put(vault, txn, &k, &row)?;
+    if located.session.is_none() {
+        let mut row = located.row;
+        row.generation = claimed.attempt_count;
+        TABLE.put(vault, txn, &k, &row)?;
+    }
     fence::put(&vault.store, txn, claimed)
 }
 
@@ -294,7 +311,7 @@ pub(crate) fn clear_in_txn(
     leased: &AttemptRecord,
 ) -> Result<()> {
     let k = key(leased.id)?;
-    let Some(mut row) = TABLE.get(&vault.store, txn, &k)? else {
+    let Some(located) = locate_in_txn(vault, txn, leased)? else {
         return if fence::check(&vault.store, txn, leased)? {
             Err(invalid("workflow checkpoint payload is unavailable"))
         } else {
@@ -302,12 +319,19 @@ pub(crate) fn clear_in_txn(
         };
     };
     let actual = leased_row(vault, txn, leased)?;
-    if row.attempt != actual.id || row.generation != actual.attempt_count {
+    if !located.generation_matches(&actual) {
         return Err(invalid(
             "workflow checkpoint completion has foreign generation",
         ));
     }
     fence::require(&vault.store, txn, actual.id, actual.attempt_count)?;
+    if located.session.is_some() {
+        // No canonical occurrence exists for session bytes. The terminal
+        // queue transition in this writer ends access; native close owns
+        // the overlay rows and spill cleanup, with no durable session facts.
+        return Ok(());
+    }
+    let mut row = located.row;
     if let Some(content) = row.content.take() {
         release_in_txn(&vault.store, txn, &content)?;
         row.retained = Some(content.binding());
@@ -331,7 +355,7 @@ pub(crate) fn requeue_failure_in_txn(
     source: &AttemptRecord,
     input: &RetryAttempt,
 ) -> Result<Option<AttemptRecord>> {
-    let Some(row) = TABLE.get(&vault.store, txn, &key(source.id)?)? else {
+    let Some(located) = locate_in_txn(vault, txn, source)? else {
         return if fence::check(&vault.store, txn, source)? {
             Err(invalid("workflow checkpoint payload is unavailable"))
         } else {
@@ -339,9 +363,10 @@ pub(crate) fn requeue_failure_in_txn(
         };
     };
     let actual = leased_row(vault, txn, source)?;
-    if row.attempt != actual.id || row.generation != actual.attempt_count {
+    if !located.generation_matches(&actual) {
         return Err(invalid("workflow checkpoint retry has foreign generation"));
     }
+    let row = &located.row;
     if input.id != actual.id
         || input.attempt_count != actual.attempt_count
         || actual.lease_owner.as_deref() != Some(input.lease_owner.as_str())
@@ -351,7 +376,7 @@ pub(crate) fn requeue_failure_in_txn(
     // Erasure can race a paid provider failure. Requeue the fenced leaf,
     // never its body; the next pump cancels its erased form before claim.
     if row.content.is_some()
-        && checked_content(vault, txn, &actual, &row)?
+        && checked_content(vault, txn, &actual, &located)?
             .progress
             .wait
             .is_some()
@@ -384,10 +409,10 @@ fn failure_count_in_txn(
     txn: &RoTxn<'_>,
     actual: &AttemptRecord,
 ) -> Result<Option<usize>> {
-    let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
+    let Some(located) = locate_in_txn(vault, txn, actual)? else {
         return Ok(fence::check(&vault.store, txn, actual)?.then_some(actual.history.len()));
     };
-    if row.attempt != actual.id || row.generation != actual.attempt_count {
+    if !located.generation_matches(actual) {
         return Err(invalid("workflow checkpoint failure history is stale"));
     }
     Ok(Some(actual.history.len()))
@@ -422,15 +447,16 @@ pub(crate) fn advance_saved_retry_in_txn(
     if actual.state != AttemptState::Scheduled || actual.history.is_empty() {
         return Ok(false);
     }
-    let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
+    let Some(located) = locate_in_txn(vault, txn, actual)? else {
         return Ok(false);
     };
+    let row = &located.row;
     // The workflow pump settles erased rows; one such row must not abort
     // the provider's recovery pass for unrelated retained retries.
     if row.content.is_none() {
         return Ok(false);
     }
-    let content = checked_content(vault, txn, actual, &row)?;
+    let content = checked_content(vault, txn, actual, &located)?;
     if content.progress.wait.is_some() {
         return Ok(false);
     }

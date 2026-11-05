@@ -23,12 +23,14 @@ mod erased;
 mod fence;
 mod lifetime;
 mod runtime;
+mod session;
 pub(crate) use erased::settle_erased_in_txn;
 pub(crate) use lifetime::{erase_actor_in_txn, erase_source_in_txn, settle_payloads_in_txn};
 pub use runtime::WorkflowToolContinuation;
 pub(crate) use runtime::{
     adopt_claim_in_txn, advance_saved_retry_in_txn, clear_in_txn, requeue_failure_in_txn,
 };
+pub use session::WorkflowToolCheckpointWriter;
 
 const TABLE: SideTable<EntityId, CheckpointRow, Named> =
     SideTable::new(&side_table::WORKFLOW_TOOL_CHECKPOINT);
@@ -229,6 +231,13 @@ pub(crate) fn put_in_txn(
         return Err(invalid("workflow checkpoint is not a running leaf"));
     }
     let (actor, room) = identity_in_txn(vault, txn, &actual)?;
+    if progress.no_record_at_arrival
+        || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room))
+    {
+        return Err(invalid(
+            "workflow checkpoint requires its live no-record session",
+        ));
+    }
     check_progress_in_txn(vault, txn, &actual, actor, &progress)?;
     let k = key(actual.id)?;
     let prior = TABLE.get(&vault.store, txn, &k)?;
@@ -275,34 +284,7 @@ pub(crate) fn put_in_txn(
     };
     let transcript: WorkflowToolTranscript = serde_json::from_slice(&bytes)
         .map_err(|_| invalid("admitted workflow transcript does not decode"))?;
-    let assistant = transcript
-        .request
-        .messages
-        .get(progress.cursor.assistant_message)
-        .filter(|message| message.role == crate::LlmMessageRole::Assistant)
-        .ok_or_else(|| invalid("workflow checkpoint tool message is missing"))?;
-    let calls = assistant
-        .content
-        .iter()
-        .filter(|part| matches!(part, ContentPart::ToolCall { .. }))
-        .count();
-    if progress.cursor.tool_index > calls
-        || (progress.wait.is_some() && pending_call(&transcript, &progress.cursor).is_none())
-    {
-        return Err(invalid("workflow checkpoint tool cursor is invalid"));
-    }
-    if transcript.answer.as_ref().is_some_and(|answer| {
-        progress.wait.is_some()
-            || progress.cursor.tool_index != calls
-            || answer
-                .response
-                .message
-                .content
-                .iter()
-                .any(|part| matches!(part, ContentPart::ToolCall { .. }))
-    }) {
-        return Err(invalid("workflow checkpoint answer has unfinished tools"));
-    }
+    validate_transcript(&transcript, &progress)?;
     // The one dedicated owner holds this checkpoint's body only. Release
     // its previous occurrence before replacing it, in this same writer.
     if let Some(content) = prior.and_then(|row| row.content) {
@@ -410,6 +392,41 @@ fn check_progress_in_txn(
             != progress.spend_scope
     {
         return Err(invalid("workflow checkpoint meter has foreign identity"));
+    }
+    Ok(())
+}
+
+fn validate_transcript(
+    transcript: &WorkflowToolTranscript,
+    progress: &WorkflowToolProgress,
+) -> Result<()> {
+    let assistant = transcript
+        .request
+        .messages
+        .get(progress.cursor.assistant_message)
+        .filter(|message| message.role == crate::LlmMessageRole::Assistant)
+        .ok_or_else(|| invalid("workflow checkpoint tool message is missing"))?;
+    let calls = assistant
+        .content
+        .iter()
+        .filter(|part| matches!(part, ContentPart::ToolCall { .. }))
+        .count();
+    if progress.cursor.tool_index > calls
+        || (progress.wait.is_some() && pending_call(&transcript, &progress.cursor).is_none())
+    {
+        return Err(invalid("workflow checkpoint tool cursor is invalid"));
+    }
+    if transcript.answer.as_ref().is_some_and(|answer| {
+        progress.wait.is_some()
+            || progress.cursor.tool_index != calls
+            || answer
+                .response
+                .message
+                .content
+                .iter()
+                .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    }) {
+        return Err(invalid("workflow checkpoint answer has unfinished tools"));
     }
     Ok(())
 }

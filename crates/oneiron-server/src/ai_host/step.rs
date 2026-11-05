@@ -498,6 +498,11 @@ impl StepRunner {
             sources,
             response_format,
         } = input;
+        let mut checkpoints = if workflow.is_some() {
+            Some(AgentDispatcher::new(vault).workflow_tool_checkpoint_writer(attempt)?)
+        } else {
+            None
+        };
         if let Some(saved) = &continuation
             && let Some(answer) = &saved.transcript.answer
         {
@@ -913,11 +918,13 @@ impl StepRunner {
                     route: binding.route.clone(),
                 }),
             };
-            if progress.wait.is_some() {
-                dispatcher.park_workflow_tool(attempt, &transcript, progress, super::unix_now())?;
-            } else {
-                dispatcher.save_workflow_tool_progress(attempt, &transcript, progress)?;
-            }
+            let park_at = progress.wait.is_some().then(super::unix_now);
+            checkpoints
+                .as_mut()
+                .ok_or_else(|| {
+                    Error::InvalidConfig("workflow checkpoint route is missing".to_owned())
+                })?
+                .save(&transcript, progress, park_at)?;
             saved_tool_state = true;
             Ok(())
         };

@@ -2,7 +2,7 @@
 
 use heed::RwTxn;
 
-use super::{TABLE, fence, invalid, key};
+use super::{fence, invalid, session::locate_in_txn};
 use crate::attempt_queue::{
     AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, InterveneAttempt,
 };
@@ -28,17 +28,27 @@ pub(crate) fn settle_erased_in_txn(
     if !eligible {
         return Ok(false);
     }
-    let row = TABLE.get(&vault.store, txn, &key(active.id)?)?;
+    let located = locate_in_txn(vault, txn, active)?;
     let fenced = fence::check(&vault.store, txn, active)?;
-    let note = match row {
-        Some(row) => {
-            if row.attempt != active.id || row.generation != active.attempt_count || !fenced {
+    let note = match located {
+        Some(located) => {
+            if !located.generation_matches(active) || !fenced {
                 return Err(invalid(
                     "workflow checkpoint settlement has foreign generation",
                 ));
             }
+            let row = &located.row;
             if let Some(content) = &row.content {
-                if crate::agent_dispatch::AgentDispatcher::new(vault)
+                let mut gone = false;
+                for source in std::iter::once(content.actor)
+                    .chain(content.progress.known_sources.iter().copied())
+                    .chain(content.room)
+                {
+                    gone |= crate::ports::owner_gone_in_txn(&vault.store, txn, &source)?;
+                }
+                if gone {
+                    UNAVAILABLE_CHECKPOINT
+                } else if crate::agent_dispatch::AgentDispatcher::new(vault)
                     .workflow_tool_sources_readable_in_txn(
                         txn,
                         active,
@@ -46,8 +56,9 @@ pub(crate) fn settle_erased_in_txn(
                     )?
                 {
                     return Ok(false);
+                } else {
+                    UNREADABLE_CHECKPOINT
                 }
-                UNREADABLE_CHECKPOINT
             } else if row.retained.is_some() {
                 UNAVAILABLE_CHECKPOINT
             } else {
