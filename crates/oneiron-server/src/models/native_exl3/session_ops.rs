@@ -214,6 +214,63 @@ pub(in crate::models) async fn import(
     Ok(answer)
 }
 
+/// Imports a kept snapshot under the restoring turn's live dispatch conditions.
+pub(in crate::models) async fn import_released(
+    socket: &Path,
+    epoch: &str,
+    body: &SessionImport,
+    snapshot: &SnapshotRegion,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+) -> Result<SessionImported, ReleasedOpFault> {
+    if !lease.has_dispatch_release() {
+        return import(socket, epoch, body, snapshot, worker)
+            .await
+            .map_err(ReleasedOpFault::Op);
+    }
+    let op = SessionOp::Import;
+    if snapshot.len() != body.snapshot_bytes {
+        return Err(ReleasedOpFault::Op(cut(
+            op,
+            &"the region is not the snapshot the body names",
+        )));
+    }
+    let request = serde_json::to_value(body).map_err(|e| ReleasedOpFault::Op(cut(op, &e)))?;
+    let mut channel = Channel::connect(socket)
+        .await
+        .map_err(|e| ReleasedOpFault::Op(cut(op, &e)))?;
+    let frame = channel
+        .exchange_released(
+            op.wire_name(),
+            Some(epoch),
+            request,
+            snapshot.outbound(),
+            lease,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::ReleasedExchangeError::Transport(error) => {
+                ReleasedOpFault::Op(cut(op, &error))
+            }
+            super::transport::ReleasedExchangeError::Release(error) => {
+                ReleasedOpFault::Release(error)
+            }
+        })?;
+    let answer: SessionImported = answer_of(op, epoch, &frame).map_err(ReleasedOpFault::Op)?;
+    if answer.staged != body.checkpoint {
+        return Err(ReleasedOpFault::Op(cut(
+            op,
+            &"the answer staged another checkpoint",
+        )));
+    }
+    if answer.imported_bytes != body.snapshot_bytes
+        || answer.snapshot_sha256 != body.snapshot_sha256
+    {
+        return Err(ReleasedOpFault::Op(cut(op, &"the answer read other bytes")));
+    }
+    report(worker, &frame.body);
+    Ok(answer)
+}
 /// The answer `frame` gives `op`: its own frame, from the incarnation
 /// `epoch` names, read; or the worker's refusal.
 fn answer_of<R: DeserializeOwned>(

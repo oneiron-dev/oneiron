@@ -104,8 +104,9 @@ pub(in crate::models) async fn open_turn(
         manifest: manifest.digest(),
         path,
         admitted,
+        lease,
     };
-    let Some(opened) = session(&worker_id, &place, &key, ops, &turn).await else {
+    let Some(opened) = session(&worker_id, &place, &key, ops, &turn).await? else {
         return Ok(None);
     };
     let binding = key.binding();
@@ -247,6 +248,7 @@ struct Turn<'a> {
     manifest: &'a ManifestDigest,
     path: &'a [MessageStamp],
     admitted: Admitted,
+    lease: &'a oneiron::BudgetLease,
 }
 
 /// The session `key` names on `place`, reused when it still serves (and,
@@ -260,7 +262,7 @@ async fn session(
     key: &SessionKey,
     ops: Ops,
     turn: &Turn<'_>,
-) -> Option<Opened> {
+) -> oneiron::LlmResult<Option<Opened>> {
     let binding = key.binding();
     let (found, retired, restoring) = {
         let mut workers = registry::lock();
@@ -310,9 +312,9 @@ async fn session(
         registry::release_later(target, at, reason);
     }
     if restoring {
-        return None;
+        return Ok(None);
     }
-    match found {
+    Ok(match found {
         Some((opened, residency)) => {
             resident(worker_id, place, &binding, opened, residency, ops.restore).await
         }
@@ -325,8 +327,9 @@ async fn session(
                     turn.manifest,
                     turn.path,
                     turn.admitted,
+                    turn.lease,
                 )
-                .await
+                .await?
             } else {
                 None
             };
@@ -339,7 +342,7 @@ async fn session(
                 None => create(worker_id, place, key, turn.admitted).await,
             }
         }
-    }
+    })
 }
 
 /// `opened` as it may fork now: as it is when its checkpoint is resident or

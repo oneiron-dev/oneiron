@@ -36,6 +36,7 @@ pub(super) use transport::next_request_id;
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
 pub(super) use session_ops::{export as session_export, import as session_import};
+pub(super) use session_ops::import_released as session_import_released;
 // The launch tie, shared with the HTTP routes (FIX 9296).
 pub(super) use super::exl3_evidence::Tie;
 
