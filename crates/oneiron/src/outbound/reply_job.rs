@@ -522,13 +522,14 @@ pub(crate) fn erase_connector_reply_job_payload(
 /// # Errors
 /// Storage errors.
 pub(crate) fn erase_connector_reply_results_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     attempts: &[AttemptId],
 ) -> Result<()> {
+    let store = write.store;
     for attempt in attempts {
         let artifact = connector_reply_result_id(*attempt)?;
-        erase_connector_reply_result_artifact_in_txn(store, txn, &artifact, true)?;
+        erase_connector_reply_result_artifact_in_txn(write, txn, &artifact, true)?;
     }
     Ok(())
 }
@@ -545,11 +546,12 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 /// same transaction (REVIEW-4385 P1), so replicas cannot restore it. Returns
 /// whether the tear ran; a hold-kept body stages nothing (REVIEW-4385 P1).
 fn erase_connector_reply_result_artifact_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     artifact: &EntityId,
     follow_body_ref: bool,
 ) -> Result<bool> {
+    let store = write.store;
     let raw = EntityStoreRead::port_entity_raw(store, txn, artifact)?;
     if raw
         .as_deref()
@@ -618,9 +620,9 @@ fn erase_connector_reply_result_artifact_in_txn(
         }
     }
     crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
-        store, txn, artifact, true,
+        write, txn, artifact, true,
     )?;
-    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, artifact)?;
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, artifact)?;
     crate::ppr::invalidate_ppr_for_delete(store, txn, artifact, &neighbors)?;
     if graph {
         crate::store::graph_version::increment_graph_version(store, txn)?;
@@ -629,7 +631,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if let Some(body) = body_artifact {
-        erase_connector_reply_body_artifact_in_txn(store, txn, &body)?;
+        erase_connector_reply_body_artifact_in_txn(write, txn, &body)?;
     }
     Ok(true)
 }
@@ -685,15 +687,16 @@ fn is_connector_reply_body_in_txn(
 /// A newly reached body uses the same whole tear and publishes its tombstone
 /// only when that tear ran. A hold keeps its bytes and stages nothing.
 fn erase_connector_reply_body_artifact_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     body: &EntityId,
 ) -> Result<bool> {
+    let store = write.store;
     let learned_at = EntityStoreRead::port_entity_raw(store, txn, body)?
         .as_deref()
         .and_then(crate::batch::EntityMetadataHeader::parse)
         .map(|header| header.learned_at);
-    let erased = erase_connector_reply_result_artifact_in_txn(store, txn, body, false)?;
+    let erased = erase_connector_reply_result_artifact_in_txn(write, txn, body, false)?;
     if erased && let Some(learned_at) = learned_at {
         let value = crate::deletion::TombstoneValueV2 {
             reason: crate::deletion::TombstoneReason::UserHardDelete,
@@ -710,10 +713,11 @@ fn erase_connector_reply_body_artifact_in_txn(
 /// The bodies an erased participant's frozen events produced, even when no
 /// job or result ever named them. Stored provenance filters run-key collisions.
 pub(crate) fn erase_connector_reply_bodies_for_events_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     event_ids: &BTreeSet<String>,
 ) -> Result<()> {
+    let store = write.store;
     for event_id in event_ids {
         let source = crate::blob_artifact::BornFromSource::AgentRun(format!(
             "{}{event_id}",
@@ -721,7 +725,7 @@ pub(crate) fn erase_connector_reply_bodies_for_events_in_txn(
         ));
         for artifact in crate::blob_artifact::artifacts_born_from_in_txn(store, txn, &source)? {
             if is_connector_reply_body_in_txn(store, txn, &artifact)? {
-                erase_connector_reply_body_artifact_in_txn(store, txn, &artifact)?;
+                erase_connector_reply_body_artifact_in_txn(write, txn, &artifact)?;
             }
         }
     }
@@ -747,7 +751,11 @@ pub(crate) fn erase_connector_reply_bodies_by_authors_in_txn(
             && crate::blob_artifact::artifact_author_in_txn(vault, txn, &artifact)?
                 .is_some_and(|author| authors.contains(&author))
         {
-            erase_connector_reply_body_artifact_in_txn(&vault.store, txn, &artifact)?;
+            erase_connector_reply_body_artifact_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &artifact,
+            )?;
         }
     }
     Ok(())
