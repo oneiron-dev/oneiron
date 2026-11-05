@@ -31,6 +31,10 @@ use oneiron_llm_anthropic::{
     AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,
     parse_anthropic_messages_response,
 };
+use oneiron_llm_gemini::{
+    build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
+    parse_response as parse_gemini_chat_response,
+};
 use oneiron_llm_openai::{
     OpenAiCompatConfig, build_openai_chat_request, classify_openai_status,
     parse_openai_chat_response,
@@ -99,6 +103,7 @@ impl KeyDoor for VaultKeyDoor {
 enum Wire {
     OpenAi(OpenAiCompatConfig),
     Anthropic(AnthropicMessagesConfig),
+    Gemini,
 }
 
 /// One `key_secret` provider's backend: its wire adapter's request builder,
@@ -202,7 +207,7 @@ pub(super) fn broker_backend(
         .ok_or_else(|| anyhow::anyhow!("this server has no vault custody door"))?;
     let client = site.client(Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN)?;
     let url = reqwest::Url::parse(&provider.base_url)?;
-    let prefix = url.path().trim_end_matches('/').to_owned();
+    let mut prefix = url.path().trim_end_matches('/').to_owned();
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
         .into_iter()
         .map(|mut entry| {
@@ -224,7 +229,12 @@ pub(super) fn broker_backend(
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
             anyhow::bail!("a speech provider sends no model call")
         }
-        ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
+        ProviderKind::Gemini => {
+            // The adapter owns the versioned paths: the base is the API's origin.
+            prefix = prefix.strip_suffix("/v1beta").unwrap_or(&prefix).to_owned();
+            drop(rows);
+            Wire::Gemini
+        }
         ProviderKind::Soniox => anyhow::bail!("a soniox provider hears live audio only"),
     };
     Ok(BrokerBackend {
@@ -267,8 +277,23 @@ impl BrokerBackend {
                 let wire = build_anthropic_messages_request(config, request, false)?;
                 (Shape::AnthropicMessages, wire.path, wire.headers, wire.body)
             }
+            Wire::Gemini => {
+                let entry = self
+                    .catalog
+                    .get(&request.model)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                let wire = build_gemini_chat_request(entry, request, false)?;
+                (Shape::GeminiGenerate, wire.path, BTreeMap::new(), wire.body)
+            }
         };
-        self.cap.apply(&mut body);
+        match &self.wire {
+            Wire::Gemini => {
+                if let Some(generation) = body.get_mut("generationConfig") {
+                    self.cap.apply(generation);
+                }
+            }
+            Wire::OpenAi(_) | Wire::Anthropic(_) => self.cap.apply(&mut body),
+        }
         super::openai::send_format(self.response_format, &mut body);
         let wire_model = self
             .catalog
@@ -335,6 +360,7 @@ impl BrokerBackend {
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
+                Wire::Gemini => classify_gemini_status(status, &body),
             });
         }
         let mut body = parsed.map_err(|_| LlmError::from(RetryableLlmError::ServerError))?;
@@ -358,6 +384,11 @@ impl BrokerBackend {
             Wire::Anthropic(_) => {
                 super::anthropic::carry_served_model(&mut body);
                 parse_anthropic_messages_response(&body)
+            }
+            Wire::Gemini => {
+                let mut answer = parse_gemini_chat_response(body)?;
+                answer.usage.bind_inference_model(model);
+                Ok(answer)
             }
         }
     }
