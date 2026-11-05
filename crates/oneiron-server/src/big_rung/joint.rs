@@ -12,7 +12,7 @@ use oneiron::LlmCapability;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionCall, DecisionQuestion, PairedAnswer, ProviderDecision,
 };
-use oneiron::llm::joint_marginals;
+use oneiron::llm::{first_token_alternatives, joint_marginals};
 use serde_json::{Value, json};
 
 use super::{BigModel, ResolvedDecisionRoute};
@@ -101,21 +101,12 @@ impl JointRead {
         contract: &AnswerContract,
         scores: Option<&Value>,
     ) -> Option<ProviderDecision> {
-        let alternatives = scores?
-            .get("content")?
-            .as_array()?
-            .first()?
-            .get("top_logprobs")?
-            .as_array()?;
+        let alternatives = first_token_alternatives(scores?)?;
         let letters: Vec<char> = self.letters().collect();
         let mut weights = vec![0.0_f64; letters.len()];
         for alternative in alternatives {
-            let (Some(token), Some(logprob)) = (
-                alternative.get("token").and_then(Value::as_str),
-                alternative.get("logprob").and_then(Value::as_f64),
-            ) else {
-                continue;
-            };
+            let token = alternative.token;
+            let logprob = alternative.logprob;
             let mut chars = token.trim().chars();
             let (Some(letter), None) = (chars.next(), chars.next()) else {
                 continue;
