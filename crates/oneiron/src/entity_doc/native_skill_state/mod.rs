@@ -30,6 +30,7 @@ pub(super) use inspect::{
     NativeMapFloorView, NativeMapInventory, NativeMapMutationView, NativeMapReplay,
     NativeMapWriteView, inspect as inspect_inventory,
 };
+pub(super) use project::project_state;
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
 pub(crate) use request::SkillStateSnapshot;
