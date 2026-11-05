@@ -98,7 +98,7 @@ pub fn credit_adjustments(vault: &Vault, receipt_id: &str) -> Result<Vec<CreditA
         .collect())
 }
 
-fn chain_in_txn(
+pub(super) fn chain_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     base: &str,
@@ -243,6 +243,16 @@ pub(super) fn effective_fields_in_txn(
     credit: &LateCreditReceipt,
     sealed: PackAttributionFields,
 ) -> Result<PackAttributionFields> {
+    let fields = super::judge_binding::with_workflow_judge_in_txn(
+        vault,
+        txn,
+        &credit.attempt_receipt,
+        sealed.clone(),
+    )
+    .unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "a workflow's Done judge was not joined; its credit keeps the frozen judge");
+        sealed
+    });
     joined_fields_in_txn(
         vault,
         txn,
@@ -250,7 +260,7 @@ pub(super) fn effective_fields_in_txn(
         &credit.outcome_receipt,
         &credit.axis,
         credit.goal_revision.as_deref(),
-        sealed,
+        fields,
     )
 }
 
@@ -581,6 +591,7 @@ fn reconcile_in_txn(
         ),
         None => (None, &credit.direct_subjects, &credit.shares),
     };
+    super::credit_judge::capture_in_txn(vault, txn, credit, &fields, now);
     // A replayed check or landing, or one that moves no credit, appends
     // nothing.
     if *last_direct == direct && *last_shares == shares {
