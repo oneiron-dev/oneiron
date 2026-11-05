@@ -2,17 +2,25 @@
 
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Default)]
-pub(super) struct BodyRevocation(Arc<State>);
+pub(crate) struct BodyRevocation(Arc<State>);
 
 #[derive(Default)]
 struct State {
     credential: OnceLock<Credential>,
     ended_revoked: AtomicBool,
+    read_wait: Mutex<ReadWait>,
+}
+
+#[derive(Default)]
+struct ReadWait {
+    total: Duration,
+    started: Option<Instant>,
 }
 
 enum Credential {
@@ -54,6 +62,29 @@ fn attach(credential: Credential) {
 }
 
 impl BodyRevocation {
+    pub(super) fn read_finished(&self) {
+        let mut wait = self
+            .0
+            .read_wait
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(started) = wait.started.take() {
+            wait.total += started.elapsed();
+        }
+    }
+
+    fn read_wait(&self) -> Duration {
+        let wait = self
+            .0
+            .read_wait
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        wait.total
+            + wait
+                .started
+                .map_or(Duration::ZERO, |started| started.elapsed())
+    }
+
     pub(super) fn end_revoked(&self) {
         self.0.ended_revoked.store(true, Ordering::Release);
     }
@@ -74,6 +105,11 @@ impl BodyRevocation {
         };
         let vault = Arc::clone(vault);
         let slip_id = *slip_id;
+        self.0
+            .read_wait
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .started = Some(Instant::now());
         Some(tokio::task::spawn_blocking(move || {
             matches!(
                 vault.capability_slip_is_explicitly_revoked(&slip_id),
@@ -102,4 +138,37 @@ pub(super) fn revoked_response() -> axum::response::Response {
         })),
     )
         .into_response()
+}
+
+/// Capture while the feed future is created, before a caller spawns it.
+pub(crate) fn current_body_revocation() -> Option<BodyRevocation> {
+    BODY_REVOCATION.try_with(Clone::clone).ok().flatten()
+}
+
+/// The existing transfer-idle clock, excluding only this body's own fold read.
+/// Reusing the pending read future never polls another frame or repeats a check.
+pub(crate) async fn body_read_timeout<F: Future>(
+    body: Option<&BodyRevocation>,
+    idle: Duration,
+    read: F,
+) -> Option<F::Output> {
+    let started = tokio::time::Instant::now();
+    let before = body.map_or(Duration::ZERO, BodyRevocation::read_wait);
+    let mut read = std::pin::pin!(read);
+    loop {
+        let excluded = body
+            .map_or(Duration::ZERO, BodyRevocation::read_wait)
+            .saturating_sub(before);
+        match tokio::time::timeout_at(started + idle + excluded, read.as_mut()).await {
+            Ok(value) => return Some(value),
+            Err(_) => {
+                let excluded = body
+                    .map_or(Duration::ZERO, BodyRevocation::read_wait)
+                    .saturating_sub(before);
+                if started.elapsed().saturating_sub(excluded) >= idle {
+                    return None;
+                }
+            }
+        }
+    }
 }

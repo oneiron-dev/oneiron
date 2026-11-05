@@ -67,8 +67,11 @@ use crate::wire_telemetry::{
 
 mod body_revocation;
 mod owner_admission;
-use body_revocation::{BodyRevocation, CredentialRevoked, revoked_response, with_body_revocation};
-pub(crate) use body_revocation::{attach_body_account_key, attach_body_slip};
+pub(crate) use body_revocation::{
+    BodyRevocation, attach_body_account_key, attach_body_slip, body_read_timeout,
+    current_body_revocation,
+};
+use body_revocation::{CredentialRevoked, revoked_response, with_body_revocation};
 use owner_admission::{Custody, OwnerGate, OwnerReserve, ProbeShed};
 
 /// The listener's bounds.
@@ -675,6 +678,9 @@ impl hyper::body::Body for IdleBody {
                 match Pin::new(checking).poll(cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(revoked) => {
+                        if let Some(revocation) = &this.revocation {
+                            revocation.read_finished();
+                        }
                         this.checking = None;
                         if matches!(revoked, Ok(true)) {
                             return this.revoked();
