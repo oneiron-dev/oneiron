@@ -7,8 +7,11 @@ use std::path::Path;
 
 use super::MergeFile;
 use crate::error::{Error, Result};
-use crate::git_wire::bundle_tree::{BundleTreeEdit, stage_bundle_tree_edits};
+use crate::git_wire::bundle_tree::{
+    BundleTreeEdit, gitlink_index_entries, stage_bundle_tree_edits,
+};
 use crate::store::code_document_values::CodeFileMetadataEdit;
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::store::contract_oracle::{invalid, safe_entry_path};
 
 /// A symlink's Git mode.
@@ -46,14 +49,26 @@ pub(super) fn validate_received_merge_file(
 /// # Errors
 /// A stale or overlapping base, or a Git failure.
 pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile]) -> Result<()> {
+    let gitlinks = gitlink_index_entries(root)?;
     let mut edits = Vec::with_capacity(files.len());
     for file in files {
         let edit = file
             .metadata_edit
             .as_ref()
             .ok_or_else(|| invalid("a received bundle file carries its state change"))?;
-        // Parents never follow a link; a final symlink is read as itself (FIX 9977).
-        let (bytes, mode) = entry_state(&safe_entry_path(root, &file.path)?)?;
+        if gitlinks.keys().any(|parent| {
+            file.path
+                .strip_prefix(parent.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        }) {
+            return Err(invalid("a bundle cannot enter a linked repository"));
+        }
+        // Parents never follow a link; gitlinks name only their index OID.
+        let path = safe_entry_path(root, &file.path)?;
+        let (bytes, mode) = match gitlinks.get(&file.path) {
+            Some(oid) => (Some(oid.clone()), Some(MODE_GITLINK)),
+            None => entry_state(&path)?,
+        };
         if !file.expects(bytes.as_deref()) || mode != edit.expected.mode {
             return Err(Error::ConcurrentWrite(
                 "proposal bytes overlap or base is stale",
