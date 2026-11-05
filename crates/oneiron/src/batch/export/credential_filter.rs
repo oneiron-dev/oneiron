@@ -1,4 +1,7 @@
-//! Credential filtering at memory serve and export serialization boundaries.
+//! Core half of `batch::export::credential_filter`: its store-layer items live in `oneiron_store::batch::export::credential_filter` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
