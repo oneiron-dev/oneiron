@@ -7094,13 +7094,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9
      }
     },
@@ -45183,18 +45183,21 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "MediaStepOutcome"
+     ],
      "path": "src/llm/step/media_step.rs",
      "purpose": "The media sibling of `call_as_step` (FIX 465, FIX 2245): a durable step's media call keyed by its attempt…",
      "surface": {
-      "fn": 1
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -45206,7 +45209,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -54353,7 +54356,7 @@
      "path": "src/origin/smart_http/intent_erase.rs",
      "purpose": "An erased actor out of the receive-pack intent journal (FIX 3877)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -91087,7 +91090,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 152,
+   "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6378,
    "test_files": 895
@@ -97385,7 +97388,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 73,
+      "const": 74,
       "crate-vis": 1
      }
     },
@@ -112633,7 +112636,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -112653,7 +112656,7 @@
      "path": "src/api/facade/host_doors/support.rs",
      "purpose": "The host doors' shared vocabulary: listings, refusals, proofs, the calling origin and askers",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -123622,7 +123625,7 @@
      "path": "src/models/media/calls.rs",
      "purpose": "Media calls, public job operations and runtime cleanup",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 6
      }
     },
@@ -126117,7 +126120,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 5
      }
     },
@@ -126394,13 +126397,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -126421,6 +126424,16 @@
      "purpose": "Host-served verb rows for an agent run and its model options",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/run_host_door/media_step.rs",
+     "purpose": "The resident entry's dispatcher-owned context for a durable media call",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -128035,7 +128048,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 79,
+     "files": 80,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -128112,9 +128125,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 48,
+   "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1583,
+   "source_files": 1584,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
