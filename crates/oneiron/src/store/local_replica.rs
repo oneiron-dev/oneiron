@@ -64,11 +64,11 @@ use crate::temporal::TimeRange;
 use crate::window_key::WindowKey;
 
 /// Unacknowledged local text-document frames (`qd:e:{id}:{seq}`), read for
-/// presence only.
+/// presence, and discarded only with a member a caller releases (FIX 14534).
 const PENDING_DOCUMENT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QD_E);
 /// NOTE requests awaiting their receipt (`qn:e:{id}:{request}`), read for
-/// presence only.
+/// presence, and discarded only with a member a caller releases (FIX 14534).
 const PENDING_NOTE_REQUESTS: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
@@ -118,6 +118,12 @@ pub(crate) struct KeepControls {
     /// caller that may not drop what only this install holds can find it
     /// again (FIX 14534).
     pub(crate) defer_on_local_members: bool,
+    /// Take members the window document does not carry, and members whose
+    /// only pending local work is their promotion pickup, document frames or
+    /// NOTE requests, with that work and every edge they touch: the owner's
+    /// discard of a world copy (FIX 14534, Engine 11-06 08:34). A pending
+    /// tombstone still keeps its member, and every other keep rule holds.
+    pub(crate) release_local_members: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
 }
@@ -130,6 +136,7 @@ impl Default for KeepControls {
             guarded_rows: true,
             defer_on_queued_writes: true,
             defer_on_local_members: false,
+            release_local_members: false,
             max_removals: 1024,
         }
     }
@@ -226,28 +233,100 @@ pub(crate) fn remove_local_replica_window_in_txn(
     }
     let doc = persisted_window_doc(store, txn, window)?;
     let census = Census::new(store, txn, window, &keep, &doc)?;
-    let removable = census.sort(txn, &mut report)?;
-    if keep.defer_on_local_members
+    let members = census.sort(txn, &mut report)?;
+    if defers_on_local_members(&keep, &report) {
+        return Ok(report);
+    }
+    tear_members(store, txn, window, &doc, &members, &keep, &mut report)?;
+    if report.remaining == 0 {
+        remove_window_rows(store, txn, window, &mut report)?;
+        report.complete = true;
+    }
+    Ok(report)
+}
+
+/// Removes the members `ids` of `window` named one by one, in the caller's
+/// write transaction (FIX 14534): the same keep rules, removal plan and local
+/// leaves as [`remove_local_replica_window_in_txn`], for members a caller
+/// found after the window's own rows went (a world's CLAIMs, by its claim
+/// posting list). An id whose row is not in `window` is passed over. The
+/// window's rows are not touched; `complete` says every removable named
+/// member is gone. Run it with the window closed.
+pub(crate) fn remove_local_members_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    window: &WindowKey,
+    ids: &[EntityId],
+    keep: KeepControls,
+) -> Result<RemovedReplica> {
+    let queued_writes =
+        store
+            .sync_hooks
+            .queued_window_update_count_in_txn(store, txn, window.as_str())?;
+    let mut report = RemovedReplica {
+        queued_writes,
+        ..RemovedReplica::default()
+    };
+    if keep.defer_on_queued_writes && queued_writes > 0 {
+        return Ok(report);
+    }
+    let doc = persisted_window_doc(store, txn, window)?;
+    let census = Census::new(store, txn, window, &keep, &doc)?;
+    let members = census.sort_ids(txn, ids, &mut report)?;
+    if defers_on_local_members(&keep, &report) {
+        return Ok(report);
+    }
+    tear_members(store, txn, window, &doc, &members, &keep, &mut report)?;
+    report.complete = report.remaining == 0;
+    Ok(report)
+}
+
+/// Whether the caller defers the whole call: it may not drop what only this
+/// install holds, and a member its document does not carry, or one with local
+/// work pending, stays (FIX 14534).
+fn defers_on_local_members(keep: &KeepControls, report: &RemovedReplica) -> bool {
+    keep.defer_on_local_members
         && report
             .kept
             .iter()
             .any(|(_, reason)| matches!(reason, KeepReason::NotCarried | KeepReason::Pending))
-    {
-        return Ok(report);
-    }
+}
+
+/// The removable members a census found: in learned order, and the ones it
+/// released ([`KeepControls::release_local_members`]).
+struct Members {
+    removable: Vec<EntityId>,
+    released: BTreeSet<EntityId>,
+}
+
+/// Removes one call's batch of `members` with their local leaves.
+fn tear_members(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    window: &WindowKey,
+    doc: &LoroDoc,
+    members: &Members,
+    keep: &KeepControls,
+    report: &mut RemovedReplica,
+) -> Result<()> {
+    let removable = &members.removable;
     // The next take of a sealed window's mirror lands its rows again, from
     // the first call that may remove one (FIX 5506).
     crate::world_keys::unland_window_in_txn(store, txn, window)?;
     report.remaining = removable.len().saturating_sub(keep.max_removals);
     let batch = &removable[..removable.len().min(keep.max_removals)];
-    let removal = Removal::plan(store, txn, batch, &mut report)?;
+    let removal = Removal::plan(store, txn, batch, report)?;
     super::turn_missing::record_in_txn(store, txn, &removal.missing)?;
     // The leaves read the removed rows, their edges and other turns' sets.
     crate::tagging::demote_tags_in_txn(store, txn, &removal.gone, &removal.partial)?;
     crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
     let edges = doc.get_map("edges");
     for id in &removal.order {
-        remove_member(store, txn, &edges, id, &mut report)?;
+        let released = members.released.contains(id);
+        remove_member(store, txn, &edges, id, released, report)?;
+        if released {
+            release_local_work(store, txn, window, id)?;
+        }
     }
     if report.vectors > 0 {
         crate::store::vector_index::increment_vector_version(store, txn)?;
@@ -255,11 +334,28 @@ pub(crate) fn remove_local_replica_window_in_txn(
     if !report.removed.is_empty() {
         crate::store::graph_version::increment_graph_version(store, txn)?;
     }
-    if report.remaining == 0 {
-        remove_window_rows(store, txn, window, &mut report)?;
-        report.complete = true;
-    }
-    Ok(report)
+    Ok(())
+}
+
+/// Discards the local work a released member `id` of `window` still had:
+/// its promotion pickup, its document frames and its NOTE requests, gone
+/// with the copy the owner discarded (FIX 14534). Its pending tombstone, an
+/// id-only delete that still travels, is never released.
+fn release_local_work(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    window: &WindowKey,
+    id: &EntityId,
+) -> Result<()> {
+    let pickup = WindowEntityKey {
+        window: window.as_str().to_owned(),
+        entity: *id,
+    };
+    OFF_RECORD_PROMOTE_PICKUP.delete(store, txn, &pickup)?;
+    let prefix = format!("{}:", id.to_hex());
+    PENDING_DOCUMENT_FRAMES.delete_from(store, txn, prefix.as_bytes())?;
+    PENDING_NOTE_REQUESTS.delete_from(store, txn, prefix.as_bytes())?;
+    Ok(())
 }
 
 /// The window's persisted document, read in the caller's transaction: the
@@ -318,7 +414,7 @@ impl<'a> Census<'a> {
 
     /// Walks the month on the learned-time index, records each kept member in
     /// `report` and returns the removable ones in learned order.
-    fn sort(&self, txn: &RoTxn<'_>, report: &mut RemovedReplica) -> Result<Vec<EntityId>> {
+    fn sort(&self, txn: &RoTxn<'_>, report: &mut RemovedReplica) -> Result<Members> {
         let start = self.window.start_timestamp();
         let end = self.window.end_timestamp();
         let (Some(start), Some(end)) = (start, end) else {
@@ -330,25 +426,72 @@ impl<'a> Census<'a> {
             ..TimelineQuery::default()
         };
         let mut seen = HashSet::new();
-        let mut removable = Vec::new();
+        let mut members = Members {
+            removable: Vec::new(),
+            released: BTreeSet::new(),
+        };
         for row in self.store.port_entity_timeline(txn, query)? {
             let id = row?.id;
             if !seen.insert(id) {
                 continue;
             }
-            let Some(raw) = self.store.port_entity_raw(txn, &id)? else {
-                continue;
-            };
-            // A world window's month also holds base rows and other worlds.
-            if residence_window_for_blob(&raw).ok().as_ref() != Some(self.window) {
-                continue;
-            }
-            match self.keep_reason(txn, &id, &raw)? {
-                Some(reason) => report.kept.push((id, reason)),
-                None => removable.push(id),
+            self.place(txn, id, &mut members, report)?;
+        }
+        Ok(members)
+    }
+
+    /// [`Self::sort`] over the members `ids` names, in that order.
+    fn sort_ids(
+        &self,
+        txn: &RoTxn<'_>,
+        ids: &[EntityId],
+        report: &mut RemovedReplica,
+    ) -> Result<Members> {
+        let mut seen = HashSet::new();
+        let mut members = Members {
+            removable: Vec::new(),
+            released: BTreeSet::new(),
+        };
+        for id in ids {
+            if seen.insert(*id) {
+                self.place(txn, *id, &mut members, report)?;
             }
         }
-        Ok(removable)
+        Ok(members)
+    }
+
+    /// Places the row `id`, when it is a member of this window: kept with its
+    /// reason, or removable, released when only the caller's release takes it.
+    fn place(
+        &self,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        members: &mut Members,
+        report: &mut RemovedReplica,
+    ) -> Result<()> {
+        let Some(raw) = self.store.port_entity_raw(txn, &id)? else {
+            return Ok(());
+        };
+        // A world window's month also holds base rows and other worlds.
+        if residence_window_for_blob(&raw).ok().as_ref() != Some(self.window) {
+            return Ok(());
+        }
+        match self.keep_reason(txn, &id, &raw)? {
+            Some(reason) => report.kept.push((id, reason)),
+            None => {
+                if self.keep.release_local_members && self.local_member(txn, &id)? {
+                    members.released.insert(id);
+                }
+                members.removable.push(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `id` is one only a release takes: the window document does
+    /// not carry it, or local work it has is pending.
+    fn local_member(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        Ok(!map_contains_binary(&self.entities, &id.to_hex()) || self.pending_work(txn, id)?)
     }
 
     fn keep_reason(
@@ -382,9 +525,13 @@ impl<'a> Census<'a> {
             // A file-plane ASSET's body moves outside Loro; the home's
             // window ack does not durably hold the body (FIX 5393).
             KeepReason::NotCarried
-        } else if !map_contains_binary(&self.entities, &id.to_hex()) {
+        } else if !self.keep.release_local_members
+            && !map_contains_binary(&self.entities, &id.to_hex())
+        {
             KeepReason::NotCarried
-        } else if self.pending(txn, id)? {
+        } else if self.pending_delete(txn, id)?
+            || (!self.keep.release_local_members && self.pending_work(txn, id)?)
+        {
             KeepReason::Pending
         } else if self
             .store
@@ -402,19 +549,22 @@ impl<'a> Census<'a> {
         Ok(Some(reason))
     }
 
-    /// Local intent the window document does not hold yet.
-    fn pending(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    /// A delete of `id` this window's document does not hold yet: a pending
+    /// tombstone, which travels as an id.
+    fn pending_delete(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        self.store
+            .port_pending_tombstone_present(txn, WindowAddress::new(self.window.as_str()), id)
+    }
+
+    /// Other local intent the window document does not hold yet: a promotion
+    /// pickup, document frames or NOTE requests.
+    fn pending_work(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let window = self.window.as_str().to_owned();
         let pickup = WindowEntityKey {
             window,
             entity: *id,
         };
-        if self.store.port_pending_tombstone_present(
-            txn,
-            WindowAddress::new(self.window.as_str()),
-            id,
-        )? || OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)?
-        {
+        if OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)? {
             return Ok(true);
         }
         let prefix = format!("{}:", id.to_hex());
@@ -557,12 +707,13 @@ fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
 
 /// Tears one member's local rows. Every step is a local index or projection
 /// leaf of the physical tear; custody, provenance, document and control rows
-/// stay.
+/// stay. A released member takes every edge it touches with it.
 fn remove_member(
     store: &Store,
     txn: &mut RwTxn<'_>,
     edges: &LoroMap,
     id: &EntityId,
+    released: bool,
     report: &mut RemovedReplica,
 ) -> Result<()> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {
@@ -579,7 +730,7 @@ fn remove_member(
     crate::code_symbol::delete_code_symbol_manifest_in_txn(store, txn, id)?;
     crate::counterparty_contact::drop_contact_index_rows_in_txn(store, txn, id)?;
     remove_vectors(store, txn, id, report)?;
-    let neighbors = remove_carried_edges(store, txn, edges, id, report)?;
+    let neighbors = remove_member_edges(store, txn, edges, id, released, report)?;
     if let Some((short_id, hash)) = store.port_short_id_reference(txn, id)? {
         let forward = crate::batch::encode_short_id_forward_key(&short_id, hash);
         store.short_ids.delete(txn, &forward)?;
@@ -651,13 +802,15 @@ fn remove_vectors(
 
 /// Removes the edges touching `id` that this window's document carries. An
 /// edge another window carries stays, as partial residence leaves it, and so
-/// does a local-only edge, which no server copy could give back. Returns
-/// every neighbour, for cache invalidation.
-fn remove_carried_edges(
+/// does a local-only edge, which no server copy could give back; a released
+/// member (`all`) takes every edge it touches, out and in, its neighbours
+/// staying (FIX 14534). Returns every neighbour, for cache invalidation.
+fn remove_member_edges(
     store: &Store,
     txn: &mut RwTxn<'_>,
     edges: &LoroMap,
     id: &EntityId,
+    all: bool,
     report: &mut RemovedReplica,
 ) -> Result<Vec<EntityId>> {
     let mut incident = Vec::new();
@@ -675,7 +828,7 @@ fn remove_carried_edges(
     let mut neighbors = Vec::with_capacity(incident.len());
     for (source, kind, target) in incident {
         neighbors.push(if source == *id { target } else { source });
-        if map_contains_binary(edges, &format_edge_key(&source, kind, &target))
+        if (all || map_contains_binary(edges, &format_edge_key(&source, kind, &target)))
             && store.port_remove_edge_rows(txn, &source, kind, &target)?
         {
             report.edges += 1;
