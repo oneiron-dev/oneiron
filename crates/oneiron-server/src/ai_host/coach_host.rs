@@ -269,11 +269,12 @@ fn run_one(
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         // FIX 12569: no trainer recipe is wired on this host, so the night
-        // holds with its reason and serving stays as it is. This host serves
-        // no vault drafter target yet (the serving binding, FIX 14976, names
-        // it), so the night exports no corpus (FIX 14973).
+        // holds with its reason and serving stays as it is. It exports its
+        // corpus (FIX 14973) for the drafter target this process serves
+        // (FIX 14976), when it launches one.
         COACH_DRAFTER_RETRAIN_FACET => {
-            let outcome = vault.run_coach_drafter_retrain(admitted, None, now)?;
+            let target = crate::models::drafter_retrain_target();
+            let outcome = vault.run_coach_drafter_retrain(admitted, target.as_ref(), now)?;
             tracing::debug!(?outcome, "the Coach's nightly drafter retrain");
             Ok(())
         }

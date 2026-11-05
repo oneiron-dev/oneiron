@@ -618,6 +618,13 @@ pub(super) fn workers_configured() {
     }
 }
 
+/// The drafter target this process's nightly retrain exports its corpus
+/// for (FIX 14973): the first managed EXL3 worker it launches with a draft;
+/// `None` when it launches none.
+pub(crate) fn drafter_retrain_target() -> Option<DrafterTarget> {
+    worker_host::retrain_target()
+}
+
 /// Attaches this process's drafter serving host to `vault`: its leftover
 /// plaintext goes, and its task serves the vault's bindings from start-up
 /// on. A second vault served here puts every private draft back to stock,

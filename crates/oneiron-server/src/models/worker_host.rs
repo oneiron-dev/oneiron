@@ -69,7 +69,8 @@ use probe::HouseProbe;
 use serde_json::Value as JsonValue;
 
 pub(super) use drafter_binding::{
-    DraftSeat, clear_vault_drafts, draft_seat, launch_records, replace_draft, vault_drafts,
+    DraftSeat, clear_vault_drafts, draft_seat, launch_records, replace_draft, retrain_target,
+    vault_drafts,
 };
 #[cfg(unix)]
 pub(super) use session::open_turn;
