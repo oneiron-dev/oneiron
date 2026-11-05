@@ -2,7 +2,7 @@
 //! demotion of a promoted canonical window.
 //!
 //! Only the thin read cache of an unpromoted item is pruned: its body
-//! (`ri:b:`), text document (`ri:d:`), opened marker (`ro:e:`) and touch row
+//! (`ri:b:`), text document (`ri:d:`), source provenance (`ri:s:`), opened marker (`ro:e:`) and touch row
 //! (`rt:e:`). The thin index, promoted windows, local writes, deletes and
 //! authority stay, and so does the cache of an item a legal hold names. No
 //! tombstone or Loro operation is produced: a pruned item is fetched again on
@@ -150,7 +150,7 @@ pub(crate) fn erase_item_caches_in_txn(
     }
     let hexes: Vec<String> = items.iter().map(EntityId::to_hex).collect();
     for hex in &hexes {
-        for family in ["ri:b:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+        for family in ["ri:b:", "ri:d:", "ri:s:", "ro:e:", TOUCH_PREFIX] {
             store.sync_state.delete(txn, &format!("{family}{hex}"))?;
         }
     }
@@ -237,7 +237,7 @@ pub(crate) fn prune_thin_items_in_txn(
         {
             continue;
         }
-        for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {
+        for family in ["ri:b:", "ri:d:", "ri:s:", TOUCH_PREFIX] {
             vault
                 .store
                 .sync_state
