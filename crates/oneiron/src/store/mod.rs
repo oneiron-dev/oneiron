@@ -178,6 +178,10 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod attempt_operations;
 pub(crate) use attempt_operations::StoreAttemptOperations;
+#[cfg(unix)]
+pub(crate) mod voice_bank_response;
+#[cfg(unix)]
+pub(crate) use voice_bank_response::StoreVoiceBankResponse;
 pub(crate) mod core_write_operations;
 pub(crate) use core_write_operations::StoreCoreWriteOperations;
 pub(crate) mod actor_scrubs;
@@ -462,6 +466,9 @@ pub(crate) use group_commit::{
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
+};
 pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
