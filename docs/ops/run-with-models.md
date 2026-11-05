@@ -123,7 +123,8 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
 `elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+`max_output_tokens`, `output_limit_field`, `chat_path`, `prefill_wire` (both
+optional wire flags, below), `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
 `assistant_prefill`, `reasoning`, `reasoning_content_history`;
@@ -156,9 +157,37 @@ family neither judge has),
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
-A selected catalog row may carry `chat_path = "unversioned"` metadata. When the adapter still uses its default `/v1/chat/completions` path, that row sends `POST /chat/completions` instead. With `base_url = "https://api.deepseek.com/beta"`, the call goes to `/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit non-default endpoint path wins; absent or unknown metadata leaves the configured path unchanged.
+`chat_path` and `prefill_wire` are optional provider fields. The server copies
+only these explicit settings into each configured model's catalog metadata,
+on the ordinary, brokered and managed-settings paths. For example, for an
+endpoint whose named model supports prefix continuation:
 
-Prefill still needs the same row's `assistant_prefill` capability and `prefill_wire = "prefix"` metadata. The path option adds no catalog row and binds no model by default. For a `key_secret` provider using the unversioned path, update the server and credential broker together so both recognize the new closed row.
+```toml
+[models.providers.prefix]
+kind = "openai-compat"
+base_url = "https://api.example.com/beta"
+key_env = "PREFIX_API_KEY"
+chat_path = "unversioned"
+prefill_wire = "prefix"
+model_capabilities = { "prefix-model" = ["streaming", "json_response", "assistant_prefill"] }
+```
+
+When the selected catalog row has `chat_path = "unversioned"` and the adapter
+still uses its default `/v1/chat/completions` path, that row sends
+`POST /chat/completions` instead. With
+`base_url = "https://api.deepseek.com/beta"`, the call goes to
+`/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit
+non-default endpoint path wins; absent or unknown values leave the configured
+path unchanged.
+
+`prefill_wire = "prefix"` sends `prefix: true` on an open trailing assistant
+message only when that same selected row declares `assistant_prefill` in
+`model_capabilities` or the provider's fallback `capabilities`. An absent or
+unknown flag sends no prefix field. Continue still requires every rung to
+declare `assistant_prefill`. Neither option adds a catalog row, changes a
+model's capabilities, or binds a model by default. For a `key_secret` provider
+using the unversioned path, update the server and credential broker together
+so both recognize the new closed row. Direct calls need no broker.
 
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
