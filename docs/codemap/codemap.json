@@ -64729,8 +64729,18 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/checkpoint.rs",
+     "purpose": "Canonical step-capture owner witnesses, carried under each key owner's compartment",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -64740,7 +64750,17 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/ownership.rs",
+     "purpose": "One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the capture for, keyed…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -64750,7 +64770,7 @@
      "path": "src/self_heal/blocked_reports/source/response.rs",
      "purpose": "A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -70465,7 +70485,7 @@
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -70505,7 +70525,17 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response/owners.rs",
+     "purpose": "Late owner obligations of an already bound captured request",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -92164,7 +92194,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92276,7 +92306,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 491,
+     "files": 492,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92516,7 +92546,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6463,
+   "source_files": 6466,
    "test_files": 895
   },
   "oneiron-android": {
@@ -123528,7 +123558,7 @@
      "path": "src/managed/vm_outbox/local.rs",
      "purpose": "One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -123590,6 +123620,16 @@
      "purpose": "A taken set's check against this end's own versions before it is published, and the copy this end keeps, or…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/transfer/receive.rs",
+     "purpose": "Descriptor-only admission and body receipt for one complete carrier set",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -128734,7 +128774,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 99,
+     "files": 100,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -128918,7 +128958,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1552,
+   "source_files": 1553,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
