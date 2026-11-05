@@ -106,6 +106,8 @@ pub(in crate::models) async fn open_turn(
             return None;
         }
     };
+    // What the session's prepared tail gave this turn (I1 = C).
+    super::prepare::forked(&binding, forked.prepared.as_ref());
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
     {
         let mut workers = registry::lock();
@@ -193,6 +195,7 @@ async fn serves(worker_id: &str, place: &Place) -> Option<Ops> {
                     restore: capability.serves(SessionOp::Restore),
                     snapshot: capability.serves(SessionOp::Export)
                         && capability.serves(SessionOp::Import),
+                    prepare: capability.serves(SessionOp::Prepare),
                 }),
                 _ => Serves::No,
             };
