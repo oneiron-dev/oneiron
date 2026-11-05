@@ -104,7 +104,7 @@ originals once their sources are no longer held. Relationship ids are not actor
 ids; this does not add a relationship-to-actor erasure cascade.
 
 The original's actual checkpoint-privacy reason settles these sources' own
-entity-owned compartments and known-value history before their live rows go.
+entity-owned compartments before their live rows go.
 Remote hard replay passes its decoded reason before the purge, not a fabricated
 reason from a missing topology reservation. Other delete reasons retain their
 checkpoint window. The native key finisher still defers keys a source's own hold

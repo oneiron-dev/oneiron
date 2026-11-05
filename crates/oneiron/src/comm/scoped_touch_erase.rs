@@ -50,7 +50,6 @@ pub(crate) fn settle_scoped_touch_checkpoint_payloads_for_reason_in_txn(
         return Ok(());
     }
     for source in source_ids_in_txn(store, txn, &BTreeSet::from([*original]))? {
-        store.stage_known_history_erase_in_txn(txn, &source)?;
         crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(store, txn, &source, reason)?;
     }
     Ok(())
