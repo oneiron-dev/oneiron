@@ -78,6 +78,7 @@ async fn enroll(
         .transpose()
         .map_err(owner_error)?;
     let machine = crate::owner::recovery_kit::authority_holding_machine(server.vault(), named)
+        .map_err(OwnerError::from)
         .map_err(owner_error)?
         .ok_or_else(|| OwnerError::Refused("this install has no machine in the vault".to_owned()))
         .map_err(owner_error)?;
