@@ -75,7 +75,7 @@ impl QuarantineContainer {
 
 /// A persisted quarantine record. Hash + metadata ONLY — GDPR-inert, never
 /// the rejected bytes themselves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarantineRecord {
     /// Window key (YYYY-MM) of the doc whose replay rejected the op.
     pub window_key: String,

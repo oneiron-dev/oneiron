@@ -1447,7 +1447,7 @@ declare namespace Sdk {
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
   type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases";
-  type QuarantineRecord = { window_key: string; container: QuarantineContainer; crdt_key_hash: number; crdt_key_len: number; reason_code: string; payload_hash: number; quarantined_at: number };
+  type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number };
   type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
   type RetainedWorkWaitSetRequest = { queue: RetainedWorkQueue; secs?: number | null };
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
@@ -7590,8 +7590,8 @@ declare const vault: Sdk.VaultHost & {
   };
   sync: {
     quarantine: {
-      /** The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status. */
-      held_edits(input: Sdk.EmptyRequest): Promise<[number, Sdk.QuarantineRecord][] | StoredResult>;
+      /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+      held_edits(input: Sdk.EmptyRequest): Promise<[number, Sdk.SyncHeldEditEvidence][] | StoredResult>;
     };
     retained_work: {
       wait: {

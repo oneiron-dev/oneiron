@@ -1144,7 +1144,7 @@ impl OneironClient {
                     oneiron::sync::federation_burst::FederationBurstPolicy,
                 >(client, verb, &input),
                 "vault.sync.quarantine.held_edits" => remote_agent_verb_output::<
-                    Vec<(u64, oneiron::sync::QuarantineRecord)>,
+                    Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>,
                 >(client, verb, &input),
                 "vault.sync.retained_work.wait.set" => {
                     remote_agent_verb_output::<u64>(client, verb, &input)
@@ -8344,7 +8344,7 @@ impl OneironClient {
     pub fn vault_sync_quarantine_held_edits(
         &self,
         input: &oneiron::task_verb::sdk::EmptyRequest,
-    ) -> Result<Vec<(u64, oneiron::sync::QuarantineRecord)>, MemoryError> {
+    ) -> Result<Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

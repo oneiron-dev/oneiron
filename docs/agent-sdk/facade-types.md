@@ -2863,8 +2863,8 @@ export type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null;
 export type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy }
 /** `oneiron::sync::quarantine::keys_classifier::QuarantineContainer` */
 export type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases"
-/** `oneiron::sync::quarantine::keys_classifier::QuarantineRecord` */
-export type QuarantineRecord = { window_key: string; container: QuarantineContainer; crdt_key_hash: number; crdt_key_len: number; reason_code: string; payload_hash: number; quarantined_at: number }
+/** `oneiron::verbs::sync_quarantine::SyncHeldEditEvidence` */
+export type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number }
 /** `oneiron::sync::federation_burst::schedule::RetainedWorkQueue` */
 export type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp"
 /** `oneiron::verbs::federation_burst::RetainedWorkWaitSetRequest` */

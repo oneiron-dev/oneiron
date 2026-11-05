@@ -7384,13 +7384,13 @@ class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
 QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
-class QuarantineRecord(TypedDict):
+class SyncHeldEditEvidence(TypedDict):
     window_key: str
     container: QuarantineContainer
-    crdt_key_hash: int
+    crdt_key_hash: str
     crdt_key_len: int
     reason_code: str
-    payload_hash: int
+    payload_hash: str
     quarantined_at: int
 RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
 class RetainedWorkWaitSetRequest(TypedDict):

@@ -22663,37 +22663,37 @@ pub enum QuarantineContainer {
     Leases,
 }
 
-/// `oneiron::sync::quarantine::keys_classifier::QuarantineRecord`.
+/// `oneiron::verbs::sync_quarantine::SyncHeldEditEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct QuarantineRecord {
+pub struct SyncHeldEditEvidence {
     #[serde(rename = "window_key")]
     pub window_key: String,
     #[serde(rename = "container")]
     pub container: QuarantineContainer,
     #[serde(rename = "crdt_key_hash")]
-    pub crdt_key_hash: u64,
+    pub crdt_key_hash: String,
     #[serde(rename = "crdt_key_len")]
     pub crdt_key_len: u32,
     #[serde(rename = "reason_code")]
     pub reason_code: String,
     #[serde(rename = "payload_hash")]
-    pub payload_hash: u64,
+    pub payload_hash: String,
     #[serde(rename = "quarantined_at")]
     pub quarantined_at: u64,
 }
 
 /// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct TupleU64QuarantineRecord {
+pub struct TupleU64SyncHeldEditEvidence {
     pub item0: u64,
-    pub item1: QuarantineRecord,
+    pub item1: SyncHeldEditEvidence,
 }
-impl serde::Serialize for TupleU64QuarantineRecord {
+impl serde::Serialize for TupleU64SyncHeldEditEvidence {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
     }
 }
-impl<'de> serde::Deserialize<'de> for TupleU64QuarantineRecord {
+impl<'de> serde::Deserialize<'de> for TupleU64SyncHeldEditEvidence {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
     }

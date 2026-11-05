@@ -2801,7 +2801,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def held_edits(self, spec):
-            """The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status."""
+            """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
             return json.loads(_translate(lambda: self._client.vault_sync_quarantine_held_edits(json.dumps(spec))))
     class _VaultSyncRetainedWorkVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -1603,7 +1603,7 @@ export interface FacadeResults {
   "vault.federation.burst.baseline": Facade.FederationBurstBaselineState;
   "vault.federation.burst.policy": Facade.FederationBurstPolicy;
   "vault.federation.burst.policy.set": Facade.FederationBurstPolicy;
-  "vault.sync.quarantine.held_edits": [number, Facade.QuarantineRecord][];
+  "vault.sync.quarantine.held_edits": [number, Facade.SyncHeldEditEvidence][];
   "vault.sync.retained_work.wait.set": number;
   "vault.federation.burst.ingress": Facade.FederationBurstReceipt;
   "vault.federation.burst.disposition": Facade.FederationBurstReceipt;
@@ -2853,7 +2853,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.federation.burst.baseline": { description: "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.federation.burst.policy": { description: "The owner reads one grant-bound peer's relative-burst outcome policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.federation.burst.policy.set": { description: "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.sync.quarantine.held_edits": { description: "The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sync.quarantine.held_edits": { description: "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.sync.retained_work.wait.set": { description: "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.federation.burst.ingress": { description: "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.federation.burst.disposition": { description: "The owner reads an authenticated batch original disposition, named baseline context and current durable replay state.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -4843,7 +4843,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       },
       sync: {
         quarantine: {
-          /** The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status. */
+          /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
           held_edits: (input: Facade.EmptyRequest, options?: O): FacadeReturns<"vault.sync.quarantine.held_edits">[K] => invoke("vault.sync.quarantine.held_edits", input, options, newInvocation()),
         },
         retained_work: {

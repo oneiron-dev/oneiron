@@ -2439,8 +2439,8 @@ class Oneiron:
         @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
     class _VaultSyncQuarantineVerbs:
-        def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.QuarantineRecord]]:
-            """The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status."""
+        def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.SyncHeldEditEvidence]]:
+            """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
     class _VaultSyncRetainedWorkVerbs:
         @property
         def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs": ...

@@ -12081,7 +12081,7 @@ impl AgentVerb {
                 "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
             }
             Self::VaultSyncQuarantineHeldEdits => {
-                "The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status."
+                "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."
             }
             Self::VaultSyncRetainedWorkWaitSet => {
                 "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."

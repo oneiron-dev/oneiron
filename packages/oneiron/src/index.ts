@@ -1530,8 +1530,8 @@ export class Oneiron {
     },
     sync: {
       quarantine: {
-        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Shared quarantine retention applies; this is not live pending work or settlement status. */
-        held_edits: (input: Facade.EmptyRequest): [number, Facade.QuarantineRecord][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.QuarantineRecord][]),
+        /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
+        held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
       },
       retained_work: {
         wait: {

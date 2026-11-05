@@ -8723,7 +8723,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => crate::code_run::vault_read::request_schema::<
-            Vec<(u64, crate::sync::QuarantineRecord)>,
+            Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>,
         >(),
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
@@ -29251,7 +29251,7 @@ pub fn vault_federation_burst_policy_set(
 pub fn vault_sync_quarantine_held_edits(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
-) -> MemoryResult<Vec<(u64, crate::sync::QuarantineRecord)>> {
+) -> MemoryResult<Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>> {
     crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.sync.quarantine.held_edits")?,

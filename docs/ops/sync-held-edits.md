@@ -7,9 +7,11 @@ Use the normal owner credential and holder proof. An embedded handle uses
 its actual embedded owner; an ordinary scoped reader cannot list this
 whole-vault evidence.
 
-The reply contains the stored sequence and the existing quarantine record:
+The reply contains the stored sequence and retained quarantine metadata:
 window key, container, CRDT-key hash and byte length, reason code, payload
-hash, and quarantine time. It includes only entity-map records whose reason
+hash, and quarantine time. Both hashes are sixteen-digit lowercase hexadecimal
+strings, so JavaScript callers receive all 64 bits unchanged. The native stored
+record and its codecs do not change. It includes only entity-map records whose reason
 is `sealed_file_edited` or `projection_edit_conflict`, in stored sequence
 order. It never returns rejected body bytes or the original CRDT map key.
 The owner and any request credential are checked again in the same read
