@@ -111,13 +111,15 @@ impl VoxCpm2HttpQueue {
             .timeout(Duration::from_millis(vault_limits.http_deadline_ms))
             .build()
             .map_err(|_| invalid("worker client unavailable"))?;
-        let warm: WarmTarget = client
+        let ready: Value = client
             .get(base.join("ready").map_err(|_| invalid("ready URL"))?)
             .bearer_auth(bearer)
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
             .and_then(reqwest::blocking::Response::json)
             .map_err(|_| invalid("worker is not ready"))?;
+        let (warm, _) =
+            WarmTarget::from_ready(ready).map_err(|_| invalid("worker is not ready"))?;
         warm.validate()?;
         if !vault_limits.within(warm.limits) {
             return Err(invalid("worker policy narrower than vault limits"));
