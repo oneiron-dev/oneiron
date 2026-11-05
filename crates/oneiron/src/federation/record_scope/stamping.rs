@@ -176,6 +176,9 @@ pub(super) fn body_keeps_stamp(
 ///   does not move it.
 /// - A base row the room restages keeps base's own stamp, read on base,
 ///   and the room's body must keep it ([`body_keeps_stamp`]).
+/// - A base NOTE, restaged or not, keeps base's worlds: an `InWorld` edge
+///   the room adds or drops would widen or move where it reads, so the NOTE
+///   stands nowhere for this read (review P1 #5926).
 /// - A room birth keeps the position its write staged beside it
 ///   ([`stage_session_position`]). With no staged position it stands
 ///   nowhere: no position is inferred.
@@ -197,11 +200,15 @@ pub(crate) fn room_row_placed(
     if !view.entities.stages_row(id.as_bytes()) {
         return Ok(!room_stamp
             && (!carries_birth_stamp(kind)
-                || birth_facet(view, txn, id)? == birth_facet(base, txn, id)?));
+                || birth_facet(view, txn, id)? == birth_facet(base, txn, id)?)
+            && keeps_base_worlds(view, txn, id, kind));
     }
     // A restaged base row keeps base's stamp, read on base; a room birth
     // keeps the stamp its write staged. Exactly one of them stands.
     let base_row = crate::ports::EntityStoreRead::port_entity_present(base, txn, &id)?;
+    if base_row && !keeps_base_worlds(view, txn, id, kind) {
+        return Ok(false);
+    }
     let stamp = match (base_row, room_stamp) {
         (true, false) => SCOPE_RECORD.get(base, txn, &id)?,
         (false, true) => SCOPE_RECORD.get(view, txn, &id)?,
@@ -215,6 +222,21 @@ pub(crate) fn room_row_placed(
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// Whether the base row `id` of `kind` sits in the same worlds in `view`'s
+/// room as on base: always for a row that is not a NOTE, whose world is
+/// stamped; for a NOTE, whose world its live `InWorld` edges name, only when
+/// the room's edges name the same worlds (review P1 #5926).
+fn keeps_base_worlds(
+    view: &crate::store::SessionStoreView<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> bool {
+    kind != crate::registry::ENTITY_TYPE_NOTE
+        || super::note_world::note_worlds_in(view, txn, id)
+            == super::note_world::note_worlds_in(view.read().base(), txn, id)
 }
 
 /// Settles an epoch SUMMARY's birth position in its mint transaction: born

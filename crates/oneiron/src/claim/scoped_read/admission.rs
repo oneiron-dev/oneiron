@@ -334,11 +334,26 @@ impl<'a> ScopedRead<'a> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityRecord>> {
+        Ok(match self.entity_record_loaded_in(txn, id)? {
+            LoadedRecord::Placed(row) => Some(row),
+            LoadedRecord::Absent | LoadedRecord::Unplaced(_) => None,
+        })
+    }
+
+    /// [`Self::entity_record_in`], telling a room row this read cannot place
+    /// from a row that is not there (review P1 #5926). A gate that needs
+    /// every part of a whole refuses the whole for an unplaced part.
+    pub(super) fn entity_record_loaded_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<LoadedRecord> {
         let record = match self.session_view {
             Some(view) => view.port_entity_record(txn, id)?,
             None => self.vault.port_entity_record(txn, id)?,
         };
-        match record {
+        Ok(match record {
+            None => LoadedRecord::Absent,
             Some(row)
                 if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                     &self.vault.store,
@@ -347,11 +362,13 @@ impl<'a> ScopedRead<'a> {
                     row.entity_type,
                 )? =>
             {
-                Ok(None)
+                LoadedRecord::Absent
             }
-            Some(row) if !self.room_row_placed_in(txn, id, row.entity_type, &row.body)? => Ok(None),
-            record => Ok(record),
-        }
+            Some(row) if !self.room_row_placed_in(txn, id, row.entity_type, &row.body)? => {
+                LoadedRecord::Unplaced(row)
+            }
+            Some(row) => LoadedRecord::Placed(row),
+        })
     }
 
     /// Whether the body `data` of `kind` this read's room serves for `id`
@@ -638,4 +655,15 @@ fn owner_proof_holds_in(
     owner: &crate::consent::AuthenticatedOwner,
 ) -> Result<()> {
     owner.revalidate_in_txn(vault, txn).map(drop)
+}
+
+/// A row a scoped read loads by id ([`ScopedRead::entity_record_loaded_in`]).
+pub(super) enum LoadedRecord {
+    /// No row, or no record a scoped read finds (an unpublished LFS chunk).
+    Absent,
+    /// A row the room serves that this read cannot place (FIX 5161): absent
+    /// for this read, yet present.
+    Unplaced(EntityRecord),
+    /// A row this read takes as it stands.
+    Placed(EntityRecord),
 }
