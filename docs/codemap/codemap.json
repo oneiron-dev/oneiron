@@ -4688,7 +4688,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 48,
       "mod": 2,
       "re-export": 70
      }
@@ -4721,6 +4721,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/origin_cut.rs",
+     "purpose": "Folds the owner's signed cuts of a repository's origin authority (FIX 15740, Engine 11-06 02:54 A2…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ActAuthority",
       "GrantedAct",
@@ -4744,7 +4754,7 @@
      "path": "src/authority/owner_choice.rs",
      "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "struct": 1
      }
     },
@@ -19363,7 +19373,7 @@
      "path": "src/codebase/snapshot.rs",
      "purpose": "Code snapshot vocabulary and the vault-backed read-only mount",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -29350,7 +29360,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 6,
       "trait": 1
      }
@@ -29374,7 +29384,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/candidate_run.rs",
      "purpose": "Candidate results and the native origin each replay carries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -29421,6 +29431,21 @@
       "fn": 3,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherCandidateInput",
+      "PublisherCandidateRef"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix/publisher_refs.rs",
+     "purpose": "Local references to occurrences in the host's actual publisher inputs",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -53752,7 +53777,7 @@
      "path": "src/origin/repo_manifest/refresh.rs",
      "purpose": "Refresh of a standing manifest's refs (FIX 6870 phase 1, rulings 7-8)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -75083,7 +75108,7 @@
      "path": "src/sync/client/inbound/window_sync.rs",
      "purpose": "The window-sync message family",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75114,7 +75139,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 8
      }
     },
@@ -75480,6 +75505,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/sealed_updates.rs",
+     "purpose": "A machine's side of the sealed world-update relay (DEC-0005 fix 8: \"A my-machines world on it still syncs",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -76917,7 +76952,7 @@
       "const": 2,
       "crate-vis": 16,
       "fn": 14,
-      "re-export": 22,
+      "re-export": 23,
       "struct": 2
      }
     },
@@ -77396,6 +77431,24 @@
      "purpose": "Resolved recall scope and signing transcript, defined by the recall layer",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OutboxSealedUpdate",
+      "SealedUpdatePage",
+      "SealedUpdateQueue",
+      "StoredSealedUpdate"
+     ],
+     "path": "src/sync/residence/sealed_updates.rs",
+     "purpose": "The home's queue of sealed world updates (DEC-0005 fix 8, CLIP-SYNC = A, FIX 12586), and this machine's…",
+     "surface": {
+      "const": 3,
+      "fn": 8,
+      "struct": 4,
+      "type": 2
      }
     },
     {
@@ -77996,7 +78049,7 @@
       "crate-vis": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -78040,10 +78093,10 @@
      "path": "src/sync/transport/codec.rs",
      "purpose": "The own-link codec frame (ARCH-0081 §7, OF-604): zstd-3 on our own sockets",
      "surface": {
-      "const": 9,
+      "const": 11,
       "crate-vis": 1,
-      "fn": 16,
-      "mod": 1,
+      "fn": 17,
+      "mod": 2,
       "struct": 4
      }
     },
@@ -78073,6 +78126,21 @@
      "surface": {
       "const": 4,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedUpdateFrame"
+     ],
+     "path": "src/sync/transport/sealed_updates.rs",
+     "purpose": "Sealed world-update frames (DEC-0005 fix 8, CLIP-SYNC = A, FIX 12586): a home that may not read a…",
+     "surface": {
+      "const": 10,
+      "enum": 1,
+      "fn": 2,
+      "mod": 1
      }
     },
     {
@@ -87997,7 +88065,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -88377,6 +88445,16 @@
       "crate-vis": 5,
       "enum": 3,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/sealed_update.rs",
+     "purpose": "One private world's window messages, sealed for a home that may not read the world, which stores them and…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -89436,7 +89514,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 251,
+     "files": 252,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89884,7 +89962,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 200,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90738,7 +90816,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 346,
+     "files": 349,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90941,7 +91019,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90950,7 +91028,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6367,
+   "source_files": 6373,
    "test_files": 895
   },
   "oneiron-android": {
@@ -91334,7 +91412,22 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 33
+      "re-export": 34
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginCut"
+     ],
+     "path": "src/authority/origin_cut.rs",
+     "purpose": "The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: \"Refs are…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -91965,7 +92058,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92030,7 +92123,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 59,
+   "source_files": 60,
    "test_files": 1
   },
   "oneiron-base": {
@@ -97231,7 +97324,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 72,
+      "const": 73,
       "crate-vis": 1
      }
     },
@@ -120527,6 +120620,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/sealed_updates.rs",
+     "purpose": "The home's side of the sealed world-update relay (DEC-0005 fix 8: \"The cloud relays its sealed updates…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/selector_scope.rs",
      "purpose": "Single-vault selector grant scope shared by handler and livequery (FIX 9251)",
      "surface": {
@@ -120558,7 +120661,7 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -127668,7 +127771,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -127950,7 +128053,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1582,
+   "source_files": 1583,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
