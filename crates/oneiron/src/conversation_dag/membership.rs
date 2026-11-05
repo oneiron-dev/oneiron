@@ -107,7 +107,7 @@ pub(super) fn restore(vault: &Vault, txn: &mut heed::RwTxn<'_>, turn: EntityId) 
 }
 
 pub(super) fn validate_topology(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     turn: EntityId,
