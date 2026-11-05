@@ -308,9 +308,22 @@ the physical block before releasing its stored ticket. Reset, renew and root
 reuse keep the block. Original zeroing, tail offsets, borrowed arrays, flags,
 mutex and commit/abort paths stay unchanged; no startup block is retrocharged.
 
+The sealed-read stash in `txn.rs` admits each original boxed payload's exact
+length through the same root account. The actual setter stores the native
+registration before installing that account in the stash; nested writers clone
+the parent's installed account. `keep` and both stable wrappers return typed
+errors, and all three database and twelve cursor copy sites propagate the
+existing ENOMEM conversion. Each inline allocation guard keeps the account
+alive. The entry wipes its payload, then field order physically frees the Box
+before releasing its charge. A denied reserve creates neither a copy nor a
+release; the pre-copy guard cancels an unmaterialized successful reservation.
+Unaccounted sealed reads still copy and wipe; plain environments stay zero-copy.
+No earlier allocation is retroactively charged.
+
 This is not complete FIX8125, native disk accounting, whole-heap coverage or
-runtime proof. Other ID2/ID3 control arrays, startup scratch, decrypted-read stash, mmap
-and other metadata copies remain outside this allocation scope.
+runtime proof. The stash's Vec index and inline guard metadata, other ID2/ID3
+control arrays, startup scratch, mmap and other metadata copies remain outside
+this allocation scope.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

@@ -372,7 +372,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
 
         match result {
             Ok(()) => {
-                let data = unsafe { txn.stable(crate::from_val(data_val.assume_init())) };
+                let data = unsafe { txn.stable(crate::from_val(data_val.assume_init())) }?;
                 let data = DC::bytes_decode(data).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }
@@ -2144,7 +2144,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
             Ok(()) => Ok(None),
             // the key already exists: the previous value is stored in the data parameter
             Err(MdbError::KeyExist) => {
-                let bytes = unsafe { txn.stable(crate::from_val(data_val)) };
+                let bytes = unsafe { txn.stable(crate::from_val(data_val)) }?;
                 let data = DC::bytes_decode(bytes).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }
@@ -2308,7 +2308,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
             }
             // the key already exists: the previous value is stored in the data parameter
             Err(MdbError::KeyExist) => {
-                let bytes = unsafe { txn.stable(crate::from_val(reserved)) };
+                let bytes = unsafe { txn.stable(crate::from_val(reserved)) }?;
                 let data = DC::bytes_decode(bytes).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }

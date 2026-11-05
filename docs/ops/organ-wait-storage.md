@@ -153,9 +153,20 @@ blocks use the same layout without an account; attaching a later write account
 does not retroactively charge them. Their original tail offsets, zeroed fields,
 borrowed arrays and mutex lifecycle remain unchanged.
 
-This covers dirty-page, encrypted read-cache, single-ID-list, raw dirty-list
-and transaction-control-block allocations during the accounted transaction,
-including their actual heap-only prefixes. It does not cover other ID2/ID3 control arrays, startup
-scratch, encryption stash, mmap, every metadata/overlay copy or native
-physical-disk/CoW costs. The disk claim above still covers encoded values only.
-This is not complete FIX8125, whole-heap coverage or runtime proof.
+Sealed reads also admit each copied byte payload through that same account.
+The root writer installs it in the existing sealed-read stash only after native
+registration succeeds. A nested writer inherits the parent's installed account.
+Each boxed payload reserves its exact length before copying and materializes
+immediately afterward. The copy survives until transaction end, when it is wiped
+and physically freed before its charge returns. An admission denial follows the
+same typed ENOMEM path as native allocation denial; it does not wait inside the
+writer. Plain environments remain zero-copy. Sealed reads without an account
+still copy and wipe; earlier copies are not retroactively charged.
+
+This covers dirty-page, encrypted read-cache, single-ID-list, raw dirty-list,
+transaction-control-block and sealed read-copy payload allocations during the
+accounted transaction, including the native allocations' actual heap-only
+prefixes. It does not cover the stash's Vec index or inline guard metadata,
+other ID2/ID3 control arrays, startup scratch, mmap, every metadata/overlay copy
+or native physical-disk/CoW costs. The disk claim above still covers encoded
+values only. This is not complete FIX8125, whole-heap coverage or runtime proof.

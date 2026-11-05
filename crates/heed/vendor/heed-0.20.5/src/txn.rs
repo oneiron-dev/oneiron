@@ -39,12 +39,42 @@ pub struct RoTxn<'e> {
 /// of mdb.master3's page cache. That cache may unmap a page while the
 /// transaction lives, so a sealed env's values are copied here and live until
 /// the transaction ends, as heed promises. Wiped when the transaction drops.
-#[derive(Default)]
-pub(crate) struct Stash(Mutex<Vec<Box<[u8]>>>);
+pub(crate) struct Stash {
+    kept: Mutex<Vec<StashedCopy>>,
+    account: Option<Arc<dyn crate::PageAccount>>,
+}
+
+// Field order keeps the payload alive through wiping, then frees it before
+// returning its admitted bytes to the account.
+struct StashedCopy {
+    bytes: Box<[u8]>,
+    _allocation: Option<StashAllocation>,
+}
+
+impl Drop for StashedCopy {
+    fn drop(&mut self) {
+        self.bytes.zeroize();
+    }
+}
+
+struct StashAllocation {
+    account: Arc<dyn crate::PageAccount>,
+    bytes: usize,
+    allocated: bool,
+}
+
+impl Drop for StashAllocation {
+    fn drop(&mut self) {
+        self.account.release(self.bytes, self.allocated);
+    }
+}
 
 impl Stash {
-    fn for_env(env: &Env) -> Option<Stash> {
-        env.is_sealed().then(Stash::default)
+    fn for_env(env: &Env, account: Option<Arc<dyn crate::PageAccount>>) -> Option<Stash> {
+        env.is_sealed().then(|| Stash {
+            kept: Mutex::new(Vec::new()),
+            account,
+        })
     }
 
     /// A copy of `bytes` that lives as long as this stash.
@@ -53,27 +83,36 @@ impl Stash {
     ///
     /// The caller bounds `'s` by the stash's own life, as heed bounds every
     /// returned value by its transaction.
-    pub(crate) unsafe fn keep<'s>(&self, bytes: &[u8]) -> &'s [u8] {
+    pub(crate) unsafe fn keep<'s>(&self, bytes: &[u8]) -> Result<&'s [u8]> {
+        // Declared before the physical copy so unwinding frees the copy first.
+        let mut allocation = match &self.account {
+            Some(account) => {
+                if !account.reserve(bytes.len()) {
+                    mdb_result(libc::ENOMEM)?;
+                }
+                Some(StashAllocation {
+                    account: Arc::clone(account),
+                    bytes: bytes.len(),
+                    allocated: false,
+                })
+            }
+            None => None,
+        };
         let copy: Box<[u8]> = bytes.into();
+        if let Some(allocation) = &mut allocation {
+            allocation.account.materialized(allocation.bytes);
+            allocation.allocated = true;
+        }
         let (data, len) = (copy.as_ptr(), copy.len());
         // A boxed slice's buffer never moves; it frees only when the stash drops.
-        self.0
+        self.kept
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(copy);
-        unsafe { std::slice::from_raw_parts(data, len) }
-    }
-}
-
-impl Drop for Stash {
-    fn drop(&mut self) {
-        let kept = self
-            .0
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for copy in kept.iter_mut() {
-            copy.zeroize();
-        }
+            .push(StashedCopy {
+                bytes: copy,
+                _allocation: allocation,
+            });
+        Ok(unsafe { std::slice::from_raw_parts(data, len) })
     }
 }
 
@@ -92,7 +131,7 @@ impl<'e> RoTxn<'e> {
 
         Ok(RoTxn {
             txn,
-            stash: Stash::for_env(env),
+            stash: Stash::for_env(env, None),
             env: Cow::Borrowed(env),
         })
     }
@@ -111,7 +150,7 @@ impl<'e> RoTxn<'e> {
 
         Ok(RoTxn {
             txn,
-            stash: Stash::for_env(&env),
+            stash: Stash::for_env(&env, None),
             env: Cow::Owned(env),
         })
     }
@@ -135,9 +174,9 @@ impl<'e> RoTxn<'e> {
     /// # Safety
     ///
     /// `'s` must not outlive this transaction.
-    pub(crate) unsafe fn stable<'s>(&self, bytes: &'s [u8]) -> &'s [u8] {
+    pub(crate) unsafe fn stable<'s>(&self, bytes: &'s [u8]) -> Result<&'s [u8]> {
         match &self.stash {
-            None => bytes,
+            None => Ok(bytes),
             Some(stash) => unsafe { stash.keep(bytes) },
         }
     }
@@ -219,7 +258,7 @@ impl<'p> RwTxn<'p> {
         Ok(RwTxn {
             txn: RoTxn {
                 txn,
-                stash: Stash::for_env(env),
+                stash: Stash::for_env(env, None),
                 env: Cow::Borrowed(env),
             },
             page_account: None,
@@ -242,7 +281,14 @@ impl<'p> RwTxn<'p> {
         Ok(RwTxn {
             txn: RoTxn {
                 txn,
-                stash: Stash::for_env(env),
+                stash: Stash::for_env(
+                    env,
+                    parent
+                        .txn
+                        .stash
+                        .as_ref()
+                        .and_then(|stash| stash.account.clone()),
+                ),
                 env: Cow::Borrowed(env),
             },
             page_account: None,
@@ -260,8 +306,12 @@ impl<'p> RwTxn<'p> {
     /// Returns EINVAL for a child, WRITEMAP, a written or already scoped writer.
     /// The account must perform real admission outside this transaction.
     pub fn set_page_account(&mut self, account: Arc<dyn crate::PageAccount>) -> Result<()> {
-        let registration = crate::page_account::Registration::attach(self.txn.txn, account)?;
+        let registration =
+            crate::page_account::Registration::attach(self.txn.txn, Arc::clone(&account))?;
         self.page_account = Some(registration);
+        if let Some(stash) = &mut self.txn.stash {
+            stash.account = Some(account);
+        }
         Ok(())
     }
 
