@@ -48,9 +48,9 @@ pub(crate) fn private_threads_readable_raw_in(
 /// TURN, or a TURN of a thread it opened, meets that thread's audience
 /// (FIX 3122). Both the row base holds now and the one the view composes
 /// are walked, so an overlay row never stands in for a base restriction.
-/// Base privacy obligations are checked independently before the composed walk.
-/// Summary covers validate through the same content view; task bindings and
-/// the audience itself still read base.
+/// Base source obligations are walked independently; only roots absent on
+/// base resolve through the composed view. Summary covers validate through
+/// each walk's content view; task bindings and audience authority read base.
 pub(crate) fn private_threads_readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -60,15 +60,45 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
-    if crate::store::ManifestDbs::is_union(dbs)
-        && !private_threads_readable_raw_in(vault, txn, id, raw, viewers, current)?
-    {
-        return Ok(false);
+    if crate::store::ManifestDbs::is_union(dbs) {
+        let base = vault.store.read();
+        let Some(walk) = thread_walk_kept(vault, &base, txn, id, raw)? else {
+            return Ok(false);
+        };
+        if !thread_walk_readable_in(vault, dbs, txn, walk, viewers, current, Some(&base))? {
+            return Ok(false);
+        }
     }
-    let Some(ThreadWalk { placed, reached }) = thread_walk_kept(vault, dbs, txn, id, raw)? else {
+    let Some(walk) = thread_walk_kept(vault, dbs, txn, id, raw)? else {
         return Ok(false);
     };
+    thread_walk_readable_in(vault, dbs, txn, walk, viewers, current, None)
+}
+
+fn thread_walk_readable_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    ThreadWalk { placed, reached }: ThreadWalk,
+    viewers: &[EntityId],
+    current: bool,
+    base: Option<&crate::store::StoreRead<'_>>,
+) -> Result<bool> {
+    let read_for_root = |root| -> Result<_> {
+        // A base walk can reach a TURN staged only in a stretch. Existing
+        // roots, including deleted shells, keep their base restriction.
+        if let Some(base) = base
+            && !matches!(
+                crate::vault::live_entity_row_in_txn(base, txn, &root)?,
+                crate::vault::LiveEntityRow::Absent
+            )
+        {
+            return Ok(base);
+        }
+        Ok(dbs)
+    };
     for (root, turn) in placed {
+        let dbs = read_for_root(root)?;
         let readable = if current {
             crate::workspace_roster::thread_root_readable_with_read_in(
                 vault, dbs, txn, root, viewers,
@@ -84,7 +114,11 @@ pub(crate) fn private_threads_readable_with_read_in(
     }
     for root in reached {
         if !crate::workspace_roster::thread_root_readable_with_read_in(
-            vault, dbs, txn, root, viewers,
+            vault,
+            read_for_root(root)?,
+            txn,
+            root,
+            viewers,
         )? {
             return Ok(false);
         }

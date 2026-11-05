@@ -11,13 +11,18 @@ An overlay-only source can therefore resolve. An erased source or changed
 MESSAGE revision in that view does not validate against an older base copy.
 The caller retains its existing unresolved-summary and private-thread error
 behavior. A composed read also checks the base private-thread walk independently,
-so invalid composed content cannot remove a base privacy restriction. The
+so invalid composed content cannot remove a base privacy restriction. A root
+present on base keeps its base resolution, including a deleted shell. Only a
+root genuinely absent on base resolves through the composed view, so a new
+public or private overlay thread still meets its native audience check. The
 epoch-summary and registered dependency paths still retain both base and
 composed-view source obligations.
 
 This does not make a content view an authority source. Archive controls, task
-bindings, audience checks, policy, grants and the Dreamer's NOTE-source admission
-remain on their existing native base readers. The NOTE-source admission and
+bindings, audience edits and membership, policy, grants and the Dreamer's
+NOTE-source admission remain on their existing native base readers. Resolving a
+new thread's root and conversation through the view does not move those
+authority checks into the view. The NOTE-source admission and
 stale-note behavior are unchanged; this change does not establish complete
 NOTE-overlay support. Ordinary writer, landing and metadata calls still use
 the base store through the same validation bodies.
