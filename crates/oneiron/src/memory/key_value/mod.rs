@@ -3,7 +3,8 @@
 //!
 //! This first surface is explicitly WORLDLESS: it neither reads nor writes
 //! world-scoped claims. Actor id AND class are part of the identity. Reads
-//! require the canonical claim's envelope to name that actor/class. Namespace
+//! require the canonical claim's envelope to name that actor/class, and see
+//! only the words the canonical claim read serves (FIX 9946). Namespace
 //! prefixes compare whole string segments, never string-prefix approximations.
 #[cfg(test)]
 mod tests;
@@ -258,13 +259,30 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let Ok(body) = crate::claim::decode_claim_body(
+            // Malformed rows are not heads: one bad payload never denies
+            // every key of this actor, and the canonical read below would
+            // answer it as an error.
+            if crate::claim::decode_claim_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 true,
-            ) else {
+            )
+            .is_err()
+            {
+                continue;
+            }
+            // A head is chosen only among the words the canonical claim read
+            // serves now (FIX 9946): deleted, archived, integrity-withdrawn
+            // or use-limited words, words whose recorded source is gone or
+            // under a pending deletion walk, and a MACHINE claim whose
+            // authenticated history no longer projects it current all read
+            // as absent here, before any conflict, count, page or write
+            // prior. No older revision stands in for a withheld head: a
+            // superseded body is closed, and only Active heads are kept.
+            let Some(body) = self.vault.get_claim_in_txn(txn, &id)? else {
                 continue;
             };
             if body.lifecycle != ClaimLifecycleStatus::Active
+                || body.stale
                 || !matches!(
                     body.approval,
                     ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
