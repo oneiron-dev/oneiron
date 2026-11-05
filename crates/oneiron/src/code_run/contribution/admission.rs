@@ -3,20 +3,21 @@
 //! receipts this runner kept for the pair's canonical candidate are the ones
 //! submitted, scored as submitted for the candidate's outcome, and
 //! regenerated the capsule of the step the target's check regenerates as it
-//! stands, read on the caller's snapshot. An engine step's forks also prove
-//! their scores only by a kept execution (FIX 3607): each fork's own answer
-//! run from that capsule's start under the one pin both forks' frozen
-//! scoring identity names. A pair they do not prove is still recorded, as
-//! unmatched; nothing here refuses it.
+//! stands, read on the caller's snapshot. Both forks were also scored in
+//! one evidence mode, the one their kept program runs settle (FIX 3607,
+//! [`super::execution`]): `Text`, or `Executed` under the one pin both ran
+//! their own answers under from that capsule's start. A pair they do not
+//! prove is still recorded, as unmatched; nothing here refuses it.
 
 use serde::{Deserialize, Serialize};
 
-use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
+use super::super::replay_capsule::StepReplayCapsule;
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
 use super::ancestor::target_step;
+use super::execution::pair_evidence_mode;
 use super::{
-    ContributionForkReceipt, ForkEvidence, ForkScoring, ForkTreatment, anchor_hash, pair_digest,
-    receipt_attempt,
+    ContributionForkReceipt, ForkEvidenceMode, ForkExecutionOutcome, ForkScoring, ForkTreatment,
+    anchor_hash, pair_digest, receipt_attempt,
 };
 use crate::skill_attribution::{ContributionCandidate, ContributionFork};
 use crate::{Result, Vault};
@@ -38,14 +39,14 @@ pub enum ForkMismatch {
     OtherScore,
     /// The two forks were not scored against one anchor: their stored
     /// anchors differ, a stored anchor is not the candidate's anchor bound
-    /// to its fork's frozen scoring identity, or a fork was scored on other
-    /// evidence than its step's (an engine step's executed program under
-    /// that identity's pin, a workflow step's answer text).
+    /// to its fork's frozen scoring identity, or the forks were not scored
+    /// in one evidence mode, the one their kept program runs settle.
     AnchorDiverged,
     /// A fork did not regenerate the capsule of the step the target's check
     /// regenerates as it stands: another capsule, request, model, route
-    /// prompt or seed, or the capsule's content is gone; or an engine step's
-    /// fork's execution did not run its own answer from that capsule's start.
+    /// prompt or seed, or the capsule's content is gone; or, in the
+    /// `Executed` mode, a fork's execution did not run from that capsule's
+    /// start.
     OtherCapsule,
     /// A kept fork was scored for another outcome, goal revision or axis
     /// than the candidate's.
@@ -89,9 +90,11 @@ pub(crate) fn matched_contribution_facts_in_txn(
         if fork.receipt != submitted.receipt || fork.treatment != treatment {
             reasons.push(ForkMismatch::OtherReceipt);
         }
-        match fork.passed {
+        match fork.score {
             None => reasons.push(ForkMismatch::Unscored),
-            Some(passed) if passed != submitted.passed => reasons.push(ForkMismatch::OtherScore),
+            Some(score) if score.passed != submitted.passed => {
+                reasons.push(ForkMismatch::OtherScore);
+            }
             Some(_) => {}
         }
     }
@@ -111,8 +114,7 @@ pub(crate) fn matched_contribution_facts_in_txn(
         Some(capsule)
             if regenerates(&capsule, &with_fork) && regenerates(&capsule, &without_fork) =>
         {
-            reasons.extend(evidence_mismatch(&capsule, &with_fork));
-            reasons.extend(evidence_mismatch(&capsule, &without_fork));
+            reasons.extend(evidence_mismatch(&capsule, &with_fork, &without_fork));
         }
         _ => reasons.push(ForkMismatch::OtherCapsule),
     }
@@ -121,10 +123,10 @@ pub(crate) fn matched_contribution_facts_in_txn(
     if !reasons.is_empty() {
         return Ok(Err(reasons));
     }
-    match (with_fork.passed, without_fork.passed) {
-        (Some(with_skill_passed), Some(without_skill_passed)) => Ok(Ok(MatchedContributionFacts {
-            with_skill_passed,
-            without_skill_passed,
+    match (with_fork.score, without_fork.score) {
+        (Some(with_score), Some(without_score)) => Ok(Ok(MatchedContributionFacts {
+            with_skill_passed: with_score.passed,
+            without_skill_passed: without_score.passed,
         })),
         _ => Ok(Err(vec![ForkMismatch::Unscored])),
     }
@@ -165,34 +167,37 @@ fn regenerates(capsule: &StepReplayCapsule, fork: &ContributionForkReceipt) -> b
         && fork.seed_unsupported == capsule.seed.is_none()
 }
 
-/// Why `fork`'s score is not proved on `capsule`'s evidence (FIX 3607), if
-/// it is not: a workflow step's fork is scored on its answer's text alone;
-/// an engine step's only on its kept execution (`Unscored` without one),
-/// whose pin is the one its frozen scoring identity names, run on the fork's
-/// own answer from the capsule's start.
+/// Why the pair's two scores are not proved in the evidence mode its kept
+/// forks settle (FIX 3607), if they are not. Both forks are scored in one
+/// mode, the one [`pair_evidence_mode`] reads from their kept program runs,
+/// so a `Text` score and an `Executed` score never pair. In the `Executed`
+/// mode each fork's execution ran from `capsule`'s start. A fork not scored
+/// yet is reported as `Unscored` by the caller.
 fn evidence_mismatch(
     capsule: &StepReplayCapsule,
-    fork: &ContributionForkReceipt,
+    with_fork: &ContributionForkReceipt,
+    without_fork: &ContributionForkReceipt,
 ) -> Option<ForkMismatch> {
-    match (capsule.host, fork.anchor_scoring.evidence) {
-        (CapsuleHost::WorkflowStep, ForkEvidence::AnswerText) => fork
+    let (Some(with_score), Some(without_score)) = (with_fork.score, without_fork.score) else {
+        return None;
+    };
+    let settled = pair_evidence_mode(capsule.host, with_fork, without_fork);
+    if with_score.mode != without_score.mode || settled != Some(with_score.mode) {
+        return Some(ForkMismatch::AnchorDiverged);
+    }
+    let from_start = |fork: &ContributionForkReceipt| {
+        let execution = fork
             .execution
-            .is_some()
-            .then_some(ForkMismatch::AnchorDiverged),
-        (CapsuleHost::EngineStep, ForkEvidence::ExecutedProgram { pin }) => {
-            let Some(execution) = &fork.execution else {
-                return Some(ForkMismatch::Unscored);
-            };
-            if execution.pin.digest() != pin {
-                return Some(ForkMismatch::AnchorDiverged);
-            }
-            let from_start = capsule.start.as_ref().is_some_and(|start| {
+            .as_ref()
+            .and_then(ForkExecutionOutcome::executed);
+        execution.is_some_and(|execution| {
+            capsule.start.as_ref().is_some_and(|start| {
                 start.digest == execution.pin.start
                     && start.bridge_start == execution.pin.bridge_start
-            });
-            (!from_start || execution.response != fork.response)
-                .then_some(ForkMismatch::OtherCapsule)
-        }
-        _ => Some(ForkMismatch::AnchorDiverged),
-    }
+            })
+        })
+    };
+    let executed = matches!(with_score.mode, ForkEvidenceMode::Executed { .. });
+    (executed && !(from_start(with_fork) && from_start(without_fork)))
+        .then_some(ForkMismatch::OtherCapsule)
 }

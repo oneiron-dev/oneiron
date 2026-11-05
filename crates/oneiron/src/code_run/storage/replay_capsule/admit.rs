@@ -605,7 +605,7 @@ pub(crate) fn store_fork_response(
             let mut expected = receipt(kept.response);
             expected.receipt.clone_from(&kept.receipt);
             expected.response_path.clone_from(&kept.response_path);
-            expected.passed = kept.passed;
+            expected.score = kept.score;
             expected.execution.clone_from(&kept.execution);
             expected.generated_at = kept.generated_at;
             return Ok((expected == kept).then_some(kept));

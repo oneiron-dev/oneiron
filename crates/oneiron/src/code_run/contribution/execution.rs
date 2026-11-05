@@ -1,7 +1,17 @@
-//! A contribution fork's program, run (FIX 3607, FIX 3028): an engine
-//! step's fork is scored on what its answer's program did, never on the
-//! answer's text. The step's frozen window is prepared once, before either
-//! fork is generated ([`fork_evidence`]). Each fork's kept answer then runs
+//! A contribution fork's program, run (FIX 3607, FIX 3028), and the
+//! evidence mode its pair is scored in. L08-A owns the scorer and rubric
+//! contract. Its answer of 2026-11-06 07:42: no frozen held-out or audit
+//! rubric is qualified to read only an executed step's output. So the mode
+//! is chosen per pair, never per fork ([`pair_evidence_mode`]). In the
+//! `Executed` mode both forks of an engine step ran their answers to the
+//! step's end under one pin. The scorer then reads each answer's text and
+//! what its program did, together: every input the rubric read before is
+//! still there, and the execution is added to it. Otherwise both forks are
+//! scored in the `Text` mode, on the answer's text alone, as before FIX
+//! 3607. A workflow step's pair is always in the `Text` mode.
+//!
+//! The step's frozen window is prepared once, before either fork is
+//! generated ([`freeze_program_step`]). Each fork's kept answer then runs
 //! on a fresh runtime of the host's one pinned component, in a scratch store
 //! of its own, against the same recorded calls, clock and seed
 //! ([`execute_contribution_fork`], through the shadow runner's
@@ -13,11 +23,12 @@
 //! Its observation, files, stored results and both traces are adopted as
 //! bodies the run owns, in the one writer that keeps the fork's execution;
 //! a retry reuses a committed execution. A program the record cannot answer
-//! is unavailable for the shadow runner's own reason, never a loss: a call
-//! the record does not hold, a nested unit not captured, an answer the live
-//! guest read through a view the record does not keep, a step that parked on
-//! a recorded wait. A workflow step keeps its text scoring; an engine step
-//! never falls back to it.
+//! is unavailable for the shadow runner's own reason, and the fork keeps
+//! that reason ([`ForkExecutionOutcome`]): a call the record does not hold,
+//! a nested unit not captured, an answer the live guest read through a view
+//! the record does not keep, a step that parked on a recorded wait, no
+//! runtime now. A lasting reason puts the pair in the `Text` mode at once. A
+//! reason a retry may clear waits for one retry first. Neither is a loss.
 
 use std::sync::Arc;
 
@@ -45,31 +56,27 @@ use crate::{EntityId, LlmResponse, Result, Vault};
 /// A program run's part, or the shadow runner's reason it has none.
 type Ran<T> = Result<std::result::Result<T, ShadowUnavailable>>;
 
-/// What a fork's scorer reads (FIX 3607): a workflow step's answer text, or
-/// an engine step's executed program under the pin both forks ran under.
+/// What a pair's scorer reads (FIX 3607), the same for both forks: one part
+/// of the identity both forks are scored under, beside their anchor's
+/// frozen rubric and scorer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ForkEvidence {
-    /// A saved-workflow step's single text call: its answer's text.
-    AnswerText,
-    /// An engine step: what its answer's program did when run, by the
-    /// digest of the [`ForkExecutionPin`] both forks ran under.
-    ExecutedProgram { pin: [u8; 32] },
+pub enum ForkEvidenceMode {
+    /// Each answer's text alone: the route before FIX 3607, and a workflow
+    /// step's always.
+    Text,
+    /// An engine step whose two forks both ran their answers under one pin:
+    /// each answer's text and what its program did, by the digest of the
+    /// [`ForkExecutionPin`] both ran under.
+    Executed { pin: [u8; 32] },
 }
 
-impl ForkEvidence {
-    /// Its bytes in the anchor's hash.
-    pub(super) fn hash_into(&self, hasher: &mut blake3::Hasher) {
-        match self {
-            Self::AnswerText => {
-                hasher.update(&[0]);
-            }
-            Self::ExecutedProgram { pin } => {
-                hasher.update(&[1]);
-                hasher.update(pin);
-            }
-        }
-    }
+/// A fork's score: the evidence mode its pair was scored in and whether it
+/// passed. Both forks of a pair are scored in one mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkScore {
+    pub mode: ForkEvidenceMode,
+    pub passed: bool,
 }
 
 /// What both forks of an engine step run under (FIX 3607), frozen before
@@ -169,6 +176,46 @@ impl ContributionForkExecution {
     }
 }
 
+/// What came of an engine step's fork's program run (FIX 3607), kept on the
+/// fork's receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkExecutionOutcome {
+    /// It ran to the step's end, and its bodies are adopted.
+    Executed(ContributionForkExecution),
+    /// It did not run, for a reason the shadow runner says a retry may
+    /// clear. A later pass runs it once more before its pair falls back to
+    /// the `Text` mode.
+    RetryPending(ShadowUnavailable),
+    /// It cannot run: a lasting reason, or a retryable one that held at its
+    /// retry. Its pair is scored in the `Text` mode.
+    Unavailable(ShadowUnavailable),
+}
+
+impl ForkExecutionOutcome {
+    /// Whether it is final: it does not wait for a retry.
+    #[must_use]
+    pub const fn settled(&self) -> bool {
+        !matches!(self, Self::RetryPending(_))
+    }
+
+    /// Its kept execution, when it ran.
+    #[must_use]
+    pub const fn executed(&self) -> Option<&ContributionForkExecution> {
+        match self {
+            Self::Executed(execution) => Some(execution),
+            Self::RetryPending(_) | Self::Unavailable(_) => None,
+        }
+    }
+
+    /// Every body it names: none unless it ran.
+    pub(crate) fn bodies(&self) -> impl Iterator<Item = &ExecutedBody> {
+        self.executed()
+            .into_iter()
+            .flat_map(ContributionForkExecution::bodies)
+    }
+}
+
 /// One output of a fork's program, as its scorer reads it: its path in the
 /// step, whether its producer finished it, and its bytes, whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,9 +225,10 @@ pub struct ExecutedOutput {
     pub bytes: Vec<u8>,
 }
 
-/// A fork's executed program as its scorer reads it (FIX 3607): how its
-/// step ended, the pin it ran under, how far into the step's recorded calls
-/// it matched, and its observation, files and stored results.
+/// A fork's executed program as its scorer reads it in the `Executed` mode
+/// (FIX 3607), beside the answer's text: how its step ended, the pin it ran
+/// under, how far into the step's recorded calls it matched, and its
+/// observation, files and stored results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutedForkView {
     pub status: ExecutedStepStatus,
@@ -387,59 +435,132 @@ pub(super) struct ProgramStep {
     pub(super) pin: ForkExecutionPin,
 }
 
-/// What `capsule`'s forks are scored on: a workflow step's answer text, or
-/// an engine step's executed program, its window frozen now under the host's
-/// runtime pin. An engine step whose window or runtime is unavailable is
-/// unavailable for that reason, never scored on text.
-pub(super) fn fork_evidence(
+/// `capsule`'s frozen program step: `None` for a workflow step, which has
+/// no program. An engine step's window is frozen now under the host's
+/// runtime pin. A window or runtime that is unavailable now is that reason,
+/// which each fork keeps as its program's outcome; the pair then falls back
+/// to the `Text` mode, never to a loss.
+pub(super) fn freeze_program_step(
     vault: &Vault,
     capsule: &StepReplayCapsule,
     program: &dyn ContributionForkProgram,
-) -> Outcome<(ForkEvidence, Option<ProgramStep>)> {
+) -> Result<Option<std::result::Result<ProgramStep, ShadowUnavailable>>> {
     if capsule.host == CapsuleHost::WorkflowStep {
-        return Ok(Ok((ForkEvidence::AnswerText, None)));
+        return Ok(None);
     }
     let step = match prepare_shadow_step_source(vault, capsule)? {
         Ok(step) => step,
-        Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
+        Err(unavailable) => return Ok(Some(Err(unavailable))),
     };
-    let runtime = match program.runtime_pin()? {
-        Ok(runtime) => runtime,
-        Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
-    };
-    let pin = ForkExecutionPin::of(&step, runtime);
-    let evidence = ForkEvidence::ExecutedProgram { pin: pin.digest() };
-    Ok(Ok((evidence, Some(ProgramStep { step, pin }))))
+    Ok(Some(program.runtime_pin()?.map(|runtime| ProgramStep {
+        pin: ForkExecutionPin::of(&step, runtime),
+        step,
+    })))
+}
+
+/// The evidence mode a pair is scored in (FIX 3607), chosen per pair and
+/// never per fork: `Executed`, under the pin both forks ran under, when
+/// both are an engine step's forks whose kept executions ran their own
+/// answers under one pin; else `Text` for both. A workflow step's pair is
+/// always `Text`. `None` while an engine step's fork has not run, or waits
+/// for its retry.
+pub(super) fn pair_evidence_mode(
+    host: CapsuleHost,
+    with_skill: &ContributionForkReceipt,
+    without_skill: &ContributionForkReceipt,
+) -> Option<ForkEvidenceMode> {
+    if host == CapsuleHost::WorkflowStep {
+        return Some(ForkEvidenceMode::Text);
+    }
+    Some(match (own_run(with_skill)?, own_run(without_skill)?) {
+        (Some(with), Some(without)) if with.pin == without.pin => ForkEvidenceMode::Executed {
+            pin: with.pin.digest(),
+        },
+        _ => ForkEvidenceMode::Text,
+    })
+}
+
+/// `fork`'s kept execution of its own answer, once its program's outcome is
+/// settled: `Some(None)` when it settled without one, `None` while it has
+/// not run or waits for its retry.
+fn own_run(fork: &ContributionForkReceipt) -> Option<Option<&ContributionForkExecution>> {
+    let outcome = fork
+        .execution
+        .as_ref()
+        .filter(|outcome| outcome.settled())?;
+    Some(
+        outcome
+            .executed()
+            .filter(|execution| execution.response == fork.response),
+    )
+}
+
+/// `fork`, when it is scored in `mode`; else the pair diverged.
+pub(super) fn scored_in(
+    fork: ContributionForkReceipt,
+    mode: ForkEvidenceMode,
+) -> std::result::Result<ContributionForkReceipt, Unavailable> {
+    if fork.score.is_some_and(|score| score.mode == mode) {
+        Ok(fork)
+    } else {
+        Err(Unavailable::ForksDiverged)
+    }
+}
+
+/// Why a pair whose mode is not settled is not scored this pass: the reason
+/// a fork's program waits for its retry on, which a later pass asks again.
+pub(super) fn retry_pending(forks: [&ContributionForkReceipt; 2]) -> Unavailable {
+    forks
+        .into_iter()
+        .find_map(|fork| match &fork.execution {
+            Some(ForkExecutionOutcome::RetryPending(unavailable)) => {
+                Some(Unavailable::ProgramReplay(unavailable.clone()))
+            }
+            _ => None,
+        })
+        .unwrap_or(Unavailable::Unfinished)
 }
 
 impl Runner<'_> {
-    /// An engine step's fork as executed, else its kept answer's program run
-    /// now and its execution kept before it is scored; a workflow step's fork
-    /// as it is.
+    /// An engine step's fork with its program's outcome settled or pending,
+    /// kept before either fork is scored: as kept when it is settled, else
+    /// its kept answer's program run now. A workflow step's fork as it is.
     pub(super) fn executed(
         &self,
         prepared: &Prepared,
         fork: ContributionForkReceipt,
     ) -> Outcome<ContributionForkReceipt> {
-        let Some(frozen) = &prepared.program_step else {
+        let Some(frozen) = &prepared.frozen_program else {
             return Ok(Ok(fork));
         };
-        if fork.execution.is_some() {
-            return Ok(ran_under(fork, frozen.pin));
+        if fork
+            .execution
+            .as_ref()
+            .is_some_and(ForkExecutionOutcome::settled)
+        {
+            return Ok(Ok(fork));
         }
+        let frozen = match frozen {
+            Ok(frozen) => frozen,
+            Err(unavailable) => return self.unexecuted(prepared, fork, unavailable.clone()),
+        };
         if !self.clock.decision_may_start() {
             return Ok(Err(Unavailable::Unfinished));
         }
         let Some(response) = fork_response(self.vault, prepared.capsule.run, &fork)? else {
-            return Ok(Err(Unavailable::Unreadable));
+            return Ok(Err(if fork.response_erased {
+                Unavailable::Erased
+            } else {
+                Unavailable::Unreadable
+            }));
         };
         let executed = match self.program.execute(&frozen.step, &response)? {
             Ok(executed) => executed,
-            Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
+            Err(unavailable) => return self.unexecuted(prepared, fork, unavailable),
         };
         if executed.runtime != frozen.pin.runtime {
             let drift = ShadowUnavailable::new(Reason::ArtifactDigestMismatch, "runtime");
-            return Ok(Err(Unavailable::ProgramReplay(drift)));
+            return self.unexecuted(prepared, fork, drift);
         }
         // The bodies' paths are opaque, as the fork's answer's is.
         let path_id = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
@@ -455,27 +576,51 @@ impl Runner<'_> {
         let capsule = &prepared.capsule;
         // Its bodies, its execution and their erase ownership commit together.
         let kept = store_fork_execution(self.vault, capsule, &self.pair, &fork, &bodies, |refs| {
-            executed.record(answer, pin, &paths, refs)
+            executed
+                .record(answer, pin, &paths, refs)
+                .map(ForkExecutionOutcome::Executed)
         })?;
-        Ok(match kept {
-            Some(kept) => ran_under(kept, pin),
-            None => Err(Unavailable::Unreadable),
-        })
+        Ok(kept.ok_or(Unavailable::Unreadable))
     }
 
-    /// An engine step's fork's executed program, as its scorer reads it;
-    /// `None` for a workflow step's. Unfinished until its execution is kept,
-    /// unreadable once a body of it is gone.
+    /// `fork` with its program kept unavailable for `unavailable`: pending
+    /// one retry when a retry may clear it and the fork has not waited yet,
+    /// else for good.
+    fn unexecuted(
+        &self,
+        prepared: &Prepared,
+        fork: ContributionForkReceipt,
+        unavailable: ShadowUnavailable,
+    ) -> Outcome<ContributionForkReceipt> {
+        let outcome = if unavailable.retryable && fork.execution.is_none() {
+            ForkExecutionOutcome::RetryPending(unavailable)
+        } else {
+            ForkExecutionOutcome::Unavailable(unavailable)
+        };
+        let (vault, capsule) = (self.vault, &prepared.capsule);
+        let kept = store_fork_execution(vault, capsule, &self.pair, &fork, &[], |_| {
+            Some(outcome.clone())
+        })?;
+        Ok(kept.ok_or(Unavailable::Unreadable))
+    }
+
+    /// A fork's executed program, as its scorer reads it in `mode`: `None`
+    /// in the `Text` mode. Unreadable once a body of it is gone.
     pub(super) fn executed_view(
         &self,
         prepared: &Prepared,
         fork: &ContributionForkReceipt,
+        mode: ForkEvidenceMode,
     ) -> Outcome<Option<ExecutedForkView>> {
-        if prepared.program_step.is_none() {
+        if mode == ForkEvidenceMode::Text {
             return Ok(Ok(None));
         }
-        let Some(execution) = &fork.execution else {
-            return Ok(Err(Unavailable::Unfinished));
+        let execution = fork
+            .execution
+            .as_ref()
+            .and_then(ForkExecutionOutcome::executed);
+        let Some(execution) = execution else {
+            return Ok(Err(Unavailable::ForksDiverged));
         };
         let run = prepared.capsule.run;
         let Some(outputs) = fork_execution_outputs(self.vault, run, execution)? else {
@@ -487,22 +632,5 @@ impl Runner<'_> {
             consumed: execution.consumed,
             outputs,
         })))
-    }
-}
-
-/// `fork`, when its kept execution ran on its own answer under `pin`; else
-/// the pair diverged.
-fn ran_under(
-    fork: ContributionForkReceipt,
-    pin: ForkExecutionPin,
-) -> std::result::Result<ContributionForkReceipt, Unavailable> {
-    let ran = fork
-        .execution
-        .as_ref()
-        .is_some_and(|execution| execution.pin == pin && execution.response == fork.response);
-    if ran {
-        Ok(fork)
-    } else {
-        Err(Unavailable::ForksDiverged)
     }
 }
