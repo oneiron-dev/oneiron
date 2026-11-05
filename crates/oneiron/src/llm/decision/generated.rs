@@ -14,8 +14,9 @@ use super::ladder::{
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionPack,
-    DecisionQuestion, DecisionRung, ProviderPin, Reversibility, TypedDecision,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility, StopCause, TypedDecision,
 };
+use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, ContentPart, DeterministicFallback,
     DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
@@ -183,6 +184,45 @@ impl DecisionLadder<'_> {
         spent: &mut Vec<([u8; 32], LlmUsage)>,
         labels: Option<&dyn DecisionWireLabels>,
     ) -> DurableStepResult<GeneratedDecisions> {
+        self.run_pack_generated_spent_with_run(
+            rung,
+            questions,
+            principal,
+            evidence,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            spent,
+            labels,
+            None,
+        )
+        .await
+    }
+
+    /// The generated read with the host route's actual run carried into each
+    /// provider pack and the synchronous close. Its generation still uses
+    /// `rung`'s backend and step unchanged.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the generated pack also carries its host route's run"
+    )]
+    pub async fn run_pack_generated_spent_with_run(
+        &self,
+        rung: &GeneratedRung<'_>,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        labels: Option<&dyn DecisionWireLabels>,
+        run: Option<&RunAdmission>,
+    ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
         if !matches!(
             dial.first,
@@ -225,11 +265,15 @@ impl DecisionLadder<'_> {
                 audio: &[],
                 state,
                 deadline,
-                run: None,
+                run,
             };
             // A read the work time cannot start never goes out.
             if !deadline.decision_may_start() {
-                first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
+                first.extend(
+                    chunk
+                        .iter()
+                        .map(|_| Some(Read::NotStarted(StopCause::Deadline))),
+                );
                 continue;
             }
             let answers = match read(rung, &pack, &call, spent, labels).await? {
@@ -247,7 +291,10 @@ impl DecisionLadder<'_> {
         // Dreamer's) cannot enter it, so the close runs on its own thread.
         let decisions = std::thread::scope(|scope| {
             scope
-                .spawn(move || self.close(&pack, first, readings))
+                .spawn(move || match run {
+                    Some(run) => self.close_with_run(&pack, first, readings, run),
+                    None => self.close(&pack, first, readings),
+                })
                 .join()
         })
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;

@@ -1541,8 +1541,10 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&rung, &bound);
-            if let Some(sources) = sources {
-                sources.capture_request(&bound);
+            if !rung_run.is_unrecorded() {
+                if let Some(sources) = sources {
+                    sources.capture_request(&bound);
+                }
             }
             let sent = gate.generate(bound, permit.lease());
             let Some(answered) = call
