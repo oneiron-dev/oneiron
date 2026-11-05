@@ -394,7 +394,8 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
             rewrites.push((raw.into_owned(), record));
         }
     }
-    flush_rewrites_in_txn(store, txn, rewrites)
+    flush_rewrites_in_txn(store, txn, rewrites)?;
+    Ok(owned)
 }
 
 fn flush_rewrites_in_txn(
@@ -423,8 +424,7 @@ fn flush_rewrites_in_txn(
         rewritten.push((record.id, before, after));
     }
     // Each rewritten row's run snapshot moves with its mark (FIX 7517).
-    crate::vault_cleanup::erase_attempt_references_in_txn(store, txn, &rewritten)?;
-    Ok(owned)
+    crate::vault_cleanup::erase_attempt_references_in_txn(store, txn, &rewritten)
 }
 
 /// Empties whole every `browser.program.admit` payload captured under one
