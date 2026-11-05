@@ -16493,6 +16493,7 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 14,
+      "re-export": 1,
       "struct": 7,
       "type": 1
      }
@@ -16515,7 +16516,21 @@
      "purpose": "Shared action execution under the principal and binding of the host",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PreHookedFold"
+     ],
+     "path": "src/code_run/actions/fold_hooks.rs",
+     "purpose": "A public fold's completed pre chain, carried to its one native Mark action",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -91664,7 +91679,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 177,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92975,7 +92990,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6502,
+   "source_files": 6503,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110836,7 +110851,7 @@
      "path": "src/actions.rs",
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -114120,7 +114135,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/fold_doors.rs",
