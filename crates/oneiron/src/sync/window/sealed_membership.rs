@@ -2,8 +2,8 @@
 //! packed again, a carrier it keeps for a row that has since left the window
 //! leaves the mirror.
 //!
-//! The mirror carries rows other machines packed, so only a row held here
-//! proves a move: read here, its world or learned month names another window.
+//! The mirror carries rows other machines packed, so a locally held row must
+//! prove a move. A strictly newer carried CLAIM must agree with that proof.
 //! A row not held here, or one whose world does not decode (a deleted CLAIM's
 //! shell among them), stays. Only a CLAIM's world can change; a key pad or
 //! wrap outside its window is the local-only scrub's. Each removal is a
@@ -12,7 +12,7 @@
 //! live maps change: the mirror's history and the bundles already kept still
 //! hold the old set.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use loro::{CommitOptions, LoroDoc};
 
@@ -29,9 +29,8 @@ use crate::error::Result;
 /// What proves a row left a sealed window (CALLS:
 /// SEALED_MIRROR_DEPARTURE_PROOF).
 enum DepartureProof {
-    /// A CLAIM held here whose world or learned month, read here, names
-    /// another window. This machine's row decides, so a holder of an older
-    /// copy may drop a carrier until a holder of the newer one seals again.
+    /// A CLAIM held here whose world or learned month names another window,
+    /// unless a strictly newer carried CLAIM disproves that residence.
     HeldClaimResidesElsewhere,
 }
 
@@ -41,6 +40,7 @@ const SEALED_MIRROR_DEPARTURE_PROOF: DepartureProof = DepartureProof::HeldClaimR
 #[derive(Clone)]
 struct Residence {
     claim: bool,
+    row_version: u64,
     world: Option<EntityId>,
     month: WindowKey,
 }
@@ -51,14 +51,39 @@ fn residence_in(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<
     let Some(raw) = vault.get_raw_in(rtxn, id)? else {
         return Ok(None);
     };
-    let (Some(header), Ok(world)) = (EntityMetadataHeader::parse(&raw), entity_world(&raw)) else {
-        return Ok(None);
+    Ok(residence_of(&raw))
+}
+
+fn residence_of(raw: &[u8]) -> Option<Residence> {
+    let (Some(header), Ok(world)) = (EntityMetadataHeader::parse(raw), entity_world(raw)) else {
+        return None;
     };
-    Ok(Some(Residence {
+    Some(Residence {
         claim: header.entity_type == crate::registry::ENTITY_TYPE_CLAIM,
+        row_version: header.row_version,
         world,
         month: WindowKey::from_timestamp(header.learned_at),
-    }))
+    })
+}
+
+fn compared_residence<'a>(held: &'a Residence, carried: Option<&'a Residence>) -> &'a Residence {
+    match carried {
+        Some(carried) if held.claim && carried.claim && carried.row_version > held.row_version => {
+            carried
+        }
+        _ => held,
+    }
+}
+
+fn edge_resides_elsewhere(
+    src: &Residence,
+    tgt: &Residence,
+    window_key: &WindowKey,
+    month: &str,
+) -> bool {
+    let home = if src.world.is_none() { tgt } else { src };
+    (src.claim || tgt.claim)
+        && (!edge_worlds_match(src.world, tgt.world, window_key) || home.month.as_str() != month)
 }
 
 /// Drops from `doc`, the mirror of the sealed world window `window_key`, the
@@ -80,10 +105,10 @@ pub(super) fn drop_departed_carriers(
     };
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
-    let mut carried = BTreeSet::new();
-    map_for_each_value_bytes(&entities, |key, _| {
+    let mut carried = BTreeMap::new();
+    map_for_each_value_bytes(&entities, |key, blob| {
         if let Ok(id) = EntityId::from_hex(key) {
-            carried.insert(id);
+            carried.insert(id, blob.and_then(residence_of));
         }
     });
     let mut edge_keys = Vec::new();
@@ -105,9 +130,12 @@ pub(super) fn drop_departed_carriers(
             held.insert(id, found.clone());
             Ok(found)
         };
-        for id in carried {
+        for (&id, carrier) in &carried {
             if residence(id)?.is_some_and(|row| {
-                row.claim && (row.world != Some(world) || row.month.as_str() != month)
+                let compared = compared_residence(&row, carrier.as_ref());
+                row.claim
+                    && (row.world != Some(world) || row.month.as_str() != month)
+                    && (compared.world != Some(world) || compared.month.as_str() != month)
             }) {
                 departed.insert(id);
             }
@@ -119,10 +147,13 @@ pub(super) fn drop_departed_carriers(
             let (Some(src), Some(tgt)) = (residence(source)?, residence(target)?) else {
                 continue;
             };
-            let home = if src.world.is_none() { &tgt } else { &src };
-            if (src.claim || tgt.claim)
-                && (!edge_worlds_match(src.world, tgt.world, window_key)
-                    || home.month.as_str() != month)
+            if edge_resides_elsewhere(&src, &tgt, window_key, month)
+                && edge_resides_elsewhere(
+                    compared_residence(&src, carried.get(&source).and_then(Option::as_ref)),
+                    compared_residence(&tgt, carried.get(&target).and_then(Option::as_ref)),
+                    window_key,
+                    month,
+                )
             {
                 stale_edges.push(key);
             }

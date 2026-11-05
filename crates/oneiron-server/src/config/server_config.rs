@@ -429,6 +429,9 @@ pub struct ServeConfig {
     pub linear: Option<LinearConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
+    /// Operator-only enterprise/advanced checkpoint selection capability.
+    /// Managed argv supplies it; the owner's settings file never does.
+    pub allow_host_checkpoint_opt_out: bool,
     /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
     /// deployment's default, on for our managed serve and off on every plain
     /// serve ([`oneiron::config::failure_signals::default_exports`]).
@@ -552,6 +555,7 @@ impl Default for ServeConfig {
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
+            allow_host_checkpoint_opt_out: false,
             failure_signal_export: None,
             failure_signal_training: None,
             hosted_kms_key_ref: None,
@@ -652,6 +656,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);

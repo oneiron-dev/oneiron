@@ -95,6 +95,10 @@ pub struct PulledImage {
     #[serde(skip)]
     #[schemars(skip)]
     pub image: Option<ImageBytes>,
+    /// The canonical stored blob, not a hash of masked, cropped or scaled pixels.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub evidence: Option<super::EvidenceVersion>,
 }
 
 /// The rows one generated image landed as.
