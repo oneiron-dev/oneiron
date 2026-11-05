@@ -54,6 +54,21 @@ Phone-line settings are LIVE restore state, like other current identity-authorit
 settings. A checkpoint's stored setting is not a newly authenticated owner act. Arrival
 metadata is CONTENT, never a grant or a credential. There is no migration or old reader.
 
+## Native call-bound reads
+
+`Vault::phone_line_answer_read_key` consumes the receiving agent's actual verified
+credential and the opaque arrival reference. It issues no credential or grant and
+returns no private caller metadata. The returned key keeps the credential's existing
+bounds and is off-device, because its answer is for an external caller. Its frozen
+ceiling meets both the arrival's recorded scope and the line's current scope.
+
+Each entity-row admission rechecks the current line, agent, bridge, owner and live
+arrival in the same snapshot, then checks the current scope and native facet placement.
+This also applies to point reads, derived sources and the session view. Erase, disable
+or a binding mismatch admits no row through the call key. Ordinary keys with no phone
+ceiling keep their existing behavior. This native read factory is not an audio-session
+consumer or an output barrier; the answering path and its no-recognition mode remain open.
+
 ## HTTP doors
 
 - `GET /v1/owner/phone-lines/{identity_ref}` reads the owner's stored setting.
