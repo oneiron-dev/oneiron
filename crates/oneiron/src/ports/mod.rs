@@ -3,6 +3,7 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+pub(crate) mod claim_order;
 mod claim_read_status;
 mod contracts;
 pub(crate) use claim_read_status::ClaimReadStatus;
@@ -101,7 +102,9 @@ pub(crate) use time::{
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
-pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
+pub(crate) use lmdb_visibility::{
+    deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
+};
 pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

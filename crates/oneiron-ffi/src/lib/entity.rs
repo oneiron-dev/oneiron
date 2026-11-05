@@ -120,7 +120,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
                     // Signing doors (delete receipts) need this install's keys from the keystore.
                     vault.install_default_keystore(std::path::Path::new(&path));
                     let handle =
-                        Box::into_raw(Box::new(OneironVault::unbound(Arc::new(vault), dimensions)));
+                        Box::into_raw(Box::new(OneironVault::opened(Arc::new(vault), dimensions)));
                     write_out(out_vault, handle)?;
                     Ok(())
                 })();
@@ -239,6 +239,7 @@ pub unsafe extern "C" fn oneiron_vault_bind(
                     actor_class,
                     session,
                 }),
+                native_limit_questions: None,
             };
             write_out(out_vault, Box::into_raw(Box::new(bound)))
         });
