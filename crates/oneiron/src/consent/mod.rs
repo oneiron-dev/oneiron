@@ -48,6 +48,7 @@
 //! rewrite, or a byte/status/codec change to the source record.
 
 mod adapters;
+mod answer_wake;
 pub mod approval_proof;
 mod ask_holders;
 mod bound;
