@@ -169,4 +169,3 @@ pub struct MirrorWorkHead {
     /// Oldest first.
     pub kept: Vec<EntityId>,
 }
-
