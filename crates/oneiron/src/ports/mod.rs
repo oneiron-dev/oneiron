@@ -3,12 +3,13 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+pub(crate) mod claim_order;
 mod claim_read_status;
 mod contracts;
 pub(crate) use claim_read_status::ClaimReadStatus;
 mod point_read;
+use oneiron_store::ports::read_result;
 pub use point_read::{PointRead, ReadRow, ReadTarget};
-mod read_result;
 pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
 mod retrieval;
@@ -60,11 +61,11 @@ pub(crate) use lmdb_entity::{BodyReadError, indexes_named_entity, reindex_named_
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
-mod records;
 pub(crate) use mutation::{
     EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
     storage_service_principal,
 };
+use oneiron_store::ports::records;
 mod regeneration;
 mod safe_read;
 mod time;
@@ -93,17 +94,17 @@ pub(crate) use integrity::{
     stage_stale_mark_in_txn, stale_in_txn, withdraw_from_lost_source_in_session_txn,
     withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
-pub use records::*;
-pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
-pub(crate) use time::{
-    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
-    persist_id_floor_in_txn, recorded_at_in_txn,
-};
-pub use time::{Clock, IdGen, StoreClock};
-mod manual_clock;
 pub(crate) use lmdb_visibility::{
     deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
 };
 pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
+use oneiron_store::ports::manual_clock;
+pub use records::*;
+pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
 pub(crate) use time::ID_FLOOR;
+pub(crate) use time::{
+    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
+    persist_id_floor_in_txn, recorded_at_in_txn,
+};
+pub use time::{Clock, IdGen, StoreClock};
