@@ -289,7 +289,7 @@ async fn begin(
         Some(lease),
         session,
         Some(&schedule),
-        Some(route.worker.spec().worker_id.as_str()),
+        Some(&route.worker),
     )
     .await;
     let refused = matches!(
@@ -311,7 +311,7 @@ async fn begin(
             Some(lease),
             None,
             Some(&schedule),
-            Some(route.worker.spec().worker_id.as_str()),
+            Some(&route.worker),
         )
         .await;
     }
@@ -621,7 +621,7 @@ fn report(route: &NativeRoute, last: &JsonValue) {
 /// polls.
 fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
     if let Some(stats) = stats {
-        worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
+        worker_host::report_device_stats(&route.worker, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
         worker_host::report_device_activity(&route.worker, activity);

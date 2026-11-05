@@ -45,6 +45,7 @@ mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
+mod task_settlement;
 mod team_submit;
 mod type_diagnostics;
 mod types;
@@ -101,7 +102,9 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
-pub(crate) use self::model_call::erase_model_call_actor_in_txn;
+pub(crate) use self::model_call::{
+    erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
+};
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -170,8 +173,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
-    step_replay_capsules_in_txn,
+    erase_contribution_forks_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
@@ -297,6 +300,8 @@ pub(crate) use self::storage::code_run_continuation_accepts_masked;
 pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_replay_record_accepts_masked;
+pub(crate) use self::storage::code_run_summary_memo_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 
 pub use self::dispatcher::{
