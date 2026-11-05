@@ -27,7 +27,7 @@ pub(super) async fn execute(
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
         let reader = mcp_scoped_read(&server.vault, actor)?;
-        let mut staged = target.clone();
+        let mut staged = target.as_deref().cloned().unwrap_or_default();
         let mut observed: Option<ScopedReadReceipt> = None;
         for observation in produced.served {
             let receipt = if let Some(body) = observation.skill_body {
@@ -62,7 +62,9 @@ pub(super) async fn execute(
         if let Some(observed) = &observed {
             fold_observation_receipt(&mut produced.output, observed)?;
         }
-        *target = staged;
+        if let Some(target) = target.as_deref_mut() {
+            *target = staged;
+        }
     }
     Ok((produced.output, produced.capabilities, produced.producers))
 }
@@ -316,12 +318,18 @@ async fn memory_read_media(
         }
         Err(error) => return Err(media_error(error)),
     };
+    let (mut seed_memory, mut seeds) = (server.memory.empty_lease(), seeds);
+    seed_memory.materialized(
+        0,
+        (seeds.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+    );
     if seeds.is_empty() {
         return Ok(None);
     }
     Ok(Some(
         seeds
-            .into_iter()
+            .drain(..)
             .map(|seed| EmbeddedMediaSeed {
                 space: seed.space,
                 kind: seed.kind,
