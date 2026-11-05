@@ -68,6 +68,13 @@ holiday coercion and ordinary skipped range errors are unchanged. Holiday sortin
 allocation and other calendar/financial work still have unpolled spans; these are
 cooperative checks, not a hard time bound.
 
+DB, VDB and AMORDEGRC poll that same full token in their period-by-period
+calculations. Both VDB switch/no-switch paths and its two real helper calls carry
+typed cancellation through the evaluator before numeric-result boxing. Numeric
+formulas, period/fraction handling, switch rules, rounding and ordinary errors
+stay unchanged. Their intake/allocation internals and other financial builtins
+remain outside this cooperative coverage.
+
 The recalculation behaves like Excel recalculating at edit time. Its caller passes a
 `RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
 local UTC offset their date and time use, and the seed of RAND, RANDBETWEEN and RANDARRAY. The
@@ -261,7 +268,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.21): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.22): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -312,7 +319,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.21`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.22`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
