@@ -51,6 +51,7 @@ impl Vault {
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
+        crate::entity_doc::checkpoint::validate_native_image_rows(&checkpoint.image().databases)?;
         let (mut image, checkpoint_id, mut bodies, _) = checkpoint.into_landing_parts();
         validate_image_rows_before_destination(&image)?;
         // The compartments its payload is sealed in, carried apart from the

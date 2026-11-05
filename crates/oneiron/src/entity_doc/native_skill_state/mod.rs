@@ -13,6 +13,7 @@ mod request;
 pub(super) use canonical::{CanonicalSkillState, has_witness};
 pub(super) use checkpoint::{
     check_checkpoint_insert, check_checkpoint_op, is_checkpoint_root, validate_checkpoint_history,
+    validate_image_history,
 };
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
