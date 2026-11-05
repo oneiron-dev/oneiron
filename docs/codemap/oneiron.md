@@ -5676,7 +5676,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/agent_refusal.rs` | src | s | 1 struct · 2 enum · 7 fn · 1 const | RefusalDial, RefusalDomain, RefusalLevel | The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's… |
 | `src/store/agent_scope.rs` | src | s | 1 enum · 1 crate-vis | AgentScope | The run scope persisted with an agent definition: every world, base reality only, or one world plus base… |
 | `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
-| `src/store/asset_body/mod.rs` | src | m | 22 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
+| `src/store/asset_body/mod.rs` | src | m | 24 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
 | `src/store/asset_body/read.rs` | src | s | 6 crate-vis | — | Reading ASSET bodies whatever plane holds them (FIX 3677): a logical reader that streams a body file… |
 | `src/store/asset_body/spool.rs` | src | s | 7 crate-vis | — | The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one… |
 | `src/store/asset_body/stage.rs` | src | m | 13 crate-vis | — | Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into… |
