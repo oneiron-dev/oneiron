@@ -123,11 +123,10 @@ impl Vault {
             {
                 return Err(invalid("protected shared skill cannot merge automatically"));
             }
-            // An inherited role is native metadata, not a declaration in the
-            // submitted frontmatter. Never carry the base's call contract.
-            if super::folder::declared_role_call(&package.files)?
-                .0
-                .is_none()
+            // Inherited metadata is not a frontmatter declaration. A kept call
+            // contract must still name an exact UTF-8 file in the submitted tree.
+            let (declared_role, declared_call) = super::folder::declared_role_call(&package.files)?;
+            if declared_role.is_none()
                 && current.role != SkillRole::Callable
                 && current.role != package.record.role
             {
@@ -137,6 +136,17 @@ impl Vault {
                     package.files,
                     super::SkillPackageFormat::Native,
                 )?;
+            } else if declared_role.is_none()
+                && declared_call.is_none()
+                && current.role == SkillRole::Callable
+                && current.call.as_ref().is_some_and(|call| {
+                    package.files.iter().any(|file| {
+                        file.path == call.reference && std::str::from_utf8(&file.content).is_ok()
+                    })
+                })
+            {
+                package.record.role = SkillRole::Callable;
+                package.record.call = current.call.clone();
             }
             package.record.provenance = rmpv::Value::Map(vec![
                 (
