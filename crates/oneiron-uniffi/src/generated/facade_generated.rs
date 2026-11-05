@@ -270,6 +270,11 @@ export_facade! {
     let output = client.self_grants_answer(&input)?;
     crate::codec::lift_record("self.grants.answer", &output)
 };
+"vault.proactivity.digest.get" => fn vault_proactivity_digest_get(&self, input: DigestReadRequest) -> Option<ProactivityDigestView> = |client| {
+    let input: oneiron::dreamer_runner::maintenance::digest::DigestReadRequest = crate::codec::lower_record("vault.proactivity.digest.get", input)?;
+    let output = client.vault_proactivity_digest_get(&input)?;
+    crate::codec::lift_record("vault.proactivity.digest.get", &output)
+};
 "vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
     let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
     let output = client.vault_personas_preview(&input)?;

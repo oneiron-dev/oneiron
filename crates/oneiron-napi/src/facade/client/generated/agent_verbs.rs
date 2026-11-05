@@ -415,6 +415,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_proactivity_digest_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.proactivity.digest.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_personas_preview(
         &self,
         input: serde_json::Value,

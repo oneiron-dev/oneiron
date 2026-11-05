@@ -58,6 +58,7 @@ pub enum AgentVerb {
     SelfGrantsAsked,
     VaultCompanionsAccessRequestsAnswer,
     SelfGrantsAnswer,
+    VaultProactivityDigestGet,
     VaultPersonasPreview,
     VaultPersonasExport,
     VaultPersonasEdit,
@@ -1313,6 +1314,7 @@ impl AgentVerb {
         Self::SelfGrantsAsked,
         Self::VaultCompanionsAccessRequestsAnswer,
         Self::SelfGrantsAnswer,
+        Self::VaultProactivityDigestGet,
         Self::VaultPersonasPreview,
         Self::VaultPersonasExport,
         Self::VaultPersonasEdit,
@@ -2571,6 +2573,7 @@ impl AgentVerb {
             Self::SelfGrantsAsked => "self.grants.asked",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
             Self::SelfGrantsAnswer => "self.grants.answer",
+            Self::VaultProactivityDigestGet => "vault.proactivity.digest.get",
             Self::VaultPersonasPreview => "vault.personas.preview",
             Self::VaultPersonasExport => "vault.personas.export",
             Self::VaultPersonasEdit => "vault.personas.edit",
@@ -3862,6 +3865,7 @@ impl AgentVerb {
                 | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
+                | Self::VaultProactivityDigestGet
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -5146,6 +5150,7 @@ impl AgentVerb {
                 | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
+                | Self::VaultProactivityDigestGet
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -6592,6 +6597,7 @@ impl AgentVerb {
                 | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
+                | Self::VaultProactivityDigestGet
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -8523,6 +8529,7 @@ impl AgentVerb {
             Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
+            Self::VaultProactivityDigestGet => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -9796,6 +9803,7 @@ impl AgentVerb {
             Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
+            Self::VaultProactivityDigestGet => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -11154,6 +11162,9 @@ impl AgentVerb {
             }
             Self::SelfGrantsAnswer => {
                 "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."
+            }
+            Self::VaultProactivityDigestGet => {
+                "Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."
             }
             Self::VaultPersonasPreview => {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."

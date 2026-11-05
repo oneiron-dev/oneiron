@@ -9,6 +9,7 @@
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
 //! - `vault.shape.groups.resolve`
+//! - `vault.proactivity.digest.get`
 //! - `tasks.wave`
 //! - `vault.fanout.spawn`
 //! - `vault.budgets.resident_shares`

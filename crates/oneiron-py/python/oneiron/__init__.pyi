@@ -523,6 +523,8 @@ class Oneiron:
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
+        @property
         def personas(self) -> "Oneiron._VaultPersonasVerbs": ...
         @property
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
@@ -920,6 +922,12 @@ class Oneiron:
             """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
         def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
+    class _VaultProactivityVerbs:
+        @property
+        def digest(self) -> "Oneiron._VaultProactivityDigestVerbs": ...
+    class _VaultProactivityDigestVerbs:
+        def get(self, spec: Facade.DigestReadRequest) -> Facade.ProactivityDigestView | None:
+            """Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."""
     class _VaultPersonasVerbs:
         def preview(self, spec: Facade.PersonaSnapshotPreviewRequest) -> Facade.PersonaSnapshotPreview:
             """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""

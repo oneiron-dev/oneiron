@@ -59,6 +59,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/self.grants.answer", post(facade_route))
+        .route("/vault.proactivity.digest.get", post(facade_route))
         .route("/vault.personas.preview", post(facade_route))
         .route("/vault.personas.export", post(facade_route))
         .route("/vault.personas.edit", post(facade_route))
