@@ -14,11 +14,13 @@
 //!
 //! No write is lost to it. A window goes only once nothing in it is this
 //! install's alone: no queued send for it waits, and the home's version
-//! vector for it, as this connection last exchanged it, covers every
-//! operation its persisted copy holds, as a demotion asks. A window the home
-//! never held, or holds less of, stays, named on the pass's report, until
-//! the owner discards this install's copy himself
-//! ([`discard_world_copy_as`]). The thin read caches of the world's items
+//! vector for it, as this device last exchanged it (`sv:hw:`, kept across
+//! restarts and taken from the home's vector frames even after the world
+//! left), covers every operation its persisted copy holds, as a demotion
+//! asks. A window the home never held, or holds less of, stays, named on the
+//! pass's report, until the owner discards this install's copy himself
+//! ([`discard_world_copy_as`]). A window open with no handle but the
+//! manager's is unloaded first; one a handle holds waits for the next pass. The thin read caches of the world's items
 //! (`ri:b:`, `ri:d:`, `ro:e:`, their touch and index rows) go at once: each is
 //! a copy of an item the home holds. A cache a legal hold names stays.
 //!
@@ -34,7 +36,7 @@
 //! to take it back if the owner turns the switch off. A window held open, or
 //! a member a keep rule holds, waits for the next pass.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use loro::VersionVector;
 
@@ -126,21 +128,40 @@ pub struct WorldEviction {
     pub cached_items_held: usize,
 }
 
+/// The home's version vector of world window `window_key`, as this device
+/// last exchanged it (FIX 14534).
+fn home_window_vv_key(window_key: &str) -> String {
+    format!(
+        "{}{window_key}",
+        String::from_utf8_lossy(crate::side_table::SYNC_HOME_WINDOW_VV.prefix)
+    )
+}
+
+/// Keeps `home`, the home's version vector of world window `window_key`,
+/// as this device just exchanged it.
+///
+/// # Errors
+/// Store errors.
+pub(crate) fn put_home_window_vv(
+    vault: &Vault,
+    window_key: &str,
+    home: &VersionVector,
+) -> Result<()> {
+    vault.sync_state_put(&home_window_vv_key(window_key), &home.encode())
+}
+
 /// Evicts this install's local copy of every world its fold keeps on one
 /// other machine ([`world_placed_elsewhere_in`]), losing no write: a window
-/// goes only once `home`, the home's version vector for each window as this
-/// connection last exchanged it, covers its persisted copy and no queued
-/// send for it waits. Local only: see the module note. Safe to run at any
-/// time and again: a pass that finds nothing writes nothing.
+/// goes only once the home's version vector for it, as this device last
+/// exchanged it, covers its persisted copy and no queued send for it waits.
+/// Local only: see the module note. Safe to run at any time and again: a
+/// pass that finds nothing writes nothing.
 ///
 /// # Errors
 /// Store or fold errors; a window's removal error.
-pub fn evict_worlds_placed_elsewhere(
-    vault: &Vault,
-    home: &HashMap<String, VersionVector>,
-) -> Result<WorldEviction> {
+pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
     let worlds = worlds_placed_elsewhere(vault)?;
-    evict(vault, &worlds, Confirmation::Home(home))
+    evict(vault, &worlds, Confirmation::Home)
 }
 
 /// Discards this install's copy of `world` on the owner's word (FIX 14534):
@@ -172,9 +193,9 @@ pub fn discard_world_copy_as(
 
 /// What lets a window go.
 #[derive(Clone, Copy)]
-enum Confirmation<'h> {
+enum Confirmation {
     /// The home holds every operation of it, and no queued send for it waits.
-    Home(&'h HashMap<String, VersionVector>),
+    Home,
     /// The owner discards this install's copy, queued sends with it.
     Owner,
 }
@@ -182,7 +203,7 @@ enum Confirmation<'h> {
 fn evict(
     vault: &Vault,
     worlds: &BTreeSet<EntityId>,
-    confirmation: Confirmation<'_>,
+    confirmation: Confirmation,
 ) -> Result<WorldEviction> {
     let mut report = WorldEviction {
         worlds: worlds.len(),
@@ -195,12 +216,13 @@ fn evict(
     report.cached_items_removed = removed;
     report.cached_items_held = held;
     for window in local_world_windows(vault, worlds)? {
-        if let Confirmation::Home(home) = confirmation
-            && !home_holds_window(vault, home, &window)?
-        {
+        if matches!(confirmation, Confirmation::Home) && !home_holds_window(vault, &window)? {
             report.windows_unconfirmed += 1;
             continue;
         }
+        // A window open with no handle but the manager's is put away first,
+        // so the fence can hold it closed; one a handle holds waits.
+        vault.unload_idle_window(&window)?;
         match vault.while_window_closed(&window, || evict_window(vault, &window, confirmation)) {
             None => report.windows_busy += 1,
             Some(step) => {
@@ -226,14 +248,14 @@ fn evict(
     Ok(report)
 }
 
-/// Whether the home's version vector for `window`, as this connection last
-/// exchanged it, covers every operation its persisted copy holds.
-fn home_holds_window(
-    vault: &Vault,
-    home: &HashMap<String, VersionVector>,
-    window: &WindowKey,
-) -> Result<bool> {
-    let Some(home) = home.get(window.as_str()) else {
+/// Whether the home's version vector for `window`, as this device last
+/// exchanged it, covers every operation its persisted copy holds. One that
+/// does not read covers nothing.
+fn home_holds_window(vault: &Vault, window: &WindowKey) -> Result<bool> {
+    let Some(home) = vault.sync_state_get(&home_window_vv_key(window.as_str()))? else {
+        return Ok(false);
+    };
+    let Ok(home) = VersionVector::decode(&home) else {
         return Ok(false);
     };
     let txn = vault.store.env.read_txn()?;
@@ -344,7 +366,7 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
 fn evict_window(
     vault: &Vault,
     window: &WindowKey,
-    confirmation: Confirmation<'_>,
+    confirmation: Confirmation,
 ) -> Result<(usize, usize, bool)> {
     let discard = matches!(confirmation, Confirmation::Owner);
     let keep = KeepControls {
@@ -363,6 +385,10 @@ fn evict_window(
                     .store
                     .sync_state
                     .delete(txn, &format!("rp:w:{window}"))?;
+                vault
+                    .store
+                    .sync_state
+                    .delete(txn, &home_window_vv_key(window.as_str()))?;
             }
             Ok(step)
         })?;
