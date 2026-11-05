@@ -159,3 +159,20 @@ Its required null card stays present. The same settled entity, unknown state,
 deciding ask and person-choice ask remain intact, with the same public record,
 input, native settlement and typed client call. JSON held inside card strings
 stays opaque text. No identity or action-admission rule changes.
+
+
+`feedback.preview` consumes its required bundle directly into `WireJson`, while
+keeping every finite preview field and disclosure state in the shared record
+codec. `self.off_record.results.read` also consumes a page's required JSON or a
+result card's optional shape before the finite facet or card metadata. Required
+page null stays present; a missing or null optional shape stays absent. The
+same native readers, release checks, preview approval and typed client calls
+remain unchanged.
+
+`vault.shape.plan.card` consumes its required generated UI and every manifest
+JSON value in the plan's seed, before/after items and undeclared rows before
+any finite conversion can fail. The shared record codec retains all other
+shape fields and custom serde behavior, including present empty body strings,
+default booleans, decimal vault identifiers and reach metadata. Missing or null
+optional manifest JSON stays absent. Hex-encoded manifest bodies remain opaque
+strings. The native plan, input, authority and typed client call do not change.
