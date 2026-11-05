@@ -18,12 +18,25 @@ request-sized `String` or `Vec`. JSON validation finishes before an invalid hex
 field is reported. Empty hex remains valid syntax and fails or succeeds only under
 the existing native comparison rules.
 
+The `proposal_ref` string is also unescaped into an anonymous file. Property names
+are matched as they stream, without copying them or an unknown member's value
+into a metadata head. Missing, duplicate, unknown and non-string members still
+produce the same invalid-JSON response. The generic decoder used by other doors
+is unchanged.
+
 The raw-body spool already reserves a stored-copy amount equal to its counted
-length. The decoded hex file cannot exceed half that raw length. That same room
-is retained through the final native read; it is not replaced with a second
-cumulative claim. Files are anonymous and are removed when their handles close.
+length. The decoded hex file cannot exceed half its own raw member's length;
+unescaping the reference cannot expand its raw member. Their combined decoded
+length therefore cannot exceed the raw body's length. That same room is retained
+through both files' final native read; it is not replaced with a second cumulative
+claim. Files are anonymous and are removed when their handles close.
 
 ## Native acceptance
+
+Native acceptance checks the holder credential before validating the reference's
+existing 64-byte lowercase hex shape. It reads that reference into a fixed 64-byte
+buffer and checks EOF, never a request-sized string. Invalid references retain
+their existing refusal and do not bypass the holder check.
 
 File comparison runs on a blocking worker, outside every LMDB transaction. It
 compares exact bytes to the proposal's stored canonical delta, not just a digest.
@@ -36,8 +49,10 @@ The wire request, error fields and OpenAPI schema do not change. Reject has no
 
 ## Scope
 
-This removes request-sized `expected_delta` allocations on the large-body path.
-It is not a bound on the whole endpoint or a claim of complete heap admission.
-Other metadata, `proposal_ref`, unknown JSON members, normal JSON working buffers
-and stored proposal allocations remain separate work. The two 64 KiB working
-buffers are internal I/O geometry, not new request caps, defaults or timeouts.
+This removes request-sized `expected_delta`, `proposal_ref`, property-name and
+metadata-head allocations on the large-accept path. It is not a bound on the whole
+endpoint or a claim of complete heap admission. Reject bodies, other doors' generic
+metadata decoding, normal working-buffer admission and stored proposal allocations
+remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+are internal I/O geometry and the existing reference shape, not new request caps,
+defaults or timeouts.

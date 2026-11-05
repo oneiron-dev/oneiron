@@ -31,7 +31,9 @@ use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
 pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
-pub(super) use self::json::{Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField};
+pub(super) use self::json::{
+    Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
+};
 pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
@@ -69,6 +71,12 @@ impl BodySpool {
         bulk: &mut [BulkMember<'_>],
     ) -> Result<T, JsonInvalid> {
         json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
+    }
+
+    /// The spool as an object containing only the declared string members,
+    /// without a copied metadata head.
+    pub(super) fn string_object(&mut self, bulk: &mut [BulkMember<'_>]) -> Result<(), JsonInvalid> {
+        json::decode_string_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
     }
 
     /// The spool's bytes from its start, read as they lie on the disk, a
