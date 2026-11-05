@@ -494,7 +494,14 @@ impl SealTrust {
             SealAuthority::Decision(act) => {
                 let act_at = super::seal_standing::external_act(fact, act)?;
                 let causal = self.causal_standing(store, rtxn, &act_at)?;
-                super::act_admission::decision_standing_in_txn(store, rtxn, causal, act, core.at)
+                super::act_admission::decision_standing_in_txn(
+                    store,
+                    rtxn,
+                    causal,
+                    self.fold(store, rtxn)?,
+                    fact,
+                    core,
+                )
             }
         }
     }
