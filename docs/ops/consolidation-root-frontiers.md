@@ -25,5 +25,14 @@ bridge's queued proposal payloads in the same transaction, without touching
 other Micro jobs. Consolidation claims retain the normal evidence and erasure
 rules; this slice does not establish full RUNS-07 or NOTE promotion support.
 
+When this attempt's own native grant closes a pinned CLAIM, the same grant
+transaction records the original retained revision and the exact closed-row
+revision in the private root. A later pass can recover only that attempt's
+original bytes through the existing entity revision ledger, after current
+Recorded read authority and the full root fence pass. No source bodies are
+copied into the root. Native source erasure, stale checks and history retirement
+still govern those retained revisions. Another attempt or an external change
+cannot use the own-close exception.
+
 There is no new queue kind, wake timer, public request field, model setting,
 budget, numeric limit, migration or deployment requirement.

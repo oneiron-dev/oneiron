@@ -67,7 +67,7 @@ impl<'a> BranchResources<'a> {
         let read = vault.scoped_read(actor_key);
         let (binding, turns) = {
             let txn = vault.store.env.read_txn()?;
-            let binding = RootBinding::load(vault, &read, &txn, payload)?;
+            let binding = RootBinding::load(vault, &read, &txn, payload, actor, attempt)?;
             let mut turns = BTreeMap::new();
             for pin in binding.pins() {
                 let reference = super::super::root_evidence::reference(&pin.reference)?;
@@ -100,10 +100,23 @@ impl<'a> BranchResources<'a> {
         }
         ids.extend(turns.values().copied());
         let ids: Vec<_> = ids.into_iter().collect();
+        let live_ids: Vec<_> = ids
+            .iter()
+            .filter(|id| !binding.has_closed(id))
+            .copied()
+            .collect();
         let ScopedReadResult {
             value: (rows, texts),
-            receipt,
-        } = super::super::turn_text::read_sources(&read, &ids)?;
+            mut receipt,
+        } = super::super::turn_text::read_sources(&read, &live_ids)?;
+        let mut by_id: BTreeMap<_, _> = live_ids.into_iter().zip(rows).collect();
+        for id in &ids {
+            if let Some(recovered) = binding.read_recovered(vault, &read, *id)? {
+                receipt.restrict_with(&recovered.receipt);
+                by_id.insert(*id, Some(recovered.value));
+            }
+        }
+        let rows: Vec<_> = ids.iter().map(|id| by_id.remove(id).flatten()).collect();
         let mut readable = buckets.clone();
         let mut claim_versions = BTreeSet::new();
         let mut sources = BTreeMap::new();
@@ -237,5 +250,24 @@ impl<'a> BranchResources<'a> {
             .expect("root origin")
             .validate_in_txn(vault, &resources.read, &txn)?;
         Ok(resources)
+    }
+}
+
+impl BranchResources<'_> {
+    pub(super) fn root_recovered_source(&self, id: EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
+        let Some(binding) = self.origin.root_binding() else {
+            return Ok(None);
+        };
+        let Some(row) = binding.read_recovered(self.read.vault(), &self.read, id)? else {
+            return Ok(None);
+        };
+        self.fold_read_receipt(&row.receipt)?;
+        Ok(Some(row.value))
+    }
+
+    pub(super) fn root_source_closed(&self, id: &EntityId) -> bool {
+        self.origin
+            .root_binding()
+            .is_some_and(|binding| binding.has_closed(id))
     }
 }

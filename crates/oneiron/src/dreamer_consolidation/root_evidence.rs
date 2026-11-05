@@ -36,6 +36,7 @@ pub(crate) fn root_bridge_read_context(input: &rmpv::Value) -> Option<Vec<Entity
 struct Root {
     owner: EntityId,
     accounting: ConsolidationRootAccounting,
+    closes: Vec<bridge::GrantedClose>,
 }
 
 pub(crate) fn reference(input: &ConsolidationReference) -> Result<super::SwarmEvidenceRef> {
@@ -369,6 +370,7 @@ fn put_root_in_txn(
         &Root {
             owner,
             accounting: accounting.clone(),
+            closes: Vec::new(),
         },
     )?;
     Ok(accounting)

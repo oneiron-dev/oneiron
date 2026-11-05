@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::super::ConsolidationBucketKey;
 use super::super::support::invalid_consolidation;
 use super::{Root, bucket_key, pin_reference, reference, require_readable};
+mod recovery;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
 use crate::dreamer_runner::{
@@ -21,6 +22,7 @@ use crate::memory::consolidation_frontier::{
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{Result, Vault};
+pub(super) use recovery::GrantedClose;
 
 /// The bridge attempt type. Queued on the existing Micro kind
 /// (`DreamerConsolidationScope::Micro.attempt_kind()`), so wake preparation
@@ -318,16 +320,6 @@ fn pin_bytes(pin: &ConsolidationRootEvidence) -> Result<Vec<u8>> {
 /// source hash, trust, ancestors, messages, refusal, project and axes (the
 /// last two refuse inside `pin_reference` itself). Byte comparison avoids
 /// widening native public types for PartialEq.
-fn fresh_pins_match(
-    vault: &Vault,
-    read: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    key: &ConsolidationBucketKey,
-    expected: &[ConsolidationRootEvidence],
-) -> Result<()> {
-    fresh_pins_match_after_closes(vault, read, read, txn, key, expected, &BTreeMap::new())
-}
-
 fn fresh_pins_match_after_closes(
     vault: &Vault,
     live: &ScopedRead<'_>,
@@ -420,6 +412,7 @@ pub(in crate::dreamer_consolidation) struct RootBinding {
     accepted: Vec<ConsolidationChildReceipt>,
     pins: Vec<ConsolidationRootEvidence>,
     identity: [u8; 32],
+    closed: BTreeMap<EntityId, GrantedClose>,
 }
 
 impl RootBinding {
@@ -434,6 +427,8 @@ impl RootBinding {
         read: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         payload: &RootPayload,
+        actor: crate::WriteActor,
+        attempt: AttemptId,
     ) -> Result<Self> {
         if payload.children.is_empty() {
             return Err(invalid_consolidation("root bridge payload has no children"));
@@ -523,12 +518,11 @@ impl RootBinding {
             }
             pins.push(pin.clone());
         }
-        fresh_pins_match(vault, read, txn, &key, &pins)?;
         let subset: Vec<(String, [u8; 32])> = accepted
             .iter()
             .map(|row| (row.child_ref.clone(), row.judgement_hash))
             .collect();
-        Ok(Self {
+        let mut binding = Self {
             root_id,
             owner,
             revision: payload.revision,
@@ -537,7 +531,11 @@ impl RootBinding {
             accepted,
             pins,
             identity: binding_identity(&root_id, &payload.bucket_hash, &subset),
-        })
+            closed: BTreeMap::new(),
+        };
+        binding.load_closes(&root, actor, attempt);
+        binding.validate_in_txn(vault, read, txn)?;
+        Ok(binding)
     }
 
     pub(in crate::dreamer_consolidation) fn key(&self) -> &ConsolidationBucketKey {
@@ -564,7 +562,20 @@ impl RootBinding {
         read: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
     ) -> Result<()> {
-        self.validate_after_closes_in_txn(vault, read, read, txn, &BTreeMap::new())
+        if self.closed.is_empty() {
+            self.validate_after_closes_in_txn(vault, read, read, txn, &BTreeMap::new())
+        } else {
+            let key = self
+                .closed
+                .values()
+                .next()
+                .expect("root close")
+                .reader_key()?;
+            let recorded = vault
+                .scoped_read(key)
+                .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
+            self.validate_after_closes_in_txn(vault, read, &recorded, txn, &self.closed_revisions())
+        }
     }
 
     pub(in crate::dreamer_consolidation) fn validate_after_closes_in_txn(
@@ -578,6 +589,7 @@ impl RootBinding {
         let root = super::ROOTS
             .get(&vault.store, txn, &self.root_id)?
             .ok_or_else(|| invalid_consolidation("root bridge root is gone"))?;
+        self.validate_closes(&root)?;
         if root.owner != self.owner {
             return Err(invalid_consolidation(
                 "evidence root belongs to another owner",

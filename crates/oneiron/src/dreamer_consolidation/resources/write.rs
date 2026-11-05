@@ -83,7 +83,7 @@ pub(crate) struct ConsolidationFence {
 }
 
 /// A row as it is stored: its type, learned time and document version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RowRevision {
     entity_type: u8,
     learned_at: u64,
@@ -124,6 +124,40 @@ impl ConsolidationFence {
     /// may promote under (`validate_run` refuses any other).
     pub(crate) fn run_identity(&self) -> (WriteActor, crate::attempt_queue::AttemptId) {
         (self.actor, self.attempt)
+    }
+
+    pub(crate) fn root_close_revision(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        prior: EntityId,
+    ) -> Result<Option<crate::vault::entity_revision::RevisionRef>> {
+        match &self.root_binding {
+            Some(binding) => binding.capture_close_revision(vault, txn, prior),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn record_root_close_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        prior: EntityId,
+        replacement: EntityId,
+        original: Option<crate::vault::entity_revision::RevisionRef>,
+    ) -> Result<()> {
+        if let (Some(binding), Some(original)) = (&self.root_binding, original) {
+            binding.record_close_in_txn(
+                vault,
+                txn,
+                self.actor,
+                self.attempt,
+                prior,
+                replacement,
+                original,
+            )?;
+        }
+        Ok(())
     }
 
     /// Records a prior this handoff's own granted correction closed, at the
@@ -269,7 +303,12 @@ impl BranchResources<'_> {
             turns: self.turns.clone(),
             texts: self.texts.clone(),
             rules: self.rules.clone(),
-            closed: std::sync::Mutex::default(),
+            closed: std::sync::Mutex::new(
+                self.origin
+                    .root_binding()
+                    .map(|binding| binding.closed_revisions())
+                    .unwrap_or_default(),
+            ),
             standing: std::sync::Mutex::default(),
         }
     }

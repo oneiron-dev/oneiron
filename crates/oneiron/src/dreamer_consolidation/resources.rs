@@ -294,10 +294,15 @@ impl<'a> BranchResources<'a> {
         }
         let (entity_type, learned_at, body) = if pin.entity_type == ENTITY_TYPE_CLAIM {
             self.prior(*id)?;
-            let head = self.read.get_entity_parts_with_receipt(id, None)?;
-            self.fold_read_receipt(&head.receipt)?;
-            head.value
-                .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+            match self.root_recovered_source(*id)? {
+                Some(row) => row,
+                None => {
+                    let head = self.read.get_entity_parts_with_receipt(id, None)?;
+                    self.fold_read_receipt(&head.receipt)?;
+                    head.value
+                        .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+                }
+            }
         } else {
             let source = read_source(&self.read, id)?;
             self.fold_read_receipt(&source.receipt)?;
@@ -406,6 +411,7 @@ impl<'a> BranchResources<'a> {
         refs.iter()
             .zip(source_rows)
             .map(|(entry, row)| {
+                let row = self.root_recovered_source(entry.source_id)?.or(row);
                 let (kind, learned_at, body) =
                     row.ok_or_else(|| invalid_consolidation("branch evidence is not readable"))?;
                 let pin = &self.sources[&entry.source_id];
