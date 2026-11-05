@@ -7,6 +7,7 @@ use crate::result_body::ResultBodyPin;
 use crate::store::result_body_rows::body_handle;
 pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
+mod context_output;
 mod host_occurrence;
 mod reader;
 

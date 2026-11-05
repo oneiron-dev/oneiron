@@ -234,7 +234,13 @@ fn complete(
     if settled_itself {
         let body =
             serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
-        let entry = OutputContextEntry::capture(vault, body.as_bytes(), now, String::new())?;
+        let entry = OutputContextEntry::capture_for_run(
+            vault,
+            outcome.replay_record.run_id,
+            body.as_bytes(),
+            now,
+            String::new(),
+        )?;
         AttemptQueue::new(vault).set_result(SetAttemptResult {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
