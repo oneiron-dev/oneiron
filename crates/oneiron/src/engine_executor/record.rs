@@ -620,6 +620,16 @@ pub(super) fn durable_wait_reason_from_str(
     }
 }
 
+/// Where a step's calls end and what its guest read beside them, which its
+/// checkpoint binds (FIX 6354, FIX 6351): the run-global bridge position
+/// the step's calls end at, exclusive, and the BLAKE3 of the step's replay
+/// context as captured.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct StepEnd {
+    pub(super) bridge_end: u64,
+    pub(super) context: [u8; 32],
+}
+
 /// What a step's checkpoint hashes of its result: each body's BLAKE3
 /// digest, which its stored manifest already carries, never the body.
 pub(super) struct StepResultDigests {
@@ -645,7 +655,8 @@ impl StepResultDigests {
 }
 
 /// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
-/// preparation; every caller outside the tests passes its preparation.
+/// preparation, and of a step that ends at bridge position zero with no
+/// replay context; every caller outside the tests passes its own.
 #[cfg(test)]
 pub(super) fn step_state_hash(
     previous: [u8; 32],
@@ -665,14 +676,20 @@ pub(super) fn step_state_hash(
         result,
         implicit_speak,
         bridge_calls,
+        StepEnd {
+            bridge_end: 0,
+            context: [0; 32],
+        },
     )
 }
 
 /// The checkpoint hash of one step, for a step whose program may have run as
 /// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
 /// preparation's identity (the executed JavaScript, its map and the Oxc
-/// pin), hashed beside the original program; a JavaScript step has none,
-/// and its hash is the one it always had.
+/// pin), hashed beside the original program; a JavaScript step has none.
+/// `end` is where the step's calls end and the digest of its replay context
+/// (FIX 6354, FIX 6351), so a context with other responses never stands for
+/// the same step.
 #[expect(
     clippy::too_many_arguments,
     reason = "the checkpoint hashes every part of the step's state"
@@ -686,6 +703,7 @@ pub(super) fn prepared_step_state_hash(
     result: &StepResultDigests,
     implicit_speak: Option<&str>,
     bridge_calls: &[CodeRunBridgeCall],
+    end: StepEnd,
 ) -> EngineExecutorResult<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CHECKPOINT_DOMAIN);
@@ -730,6 +748,8 @@ pub(super) fn prepared_step_state_hash(
             hash_bytes(&mut hasher, &rewritten);
         }
     }
+    hash_u64(&mut hasher, end.bridge_end);
+    hash_bytes(&mut hasher, &end.context);
     Ok(*hasher.finalize().as_bytes())
 }
 

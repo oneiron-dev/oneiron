@@ -180,6 +180,10 @@ pub struct StepReplayCapsule {
     pub start: Option<ExecutorStepStart>,
     /// What it holds, and for whose step (FIX 6144).
     pub content: CapsuleContent,
+    /// The replay context its step's checkpoint committed beside it (FIX
+    /// 6351): the guest responses the step's bridge handed out. `None`
+    /// until that checkpoint commits one, and for good when it did not.
+    pub context: Option<StepContextRef>,
 }
 
 impl StepReplayCapsule {
@@ -211,14 +215,27 @@ pub struct ExecutorStepStart {
     pub erased: bool,
 }
 
+/// The replay context a step's checkpoint committed (FIX 6351): a body the
+/// run owns, as the wall admitted it, beside the step's capsule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepContextRef {
+    pub body: OutputRef,
+    pub path: String,
+    /// BLAKE3 of the body bytes as stored.
+    pub digest: [u8; 32],
+    /// Whether restore explicitly marked this context body as erased.
+    pub erased: bool,
+}
+
 /// What an erase leaves of a capsule (FIX 6144): what the step was (its
 /// attempt, run, step and lease generation, its host, the model and
 /// locality that answered it, both request hashes and its messages digest,
 /// its exposures' skills, revisions and spans, its seed, its time, its
-/// start's ref, digest and bridge count, and the route its rung went out on,
-/// which holds the route prompt's digest only), its content Erased, naming
-/// no actor, with its route prompt cleared. Its bodies are released beside it;
-/// its fork receipts and scores stay in their own rows.
+/// start's ref, digest and bridge count, its replay context's ref and
+/// digest, and the route its rung went out on, which holds the route
+/// prompt's digest only), its content Erased, naming no actor, with its
+/// route prompt cleared. Its bodies are released beside it; its fork
+/// receipts and scores stay in their own rows.
 pub(crate) fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
     capsule.content = CapsuleContent::Erased;
     if let Some(binding) = &mut capsule.binding {

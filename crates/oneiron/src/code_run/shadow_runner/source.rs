@@ -4,26 +4,31 @@
 //! check withholding and digests; the start's prefix row must be the run's
 //! row at the step (its run, exactly as many checkpoints as the step's
 //! number, its bridge log at the step's start), and the step's own calls
-//! come from a record that proves where they end: the next step's captured
-//! start, or the run's row once the step is its last checkpoint. A step
-//! whose end nothing proves, or a body that is gone, is unavailable, never
-//! assumed. The run's results and observations before the step are frozen
-//! with the taint they read under, so the arm reads no live state. A reader
-//! admitted to the step's capture (FIX 8704, `admitted`) has its admission
-//! read again before each raw read of it: the request, the start and the
-//! record of its end, and each body frozen.
+//! come from a record that holds the step's checkpoint, which records where
+//! they end (FIX 6354): the next step's captured start, else the run's row
+//! as stored, however many steps later. A step whose end nothing proves, or
+//! a body that is gone, is unavailable, never assumed. The run's results and
+//! observations before the step are frozen with the taint they read under,
+//! so the arm reads no live state, and so is the step's replay context, the
+//! responses its live guest read (FIX 6351, `context`). A reader admitted to
+//! the step's capture (FIX 8704, `admitted`) has its admission read again
+//! before each raw read of it: the request, the start, the record of its end
+//! and its replay context, and each body frozen.
 
 mod admitted;
+mod context;
 
 pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+use self::context::ArmContext;
 use super::types::{
     ShadowBodyRef, ShadowDeterminism, ShadowRequestDigest, ShadowStepIdentity, ShadowUnavailable,
     ShadowUnavailableReason as Reason,
 };
 use crate::code_run::{
     CapsuleRequest, CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StepStartBody, capsule_request,
-    capsule_start_body, decode_code_run_replay_record, step_replay_capsules_in_txn,
+    ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StepStartBody, capsule_context_body,
+    capsule_request, capsule_start_body, decode_code_run_replay_record,
+    step_replay_capsules_in_txn,
 };
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
@@ -63,10 +68,14 @@ pub struct PreparedShadowStep {
     pub(crate) determinism: CodeRunDeterminism,
     /// The run's row as the step started.
     pub(crate) prefix: CodeRunReplayRecord,
-    /// A row that holds the step's calls, `bridge_start..bridge_end`.
+    /// A row that holds the step's calls, `bridge_start..bridge_end`, cut
+    /// to the step's checkpoint and the end it records (FIX 6354).
     pub(crate) window: CodeRunReplayRecord,
     pub(crate) bridge_start: u64,
     pub(crate) bridge_end: u64,
+    /// The responses the step's live guest read, read and checked once
+    /// (FIX 6351).
+    pub(crate) context: ArmContext,
     pub(crate) frozen: Vec<FrozenBody>,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     pub(crate) scan_bytes: u64,
@@ -164,8 +173,9 @@ fn unavailable(reason: Reason, cause: &str) -> ShadowUnavailable {
 /// The step `capsule` captured, read and frozen for an arm, or why it
 /// cannot be: an erased capsule, a withheld or unreadable request or start
 /// (`SourceWithheld`), no start (`SourceMissing`), a start that is not the
-/// run's row at the step (`SourceDigestMismatch`), a step whose end nothing
-/// proves (`CapturedOutcomeMissing`), or a body of its run that is gone
+/// run's row at the step, or a checkpoint end or replay context that
+/// contradicts it (`SourceDigestMismatch`), a step whose end nothing proves
+/// (`CapturedOutcomeMissing`), or a body of its run that is gone
 /// (`SourceMissing`). Everything is read here, before the arm starts.
 ///
 /// # Errors
@@ -218,13 +228,18 @@ fn prepare_step_source(
     if !admits()? {
         return Ok(Err(admitted::lapsed()));
     }
-    let read = {
+    let (read, context_body) = {
         let _bodies = vault.pin_all_result_bodies();
         let rtxn = vault.store.env.read_txn()?;
-        read_step_in_txn(vault, &rtxn, capsule, &start)?
+        let read = read_step_in_txn(vault, &rtxn, capsule, &start)?;
+        (read, capsule_context_body(vault, &rtxn, capsule)?)
     };
     let (prefix, window) = match read {
         Ok(read) => read,
+        Err(unavailable) => return Ok(Err(unavailable)),
+    };
+    let context = match context::freeze_context(context_body, capsule, &start, &window) {
+        Ok(context) => context,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
     let Some(determinism) = prefix.determinism else {
@@ -249,6 +264,7 @@ fn prepare_step_source(
         determinism,
         bridge_start: start.bridge_start,
         bridge_end,
+        context,
         start,
         prefix,
         window,
@@ -288,10 +304,10 @@ fn read_step_in_txn(
             "start_prefix",
         )));
     }
-    Ok(match step_end_in_txn(vault, rtxn, capsule, &prefix)? {
-        Some(window) => Ok((prefix, window)),
-        None => Err(unavailable(Reason::CapturedOutcomeMissing, "step_end")),
-    })
+    let Some(record) = step_end_in_txn(vault, rtxn, capsule, &prefix)? else {
+        return Ok(Err(unavailable(Reason::CapturedOutcomeMissing, "step_end")));
+    };
+    Ok(step_window(record, &prefix, capsule.step).map(|window| (prefix, window)))
 }
 
 /// The run's row a start body holds, when it decodes as a start.
@@ -302,9 +318,9 @@ fn start_prefix(bytes: &[u8]) -> Option<CodeRunReplayRecord> {
 
 /// The record that holds the step's calls to their proved end, read in
 /// `rtxn`: the next step's captured start under the same lease, else the
-/// run's row as stored once the step is its last checkpoint. Either must
-/// descend from `prefix`. `None` when neither proves where the step ends: a
-/// later row's checkpoints do not say where one step's calls stop.
+/// run's row as stored. Either must descend from `prefix` and hold the
+/// step's checkpoint, which records where its calls end (FIX 6354). `None`
+/// when neither does.
 fn step_end_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -327,7 +343,7 @@ fn step_end_in_txn(
             .start
             .as_ref()
             .is_some_and(|start| start.bridge_start == record.bridge_calls.len() as u64)
-        && ends_step(&record, prefix, capsule.step)
+        && holds_step(&record, prefix, capsule.step)
     {
         return Ok(Some(record));
     }
@@ -335,20 +351,51 @@ fn step_end_in_txn(
         return Ok(None);
     };
     record.live_run = None;
-    Ok(ends_step(&record, prefix, capsule.step).then_some(record))
+    Ok(holds_step(&record, prefix, capsule.step).then_some(record))
 }
 
 /// Whether `record` descends from `prefix`, the run's row as step `step`
 /// started (its run and clock, its checkpoints and bridge calls as the
-/// prefix holds them), and its last checkpoint is the step's own.
-fn ends_step(record: &CodeRunReplayRecord, prefix: &CodeRunReplayRecord, step: u64) -> bool {
+/// prefix holds them), and holds the step's own checkpoint.
+fn holds_step(record: &CodeRunReplayRecord, prefix: &CodeRunReplayRecord, step: u64) -> bool {
     let bridge_start = prefix.bridge_calls.len();
     record.run_id == prefix.run_id
         && record.determinism == prefix.determinism
-        && record.step_checkpoints.len() as u64 == step.saturating_add(1)
+        && record.step_checkpoints.len() as u64 > step
         && record.step_checkpoints.get(..prefix.step_checkpoints.len())
             == Some(prefix.step_checkpoints.as_slice())
         && record.bridge_calls.get(..bridge_start) == Some(prefix.bridge_calls.as_slice())
+}
+
+/// The step's window in `record`, a row that holds the step's checkpoint
+/// (FIX 6354): the row cut to that checkpoint and to the bridge end it
+/// records, so nothing past the step's own calls is read, however long the
+/// row is now. A checkpoint that is not the step's, or an end before the
+/// step's start, before an earlier step's end, past a later step's or past
+/// the row's bridge log, is `SourceDigestMismatch`.
+fn step_window(
+    mut record: CodeRunReplayRecord,
+    prefix: &CodeRunReplayRecord,
+    step: u64,
+) -> Outcome<CodeRunReplayRecord> {
+    let mismatch = || unavailable(Reason::SourceDigestMismatch, "bridge_end");
+    let index = usize::try_from(step).map_err(|_| mismatch())?;
+    let calls = record.bridge_calls.len() as u64;
+    let bridge_start = prefix.bridge_calls.len() as u64;
+    let ends = |at: usize| record.step_checkpoints.get(at).map(|held| held.bridge_end);
+    let Some(checkpoint) = record.step_checkpoints.get(index) else {
+        return Err(mismatch());
+    };
+    let end = checkpoint.bridge_end;
+    let before = index.checked_sub(1).and_then(ends).unwrap_or(0);
+    let after = ends(index.saturating_add(1)).unwrap_or(calls);
+    if checkpoint.seq != step || before > bridge_start || bridge_start > end || end > after {
+        return Err(mismatch());
+    }
+    let end = usize::try_from(end).map_err(|_| mismatch())?;
+    record.step_checkpoints.truncate(index.saturating_add(1));
+    record.bridge_calls.truncate(end);
+    Ok(record)
 }
 
 /// The bodies of `run` before the step its row `prefix` holds that the

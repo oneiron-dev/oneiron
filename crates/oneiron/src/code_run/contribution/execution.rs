@@ -25,10 +25,12 @@
 //! a retry reuses a committed execution. A program the record cannot answer
 //! is unavailable for the shadow runner's own reason, and the fork keeps
 //! that reason ([`ForkExecutionOutcome`]): a call the record does not hold,
-//! a nested unit not captured, an answer the live guest read through a view
-//! the record does not keep, a step that parked on a recorded wait, no
-//! runtime now. A lasting reason puts the pair in the `Text` mode at once. A
-//! reason a retry may clear waits for one retry first. Neither is a loss.
+//! a nested unit not captured, a call whose guest response the step's replay
+//! context does not hold (FIX 6351), a step that parked on a recorded wait,
+//! no runtime now. A lasting reason puts the pair in the `Text` mode at
+//! once. A reason a retry may clear waits for one retry first. Neither is a
+//! loss. A call the live guest read through a hook's view the context kept
+//! runs as it ran, and its fork is evidence like any other.
 
 use std::sync::Arc;
 
@@ -81,7 +83,8 @@ pub struct ForkScore {
 
 /// What both forks of an engine step run under (FIX 3607), frozen before
 /// either is generated: the captured start, where the step's recorded calls
-/// are, the guest clock and seed, and the runtime's component pin.
+/// are, the responses its live guest read, the guest clock and seed, and the
+/// runtime's component pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForkExecutionPin {
     /// BLAKE3 of the step's start body as stored.
@@ -89,6 +92,9 @@ pub struct ForkExecutionPin {
     /// Where the step's recorded calls are in its run's bridge log.
     pub bridge_start: u64,
     pub bridge_end: u64,
+    /// BLAKE3 of the step's replay context as stored (FIX 6351), the
+    /// responses its live guest read; `None` when none was read.
+    pub context: Option<[u8; 32]>,
     pub determinism: ShadowDeterminism,
     /// The SHA-256 the host pinned its runtime's component to.
     pub runtime: [u8; 32],
@@ -101,6 +107,7 @@ impl ForkExecutionPin {
             start: step.start().digest,
             bridge_start,
             bridge_end,
+            context: step.context_digest(),
             determinism: step.determinism(),
             runtime,
         }
@@ -117,6 +124,10 @@ impl ForkExecutionPin {
         hasher.update(&self.start);
         hasher.update(&self.bridge_start.to_be_bytes());
         hasher.update(&self.bridge_end.to_be_bytes());
+        hasher.update(&[u8::from(self.context.is_some())]);
+        if let Some(context) = &self.context {
+            hasher.update(context);
+        }
         hasher.update(&self.determinism.frozen_unix_ms.to_be_bytes());
         hasher.update(&self.determinism.rng_seed);
         hasher.update(&self.runtime);
@@ -328,10 +339,10 @@ pub trait ContributionForkProgram {
 /// `store`, a scratch store of its own, and reads back whole what it left.
 /// Its program is not type-checked: no reader of a fork's feedback exists.
 /// Unavailable for the shadow runner's own reason, and also for a recorded
-/// call it matched whose answer the live guest read through a hook's view
-/// (`guest_view_capture_missing`), a step that parked on a recorded wait
-/// (`captured_outcome_missing`), and a body the secret scan marked
-/// (`source_withheld`).
+/// call it matched whose guest response the step's replay context does not
+/// hold (`guest_view_capture_missing`, the bridge's own check, FIX 6351), a
+/// step that parked on a recorded wait (`captured_outcome_missing`), and a
+/// body the secret scan marked (`source_withheld`).
 ///
 /// # Errors
 ///
@@ -359,9 +370,10 @@ pub fn execute_contribution_fork(
         | ShadowStatus::WindowFull { .. } => None,
     };
     let consumed = run.bridge.consumed;
-    if served_view(step, consumed) {
-        let view = ShadowUnavailable::new(Reason::GuestViewCaptureMissing, "hook_view");
-        return Ok(Err(view));
+    // Every call it matched was answered with the response its live guest
+    // read (FIX 6351): the same check the bridge answered each one by.
+    if let Err(missing) = step.captured_responses(consumed) {
+        return Ok(Err(missing));
     }
     // A step parked on a recorded wait, or left open, has its answer in a
     // later step: the captured step holds no outcome of it.
@@ -400,20 +412,6 @@ pub fn execute_contribution_fork(
         effect_trace,
         bridge_trace,
     }))
-}
-
-/// Whether a recorded call the program matched, from the step's start to
-/// `consumed`, reached the live guest through a hook's view: the record
-/// keeps the outcome, never the view the guest read.
-fn served_view(step: &PreparedShadowStep, consumed: u64) -> bool {
-    let (start, _) = step.bridge_window();
-    let (Ok(start), Ok(consumed)) = (usize::try_from(start), usize::try_from(consumed)) else {
-        return true;
-    };
-    step.window
-        .bridge_calls
-        .get(start..consumed)
-        .is_none_or(|calls| calls.iter().any(|call| call.hook_view_served))
 }
 
 /// `body`, read whole from `store`: unavailable when the secret scan marked

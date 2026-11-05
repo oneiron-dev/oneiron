@@ -50,8 +50,8 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
-    ["seq", "label", "state_hash", "created_at_ms"];
+pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 5] =
+    ["seq", "label", "state_hash", "created_at_ms", "bridge_end"];
 pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
     "handle",
     "path",
@@ -106,6 +106,7 @@ const KEY_REWRITTEN_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[9];
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
 const KEY_CREATED_AT_MS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[3];
+const KEY_BRIDGE_END: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[4];
 
 const KEY_HANDLE: &str = CODE_RUN_RAW_OUTPUT_KEYS[0];
 const KEY_PATH: &str = CODE_RUN_RAW_OUTPUT_KEYS[1];
@@ -362,6 +363,10 @@ fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Value {
             Value::from(KEY_CREATED_AT_MS),
             Value::from(checkpoint.created_at_ms),
         ),
+        (
+            Value::from(KEY_BRIDGE_END),
+            Value::from(checkpoint.bridge_end),
+        ),
     ])
 }
 
@@ -379,6 +384,7 @@ fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
             "checkpoint state_hash",
         )?,
         created_at_ms: u64_value(required(fields[3], "missing checkpoint created_at_ms")?)?,
+        bridge_end: u64_value(required(fields[4], "missing checkpoint bridge_end")?)?,
     };
     validate_label(&checkpoint.label, "checkpoint label")?;
     Ok(checkpoint)
@@ -609,11 +615,20 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     }
 
     let mut checkpoint_seqs = HashSet::new();
+    // Each step's calls end where its checkpoint says, in the log, never
+    // before an earlier step's end (FIX 6354).
+    let mut bridge_end = 0_u64;
     for checkpoint in &record.step_checkpoints {
         if !checkpoint_seqs.insert(checkpoint.seq) {
             return Err(invalid_code_run_replay("duplicate checkpoint seq"));
         }
         validate_label(&checkpoint.label, "checkpoint label")?;
+        if checkpoint.bridge_end < bridge_end || checkpoint.bridge_end > expected_seq {
+            return Err(invalid_code_run_replay(
+                "checkpoint bridge_end is outside the bridge log or before an earlier step's",
+            ));
+        }
+        bridge_end = checkpoint.bridge_end;
     }
 
     let mut output_paths = HashSet::new();

@@ -69,6 +69,18 @@ pub(super) struct Spill {
 }
 
 impl Spill {
+    /// The instances bodies of `lens` bytes spill into, minted now, before
+    /// the writer that publishes them opens.
+    pub(super) fn minted(vault: &Vault, lens: &[usize]) -> Result<Self> {
+        let bound = vault.code_result_inline_bytes();
+        let reserved = spilling(bound, lens);
+        Ok(Self {
+            bound,
+            mint: vault.store.body_mint()?.reserve(reserved)?,
+            reserved,
+        })
+    }
+
     /// Rolls the writer back, before anything spills, when bodies of `lens`
     /// bytes need more instances than it holds.
     pub(super) fn holds(&self, lens: &[usize]) -> std::result::Result<(), Unwritten> {
@@ -214,6 +226,7 @@ fn write_capsule_in_txn(
         captured_at: crate::unix_seconds_now(),
         start,
         content: CapsuleContent::Kept { actor },
+        context: None,
     };
     CAPSULES.put(vault, wtxn, &key, &capsule)?;
     Ok(Some(capsule))
@@ -260,6 +273,7 @@ fn write_withheld_in_txn(
         captured_at: crate::unix_seconds_now(),
         start,
         content: CapsuleContent::Kept { actor: draft.actor },
+        context: None,
     };
     CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
     Ok(Some(capsule))

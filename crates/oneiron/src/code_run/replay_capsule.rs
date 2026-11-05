@@ -52,7 +52,7 @@ pub use crate::team::task_exposure::TaskExposure;
 
 pub use crate::dreamer_runner::step_replay::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan,
+    ExposureKind, ExposureSlot, ReplayRoutePin, StepContextRef, StepReplayCapsule, StoredSpan,
 };
 
 /// The body an [`ExecutorStepStart`] names: the run's replay row as stored
