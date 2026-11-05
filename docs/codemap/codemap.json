@@ -1097,7 +1097,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 2,
       "re-export": 25
      }
@@ -1187,7 +1187,7 @@
      "path": "src/agent_dispatch/planner_live.rs",
      "purpose": "The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 3
      }
@@ -1231,7 +1231,7 @@
      "path": "src/agent_dispatch/planner_live/learning.rs",
      "purpose": "The measured reads the live planner weighs, and what a thin project leaf borrows into them (FIX 5496…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -45075,9 +45075,10 @@
      "path": "src/llm/seat.rs",
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 16,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 6
      }
     },
@@ -45095,6 +45096,19 @@
       "fn": 1,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatLearningContext"
+     ],
+     "path": "src/llm/seat/learning.rs",
+     "purpose": "Read-only native task context and the model evidence a fresh seat consumes",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -91703,7 +91717,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 168,
+     "files": 169,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92433,7 +92447,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6457,
+   "source_files": 6458,
    "test_files": 895
   },
   "oneiron-android": {
