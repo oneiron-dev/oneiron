@@ -82,9 +82,9 @@ pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
 pub(crate) use storage::{
-    document_text_fields, erase_in_txn, guard_record_put, has_record_head, pointer_field_in,
-    record_bodies_at_in_txn, record_body_at, record_body_history_in_txn, record_document,
-    record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
+    pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
+    record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};

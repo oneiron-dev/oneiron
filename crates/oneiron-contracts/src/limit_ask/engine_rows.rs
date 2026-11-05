@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 138] = [
+    pub const ALL: [Self; 141] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -88,6 +88,7 @@ impl EngineLimit {
         Self::SealAnswerBytes,
         Self::SealMemoryAsks,
         Self::SealCrlBytes,
+        Self::SealOcspBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
@@ -144,6 +145,8 @@ impl EngineLimit {
         Self::SharedMergeEvidenceRows,
         Self::RequestedResultRows,
         Self::EmbeddingDimensions,
+        Self::MemoryReasonEvidenceRows,
+        Self::MemoryReasonTokens,
     ];
 
     /// The config key that sets the row.
@@ -231,6 +234,7 @@ impl EngineLimit {
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
             Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
+            Self::SealOcspBytes => "limits.seal_ocsp_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
@@ -287,6 +291,8 @@ impl EngineLimit {
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
+            Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
+            Self::MemoryReasonTokens => "limits.memory_reason_tokens",
         }
     }
 
@@ -417,6 +423,7 @@ impl EngineLimit {
             // worth of reservations.
             Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
+            Self::SealOcspBytes => 1 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,
@@ -504,6 +511,14 @@ impl EngineLimit {
             // in ordinary use. Past it the row asks, and the vault serves
             // as opened.
             Self::EmbeddingDimensions => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonEvidenceRows => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonTokens => 16_777_216,
         }
     }
 }

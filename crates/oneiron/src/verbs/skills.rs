@@ -594,6 +594,23 @@ pub fn skill_code_auto_install_as_owner(
         .into())
 }
 
+/// The owner's existing dependency-advisory ask setting.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAdvisoryAskRequest {
+    pub enabled: bool,
+}
+
+pub fn skill_advisory_ask_set_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &SkillAdvisoryAskRequest,
+) -> MemoryResult<HubConsentReceipt> {
+    Ok(vault
+        .set_marketplace_advisory_ask(owner, input.enabled)?
+        .into())
+}
+
 /// The governance axis of one stored skill, resolved fail-closed.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillGovernanceView {

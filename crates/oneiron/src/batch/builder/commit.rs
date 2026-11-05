@@ -2,7 +2,7 @@
 //! the group commit, preflight, apply, commit, VAD postcommit.
 
 use super::super::*;
-use super::preflight::preflight_gate_decisions_in_txn;
+use super::preflight::{DeferredPreflight, preflight_gate_decisions_in_txn};
 use super::reference_read;
 use super::{BatchBuilder, CommitCheck};
 
@@ -351,7 +351,7 @@ impl BatchBuilder<'_> {
             };
             let mut staged_gate_decisions = Vec::new();
             let mut preflight_gate_decision_ids = HashMap::new();
-            if let Err(err) = preflight_gate_decisions_in_txn(
+            let mut deferred = match preflight_gate_decisions_in_txn(
                 &vault.store,
                 &ops,
                 wtxn,
@@ -361,18 +361,26 @@ impl BatchBuilder<'_> {
                 origin,
                 &caller_envelopes,
                 &births,
+                reader.is_some() && !gated.is_empty(),
             ) {
-                // A gate rejection is itself an intentional ledger event. Keep
-                // that denial receipt, matching the historical gate semantics;
-                // later phase-2 failures drop this transaction and its receipt.
-                return match crate::ports::recorded_at_in_txn(&vault.store, wtxn) {
-                    Ok(_) => Rows::Refuse(Refused {
-                        err,
-                        staged_gate_decisions,
-                    }),
-                    Err(err) => Rows::Discard(Err(err.into())),
-                };
-            }
+                Ok(deferred) => deferred,
+                Err(err) => {
+                    // A gate rejection is itself an intentional ledger event. Keep
+                    // that denial receipt, matching the historical gate semantics;
+                    // later phase-2 failures drop this transaction and its receipt.
+                    return match crate::ports::recorded_at_in_txn(&vault.store, wtxn) {
+                        Ok(_) => Rows::Refuse(Refused {
+                            err,
+                            staged_gate_decisions,
+                        }),
+                        Err(err) => Rows::Discard(Err(err.into())),
+                    };
+                }
+            };
+            let probes = deferred
+                .as_mut()
+                .map(|pending| std::mem::take(&mut pending.probes))
+                .unwrap_or_default();
             if let Err(err) = before_apply(wtxn) {
                 return Rows::Discard(Err(err.into()));
             }
@@ -401,6 +409,7 @@ impl BatchBuilder<'_> {
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
                     .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                    .with_pending_auto_probes(probes)
                     .with_birth_mask(birth_mask)
                     .with_text_births(text_births)
                     .with_births(births)
@@ -412,7 +421,9 @@ impl BatchBuilder<'_> {
             };
             let applied = match reader.filter(|_| !gated.is_empty()) {
                 None => apply_admitted(vault, wtxn, batch, after_apply).map(Judged::Applied),
-                Some(reader) => apply_judged(vault, wtxn, batch, after_apply, reader, &gated),
+                Some(reader) => {
+                    apply_judged(vault, wtxn, batch, after_apply, reader, &gated, deferred)
+                }
             };
             let applied = match applied {
                 Ok(Judged::Applied(applied)) => Ok(applied),
@@ -431,6 +442,14 @@ impl BatchBuilder<'_> {
                             staged_gate_decisions: vec![decision],
                         }),
                         Ok((err, None)) => Rows::Discard(Err(err.into())),
+                        Err(err) => Rows::Discard(Err(err.into())),
+                    };
+                }
+                Ok(Judged::Pended(pending)) => {
+                    let settled =
+                        settle_pending_in(&vault.store, wtxn, staged_gate_decisions, *pending);
+                    return match settled {
+                        Ok(refused) => Rows::Refuse(refused),
                         Err(err) => Rows::Discard(Err(err.into())),
                     };
                 }
@@ -540,7 +559,15 @@ fn apply_admitted(
     // Only their windows are taken from it: this terminal reads the rest of
     // its post-commit work from the ops.
     let pad_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
-    let derived = crate::embed::repo_derived_batch(&batch.ops);
+    let put_roots: BTreeSet<_> = batch
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            BatchOp::Put { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut derived = crate::embed::repo_derived_batch(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -553,6 +580,7 @@ fn apply_admitted(
     )?;
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
     crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
@@ -560,7 +588,9 @@ fn apply_admitted(
         crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
     }
     rekeys.finish(&vault.store, wtxn)?;
+    let rederive_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
+    let changes_claims = rederive_scope.finish().proactivity_changed || changes_claims;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     // The approval's commit carries its consolidation debt (FIX 9598).
     if !approved_vad_ids.is_empty() {
@@ -587,6 +617,9 @@ enum Judged {
     /// The claim gate's denial of a record ref the writer's read does not
     /// resolve; nothing the apply staged stays.
     Denied(Box<reference_read::StagedDenial>),
+    /// No reference denied, so the first preflight Pending remains; the
+    /// complete probe is discarded rather than committed.
+    Pended(Box<DeferredPreflight>),
 }
 
 /// [`apply_admitted`] for a bound writer whose batch gates CLAIMs: the batch
@@ -600,6 +633,7 @@ fn apply_judged(
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     reader: &ScopedRead<'_>,
     gated: &[reference_read::GatedClaim],
+    deferred: Option<DeferredPreflight>,
 ) -> Result<Judged> {
     let mut staged = vault.store.env.nested_write_txn(wtxn)?;
     let applied = apply_admitted(vault, &mut staged, batch, after_apply)?;
@@ -607,8 +641,32 @@ fn apply_judged(
     if let Some(denial) = denial {
         return Ok(Judged::Denied(Box::new(denial)));
     }
+    if let Some(pending) = deferred {
+        return Ok(Judged::Pended(Box::new(pending)));
+    }
     staged.commit()?;
     Ok(Judged::Applied(applied))
+}
+
+/// The rollback-only probe left all preflight receipts in the outer writer.
+/// Keep only its first native Pending, as an ordinary preflight refusal does.
+fn settle_pending_in(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    mut decisions: Vec<crate::gate::RecordedClaimGateDecision>,
+    pending: DeferredPreflight,
+) -> Result<Refused> {
+    for decision in &decisions {
+        if decision.decision_id() != pending.first_decision {
+            store.delete_gate_decision_in_txn(txn, decision.decision_id())?;
+        }
+    }
+    decisions.retain(|decision| decision.decision_id() == pending.first_decision);
+    crate::ports::recorded_at_in_txn(store, txn)?;
+    Ok(Refused {
+        err: pending.err,
+        staged_gate_decisions: decisions,
+    })
 }
 
 /// What a committed batch still owes after its group commits.

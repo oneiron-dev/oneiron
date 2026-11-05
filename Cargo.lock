@@ -8088,6 +8088,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
+ "bytes",
  "image",
  "oneiron-container",
  "schemars 0.8.22",
@@ -8136,6 +8137,7 @@ name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "bytes",
  "libc",
  "oneiron-spawn",
  "serde",

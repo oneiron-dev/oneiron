@@ -24,7 +24,9 @@ pub(crate) use admission::{validate_received_edge, validate_received_parent_valu
 pub(crate) use topology::record_kind;
 mod membership;
 mod migration;
+mod promotion;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
+pub(crate) use promotion::promote_replay_in_txn;
 
 mod branch_scope;
 mod participation;

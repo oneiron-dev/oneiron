@@ -16,6 +16,15 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+An embedded binding that uses `embedded_serve_config` retains its explicit
+vault path and optional dimensions for first-run model setup on the open
+vault. Setup replays those inputs over the file and environment; dimensions
+not supplied by the binding still come from those layers, so a later sizing
+change is still detected. A caller that constructs `ServeConfig` directly can
+state the same inputs in `embedded_holder_overrides`; leaving it unset keeps
+that caller's existing setup behavior. Managed argv/settings-only holders
+still have no config rewrite target, and setup writes no managed settings file.
+
 ## 2. Point a seat at a model
 
 Each provider is one entry of data. Pick any of the three levels below. HIGH
@@ -115,7 +124,9 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
-default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
+default, or `none`; OpenAI-compatible providers only), `embed_shape`
+(`vllm_chat`, the default, `infinity`, `jina` or `cohere`: the shape the
+provider's embedding endpoint speaks; section 10), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
 `assistant_prefill`, `reasoning`, `reasoning_content_history`;
 `reasoning_content_history` sends an earlier assistant turn's reasoning back
@@ -217,6 +228,17 @@ made private at start. A value the supervisor also passes on argv
 `--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,
 `--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
 value.
+
+The supervisor can select a separate-user credential broker on managed argv
+with `--broker-socket <absolute-path> --broker-uid <uid>`, or a same-user child
+with `--broker-program <absolute-path>` and repeatable
+`--broker-extra-roots <absolute-pem-path>`. The socket and UID are a pair;
+child program and roots cannot be combined with that pair. These flags use the
+same checks as `[models.broker]`, and their binding stands after the owner's
+model settings settle. With none, the existing same-user default stays in place.
+These are engine flags; the supervisor must supply paths reachable by the child.
+They do not add a vault VM broker transport. Plain serve keeps its file-based
+`[models.broker]` configuration.
 
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
@@ -1673,7 +1695,8 @@ and the broker checks it against the exchange's own shape before the key is
 read at the custody door. That covers an image (JSON, or a form with
 references), an edit, speech, a transcription, an embedding, a video's start,
 poll, clip and removal, and the Gemini API's generate, job start, operation
-poll and file. The broker adds the key: Bearer on the OpenAI-compatible paths,
+poll and file. An embedding among them goes in the provider's `embed_shape`,
+whichever of the four shapes it names. The broker adds the key: Bearer on the OpenAI-compatible paths,
 `x-goog-api-key` on the Gemini API's. A JSON or form request is at most
 16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
 up to 512 MiB, and are checked for the key, never rewritten: a reply that
@@ -1718,14 +1741,36 @@ tokens, an audio second 50, a video second 10000, four characters of speech
 one). `inputs = ["text", "image"]` narrows or widens what a row takes.
 
 An embed row takes text only until its `inputs` widen it (`inputs = ["text",
-"image", "audio"]` for a multimodal model). Texts go as one `input` batch. A
-call with an image or audio sends each part as its own document in the chat
-form (`messages` in place of `input`, an image as a `data:` URL, audio as
-`input_audio`), as vLLM serves multimodal embedding models, and gets one vector
-per part, in order. Every vector of one answer has one width, the `dimensions`
-param's when the call names one. The stored-media backfill and the context
-pack's `media` query embed through this row, and each refuses a vector whose
-width is not its space's declared width.
+"image", "audio"]` for a multimodal model). Texts go as one `input` batch
+(`texts`, with an `input_type`, on Cohere). A call with an image or audio part
+goes in the provider's `embed_shape` (`[models.providers.<name>]`, `vllm_chat`
+unless named): `vllm_chat` sends each part as its own document in the chat form
+(`messages` in place of `input`, an image as a `data:` URL, audio as
+`input_audio`), as vLLM serves multimodal embedding models; `infinity` sends
+each part as its own `input` with its `modality`; `jina` sends every part in one
+`input` list of objects, and takes no audio; `cohere` sends texts as `texts` and
+each image as its own `images` document to `/v2/embed`, and takes no audio. Each
+shape answers one vector per part, in order, direct or through the credential
+broker. Every vector of one answer has one width, the `dimensions` param's when
+the call names one. The stored-media backfill and the context pack's `media`
+query embed through this row, and each refuses a vector whose width is not its
+space's declared width.
+
+```toml
+[models.providers.local-embed]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8000"
+embed_shape = "infinity"
+
+[models.providers.cohere]
+kind = "openai-compat"
+base_url = "https://api.cohere.com"
+key_env = "COHERE_API_KEY"
+embed_shape = "cohere"
+
+[models.media.embed]
+rungs = ["local-embed:qwen3-embedding", "cohere:embed-english-v3.0"]
+```
 
 The verbs, each the owner's call and checked against the vault's inference policy; an agent whose owner agent Grant names an operation calls that door as the owner's call, on the owner's meter:
 
