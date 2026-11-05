@@ -29,6 +29,7 @@
 //!   head lists.
 
 pub(super) mod checkpoint;
+pub(super) mod conflicts;
 
 use std::collections::BTreeSet;
 
@@ -257,7 +258,9 @@ pub(crate) fn materialize_repo_manifests_from_delta(
 
 /// Merges the manifests window `key`'s document carries for `rows`, just
 /// committed here: a CODE row that lands after its manifest's head finds
-/// it here.
+/// it here. An authority log entry among `rows` (the owner's origin cut
+/// among them, FIX 15740) merges every head, since any copy waiting for a
+/// proven writer may be proven now.
 pub(crate) fn merge_committed_repo_manifests(
     vault: &Vault,
     doc: &LoroDoc,
@@ -267,12 +270,30 @@ pub(crate) fn merge_committed_repo_manifests(
     if !holds_repo_manifest_map(doc) {
         return;
     }
+    let authority_moved = holds_authority_entry(vault, rows);
     let map = doc.get_map(REPO_MANIFESTS_MAP);
     let heads = head_rows(&map, |_| true)
         .into_iter()
-        .filter(|(_, bytes)| decode(bytes).is_ok_and(|carried| rows.contains(&carried.code)))
+        .filter(|(_, bytes)| {
+            authority_moved || decode(bytes).is_ok_and(|carried| rows.contains(&carried.code))
+        })
         .collect();
     merge_heads(vault, &map, key.as_str(), heads);
+}
+
+/// Whether `rows` holds an authority log entry, each read by its header in
+/// place. A read fault reads as none: the next window open merges every
+/// head anyway.
+fn holds_authority_entry(vault: &Vault, rows: &BTreeSet<EntityId>) -> bool {
+    let Ok(txn) = vault.store.env.read_txn() else {
+        return false;
+    };
+    rows.iter().any(|id| {
+        matches!(
+            crate::batch::stored_entity_type(&vault.store, &txn, id),
+            Ok(Some(crate::registry::ENTITY_TYPE_AUTHORITY_LOG))
+        )
+    })
 }
 
 /// Each head `map` holds whose key `keep` takes, with its value.
@@ -332,6 +353,11 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             Ok(RepoManifestMerge::Waiting) => {
                 tracing::debug!(window, key = %map_key, "repo manifest waits for its CODE row");
             }
+            Ok(RepoManifestMerge::Unproven) => tracing::debug!(
+                window,
+                key = %map_key,
+                "repo manifest waits for a proven refs writer; the one held here stands"
+            ),
             Ok(RepoManifestMerge::Conflict) => tracing::warn!(
                 window,
                 key = %map_key,

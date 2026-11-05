@@ -7,7 +7,14 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(doc)]
-use crate::attempt_queue::{ATTEMPT_RUNTIME_ACTOR, ForceCancelAuthority};
+use crate::attempt_queue::ForceCancelAuthority;
+
+/// Actor token reserved for runtime-authored rows.
+///
+/// Worker- and peer-facing cancel doors refuse it, so a worker cannot author a
+/// row that reads as if the runtime wrote it. It matches the run-tree
+/// projection's runtime actor so both surfaces name the runtime identically.
+pub const ATTEMPT_RUNTIME_ACTOR: &str = "runtime";
 
 /// Why an attempt was asked to LAND (ONE-1896 §5).
 ///
@@ -62,6 +69,8 @@ pub enum ForceCancelGrounds {
     LeaseExpiry,
     /// A criticality stop.
     Criticality,
+    /// An accepted hard erase or authenticated restore erased the payload's source.
+    ErasedPayload,
 }
 
 /// The exact point a successor resumes from after a designed landing.

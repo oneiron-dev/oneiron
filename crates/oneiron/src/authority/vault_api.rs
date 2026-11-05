@@ -205,6 +205,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: *occurred,
                 learned_at: *learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -306,8 +307,10 @@ impl Vault {
                 return Ok(AuthorityEntryStatus::Stored(entry));
             }
         }
-        let adopted =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &rtxn)?;
+        let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(
+            &self.store,
+            &rtxn,
+        )?;
         Ok(match adopted {
             Some(adopted) if adopted.image().rows.contains_key(hash) => {
                 AuthorityEntryStatus::CoveredAttested {

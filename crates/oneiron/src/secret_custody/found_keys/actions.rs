@@ -148,14 +148,18 @@ impl Vault {
     /// revoked with its value kept, which that screen reads (CALLS
     /// CUSTODY_REVOKE_ERASE), the record's body or text field gets the value
     /// back where the mask left its handle, or the file's mark drops the key,
-    /// and a Gate record keeps the ruling. A portable record's revocation
+    /// and a Gate record keeps the ruling. For a repository finding, the ruling
+    /// leaves its exact bytes, history and marks unchanged; the publication
+    /// gate reads the custody-bound ruling. A portable record's revocation
     /// reaches the owner's other machines as a custody revoke request this
     /// install carries and enacts, with its revoked transition (WILL L04 row
     /// 04).
     ///
-    /// Only a key found in a record's body, in one of its text fields or in
-    /// a claim (FIX 2649, FIX 11882) or in a file is ruled here; one in a row
-    /// outside the entity tables keeps its handle. A MACHINE claim whose
+    /// A key found in a record's body, in one of its text fields, in a claim
+    /// (FIX 2649, FIX 11882), in a file or by a repository receive is ruled
+    /// here; other rows outside the entity tables keep their handles. A
+    /// repository finding supports only the not-a-secret ruling, not keeping
+    /// a live secret as text. A MACHINE claim whose
     /// signed history owns its body keeps its handle too: no door re-signs
     /// a stored claim. The revoke's owner act records
     /// `surface`, where his request reached this install: audit only (FIX
@@ -234,7 +238,14 @@ impl Vault {
             found.refuse_ruled()?;
             let place = found.key().place.clone();
             let field = place.strip_prefix("text:");
-            if place != "body" && place != "file" && place != "claim" && field.is_none() {
+            let repo_false_positive =
+                place == "repo:receive-pack" && action == FoundKeyAction::NotASecret;
+            if place != "body"
+                && place != "file"
+                && place != "claim"
+                && field.is_none()
+                && !repo_false_positive
+            {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "only a key found in a record's body, its text, a claim or a file takes \
                      its value back",
@@ -268,7 +279,7 @@ impl Vault {
                 restore_claim_in_txn(self, txn, &found.record, &found.handle, &value)?;
             } else if let Some(field) = field {
                 restore_text_in_txn(self, txn, &found.record, field, &found.handle, &value)?;
-            } else {
+            } else if place == "body" {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
             // The ruling's surface is where the request reached this
@@ -435,6 +446,10 @@ pub(super) fn card_in_txn(
             && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
         {
             actions.extend([FoundKeyAction::NotASecret, FoundKeyAction::KeptAsText]);
+        } else if key.place == "repo:receive-pack"
+            && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
+        {
+            actions.push(FoundKeyAction::NotASecret);
         }
     }
     let label = crate::secret_custody::secret_handle_label_in_txn(&vault.store, txn, &key.custody)?
@@ -740,6 +755,7 @@ fn restore_claim_in_txn(
             end: header.occurred_end,
         },
         learned_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

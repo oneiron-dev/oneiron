@@ -34,7 +34,8 @@ use super::storage::{self, Head};
 use super::verbs::{Admitted, admitted_text_in_txn};
 use super::{EntityDoc, TextField, invalid};
 use crate::batch::secret_scan::{
-    CarrierText, Lifted, LiftedKeys, mark_carrier_text_in_txn, scan_content_in_txn,
+    CarrierText, Lifted, LiftedKeys, mark_carrier_text_in_txn, propose_sync_text_in_txn,
+    scan_content_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, GateError, Result};
@@ -548,9 +549,12 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
 /// births' work.
 fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let born = born_in(vault, txn, entity)?.ok_or(invalid(NO_TEXT))?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &born.pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &born.pointer,
+    )?;
     let mut head = Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -580,9 +584,12 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
         None => {
             let (_, pointer, _) =
                 split_fields(header.entity_type, body, entity).ok_or(invalid(NO_TEXT))?;
-            vault
-                .store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            vault.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                entity,
+                &pointer,
+            )?;
             entity.to_hex()
         }
     };
@@ -706,6 +713,14 @@ fn mark_hits_in_txn(
             reason,
             "sync: a document's text keeps a secret hit no rule places; the write stands"
         );
+        if let Err(error) = propose_sync_text_in_txn(vault, txn, entity, reason) {
+            tracing::warn!(
+                entity = %entity.to_hex(),
+                reason,
+                kind = ?error.kind(),
+                "sync: the unplaceable-hit proposal could not be recorded; the write stands"
+            );
+        }
     }
     Ok(())
 }

@@ -38,9 +38,10 @@ mod coach_health;
 pub(crate) mod coach_host;
 mod coach_site_skills;
 mod code_fix;
+mod commitment_reminder_wording;
 mod confession_wording;
 mod connector_event;
-pub(crate) use connector_event::run_connector_reply_job;
+pub(crate) use connector_event::{repair_connector_reply_witnesses, run_connector_reply_job};
 mod contribution;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
@@ -150,6 +151,8 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// The installed Coach-heal worker's real publisher and served runtime.
+    coach_heal_wake: Arc<OnceLock<coach_heal::WakeHost>>,
     /// The same cheap compactor code mode serves, exposed to typed host
     /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
     host_compaction: Arc<

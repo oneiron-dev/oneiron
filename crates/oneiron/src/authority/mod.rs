@@ -70,6 +70,7 @@ mod current_scope;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
+mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
@@ -116,6 +117,7 @@ mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -123,11 +125,13 @@ mod owner_key_enrollment_door;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
+mod past_grant_standing;
 mod pinned_root;
 mod policy_setting_choice;
 mod principal_standing;
 mod readonly_fold;
 mod recover_many;
+mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
@@ -191,11 +195,11 @@ pub use oneiron_authority::authority::{
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
-    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
-    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    TrustedContactSlipBinding, WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord,
+    WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
+    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
+    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
@@ -324,6 +328,8 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
+// The origin cut a repo manifest is written and judged by (FIX 15740).
+pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
@@ -386,8 +392,9 @@ pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
-    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn, adopted_image_row_key,
-    adopted_pin_row_key,
+    AdoptedImageCacheEntry, adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
+    adopted_image_row_key, adopted_pin_row_key, cached_adopted_authority_checkpoint_in_txn,
+    cached_adopted_evidence_in_txn,
 };
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
@@ -411,6 +418,7 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
@@ -426,7 +434,7 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
-use readonly_fold::authority_view_readonly_for_store_in_txn;
+pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::{
@@ -446,8 +454,9 @@ use machine_profile::{
 };
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
+    machine_history_authority_descends, machine_history_authority_descends_with_image,
+    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
+    verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

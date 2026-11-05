@@ -1,7 +1,7 @@
 //! Base-apply Delete arm: tears rows and graph state.
 
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_delete_arm(
@@ -29,7 +29,12 @@ pub(super) fn apply_delete_arm(
     // a batch-deleted world takes its keys with it (fix 7). There
     // is no soft batch delete; a soft delete keeps the keys.
     crate::world_keys::destroy_world_keys_in_txn(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         id,
         crate::key_material::WorldKeyDestroyCause::BatchDelete,
@@ -60,8 +65,17 @@ pub(super) fn apply_delete_arm(
             origin,
         )?;
     }
-    let (_existed, had_vector, deleted_graph_state, neighbors) =
-        deindex_entity_with_machine_history(store, wtxn, &id)?;
+    let (existed, had_vector, deleted_graph_state, neighbors) =
+        deindex_entity_with_machine_history(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+        )?;
     claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
     if state.persist_gate_pending_consent {
         store.let_go_pending_gate_consent_in_txn(wtxn, &id, state.mutation_recorded_at)?;
@@ -70,6 +84,10 @@ pub(super) fn apply_delete_arm(
     #[cfg(feature = "sync")]
     state.pending_embedding_enqueue_priorities.remove(&id);
     ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
+    if existed || deleted_graph_state {
+        state.question_arrival_ids.insert(id);
+    }
+    state.question_arrival_ids.extend(neighbors.iter().copied());
     state.had_graph_mutation |= deleted_graph_state;
     state.had_vector_mutation |= had_vector;
     Ok(())

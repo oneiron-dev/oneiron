@@ -287,6 +287,13 @@ impl Vault {
         fork.governance_tier = parent.governance_tier;
         fork.role = parent.role;
         fork.call = parent.call.clone();
+        if let Some((document, frontier)) =
+            crate::entity_doc::source_document_pin_in_txn(&self.store, wtxn, parent_id)?
+        {
+            crate::write_envelope::skill_record::retain_fork_parent_pin(
+                &mut fork, document, frontier,
+            )?;
+        }
         let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
         if let Some(hash) = fork.content_hash
             && self
@@ -580,6 +587,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

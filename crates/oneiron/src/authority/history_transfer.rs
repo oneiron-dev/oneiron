@@ -233,15 +233,14 @@ fn adopted_context_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(
-    Option<VerifiedAuthorityCheckpoint>,
+    Option<std::sync::Arc<VerifiedAuthorityCheckpoint>>,
     Option<std::sync::Arc<AdoptedEvidence>>,
 )> {
-    let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    let Some((adopted, evidence)) = super::checkpoint_adopt::adopted_image_view_in_txn(store, txn)?
     else {
         return Ok((None, None));
     };
-    let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, txn)?;
-    Ok((Some(adopted), evidence))
+    Ok((Some(adopted), Some(evidence)))
 }
 
 impl Vault {
@@ -254,8 +253,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut history = history_in_txn(self, &txn)?;
         if let Some(adopted) =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?
-            && let Some(refusal) = unheld_prefix(&adopted, &history)
+            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
+            && let Some(refusal) = unheld_prefix(adopted.as_ref(), &history)
         {
             return Err(refusal);
         }
@@ -299,7 +298,7 @@ impl Vault {
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
-        let prefix = adopted.as_ref().map(AdoptedPrefix::of);
+        let prefix = adopted.as_deref().map(AdoptedPrefix::of);
         for (hash, bytes, entry) in &decoded {
             merged
                 .entry(*hash)
@@ -346,6 +345,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: bytes,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -505,7 +505,7 @@ impl Vault {
         // On a vault that adopted a checkpoint image, the signer's covered
         // rows count by their summaries, stored or not (OF-469, slice E).
         let adopted =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, txn)?;
+            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, txn)?;
         let covered = adopted
             .iter()
             .flat_map(|adopted| adopted.image().rows.values())

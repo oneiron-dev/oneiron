@@ -12,9 +12,10 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::store::Store;
 
+use super::made_by::default_version_made_by;
 use super::references::{claimed_hashes, live_claim_holders};
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
-use super::versions::{VERSIONS, blob_artifact_asset_entity_id};
+use super::versions::{BlobArtifactVersion, VERSIONS, blob_artifact_asset_entity_id};
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 
@@ -44,6 +45,32 @@ pub(super) fn artifact_hashes(
         }
     }
     Ok(hashes)
+}
+
+/// A hold on the artifact, any payload ASSET or any retained version
+/// claim keeps the selected artifact whole, before an erase stages bodies.
+pub(crate) fn artifact_payload_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    hashes: &[ContentHash],
+) -> Result<bool> {
+    if crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+        return Ok(true);
+    }
+    for hash in hashes {
+        let asset = blob_artifact_asset_entity_id(hash)?;
+        if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    for row in VERSIONS.iter_from(store, txn, artifact.as_bytes())? {
+        let (_, version) = row?;
+        if crate::store::legal_hold::held_in_txn(store, txn, version.claim_id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    super::references::artifact_claim_held_in_txn(store, txn, artifact)
 }
 
 /// The content hashes the stored record `raw` at `id` holds: an artifact's own bytes, or the one
@@ -159,4 +186,109 @@ fn claim_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> 
         return Ok(false);
     }
     crate::deletion::row_deletion_marked(store, txn, id, Some(raw.as_slice())).map(|marked| !marked)
+}
+
+/// One local version holding a content hash (FIX 4997 R2): its validated
+/// record and whether it is a genuine default raw — a body-owning append
+/// whose envelope is exactly the writer's own default, parent lineage
+/// preserved. Replica-only holdings have no chain here and never appear.
+#[derive(Debug, Clone)]
+pub(crate) struct LocalHashVersion {
+    pub artifact: EntityId,
+    pub record: BlobArtifactVersion,
+    pub is_default_raw: bool,
+}
+
+/// Every local version at `hash` across this hash's holders, each bound to
+/// its ledger claim: the R2 row guard's lookup path. Holders only, exact
+/// hash only, no full-version scan and no new index. Unrelated hashes return
+/// empty before any metadata/auth check, so an ordinary ASSET never errors
+/// on another holder's malformed unmarked version.
+pub(crate) fn local_hash_versions_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    hash: &ContentHash,
+) -> Result<Vec<LocalHashVersion>> {
+    let holders = content_holders_in_txn(&vault.store, txn, hash)?;
+    let mut saw_protected = false;
+    for artifact in &holders {
+        for entry in VERSIONS.iter_from(&vault.store, txn, artifact.as_bytes())? {
+            let (_, record) = entry?;
+            if record.content_hash != *hash {
+                continue;
+            }
+            match crate::commitment_wake::wording_source_binding(&record) {
+                Ok(None) => {}
+                Ok(Some(_)) | Err(_) => {
+                    saw_protected = true;
+                    break;
+                }
+            }
+        }
+        if saw_protected {
+            break;
+        }
+    }
+    if !saw_protected {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for artifact in holders {
+        for record in vault.blob_artifact_versions_in_txn(txn, &artifact)? {
+            if record.content_hash != *hash {
+                continue;
+            }
+            let Some(validated) =
+                vault.blob_artifact_version_metadata_in_txn(txn, &artifact, record.version)?
+            else {
+                continue;
+            };
+            let is_default_raw = is_default_raw_version_in_txn(vault, txn, &artifact, &validated)?;
+            out.push(LocalHashVersion {
+                artifact,
+                record: validated,
+                is_default_raw,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Whether `record` is a genuine body-owning default raw: its claim names
+/// an authenticated local writer and its envelope equals that writer's own
+/// default for its provenance, parent lineage and time. A supplied
+/// envelope, a missing writer, or a released parent is never raw.
+fn is_default_raw_version_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    record: &BlobArtifactVersion,
+) -> Result<bool> {
+    let Some(body) = vault.get_claim_in_txn(txn, &record.claim_id)? else {
+        return Ok(false);
+    };
+    let Some(writer) = crate::batch::authenticated_claim_author_in_txn(
+        &vault.store,
+        txn,
+        &record.claim_id,
+        &body,
+    )?
+    else {
+        return Ok(false);
+    };
+    let parent_claim = match record.parent_version {
+        None => None,
+        Some(parent) => {
+            let Some(parent_record) = VERSIONS.get(&vault.store, txn, &(*artifact, parent))? else {
+                return Ok(false);
+            };
+            if parent_record.version != parent {
+                return Ok(false);
+            }
+            Some(parent_record.claim_id)
+        }
+    };
+    let expected =
+        default_version_made_by(&writer, &record.provenance, parent_claim, record.created_at);
+    Ok(expected == record.made_by)
 }

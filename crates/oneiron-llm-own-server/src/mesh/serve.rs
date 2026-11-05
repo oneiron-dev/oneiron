@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_core::Stream;
+use oneiron::sync::transport::LinkBytes;
 use oneiron::{
     LlmCatalogEntry, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, ModelId,
 };
@@ -95,6 +96,7 @@ struct Session {
     staging: Staging,
     streams: Mutex<HashMap<u64, Held>>,
     next: AtomicU64,
+    bytes: LinkBytes,
 }
 
 impl Session {
@@ -103,6 +105,7 @@ impl Session {
             staging: Staging::new(budget),
             streams: Mutex::default(),
             next: AtomicU64::default(),
+            bytes: LinkBytes::default(),
         }
     }
 }
@@ -183,10 +186,12 @@ impl LlmMeshService {
         session: &Session,
         mut stream: Box<dyn MeshStream>,
     ) -> Result<(), MeshError> {
-        let request: Request = unseal(&stream.recv().await?)?;
+        let request: Request = unseal(&stream.recv().await?, &session.bytes, Request::mesh_tag)?;
         // The reply's bytes stay booked until it is sent.
         let (reply, _held) = self.answer(peer, session, request).await;
-        stream.send(&seal(&reply)?).await
+        stream
+            .send(&seal(&reply, reply.mesh_tag(), &session.bytes)?)
+            .await
     }
 
     /// The reply to `request`, and the booking of its inline body, if any.

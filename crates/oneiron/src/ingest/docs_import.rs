@@ -1,9 +1,6 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsPage, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{
-    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
-    apply_ops_with_gate_mode,
-};
+use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectDigest,
     EffectFacts, GrantBound,
@@ -166,9 +163,9 @@ fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
 /// The record one imported page's ASSET holds: its text beside the corpus,
-/// project, page and registry it was imported under.
+/// project and registry, and a blob reference to the exact source bytes.
 fn docs_asset_record(docs: &DocsExport, page: &DocsPage) -> Value {
-    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"})
+    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported","blake3":blake3::hash(page.text.as_bytes()).to_hex().to_string(),"mime_type":"text/plain","byte_size":page.text.len() as u64})
 }
 fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
     Ok(BatchOp::Put {
@@ -179,6 +176,7 @@ fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
             end: now,
         },
         learned_at: now,
+        row_version: None,
         data: encoded(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -357,6 +355,7 @@ impl Vault {
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
+        let mut changed_sources = BTreeSet::new();
         // Rule A: the owner states each page and its verbatim chunks; a model
         // summary is concluded from its chunk. Stamped once the ops land.
         let writer = WriteActor::new(actor, EdgeActorClass::Human);
@@ -390,6 +389,10 @@ impl Vault {
                 .fingerprints
                 .push((asset.to_hex(), fingerprint.decision.clone()));
             let unchanged = matches!(fingerprint.decision, super::BlobBirthDecision::Unchanged(_));
+            let source_bytes_unchanged = matches!(
+                fingerprint.decision,
+                super::BlobBirthDecision::Unchanged(super::FingerprintRung::Asset)
+            );
             fingerprint_updates.push((asset, fingerprint));
             // The approve-once ceiling applies to this source revision, not to a
             // later replacement of the same stable page id.
@@ -409,6 +412,15 @@ impl Vault {
             // The page's ASSET goes in through the asset body plane, ahead of
             // the chunks derived from it.
             self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
+            if !source_bytes_unchanged {
+                let write = crate::secret_custody::CustodyWrite::of(self);
+                crate::memory::release_asset_blob_in_txn(
+                    &self.store,
+                    &mut txn,
+                    &asset,
+                    &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+                )?;
+            }
             self.put_asset_body_in_txn(
                 &mut txn,
                 &asset,
@@ -419,6 +431,20 @@ impl Vault {
                 now,
                 staged,
             )?;
+            crate::memory::land_asset_blob_in_txn(
+                self,
+                &mut txn,
+                &asset,
+                page.text.as_bytes(),
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )?;
+            if !source_bytes_unchanged {
+                changed_sources.insert(asset);
+            }
             births.extend(
                 RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
                     .map(|birth| (asset, birth)),
@@ -546,12 +572,10 @@ impl Vault {
             }
         }
         self.validate_docs_put_kinds(&txn, &ops)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_with_derived_copies(
             &mut txn,
             ops,
+            &changed_sources,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_text_births(text_births),

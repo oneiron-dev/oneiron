@@ -1,7 +1,8 @@
 //! Membership effects: the Owner handover the two Owner acts apply, and the
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
-//! or deletes FEDERATION_GRANT records in the caller's writer and, given the
-//! host's slip issuer, revokes the capability slips of whoever lost a role.
+//! or deletes FEDERATION_GRANT records in the caller's writer and revokes the
+//! capability slips of whoever lost a role, using the supplied issuer or this
+//! install's own live host issuer.
 //! Removal is access revocation, never a group rekey. A new member joins only
 //! by accepting an invitation (`invitation`).
 mod invitation;
@@ -183,6 +184,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: data.clone(),
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -496,6 +498,10 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        let own_issuer = match slips {
+            Some(_) => None,
+            None => self.load_host_slip_issuer().ok(),
+        };
         self.change_shared_membership(
             admin,
             vault_id,
@@ -508,6 +514,8 @@ impl Vault {
                 if from == Role::Owner || from == role {
                     return Err(invalid());
                 }
+                let own_issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
+                let slips = slips.or(own_issuer.as_ref());
                 let MemberMove {
                     grants,
                     revoked_slips,
@@ -534,6 +542,10 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        let own_issuer = match slips {
+            Some(_) => None,
+            None => self.load_host_slip_issuer().ok(),
+        };
         self.change_shared_membership(
             admin,
             vault_id,
@@ -545,6 +557,8 @@ impl Vault {
                 if from == Role::Owner {
                     return Err(invalid());
                 }
+                let own_issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
+                let slips = slips.or(own_issuer.as_ref());
                 let MemberMove {
                     grants,
                     revoked_slips,
@@ -669,6 +683,10 @@ impl Vault {
         vault_id: u64,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        let own_issuer = match slips {
+            Some(_) => None,
+            None => self.load_host_slip_issuer().ok(),
+        };
         self.change_shared_membership(member, vault_id, None, |txn, actor, now| {
             let from = self
                 .member_role_in_txn(txn, vault_id, actor)?
@@ -676,6 +694,8 @@ impl Vault {
             if from == Role::Owner {
                 return Err(invalid());
             }
+            let own_issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
+            let slips = slips.or(own_issuer.as_ref());
             let MemberMove {
                 grants,
                 revoked_slips,

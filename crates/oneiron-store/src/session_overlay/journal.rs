@@ -1,3 +1,6 @@
+//! Typed session-overlay journal: entries, promotion plans, and replay.
+//! Entry [`PublishedEntry`]; consumed by `snapshot` and the `overlay` segment/retire machinery.
+//! Owned by `session_overlay`; the overlay lifecycle is the sole promoter (ONE-1730).
 use zeroize::Zeroize;
 
 use super::overlay::PlanCharge;
@@ -210,6 +213,8 @@ pub struct PromotePlan {
     /// Whether the turn is already in base, saved by this stretch, so the
     /// plan only adds messages said into it since ([`Self::appends`]).
     pub(super) appends: bool,
+    /// The exact source view whose MESSAGE bodies and side rows this plan saves.
+    pub(super) source_snapshot: super::snapshot::OverlaySnapshot,
     /// The copies' charge on what the room's overlay retains, held for the
     /// plan's life. Last, so it drops after the copies it counts.
     pub(super) charge: Option<PlanCharge>,
@@ -229,6 +234,11 @@ impl Drop for PromotePlan {
 }
 
 impl PromotePlan {
+    /// The same overlay view from which this replay program was selected.
+    pub fn source_snapshot(&self) -> &super::snapshot::OverlaySnapshot {
+        &self.source_snapshot
+    }
+
     /// The promoted turn — the receipt key and the pickup marker's id.
     pub const fn turn(&self) -> EntityId {
         self.turn
@@ -301,6 +311,7 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
         BatchOp::Put {
             id,
             entity_type,
+            row_version,
             data,
             allow_maintenance,
             allow_reserved_predicate,
@@ -311,6 +322,7 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
             entity_type: *entity_type,
             occurred: entry.occurred,
             learned_at: entry.learned_at,
+            row_version: *row_version,
             data: data.clone(),
             allow_maintenance: *allow_maintenance,
             allow_reserved_predicate: *allow_reserved_predicate,

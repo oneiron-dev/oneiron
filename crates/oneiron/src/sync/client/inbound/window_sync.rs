@@ -127,7 +127,7 @@ impl SyncClient {
                     .into_result()?,
                 ])
             }
-            window_sub_tags::RESIDENCE_ACK
+            window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
                 // The receipt binds what was sent for the row (FIX 7107).
@@ -306,7 +306,7 @@ impl SyncClient {
         }
     }
 
-    fn staged_entity_evidence(
+    pub(in crate::sync::client) fn staged_entity_evidence(
         &self,
     ) -> std::result::Result<
         std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
