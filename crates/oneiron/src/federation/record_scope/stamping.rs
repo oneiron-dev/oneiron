@@ -359,21 +359,34 @@ pub(crate) fn stamp_leader_project(
     ) {
         return Err(Error::InvalidEntityType(kind));
     }
-    let facet = crate::claim::substrate_facet_id(id)?;
-    let birth = default_stamp(kind, facet);
-    let mut scope = birth.clone();
-    scope.audience = singleton(ScopeId(project));
-    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
-        if prior.version != 2
-            || prior.kind != kind
-            || prior.birth_facet != *facet.as_bytes()
-            || (prior.scope != birth && prior.scope != scope)
-        {
+    // Blind-review P1 (FIX 7774): a new leader-chat TURN may be born under
+    // the mask/default facet, so the birth facet here is the row's own, not
+    // its substrate; this door settles only the audience. A row already
+    // settled onto another project is refused; the unsettled and idempotent
+    // same-project cases proceed.
+    let prior = SCOPE_RECORD.get(store, txn, &id)?;
+    let (facet, position) = match &prior {
+        Some(stamp) if stamp.version == 2 && stamp.kind == kind => (
+            EntityId::from_bytes(stamp.birth_facet)
+                .map_err(|_| Error::CorruptedIndex("leader chat birth facet"))?,
+            stamp.scope.clone(),
+        ),
+        Some(_) => {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
-        if prior.scope == scope {
-            return Ok(());
+        None => {
+            let facet = crate::claim::substrate_facet_id(id)?;
+            (facet, default_stamp(kind, facet))
         }
+    };
+    let default_audience = singleton(ScopeId(crate::claim::default_project_id()));
+    if position.audience != default_audience && position.audience != singleton(ScopeId(project)) {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let mut scope = position.clone();
+    scope.audience = singleton(ScopeId(project));
+    if prior.as_ref().is_some_and(|stamp| stamp.scope == scope) {
+        return Ok(());
     }
     bump_scope_revision(store, txn)?;
     SCOPE_RECORD.put(
