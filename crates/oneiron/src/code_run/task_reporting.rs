@@ -2,8 +2,8 @@
 
 use super::{CodeRunBridgeCall, CodeRunReplayRecord, SelfDispatchOutcome, SelfEffect};
 use crate::EntityId;
+use crate::task_verb::sdk::AgentVerb;
 use crate::task_verb::{TaskHandle, TaskOutcome, TaskPhase, TaskUpdateReceipt};
-use crate::verb_catalog::AgentVerb;
 
 impl CodeRunReplayRecord {
     /// Counts fresh native terminal reports of `task`, not acknowledgements,
