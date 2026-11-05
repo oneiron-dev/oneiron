@@ -313,7 +313,7 @@ side_tables! {
     BROWSER_SOLVED_COVERAGE: VaultMeta b"browser.solved.coverage.v1\0" Named Engine;
     /// CUA E8a: a solved group's full scoped key with its changed and processed generations.
     /// Key: hash32 (group).
-    BROWSER_SOLVED_DIRTY: VaultMeta b"browser.solved.dirty.v1\0" Named Authored
+    BROWSER_SOLVED_DIRTY: VaultMeta b"browser.solved.dirty.v1\0" Named Authored [accepts: crate::browser_library::browser_solved_dirty_accepts_masked]
         => crate::browser_library::erase_dirty_actor_in_txn;
     /// CUA E8a: one solved run's evidence claim in its group: its run and capture time, never its
     /// body. Key: hash32 (group) + id16.
@@ -325,7 +325,7 @@ side_tables! {
     BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_retired_accepts_masked]
         => crate::browser_library::erase_retired_actor_in_txn;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
-    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_accepts_masked]
         => crate::browser_library::erase_workflow_actor_in_txn;
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).

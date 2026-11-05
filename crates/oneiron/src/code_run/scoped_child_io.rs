@@ -47,6 +47,8 @@ pub struct HostInput {
 /// holds answers the occurrence it holds. The record is `actor`'s run's
 /// (FIX 9019): its owner row is stamped with its put, so an erase of that
 /// actor, and its outputs' retention, reach a run that only holds outputs.
+/// Each input's source rows are frozen with its first stored occurrence;
+/// a reused path lends that occurrence's sources, never a new label for it.
 ///
 /// # Errors
 ///
@@ -71,7 +73,7 @@ pub fn commit_host_inputs(
         {
             Some(output) => output.clone(),
             None => {
-                let output = publish(vault, parent_run, input.path, &input.body)?;
+                let output = publish(vault, parent_run, input.path, &input.body, input.rows)?;
                 record.outputs.push(output.clone());
                 published = true;
                 output
@@ -84,7 +86,7 @@ pub fn commit_host_inputs(
                 path: output.path,
                 handle: output.handle,
                 range: (0, output.raw_len),
-                rows: input.rows,
+                rows: output.input_rows,
             },
         );
     }
@@ -113,7 +115,7 @@ pub fn stage_host_output(
     if let Some(output) = record.outputs.iter().find(|output| output.path == path) {
         return Ok(output.clone());
     }
-    let output = publish(vault, parent_run, path, body)?;
+    let output = publish(vault, parent_run, path, body, None)?;
     record.outputs.push(output.clone());
     vault.put_code_run_replay_record(&record)?;
     Ok(output)
@@ -221,11 +223,18 @@ pub fn read_scoped_finding(vault: &Vault, job: &ReaderJob) -> Result<Option<Vec<
     read_whole(vault, &output)
 }
 
-/// Publishes `body` as `owner`'s complete output at `path`.
-fn publish(vault: &Vault, owner: EntityId, path: String, body: &[u8]) -> Result<CodeRunRawOutput> {
+/// Publishes `body` as `owner`'s complete output at `path`, with its known
+/// input rows; `None` keeps an unknown source set unknown.
+fn publish(
+    vault: &Vault,
+    owner: EntityId,
+    path: String,
+    body: &[u8],
+    input_rows: Option<Vec<EntityId>>,
+) -> Result<CodeRunRawOutput> {
     let mut sink = vault.code_run_output_sink()?;
     sink.write(body)?;
-    vault.publish_code_run_output(path, sink, true, Some(owner))
+    vault.publish_code_run_output_sourced(path, sink, true, Some(owner), input_rows)
 }
 
 /// `output`'s whole body.
