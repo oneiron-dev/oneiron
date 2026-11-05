@@ -23,6 +23,7 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
 mod editor_sources;
+mod remake;
 mod requester_lane;
 
 pub(super) const REQUEST_VERSION: u64 = 2;
