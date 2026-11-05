@@ -148,7 +148,7 @@ impl Coordinator {
         wake: broadcast::Receiver<()>,
         stop: StopFuture,
     ) -> Option<Self> {
-        let slot = server.tagger.as_ref()?;
+        let slot = server.tagger_slot()?;
         let tagger = Arc::clone(slot.tagger());
         let idle = Duration::from_millis(slot.config().idle_interval_ms).max(MIN_IDLE);
         // A round claims at least one marker.
@@ -379,7 +379,9 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, window);
+        let completion = self
+            .tagger
+            .submit(claim, window, self.reconciler.call_context().cloned());
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {
@@ -468,7 +470,7 @@ impl Coordinator {
 
     /// Logs a settled marker's trace and keeps the retry it was given.
     fn settled(&mut self, trace: &TaggingTrace) {
-        if let Some(slot) = self.server.tagger.as_ref() {
+        if let Some(slot) = self.server.tagger_slot() {
             slot.log(trace);
         }
         let retry_at = match trace.outcome {

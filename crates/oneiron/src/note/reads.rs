@@ -130,7 +130,49 @@ pub(super) struct NoteReadAt<'a, S> {
     pub(super) pending: &'a PendingScanChecks,
 }
 
+/// An admitted NOTE answer whose snapshot has closed before diary completion.
+pub(crate) struct PreparedNoteRead(ScopedReadResult<(Option<NoteReadView>, Option<DiaryReadGate>)>);
+
+impl PreparedNoteRead {
+    pub(crate) fn finish(
+        self,
+        memory: &Memory<'_>,
+    ) -> MemoryResult<ScopedReadResult<Option<NoteReadView>>> {
+        memory.finish_note_read(self.0)
+    }
+}
+
 impl Memory<'_> {
+    /// A resolved live NOTE in the caller's prepared lane and snapshot.
+    /// The lane, grant clock, room view and body pins must be prepared before
+    /// `txn`; the returned diary completion runs only after `txn` closes.
+    pub(crate) fn read_live_note_in_txn(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+        reason: &str,
+        pending: &PendingScanChecks,
+    ) -> MemoryResult<PreparedNoteRead> {
+        let store = lane.store_read();
+        let at = NoteReadAt {
+            note,
+            store: &store,
+            pending,
+        };
+        let access = NoteAccessRequest {
+            note_ref: note.to_hex(),
+            reason: Some(reason.to_owned()),
+        };
+        let result =
+            lane.read_projected_in_txn(txn, &[PointRead::id(note)], None, |txn, rows| {
+                self.project_admitted_note(txn, rows, &at, &access, |_, doc| {
+                    Ok(read_view(&doc, &[], NoteReadSource::Local)?)
+                })
+            })?;
+        Ok(PreparedNoteRead(result))
+    }
+
     /// A live editor is held by a serving host, not an embedded read handle.
     pub fn bind_note_editor(
         &self,
