@@ -129,7 +129,9 @@ impl Vault {
         work_ref: &str,
     ) -> Result<Option<QueueCheckWork>> {
         if work_ref.len() != 64 || !work_ref.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(crate::contract_oracle::invalid("work_ref must be a digest"));
+            return Err(crate::store::contract_oracle::invalid(
+                "work_ref must be a digest",
+            ));
         }
         let txn = self.store.env.read_txn()?;
         CHECK_WORK.get(&self.store, &txn, &format!("{store}:{work_ref}"))
@@ -174,8 +176,25 @@ impl Vault {
         repo: EntityId,
         repo_ref: &RepoRef,
     ) -> Result<MergeQueue<'_>> {
+        match self.open_served_queue_for_artifact(repo, repo_ref)? {
+            Some((queue, _, _)) => Ok(queue),
+            None => MergeQueue::open(self, repo_ref.clone()),
+        }
+    }
+
+    /// A served anchor's queue, internal source pointer and frozen import
+    /// ref from the same binding. `None` means a native pointer, not an
+    /// unbound served queue.
+    ///
+    /// # Errors
+    /// The same source-binding and root failures as `open_queue_for_artifact`.
+    pub(crate) fn open_served_queue_for_artifact(
+        &self,
+        repo: EntityId,
+        repo_ref: &RepoRef,
+    ) -> Result<Option<(MergeQueue<'_>, RepoRef, String)>> {
         let Some(folder) = served_store_folder(repo_ref) else {
-            return MergeQueue::open(self, repo_ref.clone());
+            return Ok(None);
         };
         let store = GitWire::new(self)?
             .repository_identity(Path::new(folder))?
@@ -183,8 +202,14 @@ impl Vault {
         let bound = self
             .require_existing_queue_source(&store, repo)?
             .ok_or_else(|| Error::Refused(NO_SOURCE.to_owned()))?;
-        self.open_bound_queue_source(&bound)?
-            .map_err(Error::Refused)
+        let queue = self
+            .open_bound_queue_source(&bound)?
+            .map_err(Error::Refused)?;
+        Ok(Some((
+            queue,
+            bound.repo_ref,
+            bound.manifest.anchor.source_ref,
+        )))
     }
 
     /// The bound source's root opened as it stands (see

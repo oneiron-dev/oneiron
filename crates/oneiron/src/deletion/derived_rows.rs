@@ -33,13 +33,13 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10460: the queue copy of a public model step's failure text.
     // First: it reads the step's terminal claim out of the live submission
     // row, which the submission scrub below replaces with Erased.
-    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
+    crate::store::attempt_operations::erase_model_step_failure_reasons_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
-    crate::saved_query::erase_memos_for_source_in_txn,
+    crate::store::query_memo_lifetime::erase_memos_for_source_in_txn,
     // FIX 10466: every inference snapshot whose dependency set reaches it.
-    crate::inference_snapshot::erase_in_txn,
+    crate::store::snapshot_catalog::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
     crate::memory::erase_reply_assertions_in_txn,
     // FIX 9970: a TURN's unpersisted-wake label.
@@ -54,7 +54,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
-    crate::voice_identity::erase_recognition_for_subject_in_txn,
+    erase_voice_recognition_for_subject_in_txn,
     // FIX 9805: a reviewed claim's teaching copies in the miner.
     crate::edit_distance::miner::erase_source_claim_in_txn,
     // FIX 9918: a typed question's copies of an erased judgment answer.
@@ -78,7 +78,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     crate::calendar::inbox_card::erase_inbox_cards_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
-    crate::skill_hub::pack_catalog::erase_hook_proposal_in_txn,
+    crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
     crate::provenance::erase_actor_stamp_uses_in_txn,
     #[cfg(feature = "sync")]
@@ -91,6 +91,16 @@ const ERASERS: &[EntitySideRowEraser] = &[
 /// The room side-row eraser slot: the engine's, through the store's hooks.
 fn erase_room_side_rows(store: &Store, wtxn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     store.record_hooks.erase_room_side_rows(store, wtxn, id)
+}
+
+fn erase_voice_recognition_for_subject_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_recognition_for_subject_in_txn(store, wtxn, id)
 }
 
 /// The carried born-with eraser slot: the engine's, through the store's hooks.
@@ -137,7 +147,7 @@ pub(crate) fn tear_derived_rows_in_txn(
         store
             .record_hooks
             .forget_claim_reassignments_in_txn(store, wtxn, id)?;
-        crate::identity_redirect::forget_deleted_in_txn(store, wtxn, id)?;
+        crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }

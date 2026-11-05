@@ -37,6 +37,7 @@ use engines::{Admission, BaselineCalibration, COREML_ABSENT, MLX_ABSENT, Platfor
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
+pub(crate) use local::{QuestionHead, QuestionTokenizer};
 
 pub(crate) mod bundle;
 mod coreml;
@@ -626,12 +627,21 @@ pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
     rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    let build = move || {
-        let mut slot = build_slot_with_rows(config.as_ref(), rows_location.as_deref())?;
-        if let Some(slot) = slot.as_mut() {
-            slot.start_platform_workers();
-        }
-        Ok(slot)
-    };
-    crate::logging::off_runtime("tagger slot task", build).await?
+    crate::logging::off_runtime("tagger slot task", move || {
+        build_slot_on_thread(config.as_ref(), rows_location.as_deref())
+    })
+    .await?
+}
+
+/// The serving build on an existing blocking thread: what first-run setup
+/// calls inside the owner route's `blocking()` unit.
+pub(crate) fn build_slot_on_thread(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<Option<TaggerSlot>> {
+    let mut slot = build_slot_with_rows(config, rows_location)?;
+    if let Some(slot) = slot.as_mut() {
+        slot.start_platform_workers();
+    }
+    Ok(slot)
 }

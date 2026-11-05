@@ -26,6 +26,10 @@ struct PinCounts {
     /// save transaction that names it opened (KS-2A): kept while its pin
     /// is held, read by that transaction.
     promoted: HashMap<[u8; 32], [u8; 16]>,
+    /// Detached line-index rebuilds one read noted (FIX 1186b), by digest.
+    /// In memory only, like pins: a restart drops the queue and reads
+    /// re-note.
+    rebuild: HashMap<[u8; 32], RebuildEntry>,
     /// Latest issued scan-bound credit per window, by
     /// (raw body digest, window base, window len) to the exact emitted
     /// (offset, line, credit). Offsets are window-relative, so the window
@@ -34,6 +38,15 @@ struct PinCounts {
     search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
     /// Insertion order of `search_credit` keys, oldest first.
     search_credit_order: VecDeque<([u8; 32], u64, u64)>,
+}
+
+/// One queued line-index rebuild (FIX 1186b): the body's length from its
+/// manifest and whether the sweep holds it in flight. Same digest means
+/// same bytes means same length, so the digest keys the entry exactly.
+#[derive(Clone, Copy)]
+struct RebuildEntry {
+    len: u64,
+    in_flight: bool,
 }
 
 impl PinCounts {
@@ -226,5 +239,64 @@ impl crate::Vault {
     ) -> bool {
         self.result_body_pins
             .valid_search_credit(digest, base, len, offset, line, credit)
+    }
+}
+
+impl crate::Vault {
+    /// Notes a detached line-index rebuild for the body `digest`, `len` bytes
+    /// long (FIX 1186b): a read whose lookup found no index calls this and
+    /// scans as today. Insert-if-absent, whether queued or in flight, so a
+    /// read during an in-flight rebuild is a no-op; only the sweep requeues
+    /// a failure.
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        lock(&self.result_body_pins.counts)
+            .rebuild
+            .entry(digest)
+            .or_insert(RebuildEntry {
+                len,
+                in_flight: false,
+            });
+    }
+
+    /// Begins up to `limit` queued rebuilds, marking them in flight without
+    /// removing them: the sweep's in-flight set, one per body per handle.
+    /// Entries already in flight stay out, so concurrent notes never double
+    /// a body.
+    pub(crate) fn begin_body_line_index_rebuilds(&self, limit: usize) -> Vec<([u8; 32], u64)> {
+        let mut counts = lock(&self.result_body_pins.counts);
+        let mut begun = Vec::new();
+        for (digest, entry) in counts.rebuild.iter_mut() {
+            if begun.len() >= limit {
+                break;
+            }
+            if !entry.in_flight {
+                entry.in_flight = true;
+                begun.push((*digest, entry.len));
+            }
+        }
+        begun
+    }
+
+    /// Finishes the rebuild for `digest`, after a rebuilt index or a terminal
+    /// drop (already fixed, inline, gone): removes it, whether queued or in
+    /// flight.
+    pub(crate) fn finish_body_line_index_rebuild(&self, digest: &[u8; 32]) {
+        lock(&self.result_body_pins.counts).rebuild.remove(digest);
+    }
+
+    /// Requeues the rebuild for `digest` after a failure, marking it queued
+    /// again for the next sweep. A digest already finished stays finished.
+    pub(crate) fn retry_body_line_index_rebuild(&self, digest: &[u8; 32]) {
+        if let Some(entry) = lock(&self.result_body_pins.counts).rebuild.get_mut(digest) {
+            entry.in_flight = false;
+        }
+    }
+
+    /// Whether any rebuild waits queued (not in flight).
+    pub(crate) fn has_queued_body_line_index_rebuilds(&self) -> bool {
+        lock(&self.result_body_pins.counts)
+            .rebuild
+            .values()
+            .any(|entry| !entry.in_flight)
     }
 }

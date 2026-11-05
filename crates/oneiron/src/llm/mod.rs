@@ -65,16 +65,17 @@ pub use step::{
     trap_for_durable_wait, trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
-    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
-    wake_trap_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
+    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
 pub(crate) use step::{
@@ -103,6 +104,7 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+pub use oneiron_model::llm::{TokenScore, first_token_alternatives};
 // FIX 6567: the cache evidence a backend reports on a physical call.
 pub use oneiron_model::llm::{
     CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
@@ -195,7 +197,6 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
@@ -208,7 +209,4 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::routing::llm_description_policy_accepts_masked;
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
-pub(crate) use self::seat::llm_model_description_accepts_masked;
-pub(crate) use self::step::model_step_submission_accepts_masked;

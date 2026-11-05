@@ -194,7 +194,8 @@ impl Vault {
                     crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 }
                 crate::deletion::actor_fields::erase_actor_fields_in_txn(
-                    self, &mut wtxn, id, owner_act,
+                    crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
+                    owner_act,
                 )?;
             }
             if crdt_persisted
@@ -273,6 +274,8 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;

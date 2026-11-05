@@ -15,7 +15,8 @@ impl Memory<'_> {
         &self,
         write: &ClaimWrite<'_>,
         approval: ClaimApprovalStatus,
-    ) -> Result<bool, Error> {
+        skip_exact_hook_replay: bool,
+    ) -> Result<Option<EntityId>, Error> {
         let ClaimWrite {
             input,
             subject,
@@ -54,12 +55,19 @@ impl Memory<'_> {
         };
         self.vault
             .try_with_actor_content_write_txn(envelope.actor(), |content| {
-                self.write_claim_in_txn(content, write, candidate, envelope, occurred)
+                self.write_claim_in_txn(
+                    content,
+                    write,
+                    candidate,
+                    envelope,
+                    occurred,
+                    skip_exact_hook_replay,
+                )
             })
     }
 
-    /// The write transaction's body; `true` means a hard-delete marker
-    /// refused the id.
+    /// The write transaction's body; returns the identity refused by a
+    /// hard-delete marker, or `None` when admitted.
     fn write_claim_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -67,14 +75,57 @@ impl Memory<'_> {
         candidate: ClaimCandidate,
         envelope: crate::WriteEnvelope,
         occurred: TimeRange,
-    ) -> Result<bool, Error> {
-        if self.admit_claim_write_in_txn(content, write, &envelope)? {
-            return Ok(true);
+        skip_exact_hook_replay: bool,
+    ) -> Result<Option<EntityId>, Error> {
+        if let Some(refused) = self.admit_claim_write_in_txn(content, write, &envelope)? {
+            return Ok(Some(refused));
+        }
+        if skip_exact_hook_replay
+            && self.exact_hook_proposal_replay_in_txn(content, write, &envelope)?
+        {
+            return Ok(None);
         }
         let support = self.stage_claim_support_in_txn(content, write)?;
         let closure_envelope =
             self.apply_claim_candidate_in_txn(content, write, candidate, envelope, occurred)?;
         self.finish_claim_write_in_txn(content, write, support, &closure_envelope)?;
-        Ok(false)
+        Ok(None)
+    }
+
+    fn exact_hook_proposal_replay_in_txn(
+        &self,
+        content: &crate::federation::ActorContentTxn<'_, '_, '_>,
+        write: &ClaimWrite<'_>,
+        envelope: &crate::WriteEnvelope,
+    ) -> Result<bool, Error> {
+        if !super::resolve::in_place_replay(write)
+            || write.prior.is_some()
+            || write.signed_replay_origin.is_some()
+            || envelope.source() != crate::claim::ClaimSource::Generated
+            || write.input.salience.is_some()
+            || write.input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD
+            || write.input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
+        {
+            return Ok(false);
+        }
+        let Some(existing) = self.vault.get_claim_in_txn(content.read(), &write.id)? else {
+            return Ok(false);
+        };
+        // Belief equality alone omits evidence. The full stamp binds this
+        // exact actor, class, binding and RunKey, including every extra stamp.
+        if !super::resolve::claim_replay_content_matches(&existing, write)
+            || existing.salience.is_some()
+            || existing.session_tag.is_some()
+            || existing.evidence.as_ref()
+                != Some(&crate::write_envelope::write_envelope_evidence(
+                    envelope, None,
+                ))
+        {
+            return Ok(false);
+        }
+        // Recheck the existing record's live shared-vault authority even
+        // though no candidate will reach the batch effect checks.
+        content.require_claim(write.id)?;
+        Ok(true)
     }
 }

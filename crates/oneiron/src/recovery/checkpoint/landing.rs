@@ -17,6 +17,20 @@ use super::{
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
 
+/// The authenticated restore's image-write continuation. Only this landing
+/// module can construct it, after the image rows and indexes have landed.
+pub(crate) struct RestoreActorScrubWriter<'write, 'env> {
+    vault: &'write Vault,
+    wtxn: &'write mut heed::RwTxn<'env>,
+    erased: &'write BTreeSet<EntityId>,
+}
+
+impl<'env> RestoreActorScrubWriter<'_, 'env> {
+    pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, &BTreeSet<EntityId>) {
+        (self.vault, &mut *self.wtxn, self.erased)
+    }
+}
+
 impl Vault {
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
@@ -90,7 +104,8 @@ impl Vault {
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
-        let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        let (retired, retired_digests) =
+            carried_bodies::require(&mut image, gate_custody.plan_mut())?;
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -184,7 +199,7 @@ impl Vault {
             // Each compartment that opened lands beside them, through its
             // getter's own restore (KS7-5).
             if let Some(opened) = opened {
-                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?;
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?;
             }
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
@@ -240,7 +255,11 @@ impl Vault {
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, &erased)?;
+            crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+                vault: &vault,
+                wtxn: txn,
+                erased: &erased,
+            })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
             response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;

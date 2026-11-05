@@ -39,7 +39,7 @@ impl BatchBuilder<'_> {
     pub(crate) fn apply_ingested(
         self,
         wtxn: &mut RwTxn<'_>,
-        authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         self.apply_with_gate_mode(
@@ -74,7 +74,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
-        authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
@@ -120,7 +120,8 @@ impl BatchBuilder<'_> {
         } else {
             Vec::new()
         };
-        let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops)
+        let changes_claims = !routed.is_empty()
+            || super::vad_postcommit::ops_change_proactivity(&self.ops)
             || super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &self.ops)?;
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
         // The sync rows name the routed source events and the heads they
@@ -138,7 +139,14 @@ impl BatchBuilder<'_> {
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);
-        let derived = crate::embed::repo_derived_batch(&ops);
+        let put_roots: std::collections::BTreeSet<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let mut derived = crate::embed::repo_derived_batch(&ops);
         if let Some(actor) = actor {
             apply_actor_ops(
                 vault,
@@ -163,6 +171,7 @@ impl BatchBuilder<'_> {
                 own_device,
             )?;
         }
+        derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
         // Queue only after admitted apply. The owner checks the final body and
         // redeemed consent after ALL of its batches, then commits before VAD.

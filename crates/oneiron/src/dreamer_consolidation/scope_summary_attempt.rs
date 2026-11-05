@@ -54,6 +54,8 @@ mod durable_labels;
 mod output;
 mod window;
 
+use window::summary_input;
+
 pub(crate) use arc_evidence::arc_evidence_in_txn;
 
 /// Wraps an executor with the declared-summary arm. Every other attempt is
@@ -150,7 +152,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             });
         }
         // A queued summary for a conversation excluded after it was requested
-        // parks for retry before any source read (FIX 12551(b)): it runs if
+        // parks for retry before source text is read (FIX 12551(b)): it runs if
         // the conversation is later un-excluded. The weave planner already
         // requests no fresh ones (#4382); this gates the queued remainder.
         // Malformed input falls through to the planner's own error below.
@@ -164,7 +166,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .as_ref()
                     .is_some_and(|scope| excluded.contains(&scope.conversation)),
                 ScopeSummaryTarget::Thread { trunk } => ctx.vault.dreamer_turn_excluded(trunk)?,
-                ScopeSummaryTarget::Session { .. } => false,
+                ScopeSummaryTarget::Session { session } => {
+                    crate::scope_summary::session_summary_excluded(ctx.vault, session)?
+                }
             };
             if gated {
                 return Ok(DreamerAttemptExecution::Park {
@@ -243,13 +247,21 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // A sitting too big for one call on its model's known window pages
         // its TURNs (FIX 7509 P7b, Rule 5); one that fits, or whose window
         // is unknown, is the one call below, byte for byte.
-        if labels.is_some()
-            && let Some(window) = self.session_window(ctx.vault)
+        let session_window = labels.as_ref().and_then(|_| self.session_window(ctx.vault));
+        if let Some(window) = session_window
             && window::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
                 > window
         {
             return self
-                .compose_pages(attempt, ctx, &plan, &evidence, instruction, window)
+                .compose_pages(
+                    attempt,
+                    ctx,
+                    &plan,
+                    &evidence,
+                    instruction,
+                    window,
+                    StepChargeTally::default(),
+                )
                 .await;
         }
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema))
@@ -375,6 +387,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 | DurableStepError::SpentFallback { usage, .. } = &other
                 {
                     charges.record_usage(usage);
+                }
+                if window::correction_overflow(&other)
+                    && let Some(window) = session_window.and_then(window::smaller_window)
+                {
+                    return self
+                        .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
+                        .await;
                 }
                 ctx.note_spend_before_error(charges.units, &charges.step_hashes);
                 return Ok(DreamerAttemptExecution::Park {
@@ -503,18 +522,6 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         evidence.labels.bind_request(&mut request, None);
         Ok(request)
     }
-}
-
-/// The input one summary call reads: the declaration's purpose, the editor's
-/// `keep`, the body it revises and the `records`, as one JSON object.
-fn summary_input(plan: &ScopeSummaryPlan, records: &str) -> Result<String> {
-    serde_json::to_string(&serde_json::json!({
-        "purpose": plan.purpose,
-        "keep": plan.keep,
-        "editor_text": plan.editor_text,
-        "records": records,
-    }))
-    .map_err(|_| invalid_consolidation("summary input encoding"))
 }
 
 /// How long a declaration whose scope moved waits before it composes again.

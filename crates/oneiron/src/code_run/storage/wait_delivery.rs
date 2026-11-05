@@ -22,8 +22,6 @@ mod settle_report;
 
 use std::cell::Cell;
 
-use serde::{Deserialize, Serialize};
-
 use self::erased_read::{delivery_in_txn, settled_in_txn};
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
@@ -31,9 +29,9 @@ use super::wait_holders::{hold_settled_for_caller_in_txn, holder_erased_in_txn, 
 use crate::code_run::ExecutorStorage;
 use crate::llm::{DreamerTrapKind, TrapRef};
 use crate::off_record::OffRecordSession;
-use crate::side_table::{
-    self, CodecError, Erased, ErasedForm, Raw, RawValue, SideCodec, SideKey, SideTable,
-};
+use crate::side_table::{self, CodecError, Erased, Raw, RawValue, SideCodec, SideKey, SideTable};
+pub use crate::store::executor_wait_delivery::WaitDelivery;
+pub(super) use crate::store::executor_wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG};
 use crate::{EntityId, Error, Result, Vault};
 
 /// One parked wait of one run. `generation` counts how many times the run
@@ -52,47 +50,6 @@ impl WaitKey {
 
     fn waiter(&self) -> ([u8; 1], EntityId, EntityId) {
         (WAITER_TAG, self.wait_id, self.run)
-    }
-}
-
-/// The reply one wait was answered with, and when it was delivered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WaitDelivery {
-    /// The reply as JSON text.
-    pub reply: String,
-    pub delivered_at_ms: u64,
-    /// The rows the reply was derived from, as its settler listed them
-    /// (FIX 5455): the rows a connector call's passes picked. `None` when
-    /// its settler listed none: the reply then adds no row to its run's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_rows: Option<Vec<EntityId>>,
-    /// Whether an erase of its holder's actor took the reply (FIX 5718):
-    /// its text is gone, and when it came and its rows stay.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub erased: bool,
-}
-
-/// A delivery's erased form (FIX 5718): when it came and the rows its reply
-/// was derived from stay, its reply goes. An erase writes it past the
-/// side-row wall.
-impl ErasedForm for WaitDelivery {
-    fn into_erased(self) -> Result<Self> {
-        Ok(Self {
-            reply: String::new(),
-            erased: true,
-            ..self
-        })
-    }
-}
-
-impl RawValue for WaitDelivery {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        serde_json::from_slice(bytes)
-            .map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
     }
 }
 
@@ -129,22 +86,7 @@ impl RawValue for TrapRef {
 /// Leads a parked waiter's index row: `p` + wait + run → generation.
 const WAITER_TAG: [u8; 1] = *b"p";
 
-/// Leads a wait's settled row: `s` + wait → the reply it settled with.
-pub(super) const SETTLED_TAG: [u8; 1] = *b"s";
-
-pub(super) const DELIVERIES: SideTable<(EntityId, EntityId, u64), WaitDelivery, Raw> =
-    SideTable::new(&side_table::CODE_RUN_WAIT_DELIVERY);
-/// Whether a masked copy of a `CODE_RUN_WAIT_DELIVERY` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn code_run_wait_delivery_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<WaitDelivery, Raw>(bytes)
-}
-
 const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
-    SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
-
-/// The wait's first reply, kept as the delivery every later waiter gets.
-pub(super) const SETTLED: SideTable<([u8; 1], EntityId), WaitDelivery, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
 
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
@@ -242,6 +184,47 @@ pub(crate) fn wait_delivered_in_txn(
         || SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?)
 }
 
+/// Wakes the trap bound to `key`'s wait (FIX 1503): `Proceed` runs the
+/// existing wake; `Skip` logs, retires this wait key's `TRAPS` row and this
+/// trap's peer binding, and succeeds so the delivery commits.
+fn wake_bound_trap_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &WaitKey,
+    trap: &TrapRef,
+    now_ms: u64,
+) -> Result<()> {
+    match crate::llm::trap_consume_precheck_in_txn(vault, txn, trap)? {
+        crate::llm::TrapConsumePrecheck::Proceed => {
+            crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+            Ok(())
+        }
+        crate::llm::TrapConsumePrecheck::Skip {
+            reason,
+            attempt_id,
+            park_owner,
+        } => {
+            let reason_str = match reason {
+                crate::llm::TrapBrokenPark::OtherOwner => "other-owner-park",
+                crate::llm::TrapBrokenPark::OrphanPark => "orphan-park",
+            };
+            tracing::warn!(
+                run = %key.run.to_hex(),
+                wait = %key.wait_id.to_hex(),
+                generation = key.generation,
+                trap = %trap.trap_claim_id.to_hex(),
+                attempt = %crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes()),
+                owner = %park_owner,
+                reason = reason_str,
+                "a broken wait trap is skipped; its delivery commits and its binding retires"
+            );
+            TRAPS.delete(&vault.store, txn, &key.row())?;
+            crate::llm::retire_peer_wait_binding_for_trap_in_txn(vault, txn, &trap.trap_claim_id)?;
+            Ok(())
+        }
+    }
+}
+
 /// Writes one waiter's delivery unless it has one, and wakes the trap bound
 /// to it in the same transaction; `true` when this call delivered. The run
 /// joins the wait's holders (FIX 5718); one an erase of its actor took the
@@ -262,7 +245,7 @@ fn deliver_in_txn(
         DELIVERIES.put(&vault.store, txn, &key.row(), settled)?;
     }
     if let Some(trap) = TRAPS.get(&vault.store, txn, &key.row())? {
-        crate::llm::wake_trap_in_txn(vault, txn, &trap, settled.delivered_at_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, &trap, settled.delivered_at_ms)?;
     }
     Ok(true)
 }
@@ -277,7 +260,7 @@ pub fn bind_wait_trap(vault: &Vault, key: &WaitKey, trap: &TrapRef, now_ms: u64)
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
             return Ok(false);
         }
-        crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
 }
@@ -299,7 +282,7 @@ pub fn park_and_bind_wait_trap(
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
             return Ok(false);
         }
-        crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+        wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
 }
@@ -457,9 +440,8 @@ impl ExecutorStorage<'_> {
     /// Retires `key`'s waiter, delivery and trap rows once the resumed record
     /// committed; idempotent. It is cleanup, never a consumer: a code
     /// consent wait's consumption was committed with the record, in its own
-    /// row, which this never touches. A room's rows stay until the room goes:
-    /// its route writes and never deletes, and the resumed record already
-    /// names the next generation, so nothing reads them again.
+    /// row, which this never touches. A room's rows retire along the run's
+    /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
@@ -470,7 +452,18 @@ impl ExecutorStorage<'_> {
                 TRAPS.delete(&vault.store, txn, &key.row())?;
                 Ok(())
             }),
-            Self::Session(_) => Ok(()),
+            Self::Session(binding) => binding.answered(|| {
+                binding
+                    .session
+                    .routed_side_txn(&binding.route, |txn, read, write| {
+                        if WAITERS.get(&read, txn, &key.waiter())? == Some(key.generation) {
+                            WAITERS.delete(&write, txn, &key.waiter())?;
+                        }
+                        DELIVERIES.delete(&write, txn, &key.row())?;
+                        TRAPS.delete(&write, txn, &key.row())?;
+                        Ok(())
+                    })
+            }),
         }
     }
 }

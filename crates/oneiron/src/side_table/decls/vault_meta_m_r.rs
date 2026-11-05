@@ -50,7 +50,7 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
     MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
@@ -136,6 +136,9 @@ side_tables! {
     /// u64be (consecutive group index); value: optional actor + token (FIX 595).
     OFFICE_BODY_EXPORT_AUTHOR: VaultMeta b"office_body:export_author:v1:" Named
         => crate::office_body::erase_export_author_actor_in_txn;
+    /// Derived DOCX author-token lookup. Key: utf8 token; value: authoritative
+    /// export and revision-author row keys, with no actor or display author.
+    OFFICE_BODY_EXPORT_TOKEN_INDEX: VaultMeta b"office_body:export_token_index:v1:" Named;
     /// Machine work on a live office body: opener, base frontier and state. Key: id16 (artifact) +
     /// id16 (fork).
     OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named
@@ -302,7 +305,7 @@ side_tables! {
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored [accepts: crate::outbound_intent_ledger::outbound_intent_ledger_record_accepts_masked]
         => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
     /// What one ledger row's send came to beside its state, written with the ledger change it
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
@@ -321,7 +324,7 @@ side_tables! {
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_SUPPRESSION_RECEIPT: VaultMeta b"outbound:suppression_receipt:v1:" Named;
     /// Direct host dispatch receipt by content-derived hash32.
-    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named Authored;
+    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named Authored [accepts: crate::receipt::outbound_direct_receipt_accepts_masked];
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`
@@ -338,10 +341,10 @@ side_tables! {
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
-        => crate::own_rate::erase_check_actor_in_txn;
+        => crate::store::own_rate_rows::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
-        => crate::own_rate::erase_window_actor_in_txn;
+        => crate::store::own_rate_rows::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
@@ -388,7 +391,7 @@ side_tables! {
     /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
     /// (ARCH-0080 §10). Key: id16(binding claim).
     SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
-        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
+        => crate::store::pack_hook_proposal::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
@@ -418,7 +421,7 @@ side_tables! {
     /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
     /// 3332). Key: id16 (PERSON).
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
-        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
+        => crate::store::person_billing_account::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
@@ -536,13 +539,13 @@ side_tables! {
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
     PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
-        => crate::gate::proposal_observation::erase_count_actor_in_txn;
+        => crate::store::gate_hooks::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
-        => crate::gate::proposal_observation::erase_history_actor_in_txn;
+        => crate::store::gate_hooks::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
-        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+        => crate::store::gate_hooks::erase_submission_actor_in_txn;
     /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
     /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
@@ -733,7 +736,7 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored [accepts: crate::critic::review::critic_review_result_accepts_masked]
         => crate::learning::erase_review_scope_in_txn;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
     CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;
