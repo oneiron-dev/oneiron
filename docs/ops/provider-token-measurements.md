@@ -37,3 +37,25 @@ runtimes, peers and captured external-agent runs still need their own real
 measurement suppliers. Durable guard-to-scope flushing and non-token budget
 accounting also remain separate work under FIX 3476 and FIX 9586. Existing native
 inference receipts, physical publishers, admission and charges are unchanged.
+
+## Reports on the issuing meter
+
+`BudgetGuard::provider_token_observation` and
+`RunAdmission::provider_token_observation` read the provider reports attached to
+that actual shared meter's started leases. The run's native Answered settlement
+records its typed report before charging the lease. These are provider token
+observations, not the line's `used_units` or a conversion from its price unit.
+A free call can report tokens even though its paid charge is zero.
+
+Each started lease contributes once. An unsettled lease, a failed or cancelled
+call without a report, or an unsupported supplier keeps the affected component
+unknown. Addition uses checked arithmetic. A report of zero stays known zero;
+an empty meter does not become a provider-reported zero. The read changes no
+admission, reservation, charge, dispatch or settlement state.
+
+This is an on-demand snapshot of admitted calls on one guard, not a count of
+socket sends, a final run or spend-scope total, or proof that every physical call
+was covered. Other guards, future calls, children, failed partial reports, and
+local, peer or BYOA suppliers still need their real source and coverage proof.
+No scope persistence or RSI settlement consumes this snapshot yet. Ordinary
+`BudgetRead` and the admission hot path are unchanged.

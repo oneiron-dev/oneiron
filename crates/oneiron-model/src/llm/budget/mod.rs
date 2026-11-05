@@ -7,6 +7,7 @@ mod guard;
 mod ladders;
 mod ledger;
 mod policy;
+mod provider_tokens;
 mod state;
 mod templates;
 mod types;
@@ -18,6 +19,7 @@ pub use self::dispatch::{
 };
 pub use self::guard::BudgetGuard;
 pub use self::policy::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
+pub use self::provider_tokens::ProviderTokenObservation;
 pub use self::templates::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
