@@ -17,10 +17,18 @@ pub struct NativeLimitQuestion {
     pub measured: u64,
 }
 
-#[derive(Default)]
 pub(crate) struct NativeLimitQuestions {
     crossings: Mutex<BTreeMap<EngineLimit, (u64, u64)>>,
     width_measured: Once,
+}
+
+impl Default for NativeLimitQuestions {
+    fn default() -> Self {
+        Self {
+            crossings: Mutex::new(BTreeMap::new()),
+            width_measured: Once::new(),
+        }
+    }
 }
 
 impl NativeLimitQuestions {
