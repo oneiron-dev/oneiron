@@ -31,6 +31,9 @@ and followed-window logic. Incomplete parts do not advance root bootstrap or fed
 replay. Errors, replacement, disconnect, reconnect, re-bootstrap and client drop release the
 incomplete buffer and its reservation. Reconnect uses the existing root snapshot/VV exchange.
 The lease mirror never observes a historical prefix introduced solely by physical framing.
+Initial sync counts a large root as one logical opening and does not advance to offline queue
+replay while that image is incomplete. A quiet gap during its parts returns to the existing
+initial read timeout instead of starting a write-only replay against a server still sending.
 
 Short-lived residence RPC sockets still discard root openings instead of importing them.
 Their existing bind-opening count counts one large root image, not each physical part; every
