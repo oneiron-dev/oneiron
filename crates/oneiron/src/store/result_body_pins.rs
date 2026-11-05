@@ -1,6 +1,7 @@
 //! Reader pins: a result body a reader holds is never deleted.
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -11,6 +12,11 @@ pub(crate) struct ResultBodyPins {
     counts: Arc<Mutex<PinCounts>>,
 }
 
+/// Issued search-credit windows kept per vault handle (#4311 P1-B): one
+/// latest entry per key, FIFO-evicted. Eviction only loses the FIX 1189
+/// discount; a resume without it scans at its own bound.
+const SEARCH_CREDIT_KEYS: usize = 64;
+
 #[derive(Default)]
 struct PinCounts {
     /// Holds on every body at once, by readers of a whole set.
@@ -20,6 +26,27 @@ struct PinCounts {
     /// save transaction that names it opened (KS-2A): kept while its pin
     /// is held, read by that transaction.
     promoted: HashMap<[u8; 32], [u8; 16]>,
+    /// Detached line-index rebuilds one read noted (FIX 1186b), by digest.
+    /// In memory only, like pins: a restart drops the queue and reads
+    /// re-note.
+    rebuild: HashMap<[u8; 32], RebuildEntry>,
+    /// Latest issued scan-bound credit per window, by
+    /// (raw body digest, window base, window len) to the exact emitted
+    /// (offset, line, credit). Offsets are window-relative, so the window
+    /// joins the key: the same relative tuple in another window attests
+    /// different bytes. In memory only, like the pins beside it.
+    search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
+    /// Insertion order of `search_credit` keys, oldest first.
+    search_credit_order: VecDeque<([u8; 32], u64, u64)>,
+}
+
+/// One queued line-index rebuild (FIX 1186b): the body's length from its
+/// manifest and whether the sweep holds it in flight. Same digest means
+/// same bytes means same length, so the digest keys the entry exactly.
+#[derive(Clone, Copy)]
+struct RebuildEntry {
+    len: u64,
+    in_flight: bool,
 }
 
 impl PinCounts {
@@ -51,6 +78,54 @@ impl ResultBodyPins {
     /// its promotion took is held.
     pub(crate) fn promoted(&self, digest: &[u8; 32]) -> Option<[u8; 16]> {
         lock(&self.counts).promoted.get(digest).copied()
+    }
+
+    /// Notes the scan-bound credit this handle issued for the window
+    /// (`digest`, `base`, `len`): the exact emitted (`offset`, `line`,
+    /// `credit`). One latest value per key; a new key past the cap evicts
+    /// the oldest, and replacing a key keeps its FIFO place.
+    fn note_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        let mut counts = lock(&self.counts);
+        let key = (digest, base, len);
+        if !counts.search_credit.contains_key(&key) {
+            while counts.search_credit.len() >= SEARCH_CREDIT_KEYS {
+                match counts.search_credit_order.pop_front() {
+                    Some(oldest) => {
+                        counts.search_credit.remove(&oldest);
+                    }
+                    None => break,
+                }
+            }
+            counts.search_credit_order.push_back(key);
+        }
+        counts.search_credit.insert(key, (offset, line, credit));
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the tuple this handle last
+    /// issued for the window (`digest`, `base`, `len`). Any mismatch, miss,
+    /// or eviction reads as no discount; the resume then scans at its own
+    /// bound.
+    fn valid_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        lock(&self.counts)
+            .search_credit
+            .get(&(digest, base, len))
+            .is_some_and(|&issued| issued == (offset, line, credit))
     }
 
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out
@@ -132,5 +207,96 @@ impl crate::Vault {
     /// before that transaction opens, held until its last file is closed.
     pub(crate) fn pin_all_result_bodies(&self) -> ResultBodyPin {
         self.result_body_pins.pin(None)
+    }
+
+    /// Notes the scan-bound search credit issued for the window (`digest`,
+    /// `base`, `len`): the exact emitted (`offset`, `line`, `credit`), kept
+    /// in memory on this handle only (FIX 1189 discount, #4311 P1-B).
+    pub(crate) fn note_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        self.result_body_pins
+            .note_search_credit(digest, base, len, offset, line, credit);
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit this handle last
+    /// issued for the window (`digest`, `base`, `len`): the full tuple must
+    /// match, else the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        self.result_body_pins
+            .valid_search_credit(digest, base, len, offset, line, credit)
+    }
+}
+
+impl crate::Vault {
+    /// Notes a detached line-index rebuild for the body `digest`, `len` bytes
+    /// long (FIX 1186b): a read whose lookup found no index calls this and
+    /// scans as today. Insert-if-absent, whether queued or in flight, so a
+    /// read during an in-flight rebuild is a no-op; only the sweep requeues
+    /// a failure.
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        lock(&self.result_body_pins.counts)
+            .rebuild
+            .entry(digest)
+            .or_insert(RebuildEntry {
+                len,
+                in_flight: false,
+            });
+    }
+
+    /// Begins up to `limit` queued rebuilds, marking them in flight without
+    /// removing them: the sweep's in-flight set, one per body per handle.
+    /// Entries already in flight stay out, so concurrent notes never double
+    /// a body.
+    pub(crate) fn begin_body_line_index_rebuilds(&self, limit: usize) -> Vec<([u8; 32], u64)> {
+        let mut counts = lock(&self.result_body_pins.counts);
+        let mut begun = Vec::new();
+        for (digest, entry) in counts.rebuild.iter_mut() {
+            if begun.len() >= limit {
+                break;
+            }
+            if !entry.in_flight {
+                entry.in_flight = true;
+                begun.push((*digest, entry.len));
+            }
+        }
+        begun
+    }
+
+    /// Finishes the rebuild for `digest`, after a rebuilt index or a terminal
+    /// drop (already fixed, inline, gone): removes it, whether queued or in
+    /// flight.
+    pub(crate) fn finish_body_line_index_rebuild(&self, digest: &[u8; 32]) {
+        lock(&self.result_body_pins.counts).rebuild.remove(digest);
+    }
+
+    /// Requeues the rebuild for `digest` after a failure, marking it queued
+    /// again for the next sweep. A digest already finished stays finished.
+    pub(crate) fn retry_body_line_index_rebuild(&self, digest: &[u8; 32]) {
+        if let Some(entry) = lock(&self.result_body_pins.counts).rebuild.get_mut(digest) {
+            entry.in_flight = false;
+        }
+    }
+
+    /// Whether any rebuild waits queued (not in flight).
+    pub(crate) fn has_queued_body_line_index_rebuilds(&self) -> bool {
+        lock(&self.result_body_pins.counts)
+            .rebuild
+            .values()
+            .any(|entry| !entry.in_flight)
     }
 }

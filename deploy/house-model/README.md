@@ -273,6 +273,11 @@ answered `schedule_ack`. A cancel the Generator cannot complete keeps the
 call's pages, place and reservation charged until its Job ends, and the call
 ends with `final` error `release_failed`, never `released`.
 
+A native terminal's `queue.open_calls` excludes the call it ends. The
+scheduler keeps counting that call until its handler settles after the
+terminal send, so drains still wait for it. Other stats keep their captured
+counts; neither the scheduler count nor the captured snapshot is changed.
+
 ## The EXL3 scheduler
 
 One scheduler thread owns the exllamav3 generator (INF 1, FIX 6566). An HTTP
