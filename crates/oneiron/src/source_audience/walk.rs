@@ -189,8 +189,9 @@ pub(crate) enum ReplicationScope {
     Restricted,
 }
 
-/// Whether the row `id` stays out of replication on `scope`: it is held back
-/// here, or [`withheld_by_lineage_in`] keeps it.
+/// Whether the row `id` stays out of replication on `scope`: it, or a row
+/// its words came from, is held back here, or [`withheld_by_lineage_in`]
+/// keeps it.
 ///
 /// # Errors
 ///
@@ -201,8 +202,38 @@ pub(crate) fn withheld_from_replication_in(
     id: &EntityId,
     scope: ReplicationScope,
 ) -> Result<bool> {
-    Ok(super::held_back_in(vault, txn, id)?.is_some()
-        || withheld_by_lineage_in(vault, txn, id, scope)?)
+    Ok(lineage_held_in(vault, txn, id)? || withheld_by_lineage_in(vault, txn, id, scope)?)
+}
+
+/// Whether the row `id`, or any row its words came from (every support of a
+/// CLAIM included), is held back here. A vault that holds no row back
+/// answers at once.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if !super::any_held_in(vault, txn)? {
+        return Ok(false);
+    }
+    let dbs = vault.store.read();
+    let mut seen = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(row) = pending.pop() {
+        if super::held_back_in(vault, txn, &row)?.is_some() {
+            return Ok(true);
+        }
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
+            continue;
+        };
+        let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
+        for source in every.into_iter().chain(supports) {
+            if seen.insert(source) {
+                pending.push(source);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Whether the row `id` stays out of replication on `scope` by its own
