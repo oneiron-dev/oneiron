@@ -313,8 +313,9 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
     }
     let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
-    for (id, mut record) in records {
-        for output in &mut record.outputs {
+    for (id, record) in records {
+        let mut paths = BTreeSet::new();
+        for output in &record.outputs {
             if !output
                 .input_rows
                 .as_ref()
@@ -333,9 +334,14 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
             )? {
                 released.entry(record.run_id).or_default().insert(digest);
             }
-            output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
+            paths.insert(output.path.clone());
         }
-        REPLAY_RECORDS.put_erased(store, wtxn, &id, Erased::of(record)?)?;
+        REPLAY_RECORDS.put_erased(
+            store,
+            wtxn,
+            &id,
+            Erased::code_run_output_previews(record, &paths),
+        )?;
     }
     retire_released_outputs_in_txn(store, wtxn, released)
 }
