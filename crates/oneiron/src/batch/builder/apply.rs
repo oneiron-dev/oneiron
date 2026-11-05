@@ -392,7 +392,7 @@ impl BatchBuilder<'_> {
             &mut content_writes,
         )?;
         // Construct the local final input only after every original check.
-        // Publication stays off until native source admission is complete.
+        // Its typed door suppliers stay off until native source admission is complete.
         #[cfg(feature = "sync")]
         let native_input = super::native_skill::NativeSkillFinalInput::finish(
             vault,
@@ -401,7 +401,9 @@ impl BatchBuilder<'_> {
             content_writes,
         )?;
         #[cfg(feature = "sync")]
-        drop(native_input);
+        if let Some(native_input) = native_input {
+            crate::entity_doc::publish_skill_state_in_txn(native_input, wtxn)?;
+        }
         #[cfg(not(feature = "sync"))]
         drop((native_outputs, content_writes));
         #[cfg(feature = "sync")]

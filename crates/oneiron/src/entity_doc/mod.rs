@@ -86,6 +86,17 @@ pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
 #[cfg(feature = "sync")]
 pub(crate) use native_skill_state::SkillStateSnapshot;
+
+/// Consume only the actual local batch's final input in its applying writer.
+/// The typed door suppliers remain separate from this persistence continuation.
+#[cfg(feature = "sync")]
+pub(crate) fn publish_skill_state_in_txn(
+    input: crate::batch::NativeSkillFinalInput<'_>,
+    txn: &mut heed::RwTxn<'_>,
+) -> crate::Result<()> {
+    native_skill_state::publish_in_txn(input, txn)
+}
+
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
