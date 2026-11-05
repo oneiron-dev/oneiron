@@ -43,20 +43,32 @@ pub fn seat_login_plan(args: SeatLoginPlanArgs) -> anyhow::Result<()> {
         args.siwc_redirect_uri.as_deref(),
         args.siwc_verifier.as_deref(),
         args.siwc_state.as_deref(),
+        args.siwc_nonce.as_deref(),
+        args.siwc_agent_host_id.as_deref(),
     ) {
-        (Some(client_id), Some(redirect_uri), Some(verifier), Some(state)) => Some(
+        (
+            Some(client_id),
+            Some(redirect_uri),
+            Some(verifier),
+            Some(state),
+            Some(nonce),
+            Some(host_id),
+        ) => Some(
             siwc_authorize_request(
                 client_id.to_owned(),
                 redirect_uri.to_owned(),
                 verifier,
                 state.to_owned(),
+                nonce.to_owned(),
+                host_id.to_owned(),
+                args.siwc_agent_name_hint.clone(),
                 args.siwc_scope.clone(),
             )
             .map_err(anyhow::Error::msg)?,
         ),
-        (None, None, None, None) => None,
+        (None, None, None, None, None, None) => None,
         _ => anyhow::bail!(
-            "Sign in with ChatGPT needs all of --siwc-client-id, --siwc-redirect-uri, --siwc-verifier, --siwc-state"
+            "Sign in with ChatGPT needs all of --siwc-client-id, --siwc-redirect-uri, --siwc-verifier, --siwc-state, --siwc-nonce, --siwc-agent-host-id"
         ),
     };
     let settings = SeatSettings {
