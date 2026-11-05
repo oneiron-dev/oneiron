@@ -33,6 +33,7 @@ mod reader_clock;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
+mod replay_context;
 mod replay_parts;
 mod repo_calls;
 mod result_read;
@@ -121,10 +122,15 @@ pub use self::replay::{
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan, TaskExposure,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
+    ExposureKind, ExposureSlot, ReplayRoutePin, StepContextRef, StepReplayCapsule, StoredSpan,
+    TaskExposure, capture_workflow_step, finalize_step_captures, note_answering_route_pin,
+    note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
+pub(crate) use self::replay_context::{
+    CapturedGuestResponse, GuestResponseCapture, StepContextCommit, StepReplayContext,
+    reveals_secret,
+};
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::unmarked_secret;
@@ -177,9 +183,9 @@ pub(crate) use self::storage::{
     session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    erase_contribution_forks_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
-    seed_continuation_run, step_replay_capsules_in_txn,
+    StoredRunContinuation, capsule_context_body, capsule_request, capsule_start_body,
+    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, put_run_continuation_row_in_txn,
+    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{

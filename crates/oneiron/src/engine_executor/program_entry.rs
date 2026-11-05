@@ -550,6 +550,10 @@ impl<'a> EngineNativeExecutor<'a> {
             .keep_preparation(&mut record, ran)?
             .or(pinned_preparation);
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
+        // Where the entry's calls end, and the responses its guest read
+        // (FIX 6354, FIX 6351).
+        let (end, context) =
+            self.step_context(config, &record, bridge_start, host.guest_responses)?;
         let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),
             seq,
@@ -564,13 +568,17 @@ impl<'a> EngineNativeExecutor<'a> {
             },
             None,
             &record.bridge_calls[bridge_start..],
+            end,
         )?;
-        record.step_checkpoints.push(CodeRunStepCheckpoint::new(
-            seq,
-            checkpoint_label(seq),
-            state_hash,
-            config.determinism.frozen_unix_ms.saturating_add(seq),
-        )?);
+        record.step_checkpoints.push(
+            CodeRunStepCheckpoint::new(
+                seq,
+                checkpoint_label(seq),
+                state_hash,
+                config.determinism.frozen_unix_ms.saturating_add(seq),
+            )?
+            .ending_at(end.bridge_end),
+        );
         let parked = parked_wait(&record, Some(&status), bridge_start);
         let resume = ProgramResumeCommit {
             attempt: entry.attempt,
@@ -597,6 +605,7 @@ impl<'a> EngineNativeExecutor<'a> {
             &host.receipts,
             parked.as_ref(),
             &resume,
+            &context,
         ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -608,6 +617,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     &host.receipts,
                     parked.as_ref(),
                     &resume,
+                    &context,
                 )?
             }
             result => result?,

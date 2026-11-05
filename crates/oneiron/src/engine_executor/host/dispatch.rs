@@ -277,7 +277,7 @@ impl RecordingJsHost<'_, '_> {
         if let Some(injection) = self.injection.as_mut() {
             match injection.answer(&call) {
                 InjectedAnswer::Live => {}
-                InjectedAnswer::Settled { outcome, view } => {
+                InjectedAnswer::Settled { seq, outcome, view } => {
                     // A granted `reveal.wait` reads its value again under its
                     // own lease, for the guest's view only; the row keeps its
                     // value-free answer (FIX 2360). A failed replay leaves
@@ -290,7 +290,8 @@ impl RecordingJsHost<'_, '_> {
                             .ok()
                             .flatten(),
                     };
-                    return Ok(self.respond(*outcome, view));
+                    // Its response is kept at the settled row's own position.
+                    return Ok(self.respond(&call, Some(seq), *outcome, view));
                 }
                 InjectedAnswer::Hold => {
                     if self.hard_failure.is_none() {
@@ -303,7 +304,8 @@ impl RecordingJsHost<'_, '_> {
                         code: None,
                         disk_floor: None,
                     });
-                    return Ok(self.respond(outcome, None));
+                    // No row answers it: the replay context is incomplete.
+                    return Ok(self.respond(&call, None, outcome, None));
                 }
             }
         }
@@ -335,7 +337,7 @@ impl RecordingJsHost<'_, '_> {
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome, None));
+            return Ok(self.respond(&call, Some(seq), outcome, None));
         }
         if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
             // Fail-closed after the first hard failure or unrecorded call:
@@ -359,7 +361,7 @@ impl RecordingJsHost<'_, '_> {
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome, None));
+            return Ok(self.respond(&call, Some(seq), outcome, None));
         }
         // OF-568: what this call reads, captured before it runs, for its
         // row's action digest. Only the vault's own storage is versioned: a
@@ -440,7 +442,7 @@ impl RecordingJsHost<'_, '_> {
                 .with_spawn_seats(seats);
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome, None));
+                return Ok(self.respond(&call, Some(seq), error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
@@ -461,7 +463,7 @@ impl RecordingJsHost<'_, '_> {
             self.declined = Some(refusal.task_ref);
         }
         self.bridge_calls.insert(place, row);
-        Ok(self.respond(outcome, view))
+        Ok(self.respond(&call, Some(seq), outcome, view))
     }
 }
 

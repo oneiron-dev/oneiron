@@ -8,8 +8,13 @@
 //! unavailable, never answered by anything else. A call that runs a step or
 //! a run of its own (a callable skill, a reader child, a summary) recorded
 //! its subtree after its own row, which one row cannot replay; it is
-//! unavailable too, as is a call the live guest read through a view the
-//! record does not keep.
+//! unavailable too, as is a revealed secret's answer, which no capture keeps.
+//!
+//! A matched call is answered as the live guest read it (FIX 6351): the
+//! recorded outcome with the response the step's replay context kept for its
+//! row, a verb hook's view in the outcome's place or none, and the wake
+//! pass's budget envelope or none. A call whose response the context does
+//! not hold stops the arm before the guest reads the bare outcome.
 //!
 //! The program's results are the arm's own: its streamed result goes to the
 //! arm's store, a value it stores or a reply too large for one message is a
@@ -29,6 +34,7 @@ use super::types::{
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayRecord,
     CodeRunResultBinding, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
+    reveals_secret,
 };
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream, JsResultCall, RESULT_READ_ROOT,
@@ -36,7 +42,6 @@ use crate::engine_executor::{
 };
 use crate::limit_ask::{EngineLimit, EngineLimits, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
-use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Error, Result};
 
 /// The taint a result reads under: its state and the secret scan's reason.
@@ -68,6 +73,9 @@ struct ArmResult {
 
 /// The arm's host bridge for one captured step.
 pub(crate) struct ShadowBridgeHost<'a> {
+    /// The step it replays, its replay context the responses it answers
+    /// with (FIX 6351).
+    step: &'a PreparedShadowStep,
     cursor: CodeRunReplayCursor<'a>,
     window: &'a CodeRunReplayRecord,
     store: &'a ShadowBodyStore,
@@ -130,6 +138,7 @@ impl<'a> ShadowBridgeHost<'a> {
             })
             .collect();
         Ok(Self {
+            step: prepared,
             cursor: CodeRunReplayCursor::from_position(&prepared.window, prepared.bridge_start)?,
             window: &prepared.window,
             store,
@@ -338,6 +347,14 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             }
         };
         self.record_matched(at)?;
+        // The live guest read this row through the response the step's
+        // replay context kept for it (FIX 6351); with none kept, the arm
+        // stops before its guest reads the bare outcome.
+        let step = self.step;
+        let response = match step.guest_response(at as u64) {
+            Ok(response) => response,
+            Err(missing) => return Err(self.stop(missing)),
+        };
         // A matched bridge answer live spilled as a body shifts every later
         // store ordinal: the arm counts it, as live counts its captured
         // outputs, or the next store mints a new path instead of reusing
@@ -364,8 +381,8 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         }
         Ok(SelfDispatchResponse {
             outcome,
-            budget: None,
-            view: None,
+            budget: response.budget,
+            view: response.view.clone(),
         })
     }
 
@@ -395,7 +412,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
 /// report and a summary run a step or a run of their own, whose calls were
 /// recorded after the call's own row, and one matched row cannot replay
 /// them; a revealed secret's answer reached the live guest through a view
-/// the record does not keep, by design.
+/// no replay context keeps, by design (FIX 6351).
 fn unreplayable(call: &SelfCall) -> Option<ShadowUnavailable> {
     match call {
         SelfCall::SkillsCall(_)
@@ -405,9 +422,10 @@ fn unreplayable(call: &SelfCall) -> Option<ShadowUnavailable> {
             Reason::NestedReplayUnsupported,
             call.effect().as_str(),
         )),
-        SelfCall::AgentVerb(verb) if verb.verb == AgentVerb::RevealWait => Some(
-            ShadowUnavailable::new(Reason::GuestViewCaptureMissing, "reveal_wait"),
-        ),
+        _ if reveals_secret(call) => Some(ShadowUnavailable::new(
+            Reason::GuestViewCaptureMissing,
+            "reveal_wait",
+        )),
         _ => None,
     }
 }
