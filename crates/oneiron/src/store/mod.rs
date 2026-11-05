@@ -313,6 +313,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_handle_purpose;
 pub(crate) mod secret_name_index;
 pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
