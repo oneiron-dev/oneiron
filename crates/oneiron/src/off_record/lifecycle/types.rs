@@ -52,6 +52,9 @@ pub enum OffRecordBackendClass {
 pub struct OffRecordSessionRecord {
     pub version: u8,
     pub session_ref: String,
+    /// This live instance's existing overlay-shell identity, distinct when
+    /// the same session ref is entered again after close. Not authority.
+    pub instance_ref: crate::EntityId,
     pub mode: OffRecordMode,
     pub backend: OffRecordBackendClass,
     pub entered_at: u64,

@@ -411,6 +411,8 @@ impl FloorWrites<'_> {
         let grant = PromoteReplayGrant::mint(plan);
         let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
@@ -654,6 +656,8 @@ impl FloorWrites<'_> {
         let stream_messages =
             self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(

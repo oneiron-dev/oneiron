@@ -138,11 +138,39 @@ impl SyncClient {
                 .continued
                 .insert(window_key.to_owned(), (id, payload));
         }
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok(frames)
+    }
+
+    pub(crate) fn window_send_batch_frames(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+    ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
+        let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
+        // Each batch draw checks the buffered whole update; no standalone
+        // continuation copy is needed for these frames.
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok((frames, binding))
+    }
+
+    fn record_window_send(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+        binding: WindowPadBinding,
+    ) {
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
             None if sealed => SentKey::Update(window_key.to_owned(), binding.payload_digest),
-            None => return Ok(frames),
+            None => return,
         };
         self.window_pad_ledger().sent.insert(
             key,
@@ -154,7 +182,34 @@ impl SyncClient {
                 queued: *blake3::hash(raw).as_bytes(),
             },
         );
-        Ok(frames)
+    }
+
+    /// Forgets only this unfinished send, never a newer binding or envelope.
+    pub(crate) fn forget_window_send(
+        &self,
+        window_key: &str,
+        binding: &WindowPadBinding,
+        first_id: Option<[u8; 32]>,
+    ) {
+        let mut ledger = self.window_pad_ledger();
+        let key = match binding.queue_seq {
+            Some(seq) => SentKey::Residence(seq),
+            None => SentKey::Update(window_key.to_owned(), binding.payload_digest),
+        };
+        if ledger
+            .sent
+            .get(&key)
+            .is_some_and(|sent| sent.window == window_key && sent.binding == *binding)
+        {
+            ledger.sent.remove(&key);
+        }
+        if ledger
+            .continued
+            .get(window_key)
+            .is_some_and(|(id, _)| Some(*id) == first_id)
+        {
+            ledger.continued.remove(window_key);
+        }
     }
 
     /// [`Self::prepare_window_send`] and [`Self::window_send_frames`] at once,

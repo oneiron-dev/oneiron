@@ -107,6 +107,7 @@ fn refused(message: &str) -> SelfDispatchOutcome {
         effect: SelfEffect::WorkflowDispatch,
         error: message.to_owned(),
         code: None,
+        disk_floor: None,
     })
 }
 
