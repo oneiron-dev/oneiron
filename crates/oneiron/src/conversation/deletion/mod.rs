@@ -385,16 +385,16 @@ pub(crate) fn replay_room_message_tombstone(
     txn: &mut heed::RwTxn<'_>,
     turn: EntityId,
     raw_value: &[u8],
-) -> Result<()> {
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &turn)?
     else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if raw.first() != Some(&ENTITY_TYPE_TURN) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(room) = crate::conversation_dag::room_turn_owner(&vault.store, txn, &turn)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let reason = crate::deletion::decode_tombstone_value(raw_value).reason;
     let author = if reason == Some(crate::deletion::TombstoneReason::PolicyDelete) {
@@ -431,6 +431,7 @@ pub(crate) fn replay_room_message_tombstone(
             Some(_) | None => None,
         }
     };
+    let mut cancelled = Vec::new();
     let mut cursor = None;
     loop {
         let ids = messages_in_turn(vault, txn, turn, cursor)?;
@@ -465,14 +466,16 @@ pub(crate) fn replay_room_message_tombstone(
                     },
                 )?;
             }
-            vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
+            let (_, _, child_cancelled) =
+                vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
+            cancelled.extend(child_cancelled);
         }
         if ids.len() < ERASE_PAGE {
             break;
         }
         cursor = ids.last().copied();
     }
-    Ok(())
+    Ok(cancelled)
 }
 
 impl Vault {
