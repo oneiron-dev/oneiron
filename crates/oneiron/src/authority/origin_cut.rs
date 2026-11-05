@@ -16,7 +16,7 @@
 //! The register records what the owner cut, never a publication lease: the
 //! host's own authority row still decides its pushes, mirrors and permits.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -246,7 +246,9 @@ impl Vault {
     /// that installs the host's own authority row, so the cuts and the row
     /// commit together or not at all (FIX 15740). Each cut supersedes its
     /// repository's live cuts, and each must land live and counted here
-    /// before the caller commits.
+    /// before the caller commits. Returns the id of every authority log row
+    /// it appended, each frontier join it needed among them, for the
+    /// caller's transaction to hand to the live mirror.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that
@@ -259,10 +261,11 @@ impl Vault {
         surface: ActSurface,
         repos: &[[u8; 32]],
         (epoch, writer): (u64, EntityId),
-    ) -> Result<()> {
+    ) -> Result<BTreeSet<EntityId>> {
         if repos.is_empty() {
-            return Ok(());
+            return Ok(BTreeSet::new());
         }
+        let before = self.authority_view_readonly_in_txn(txn)?;
         let machine = crate::identity::read_machine_id_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
@@ -321,6 +324,10 @@ impl Vault {
                 return Err(invalid_authority());
             }
         }
-        Ok(())
+        after
+            .valid_entries
+            .difference(&before.valid_entries)
+            .map(authority_log_entity_id_from_hash)
+            .collect()
     }
 }

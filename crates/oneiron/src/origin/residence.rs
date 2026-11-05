@@ -464,10 +464,21 @@ impl Vault {
             mirror,
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
-        if let (Some(actor), Some((_, surface))) = (actor, owner) {
-            self.sign_origin_cuts_in_txn(&mut txn, actor, surface, &portables, (epoch, writer))?;
-        }
+        let appended = match (actor, owner) {
+            (Some(actor), Some((_, surface))) => {
+                self.sign_origin_cuts_in_txn(&mut txn, actor, surface, &portables, (epoch, writer))?
+            }
+            _ => std::collections::BTreeSet::new(),
+        };
+        // The cuts and their joins reach every loaded window through the
+        // live mirror, and a crash before it loses none (FIX 7957).
+        #[cfg(feature = "sync")]
+        self.mark_pending_mirrors_in_txn(&mut txn, &appended)?;
         txn.commit()?;
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(appended);
+        #[cfg(not(feature = "sync"))]
+        drop(appended);
         Ok(row)
     }
     /// Host authorization is separate from the pusher's actor attribution.
