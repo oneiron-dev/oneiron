@@ -46,6 +46,22 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// [`Self::read_lane`] for rows that go on to `destination` as well
+    /// (FIX 10105): the key meets it, so it only narrows, and the caller's
+    /// grants and room ceilings stay. A row a world keeps from there reads
+    /// as withheld.
+    pub(crate) fn read_lane_for_destination(
+        &self,
+        claims: ClaimReadStatus,
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self.actor_read_key()?.for_destination(destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
     /// credential grants its actor no read (FIX 6068, 1223): a writer with
     /// none is held to the bounds of what its credential may write to
