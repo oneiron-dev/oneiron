@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4488 generated types.
+// UniFFI census: 1232 facade rows, 4490 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -62612,6 +62612,15 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// `oneiron::office_body::records::OfficeRecalcFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeRecalcFailure {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
 /// `oneiron::office_body::records::OfficeRecalcZone`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeRecalcZone {
@@ -62655,6 +62664,12 @@ pub struct OfficeBodyExportRecord {
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
     #[serde(
+        rename = "recalc_failure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recalc_failure: Option<OfficeRecalcFailure>,
+    #[serde(
         rename = "recalc_zone",
         default,
         skip_serializing_if = "Option::is_none"
@@ -62693,6 +62708,13 @@ pub struct OfficeBodyPreviewRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// `oneiron_docedit::xlsx_body::model::XlsxCellRecalc`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum XlsxCellRecalc {
+    #[serde(rename = "cached_after_failure")]
+    CachedAfterFailure,
+}
+
 /// `oneiron_docedit::xlsx_body::model::XlsxCell`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxCell {
@@ -62708,6 +62730,8 @@ pub struct XlsxCell {
     pub style: Option<u32>,
     #[serde(rename = "locked", default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<XlsxLock>,
+    #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
+    pub recalc: Option<XlsxCellRecalc>,
 }
 
 /// `oneiron_docedit::xlsx_body::model::XlsxSheet`.
@@ -62766,6 +62790,12 @@ pub struct XlsxPreview {
     pub book: XlsxBook,
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
+    #[serde(
+        rename = "recalc_failure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recalc_failure: Option<OfficeRecalcFailure>,
 }
 
 /// `oneiron_docedit::live::pptx::NodeMove`.
