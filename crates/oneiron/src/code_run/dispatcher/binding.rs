@@ -224,6 +224,20 @@ impl<'a> HostSelfDispatcher<'a> {
         self.observe_parked_hooks(bridge_calls);
     }
 
+    /// Restores lineage only from a canonical wait's committed reply
+    /// consumption. A room's replay does not consume canonical consent rows.
+    pub(crate) fn observe_consumed_code_replies(
+        &self,
+        record: &crate::code_run::CodeRunReplayRecord,
+    ) -> Result<()> {
+        if let ExecutorStorage::Canonical(vault) = &self.storage
+            && super::super::consent_wait::consumed_external_code_reply(vault, record)?
+        {
+            self.external_effect_seen.set(true);
+        }
+        Ok(())
+    }
+
     /// The HOST calls this with each turn's answer before its program runs:
     /// the provider its ladder served the turn from, or `None` when no ladder
     /// stamped it. Each verb call the program makes carries it on its origin.
