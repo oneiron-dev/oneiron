@@ -2,7 +2,7 @@
 
 pub(crate) mod codec;
 pub(crate) mod floor;
-mod types;
+use oneiron_store::secret_record::types;
 
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};

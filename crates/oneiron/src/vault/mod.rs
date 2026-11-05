@@ -9,14 +9,14 @@ mod edges;
 mod entities;
 pub(crate) mod entity_refs;
 pub(crate) mod entity_revision;
-pub(crate) mod entity_view;
-pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+pub(crate) use oneiron_store::vault::entity_view;
+pub(crate) use oneiron_store::vault::speculative_passes;
 mod identity;
 mod open;
 mod places;
