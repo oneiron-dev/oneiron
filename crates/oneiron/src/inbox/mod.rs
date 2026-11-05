@@ -26,6 +26,7 @@
 //!   receipts remain the always-on audit trail.
 
 mod actions;
+pub mod compilation_target;
 mod list;
 mod model;
 mod notification;
