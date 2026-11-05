@@ -22430,7 +22430,7 @@
      "path": "src/context_board/capabilities.rs",
      "purpose": "Turn-local capability hits and session-long loaded skill bodies",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -22497,6 +22497,7 @@
       "BoardFrame",
       "BoardFrameError",
       "BoardLegend",
+      "BoardPart",
       "BoardRender",
       "BoardRenderMetadata",
       "BoardSection",
@@ -22505,16 +22506,17 @@
       "SectionView",
       "ShedOutcome",
       "ShedRank",
-      "ShedSection"
+      "ShedSection",
+      "SplitBoardRender"
      ],
      "path": "src/context_board/frame.rs",
      "purpose": "Board frame — the canonical `<memory surface=\"board\">` envelope over typed sections, plus the adaptive…",
      "surface": {
       "const": 7,
       "crate-vis": 1,
-      "enum": 4,
-      "fn": 16,
-      "struct": 12
+      "enum": 5,
+      "fn": 17,
+      "struct": 13
      }
     },
     {
@@ -22681,7 +22683,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 3,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -23403,6 +23405,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/turn_opener.rs",
+     "purpose": "The now-time turn opener (ARCH-0067 §2: the log closes with a now-time turn opener the model completes; I1 =…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -91842,7 +91854,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93027,7 +93039,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6507,
+   "source_files": 6508,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112158,7 +112170,7 @@
      "path": "src/api/ai/chat/recall.rs",
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -112168,7 +112180,7 @@
      "path": "src/api/ai/chat/segments.rs",
      "purpose": "A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -112920,7 +112932,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -112971,6 +112983,16 @@
      "purpose": "Actor-bound session observations shared by core reads and board rendering",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/split.rs",
+     "purpose": "A live chat turn's board in two parts (I1 = C, ARCH-0067 turn order: committed history, state-only board…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -120694,13 +120716,14 @@
       "DreamerSettings",
       "ModelsConfig",
       "RecallModelSettings",
+      "TurnOpener",
       "WorkflowSettings"
      ],
      "path": "src/config/models/mod.rs",
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
+      "enum": 2,
       "fn": 2,
       "mod": 1,
       "re-export": 12,
@@ -129214,7 +129237,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 665,
+     "files": 666,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129727,7 +129750,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1561,
+   "source_files": 1562,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
