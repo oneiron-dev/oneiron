@@ -78,20 +78,32 @@ impl<'v> ScopedRead<'v> {
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<NamedSlot>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        self.read_named_projected_in_txn(&txn, reads, requested, project)
+    }
+
+    /// The named read, receipt and projection in a caller-owned snapshot.
+    /// Persist the lane's grant clock before opening `txn`.
+    pub(crate) fn read_named_projected_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<NamedSlot>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority for every slot (FIX 7462).
         let authority = HeldAuthority::for_request(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
             let (outcome, withheld) =
-                self.point_outcome_in(&txn, &policy, &filter, read, &authority)?;
+                self.point_outcome_in(txn, &policy, &filter, read, &authority)?;
             suppressed += withheld;
             value.push(outcome.into_slot());
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value: project(&txn, value)?,
+            value: project(txn, value)?,
             receipt,
         })
     }
