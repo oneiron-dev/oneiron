@@ -245,6 +245,7 @@ impl BlobStore for Vault {
                 entity_type: crate::registry::ENTITY_TYPE_ASSET,
                 occurred,
                 learned_at,
+                row_version: 0,
                 body: bytes.to_vec(),
             },
         )?;
