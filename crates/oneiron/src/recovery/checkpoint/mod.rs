@@ -563,11 +563,14 @@ impl Vault {
     /// than this vault now does (H215). Under the same writer, before the
     /// exchange, the replacement carries this vault's authorization time:
     /// its committed floor and lease, its journaled bound, the times this
-    /// handle judged and its clock now, journaled with a lease's margin in
-    /// the replacement's own lease journal, so the replacement never judges
-    /// a grant below a time this vault already took, a wall stepped back
-    /// included; a journal that does not take it refuses the swap, and
-    /// nothing moves (FIX 12772).
+    /// handle judged and its clock now, journaled in the replacement's own
+    /// lease journal, so the replacement never judges a grant below a time
+    /// this vault already took, a wall stepped back included; a journal that
+    /// does not take it refuses the swap, and nothing moves (FIX 12772).
+    /// From before that time is read until the exchange is done, a decision
+    /// here past the committed lease waits, so none judges past it; those
+    /// already past the lease are waited for up to `SWAP_SPEND_DRAIN_WAIT`,
+    /// and one still running then refuses the swap, nothing moved.
     ///
     /// First, no admission spends a nonce in memory on this handle any more,
     /// and the swap waits up to `SWAP_SPEND_DRAIN_WAIT` (5 s) for the writes
@@ -592,6 +595,19 @@ impl Vault {
                 "the writes queued before a restore's swap were not all decided in its wait; its fence refuses it if a nonce spend's rows are among them"
             );
         }
+        // From here until the exchange is done, a decision past the lease
+        // waits, so none judges past the time the replacement carries
+        // (FIX 12772; REVIEW-5620 P1).
+        let Some(_authorization_held) = self
+            .store
+            .close_authorization_for_swap(Instant::now() + SWAP_SPEND_DRAIN_WAIT)
+        else {
+            return Err(crate::Error::InvalidConfig(
+                "an authorization decision past this vault's lease did not end in the swap's \
+                 wait; nothing moved, try the swap again"
+                    .into(),
+            ));
+        };
         // The archive the swap parks keeps every body instance its rows
         // name, until its custodian releases it (FIX 6022). Its census and
         // registration hold the custody read guard like a snapshot's, so
