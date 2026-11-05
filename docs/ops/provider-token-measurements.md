@@ -183,8 +183,10 @@ provider measurement. Its `reports` retain each native inference receipt's
 optional prompt and output values, including partial failed requests and equal
 reports from separate requests. Missing values stay unknown and reported zeros
 stay zero. Normalized counters, prices and reservations never supply a value.
-The native receipt merge does not retain physical-report finality, so this
-readback does not certify complete physical use or sum the reports into a total.
+The native merged `reports` list does not retain physical-report finality.
+Separate `observed_slots` data preserves the native publisher's slot and report
+stage at that same settlement capture, as described below. Neither list certifies
+complete physical use or sums the reports into a total.
 
 Receipt stages merge independently of capture order. A stale concurrent capture
 can still add another permit or its settlement. A later financial-booking
@@ -219,3 +221,31 @@ A future's return is not a seal on its `RunAdmission`; it does not prevent a
 clone admitting later work. It does not certify all physical reports, every
 source, child scopes, whole-guard or whole-scope closure, or an RSI token total.
 The existing charged-spend and reservation settlement paths remain unchanged.
+
+## Native publisher slots at settlement
+
+The native settlement captures its lease's publisher slots once, under the
+collector lock. Every registered slot remains in `observed_slots`, including a
+publisher that recorded nothing. The old merged inference receipts are derived
+from the nonempty observations of that same capture, in the same order, using
+the unchanged merge. They are not sampled a second time. Content matching in the
+merged receipt list is not used to identify the separate publisher slots.
+
+A slot index is local to the actual run instance and lease. It is not a global
+request identifier, a collector address, or the separate `physical_attempts`
+counter. An empty slot's `observation` is null: it does not prove provider bytes,
+zero tokens, or a completed request. A present observation retains only the
+native Partial/Final status as `final_observed` and its explicit optional prompt
+and output measurements. Missing counts stay unknown; reported zero stays zero.
+
+These slots pass through the actual `Settled` receipt and its existing scoped
+sink to the recorded permit settlement and `vault.research.budget`. They are
+separate data, never extra inference receipts, charges or totals. The original
+receipt is still forwarded first. No wrapper publisher or extra send is added.
+
+This is the publisher state at that capture, not a promise that every physical
+source registered or that no publisher can report later. Counter-only and
+unsupported suppliers can have no slots; an empty list stays unknown coverage.
+Even all-final observed slots do not seal a run, close a guard or spend scope,
+join children or assign measured tokens to an RSI reservation. Existing failure
+reports, admission, answers, errors and financial settlement stay unchanged.

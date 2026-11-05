@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use super::super::{
     BrokerIsolation, BudgetDenied, InferenceCallReceipt, LlmInputUsage, LlmOutputUsage, ModelId,
-    ModelLocality,
+    ModelLocality, ObservedInferenceSlot,
 };
 use super::admission::{RunAttribution, RunDenied};
 use super::declaration::{DeclarationEditor, LeaseUnit};
@@ -73,6 +73,10 @@ pub enum RunEvent {
         /// when it reported none.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         inference_calls: Vec<InferenceCallReceipt>,
+        /// Every publisher slot in the same native capture used by the merged
+        /// receipts, including slots that recorded nothing. No all-source
+        /// coverage or later-report finality is implied.
+        observed_slots: Vec<ObservedInferenceSlot>,
         /// What the call settled past its reservation, in the run line's
         /// units (FIX 11481): a `Used` or `UsedCounted` settlement charges
         /// the settled figure even past what its permit reserved, and the
