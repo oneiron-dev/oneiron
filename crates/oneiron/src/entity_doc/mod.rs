@@ -28,6 +28,8 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+mod record_carried;
 mod recovery;
 mod registry;
 mod summary;
@@ -60,6 +62,8 @@ mod verbs;
 
 #[cfg(feature = "sync")]
 pub(crate) use carried::{CarriedDocument, DocumentMerge, moved_pointer_row_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use record_carried::{CarriedRecordDocument, export_skill_record_document_in_txn};
 pub use doc_actor::DocActor;
 pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
