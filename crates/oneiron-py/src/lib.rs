@@ -2447,6 +2447,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_advisory_ask_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.advisory_ask.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.advisory_ask.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skills_permissions_approve(
         &self,
         py: Python<'_>,
@@ -3539,6 +3549,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.federation.burst.policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_quarantine_held_edits(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.quarantine.held_edits")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.quarantine.held_edits", input)
             })
             .map_err(raise)?;
         encode(&output)

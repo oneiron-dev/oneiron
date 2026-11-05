@@ -97,11 +97,12 @@ pub use self::ctl::{
     LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
     ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
+    VmOutboxCompanionState,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
-    LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
-    LedgerReportHead,
+    ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport,
+    LedgerReportAssembly, LedgerReportHead,
 };
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_PAGE_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
