@@ -156,6 +156,11 @@ pub(super) fn apply_put_arm(
             },
             options: put_options,
             context: PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write: gate_mode
+                    .skill_state_write
+                    .as_ref()
+                    .filter(|request| request.entity() == id),
                 native_publication,
                 origin,
                 write_policy: state.write_policy.as_ref(),

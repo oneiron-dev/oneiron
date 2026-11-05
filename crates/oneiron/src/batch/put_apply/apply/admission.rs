@@ -3,6 +3,8 @@ use super::*;
 /// Inputs to `apply_put` that no phase mutates: the row identity, the admit
 /// flags, and the borrowed context the put is judged against.
 pub(super) struct FixedPut<'a> {
+    #[cfg(feature = "sync")]
+    pub(super) skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
     pub(super) native_publication: Option<crate::batch::NativePublicationContext<'a>>,
     pub(super) id: EntityId,
     pub(super) entity_type: u8,
@@ -95,6 +97,8 @@ pub(super) fn admit_put<'a>(
         options,
         context:
             PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write,
                 native_publication,
                 origin,
                 write_policy,
@@ -223,6 +227,8 @@ pub(super) fn admit_put<'a>(
     crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     Ok(Admission {
         fixed: FixedPut {
+            #[cfg(feature = "sync")]
+            skill_state_write,
             native_publication,
             id,
             entity_type,

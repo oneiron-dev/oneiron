@@ -193,6 +193,8 @@ impl PutOptions {
 /// What a put is judged against, borrowed from its batch.
 #[derive(Clone, Copy)]
 pub(in crate::batch) struct PutContext<'a> {
+    #[cfg(feature = "sync")]
+    pub(in crate::batch) skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
     pub(in crate::batch) native_publication: Option<NativePublicationContext<'a>>,
     /// Why this batch may touch the id (ARCH-0052 D2).
     pub(in crate::batch) origin: BaseWriteOrigin<'a>,
