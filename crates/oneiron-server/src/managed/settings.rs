@@ -155,8 +155,9 @@ pub(super) fn prepare(
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     // The supervisor's leaves are refused first: an argv-only binding the
     // schema has no key for (the training outbox, OF-420; a guest's
-    // container CLI, the organ directory and the mesh) reads as the
-    // supervisor's, never as unknown.
+    // container CLI, the organ directory, the container CLI's HOME and
+    // runtime directory, and the mesh) reads as the supervisor's, never as
+    // unknown.
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned, None));
