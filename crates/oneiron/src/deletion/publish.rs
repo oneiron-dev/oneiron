@@ -416,6 +416,9 @@ impl Vault {
         // FIX 10466: the host's live snapshot copies that may depend on an
         // erased id go too, whatever the build's features.
         self.inference_snapshots_erased(ids);
+        // FIX 7366: a live room's overlay rows of a gone actor's code runs
+        // take their erased form too; the vault writer is released here.
+        crate::code_run::erase_gone_actors_in_live_overlays(self, ids);
         #[cfg(feature = "sync")]
         {
             let manager = self
