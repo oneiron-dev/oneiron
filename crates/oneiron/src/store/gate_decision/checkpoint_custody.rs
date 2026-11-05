@@ -33,8 +33,8 @@ use crate::store::key_custody::{
     self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
     decode_native_path, encode_native_path,
 };
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::recovery::checkpoint::Rejected;
+use crate::recovery::checkpoint::RestoreAdmissionReason as R;
 #[cfg(unix)]
 use crate::store::root_directory::{
     FileIdentity, file_identity, named_directory_identity, refuse_shared_vault_root,

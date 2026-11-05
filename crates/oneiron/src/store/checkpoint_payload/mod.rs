@@ -33,8 +33,8 @@ use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySubject, LocalCustody, Requirement,
     retirement_in_txn,
 };
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason;
+use crate::recovery::checkpoint::Rejected;
+use crate::recovery::checkpoint::RestoreAdmissionReason;
 
 use self::instance::{Lifecycle, PayloadInstance};
 
