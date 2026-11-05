@@ -182,10 +182,9 @@ pub(crate) struct ResultRead {
     range: Option<(u64, u64)>,
     state: ArtifactTaintState,
     secret: Option<String>,
-    /// Whether the read is for a caller other than `owner` (a delegated
-    /// source or a finding): refs then stay in the caller's own names and
-    /// handles, which are stable for it, instead of naming the foreign
-    /// occurrence.
+    /// Whether the read is for a caller other than `owner`: a delegated
+    /// source keeps its caller's name, while an unnamed child finding uses
+    /// its exact occurrence.
     foreign: bool,
 }
 
@@ -193,8 +192,8 @@ impl ResultRead {
     /// `output` as `name` binds it in run `owner`, narrowed to `range`, the
     /// taint of the run's occurrence of it read now. A range that is not
     /// inside the body is refused. `foreign` says the read is for a caller
-    /// other than `owner` (a delegated source or a finding), whose refs stay
-    /// in the caller's own names and handles.
+    /// other than `owner` (a delegated source or a finding). Delegated names
+    /// stay local to that caller; findings keep their occurrence refs.
     pub(crate) fn new(
         storage: &ExecutorStorage<'_>,
         owner: EntityId,
@@ -242,31 +241,35 @@ impl ResultRead {
         self.state.is_tainted()
     }
 
-    /// The reference a reply names the result by: a range by its owner's
-    /// immutable occurrence, else by the caller's own name or handle when the
-    /// read is foreign; a whole result by its name, or its handle when it has
-    /// none.
+    /// Whether this is a delegated source named in the caller's own run,
+    /// rather than an unnamed child finding or one of the owner's results.
+    fn caller_named(&self) -> bool {
+        self.foreign && self.name.is_some()
+    }
+
+    /// Ranges and unnamed foreign findings keep the owner's exact occurrence.
+    /// A delegated source keeps its caller's name; other whole results keep
+    /// their name or content handle.
     fn reference(&self) -> String {
-        // A range names the immutable occurrence of its owner at its path,
-        // never a rebindable live name: after `x` is rebound, `x#0-2` reads
-        // the new binding's bytes, but `occurrence:<hex>#0-2` still reads
-        // this occurrence's. A foreign read keeps the caller's own name or
-        // handle instead: a delegation's name and a finding's content handle
-        // are stable for their caller, while the foreign occurrence is not
-        // resolvable there.
+        // A range must not switch occurrences when a local name is rebound
+        // or another child reports the same bytes. Delegated sources retain
+        // the name the caller's job binds to its authorized source.
         let legacy = || {
             self.name
                 .clone()
                 .unwrap_or_else(|| self.output.handle.clone())
         };
         match self.range {
-            Some((start, end)) if !self.foreign => {
+            Some((start, end)) if !self.caller_named() => {
                 match occurrence_ref(self.owner, &self.output.path) {
                     Some(parent) => format!("{parent}#{start}-{end}"),
                     None => format!("{}#{start}-{end}", legacy()),
                 }
             }
             Some((start, end)) => format!("{}#{start}-{end}", legacy()),
+            None if self.foreign && !self.caller_named() => {
+                occurrence_ref(self.owner, &self.output.path).unwrap_or_else(legacy)
+            }
             None => legacy(),
         }
     }
@@ -305,12 +308,9 @@ impl ResultRead {
                 fields.remove("lines");
             }
         }
-        if self.foreign && self.range.is_none() {
-            // A foreign whole-result card stays in the caller's own names:
-            // the parent resolves findings only by content handle, and a
-            // delegation's name is stable for its caller, while the foreign
-            // occurrence is not resolvable there. Foreign ranges already do
-            // this in `reference`.
+        if self.caller_named() && self.range.is_none() {
+            // Delegated sources keep their caller's name. An unnamed child
+            // finding keeps the native card's exact occurrence ref.
             card["ref"] = json!(
                 self.name
                     .clone()
@@ -419,9 +419,9 @@ impl ResultRead {
         // Chunk and page refs name the same parent the ref above names: the
         // owner's immutable occurrence, so a page of a renamed result still
         // reparses to its occurrence, not to the first result with its
-        // bytes. A foreign read keeps the caller's own name or handle, as
-        // its ref does.
-        let parent = if self.foreign {
+        // bytes. Only a named delegated source keeps the caller's name,
+        // as its ref does.
+        let parent = if self.caller_named() {
             self.name
                 .clone()
                 .unwrap_or_else(|| self.output.handle.clone())
