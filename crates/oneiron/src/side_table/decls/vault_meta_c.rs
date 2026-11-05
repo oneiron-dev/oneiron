@@ -460,6 +460,10 @@ side_tables! {
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
+    /// Record-only occurrence of the accepted provider-event archive version one inbound
+    /// MESSAGE landed from (FIX 10851): provenance metadata only, never read/delete
+    /// authority. Key: id16 (MESSAGE).
+    CONNECTOR_MESSAGE_ARCHIVE: VaultMeta b"connector.conversation_archive.v1:" Named;
     /// One connector credential slot's issuer binding and issuer change (FIX 988). Key: id16.
     CONNECTOR_CREDENTIAL_BINDING: VaultMeta b"connector.credential_binding.v1/" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
