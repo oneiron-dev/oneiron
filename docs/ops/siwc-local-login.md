@@ -40,6 +40,10 @@ a different callback ID or a different verified account subject.
 The command exchanges the code once against OpenAI's official token endpoint,
 using the original verifier, exact redirect URI and Responses resource. On a
 refused exchange, start a fresh sign-in; the command never retries the code.
+`--timeout-secs` bounds the whole code-exchange HTTP request, including reading
+the response body. It defaults to 120 seconds and is overrideable; zero expires
+immediately, not an unlimited wait. This new numeric default is an open owner-review
+call. It does not time the human callback wait, which Ctrl-C can cancel.
 The ID token must verify against OpenAI's published signing keys, with the
 expected issuer, issued-client audience, expiry, nonce and authorized party.
 The local record is replaced only after verification succeeds. A failed or

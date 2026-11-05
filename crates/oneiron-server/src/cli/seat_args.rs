@@ -28,6 +28,8 @@ pub enum SeatCommand {
     SiwcLogin(Box<SiwcLoginArgs>),
 }
 
+const DEFAULT_SIWC_LOGIN_TIMEOUT_SECS: u64 = 120;
+
 #[derive(Args, Clone, Debug)]
 pub struct SiwcLoginArgs {
     /// Protected local record for this account, outside every vault and repo.
@@ -43,6 +45,10 @@ pub struct SiwcLoginArgs {
     /// Your app's actual name, kept consistent across installations.
     #[arg(long)]
     pub agent_name: String,
+    /// Total HTTP timeout for the code exchange, not the human callback wait.
+    /// Zero expires immediately instead of allowing an unlimited wait.
+    #[arg(long, default_value_t = DEFAULT_SIWC_LOGIN_TIMEOUT_SECS)]
+    pub timeout_secs: u64,
 }
 
 #[derive(Args, Clone, Debug)]
