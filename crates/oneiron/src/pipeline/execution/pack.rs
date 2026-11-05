@@ -545,7 +545,10 @@ impl PipelineBuilder<'_> {
                 None if provisional => self
                     .vault
                     .store
-                    .record_context_pack_provisional_retrieval_run(&run_record),
+                    .record_context_pack_provisional_retrieval_run(
+                        &run_record,
+                        self.media_search.memory(),
+                    ),
                 None => self.vault.store.record_retrieval_run(&run_record),
             };
             match write_result {
