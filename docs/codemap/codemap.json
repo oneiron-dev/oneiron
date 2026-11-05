@@ -10965,7 +10965,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 6,
       "re-export": 7,
@@ -11053,7 +11053,7 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 7,
       "re-export": 1,
       "struct": 3
@@ -46143,7 +46143,7 @@
      "path": "src/memory/claims/commit/write.rs",
      "purpose": "The guarded claim commit: dedupe, supersede, Gate and publication in one write transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -118600,6 +118600,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/mcp_bridge/link/replies.rs",
+     "purpose": "Reply forwarding on the bridge's shared socket driver",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/msgpack_json.rs",
      "purpose": "JSON renderings of MessagePack claim values for command output",
      "surface": {
@@ -127991,7 +128001,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -128427,7 +128437,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1544,
+   "source_files": 1545,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
