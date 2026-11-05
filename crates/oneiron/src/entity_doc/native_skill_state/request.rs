@@ -108,6 +108,12 @@ impl SkillStateSnapshot {
         &self.prior
     }
 
+    /// Captured current logical bytes, not the request's updated record.
+    /// This remains only a read binding until its caller rechecks it.
+    pub(crate) fn logical_prior_body(&self) -> &[u8] {
+        &self.logical_body
+    }
+
     pub(crate) fn entity(&self) -> EntityId {
         self.entity
     }
