@@ -113,7 +113,8 @@ impl Vault {
     /// this install's machine and keeps no sealed copy; off reads it on the
     /// owner's machines with sealed copies on the cloud and on them. The
     /// world's model order is kept. `seen` is the revision the surface showed
-    /// ([`Self::world_machine_placement`]); `None` takes the current one.
+    /// ([`Self::world_machine_placement`]); `None` takes the current one,
+    /// read before the model order the switch keeps.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when this install has no machine yet, or when
@@ -135,6 +136,13 @@ impl Vault {
             .ok_or(Error::InvalidConfig(
                 "this install has no machine yet, so no world can be kept on it alone".to_owned(),
             ))?;
+        // The revision before the model order it keeps, and always named to
+        // the writer: a change landing after this read makes the edit stale
+        // and refused, so the kept order is never one a newer edit replaced.
+        let seen = match seen {
+            Some(seen) => seen,
+            None => self.world_privacy_revision(world)?,
+        };
         let models = match self.world_privacy(world)?.models {
             EffectiveModelOrder::Inherit => ModelOrder::Inherit,
             EffectiveModelOrder::Ordered(routes) => ModelOrder::Ordered(routes),
@@ -146,6 +154,6 @@ impl Vault {
             }
         };
         let settings = machine_placement_settings(this_machine_only, machine, models);
-        self.set_world_privacy_as(owner, surface, world, settings, seen)
+        self.set_world_privacy_as(owner, surface, world, settings, Some(seen))
     }
 }
