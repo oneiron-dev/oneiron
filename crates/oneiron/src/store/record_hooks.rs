@@ -146,4 +146,35 @@ pub trait StoreRecordHooks: Send + Sync {
         subject: &EntityId,
         turn: &EntityId,
     ) -> Result<bool>;
+
+    /// The engine's `comm::record_comm_thread_event_in_txn`.
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_inbound_reply_in_txn`.
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
+
+    /// The engine's `comm::record_comm_inbound_stop_in_txn`.
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
 }
