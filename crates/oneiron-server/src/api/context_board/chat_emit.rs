@@ -53,8 +53,8 @@ pub(crate) struct ChatContextCapture {
     worlds: ResolvedWorldAuthority,
     rendered_fingerprint: String,
     read_auth: CoreAuth,
-    /// The exact ROOT TASKS selection this render projected (FIX 12570, ONE
-    /// live chat pending consumer); `None` when no activation follows.
+    /// The exact ROOT TASKS selection this chat render projected (FIX 12570);
+    /// `None` when no activation follows.
     tasks_candidate: Option<TasksLayoutCandidate>,
 }
 

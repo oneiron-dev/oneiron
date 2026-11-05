@@ -118,7 +118,7 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(example = 400)]
     tasks_budget_tok: Option<usize>,
-    /// Server-internal answering-agent layout actor for ONE live chat turn
+    /// Server-internal answering-agent layout actor for a native chat turn
     /// (FIX 12570, chat slice); never on the wire. `None` keeps the
     /// auth-derived caller actor.
     #[serde(skip)]
@@ -518,13 +518,13 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
-    // ROOT TASKS layout (FIX 12570, HTTP slice + ONE live chat pending
+    // ROOT TASKS layout (FIX 12570, HTTP slice + native chat pending
     // consumer): an explicit per-request budget wins with its exact value
     // and never consumes pending (no candidate then); otherwise the staged
     // snapshot projects now (TURN selects pending when present else live)
     // and the SAME accepted TURN commit activates the exact candidate.
     // Without TURN and without a chat layout actor this reads live only
-    // and never activates; ONE live chat turn projects its answering
+    // and never activates; a native chat turn projects its answering
     // agent's row with native has_turn=true and activates it in the SAME
     // accepted answer-history commit.
     let (tasks_budget_tok, tasks_layout_candidate) = match req.tasks_budget_tok {
@@ -886,7 +886,7 @@ pub(crate) async fn describe_self_for_auth(
     Ok((value, sources))
 }
 
-/// The rendered board one live chat turn reads (FIX 6794), and the rows it
+/// The rendered board one chat turn reads (FIX 6794), and the rows it
 /// served.
 pub(crate) struct ChatBoard {
     /// The one board frame, fenced and attributed by its renderer.
@@ -906,7 +906,7 @@ pub(crate) struct ChatBoard {
 /// credential where it reads. `reader`, the answering agent's definition,
 /// shapes the optional recall by its profile; `conversation`, when it
 /// exists, narrows the read to its room's audience. `chat_layout_actor`, the
-/// answering agent for ONE live chat turn, selects that agent's ROOT TASKS
+/// answering agent for a native chat turn, selects that agent's ROOT TASKS
 /// row only and never widens content scope; `None` keeps caller behavior.
 /// A refusal answers its status.
 pub(crate) async fn chat_board(

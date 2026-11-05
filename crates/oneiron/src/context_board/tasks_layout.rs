@@ -1,12 +1,12 @@
-//! Durable per-actor TASKS token budgets for HTTP board hydration and live chat.
+//! Durable per-actor TASKS token budgets for HTTP board hydration and native chat.
 //!
 //! A TURN projects one pending snapshot before its accepted history commit
 //! activates it. Polls read live state only. Revisions preserve newer pending
 //! writes and reject late overwrites without refusing the board; a fresh row
 //! incarnation prevents activation after erase and recreation.
 //!
-//! This does not implement fork layouts or MCP/run integration; queued
-//! actions, program turns, forks, shares, folds and owner defaults stay open.
+//! This does not implement fork layouts or MCP/run integration; program
+//! turns, shares, folds and owner defaults stay open.
 //! Checkpoint rows remain unclassified. See
 //! `docs/ops/context-board-tasks-layout.md` for the supported scope.
 
@@ -176,7 +176,7 @@ impl Vault {
     /// Call only when the explicit per-request budget is `None` (explicit
     /// `Some` wins with its exact budget and never consumes pending, so the
     /// caller skips selection entirely in that case). `has_turn` is true
-    /// for an explicit HTTP TURN or the native live-chat turn whose answer
+    /// for an explicit HTTP TURN or the native chat turn whose answer
     /// history will carry this selection. `cap_tok` is the same resolved
     /// global board cap the final frame renders under.
     ///
