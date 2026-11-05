@@ -311,6 +311,14 @@ side_tables! {
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
     /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
+    /// A send whose counterparty resolved to no PERSON at admission, by the BLAKE3 digest of its
+    /// exact party key (FIX 11030). Key: hash32 (party digest) + hash32 (intent id).
+    OUTBOUND_INTENT_PARTY: VaultMeta b"outbound:intent_party:v1:" Named;
+    /// That send's party digest, by its intent id (FIX 11030). Key: hash32 (intent id).
+    OUTBOUND_INTENT_PARTY_OF: VaultMeta b"outbound:intent_party_of:v1:" Named;
+    /// A send linked to a deleted PERSON its party names, for that person's erase (FIX 11030).
+    /// Key: id16(person) + hash32 (intent id).
+    OUTBOUND_INTENT_LATE_RECIPIENT: VaultMeta b"outbound:intent_late_recipient:v1:" Named;
     /// A call a restore holds no record of, as its per-tool bound counts it (FIX 6260): the
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
