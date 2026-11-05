@@ -25892,7 +25892,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomParty",
@@ -25901,7 +25901,7 @@
      "path": "src/disclosure/room_party.rs",
      "purpose": "The term one room member brings to the room's meet (ARCH-0067 §8: \"the grants behind the people and agents…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
