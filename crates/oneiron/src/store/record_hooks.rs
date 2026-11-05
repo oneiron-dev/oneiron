@@ -74,6 +74,39 @@ pub trait StoreRecordHooks: Send + Sync {
         now: u64,
     ) -> Result<Vec<EntityId>>;
 
+    /// The engine's `comm::record_comm_send_receipt`.
+    fn record_comm_send_receipt(
+        &self,
+        vault: &crate::Vault,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_actor_send_receipt_in_txn`.
+    fn record_comm_actor_send_receipt_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        display_name: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_thread_event`.
+    fn record_comm_thread_event(
+        &self,
+        vault: &crate::Vault,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's soft `comm::run_comm_projector_housekeeping_step`.
+    fn run_comm_projector_housekeeping_step(&self, vault: &crate::Vault);
+
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
 
@@ -93,6 +126,58 @@ pub trait StoreRecordHooks: Send + Sync {
         id: &EntityId,
     ) -> Result<Option<BTreeSet<EntityId>>>;
 
+    /// The engine's `comm::send_override_for_send_in_txn`.
+    fn send_override_for_send_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        party_ref: &EntityId,
+        channel_class: &str,
+        send_ref: Option<&str>,
+        now: u64,
+    ) -> crate::write_envelope::communication::CommResult<
+        Option<crate::write_envelope::communication::SendOverrideMatch>,
+    >;
+
+    /// The engine's `comm::send_stop_reason_in_txn`.
+    fn send_stop_reason_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        persons: &[EntityId],
+        counterparty: &str,
+        channel_class: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<&'static str>>;
+
+    /// The engine's `comm::active_thread_refs_in_txn`.
+    fn active_thread_refs_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party_ref: EntityId,
+    ) -> crate::write_envelope::communication::CommResult<BTreeSet<String>>;
+
+    /// The engine's `comm::check_claim_against_descriptor_in_txn`.
+    fn check_claim_against_descriptor_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        body: &crate::claim::ClaimBody,
+    ) -> Result<()>;
+
+    /// The engine's `comm::seed_claim_class_descriptors`.
+    fn seed_claim_class_descriptors(&self, vault: &crate::Vault) -> Result<()>;
+
+    /// The engine's `comm::supersede_party_opt_out_head_in_txn`.
+    fn supersede_party_opt_out_head_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        reason: crate::counterparty_contact::CounterpartyOptOutReason,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
     /// The engine's `federation::actor_for_txn`.
     fn actor_for_txn(&self, vault: &crate::Vault, txn: &RoTxn<'_>) -> Result<Option<WriteActor>>;
 
@@ -109,6 +194,14 @@ pub trait StoreRecordHooks: Send + Sync {
 
     /// The engine's `federation::validate_federation_grant_body_bytes`.
     fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()>;
+
+    /// The engine's `counterparty_contact::fold_party_opt_out_heads_for_store_in_txn`.
+    fn fold_party_opt_out_heads_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+    ) -> Result<()>;
 
     /// The engine's `federation::guard_ruling_overwrite`.
     #[allow(clippy::too_many_arguments)]
@@ -145,6 +238,30 @@ pub trait StoreRecordHooks: Send + Sync {
         actor: EntityId,
     ) -> Result<bool>;
 
+    /// The engine's `comm::erase_skipped_send_receipt_in_txn`.
+    fn erase_skipped_send_receipt_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `counterparty_contact::erase_trusted_contact_rows_in_txn`.
+    fn erase_trusted_contact_rows_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `calendar::inbox_card::erase_inbox_cards_in_txn`.
+    fn erase_inbox_cards_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::erase_room_side_rows`, an entity
     /// side-row eraser of `deletion::derived_rows`.
     fn erase_room_side_rows(&self, store: &Store, txn: &mut RwTxn<'_>, id: &EntityId)
@@ -166,6 +283,14 @@ pub trait StoreRecordHooks: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `comm::is_restrictive_comm_predicate`.
+    fn is_restrictive_comm_predicate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<bool>;
 
     /// The engine's `secret_custody::read_secret_custody_meta_in_txn`.
     fn read_secret_custody_meta_in_txn(

@@ -140,6 +140,8 @@ side_tables! {
     /// Posting-list row of one claim under its world (base reality under the reserved base id),
     /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
     CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw;
+    /// Owner-selected ordinary Clipboard cleanup arms. Key: (). No clip text.
+    CLIPBOARD_RETENTION: VaultMeta b"clipboard.retention.v1" Named;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
