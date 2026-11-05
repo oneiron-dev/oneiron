@@ -15,11 +15,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::checkpoint::{Atom, AtomId, Payload, Skeleton, SlotKind};
+use loro::checkpoint::{
+    Atom, AtomId, KEY_PLACEHOLDER_PREFIX, Payload, Skeleton, SlotKind, placeholder_atom,
+};
 use loro::{LoroDoc, LoroValue};
 
 use super::operations::{export_slice, holds_slice};
-use super::owners::{root_entry, root_fill};
+use super::owners::{
+    key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
+};
 use super::{
     KindPlacement, LoroCarrier, LoroSlot, LoroVerdict, OpenedAtom, OpenedSyncAtoms, Placement,
     SlotCopy, SyncCarrier, SyncPayloadOwners, SyncRestoreRows, SyncUnclassified, WINDOW_ROUND_TRIP,
@@ -114,19 +118,65 @@ fn join(
     let mut available = Vec::new();
     let mut erased = Vec::new();
     let mut lossless = true;
+    // Withheld keys open first (FIX 10279): a value under one is read under
+    // the key it opened to, and goes with a key that did not open.
+    let mut keys: BTreeMap<AtomId, String> = BTreeMap::new();
     for (index, ((slot, site), shape)) in carrier
         .slots
         .iter()
-        .zip(sites)
+        .zip(&sites)
+        .zip(&skeleton.slots)
+        .enumerate()
+    {
+        if shape.kind != SlotKind::Key {
+            continue;
+        }
+        let id = AtomId::try_from(index).map_err(|_| bad_part())?;
+        let Some((root, _)) = *site else {
+            return Err(bad_part());
+        };
+        match open_key(slot, root, opened)? {
+            Some((key, whole)) => {
+                lossless &= whole;
+                keys.insert(id, key.clone());
+                available.push(Atom {
+                    id,
+                    holders: shape.holders.clone(),
+                    payload: Payload::Key(key),
+                });
+            }
+            None => {
+                lossless = false;
+                erased.push(id);
+                dropped.extend(slot.copies.iter().map(|copy| copy.at.clone()));
+            }
+        }
+    }
+    for (index, ((slot, site), shape)) in carrier
+        .slots
+        .iter()
+        .zip(&sites)
         .zip(&skeleton.slots)
         .enumerate()
     {
         let id = AtomId::try_from(index).map_err(|_| bad_part())?;
-        let (root, key) = site.ok_or_else(bad_part)?;
-        if shape.kind != SlotKind::Value {
+        let Some((root, key)) = *site else {
             return Err(bad_part());
+        };
+        match shape.kind {
+            SlotKind::Key => continue,
+            SlotKind::Value => {}
+            SlotKind::Message => return Err(bad_part()),
         }
-        match open_slot(slot, root, key, opened)? {
+        let key = match placeholder_atom(key) {
+            None => Some(key),
+            Some(atom) => keys.get(&atom.ok_or_else(bad_part)?).map(String::as_str),
+        };
+        let value = match key {
+            Some(key) => open_slot(slot, root, key, opened)?,
+            None => None,
+        };
+        match value {
             Some((value, whole)) => {
                 lossless &= whole;
                 available.push(Atom {
@@ -150,9 +200,48 @@ fn join(
     Ok((joined.bytes, lossless, joined.report.equivalent))
 }
 
+/// The withheld key `slot` puts back, from its first copy that opened, and
+/// whether every actor it names opened: `None` when no copy opened, or the
+/// actor it names did not. A key its family does not withhold, or one
+/// spelled as a placeholder, refuses.
+fn open_key(
+    slot: &LoroSlot,
+    root: &str,
+    opened: &dyn OpenedSyncAtoms,
+) -> Result<Option<(String, bool)>> {
+    for copy in &slot.copies {
+        let OpenedAtom::Opened(value) = opened.atom(copy.atom) else {
+            continue;
+        };
+        if opened.opened_home(copy.atom) != Some(copy.home) {
+            return Err(bad_part());
+        }
+        let (key, whole) = if slot.holes.is_empty() {
+            let key = std::str::from_utf8(value).map_err(|_| bad_part())?;
+            (key.to_owned(), true)
+        } else {
+            let actors = opened_actors(slot, copy, opened)?;
+            let whole = actors.len() == slot.holes.len();
+            let Some(key) = key_fill(root, value, &actors)? else {
+                return Ok(None);
+            };
+            (key, whole)
+        };
+        if key.starts_with(KEY_PLACEHOLDER_PREFIX)
+            || (withheld_key(root, &key).is_none()
+                && !withheld_part_key(root, &key)
+                && withheld_client_key(root, &key).is_none())
+        {
+            return Err(bad_part());
+        }
+        return Ok(Some((key, whole)));
+    }
+    Ok(None)
+}
+
 /// Each slot's root map and key, as the skeleton's operations and winners
-/// name it; `None` for a slot none names. A slot two sites name apart
-/// refuses.
+/// name it; `None` for a slot none names. A withheld key's slot is named by
+/// its placeholder, a delete's too. A slot two sites name apart refuses.
 fn sites(skeleton: &Skeleton) -> Result<Vec<Option<(&str, &str)>>> {
     let mut sites: Vec<Option<(&str, &str)>> = vec![None; skeleton.slots.len()];
     let ops = skeleton
@@ -167,22 +256,25 @@ fn sites(skeleton: &Skeleton) -> Result<Vec<Option<(&str, &str)>>> {
         .chain(&skeleton.latest)
         .map(|winner| (winner.root, winner.key.as_str(), winner.value));
     for (root, key, value) in ops.chain(winners) {
-        let Some(value) = value else {
-            continue;
-        };
         let root = usize::try_from(root)
             .ok()
             .and_then(|root| skeleton.roots.get(root))
             .ok_or_else(bad_part)?;
-        let site = usize::try_from(value)
-            .ok()
-            .and_then(|slot| sites.get_mut(slot))
-            .ok_or_else(bad_part)?;
         let named = (root.as_str(), key);
-        if site.is_some_and(|known| known != named) {
-            return Err(bad_part());
+        let withheld = match placeholder_atom(key) {
+            None => None,
+            Some(atom) => Some(atom.ok_or_else(bad_part)?),
+        };
+        for slot in withheld.into_iter().chain(value) {
+            let site = usize::try_from(slot)
+                .ok()
+                .and_then(|slot| sites.get_mut(slot))
+                .ok_or_else(bad_part)?;
+            if site.is_some_and(|known| known != named) {
+                return Err(bad_part());
+            }
+            *site = Some(named);
         }
-        *site = Some(named);
     }
     Ok(sites)
 }
@@ -211,7 +303,8 @@ fn open_slot(
         }
         let actors = opened_actors(slot, copy, opened)?;
         let whole = actors.len() == slot.holes.len();
-        let Some(filled) = root_fill(root, key, value, &actors)? else {
+        let holes: BTreeSet<&str> = slot.holes.iter().map(String::as_str).collect();
+        let Some(filled) = root_fill(root, key, value, &actors, &holes)? else {
             return Ok(None);
         };
         check(root, key, &filled)?;
