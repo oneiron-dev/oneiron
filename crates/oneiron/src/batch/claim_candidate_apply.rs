@@ -136,6 +136,7 @@ pub(super) fn apply_claim_candidate(
                 ..PutOptions::default()
             },
             context: PutContext {
+                skill_state: None,
                 // A claim candidate is never part of a promotion closure:
                 // promote replays the session's typed journal, which stages
                 // no candidate op.

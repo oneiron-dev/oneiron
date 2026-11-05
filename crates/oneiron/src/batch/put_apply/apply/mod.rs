@@ -107,6 +107,11 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     let data = owners.escalated_skill_body.as_deref().unwrap_or(data);
     let data = owners.task_body_without_streaks.as_deref().unwrap_or(data);
     let data = owners.pad_stored_body.as_deref().unwrap_or(data);
+    let native_skill_state_body = fixed
+        .skill_state
+        .map(|proof| proof.materialize(store, wtxn, &fixed.id, data))
+        .transpose()?;
+    let stored_data = native_skill_state_body.as_deref().unwrap_or(data);
     let old_record::OldRecord {
         body_changed,
         consolidation_dirty,
@@ -117,6 +122,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         store,
         wtxn,
         data,
+        stored_data,
         &fixed,
         &dispatch,
         &mut portable_agent_source,
@@ -125,6 +131,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         store,
         wtxn,
         data,
+        stored_data,
         &fixed,
         &dispatch,
         body_changed,

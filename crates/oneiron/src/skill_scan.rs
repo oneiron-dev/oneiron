@@ -340,7 +340,9 @@ pub(crate) fn escalate_activation_approval_in_txn(
         return Ok(false);
     }
     let prior_body = &raw.body;
-    if decode_skill_record(prior_body)
+    #[cfg(feature = "sync")]
+    let prior_body = crate::entity_doc::resolve_record_body(store, rtxn, id, prior_body)?;
+    if decode_skill_record(&prior_body)
         .is_ok_and(|prior| prior.lifecycle_status == SkillLifecycle::Active)
     {
         return Ok(false);
