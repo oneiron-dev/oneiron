@@ -1,14 +1,21 @@
 //! An mbox file's messages, one at a time (FIX 12559: mbox and Google
-//! Takeout intake). A message starts at a `From ` separator line: the first
-//! line, one after a blank line, or one shaped like a separator (`From <who>
-//! <date>`). A body line escaped as `>From ` reads as `From ` again (mboxrd).
-//! The reader keeps its byte offset, so an import goes on from where the
-//! last call stopped.
+//! Takeout intake). A message starts at a separator line shaped `From <who>
+//! <weekday> <month> <day> <time> [<zone>] <year>`, the first line or one
+//! after a blank line. A body line escaped as `>From ` reads as `From `
+//! again (mboxrd); length-delimited mbox variants are not read. The reader
+//! keeps its byte offset, so an import goes on from where the last call
+//! stopped, and holds at most one bounded line at a time.
 
 use std::io::{self, BufRead};
 
 /// The largest message read; a larger one is skipped whole.
 pub(super) const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+/// The longest line held; a longer one makes its message too large.
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// One message of an mbox file.
 #[derive(Debug, Clone)]
@@ -41,20 +48,32 @@ fn separator_text(line: &[u8]) -> String {
         .to_owned()
 }
 
-/// Whether a `From ` line has a separator's shape: a sender word, then a
-/// date with a clock time and a four-digit year.
-fn looks_like_separator(line: &[u8]) -> bool {
+/// Whether a line is an mbox separator: `From `, a sender word, then a
+/// weekday, a month, a day, a clock time and a four-digit year.
+fn is_separator(line: &[u8]) -> bool {
+    if !line.starts_with(b"From ") {
+        return false;
+    }
     let text = String::from_utf8_lossy(line);
-    let mut words = text.split_whitespace().skip(1);
-    let Some(sender) = words.next() else {
+    let words: Vec<&str> = text.split_whitespace().skip(1).collect();
+    let [sender, weekday, month, day, time, ..] = words.as_slice() else {
         return false;
     };
-    let rest: Vec<&str> = words.collect();
+    let clock = |word: &str| {
+        word.split(':').count() >= 2
+            && word
+                .split(':')
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    };
     !sender.is_empty()
-        && rest.iter().any(|word| word.contains(':'))
-        && rest
-            .iter()
-            .any(|word| word.len() == 4 && word.bytes().all(|byte| byte.is_ascii_digit()))
+        && WEEKDAYS.contains(weekday)
+        && MONTHS.contains(month)
+        && day.len() <= 2
+        && day.bytes().all(|byte| byte.is_ascii_digit())
+        && clock(time)
+        && words
+            .last()
+            .is_some_and(|year| year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// A body line escaped as `>From ` (any number of `>`) loses one `>`.
@@ -86,40 +105,70 @@ impl<R: BufRead> MboxReader<R> {
             .map_or(self.offset, |(_, offset)| *offset)
     }
 
+    /// Reads one line into `line`, at most [`MAX_LINE_BYTES`] of it (the
+    /// rest is passed over). Answers whether a line was read, and whether
+    /// it was cut.
+    fn read_line(&mut self, line: &mut Vec<u8>) -> io::Result<(bool, bool)> {
+        line.clear();
+        let mut cut = false;
+        let mut read_any = false;
+        loop {
+            let available = self.reader.fill_buf()?;
+            if available.is_empty() {
+                return Ok((read_any, cut));
+            }
+            read_any = true;
+            let (taken, ended) = match available.iter().position(|&byte| byte == b'\n') {
+                Some(newline) => (newline + 1, true),
+                None => (available.len(), false),
+            };
+            let room = MAX_LINE_BYTES.saturating_sub(line.len());
+            if taken > room {
+                cut = true;
+            }
+            line.extend_from_slice(&available[..taken.min(room)]);
+            self.reader.consume(taken);
+            self.offset += taken as u64;
+            if ended {
+                return Ok((true, cut));
+            }
+        }
+    }
+
     /// The next message, or `None` at the end of the stream.
     pub(super) fn next_message(&mut self) -> io::Result<Option<MboxMessage>> {
         let mut line = Vec::new();
         let separator = match self.pending.take() {
             Some((separator, _)) => separator,
             None => loop {
-                line.clear();
-                let read = self.reader.read_until(b'\n', &mut line)?;
-                if read == 0 {
+                let (read, _) = self.read_line(&mut line)?;
+                if !read {
                     return Ok(None);
                 }
-                self.offset += read as u64;
-                if line.starts_with(b"From ") {
+                if is_separator(&line) {
                     break separator_text(&line);
                 }
             },
         };
         let mut raw = Vec::new();
         let mut oversized = false;
-        let mut previous_blank = false;
+        let mut previous_blank = true;
         loop {
             let start = self.offset;
-            line.clear();
-            let read = self.reader.read_until(b'\n', &mut line)?;
-            if read == 0 {
+            let (read, cut) = self.read_line(&mut line)?;
+            if !read {
                 break;
             }
-            self.offset += read as u64;
-            if line.starts_with(b"From ") && (previous_blank || looks_like_separator(&line)) {
+            if previous_blank && is_separator(&line) {
                 self.pending = Some((separator_text(&line), start));
                 break;
             }
             previous_blank = is_blank(&line);
+            if cut {
+                oversized = true;
+            }
             if oversized {
+                raw = Vec::new();
                 continue;
             }
             let text = unescape(&line);

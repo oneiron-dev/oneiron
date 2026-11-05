@@ -447,7 +447,7 @@ fn split_multipart<'m>(body: &'m [u8], boundary: &[u8]) -> Vec<&'m [u8]> {
             .and_then(|rest| rest.strip_prefix(boundary))
         {
             let rest = rest.trim_ascii_end();
-            let closing = rest.starts_with(b"--");
+            let closing = rest == b"--";
             if rest.is_empty() || closing {
                 if let Some(start) = open.take() {
                     parts.push(&body[start..content_end.max(start)]);
