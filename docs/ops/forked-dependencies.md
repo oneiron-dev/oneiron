@@ -13,7 +13,7 @@ cover it.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `b990e18f6905e4bf5c10d900b37f1afb0864f1fc` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `c22a8bdf8cef9df9456511c7be58da30f2945d2f` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -53,14 +53,14 @@ five to the fork by rev:
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "b990e18f6905e4bf5c10d900b37f1afb0864f1fc" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "b990e18f6905e4bf5c10d900b37f1afb0864f1fc" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "b990e18f6905e4bf5c10d900b37f1afb0864f1fc" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "b990e18f6905e4bf5c10d900b37f1afb0864f1fc" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "b990e18f6905e4bf5c10d900b37f1afb0864f1fc" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "c22a8bdf8cef9df9456511c7be58da30f2945d2f" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "c22a8bdf8cef9df9456511c7be58da30f2945d2f" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "c22a8bdf8cef9df9456511c7be58da30f2945d2f" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "c22a8bdf8cef9df9456511c7be58da30f2945d2f" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "c22a8bdf8cef9df9456511c7be58da30f2945d2f" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.35), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.36), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -297,10 +297,20 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.35), over `362becff`:
   allocation, boxing and native work-budget/hard-time coverage remain PART.
   No new clock, quota, cap, default or corpus/timing claim.
 
+- `c22a8bdf8cef9df9456511c7be58da30f2945d2f` adds full-token checkpoints to CHOOSECOLS and
+  CHOOSEROWS after original source/shape checks, through index intake, before
+  output allocation, through the selected row and cell walks and before result
+  boxing. Existing native source/index error propagation and index error cells
+  stay unchanged, as do signed indices, truncation, duplicate selection, output
+  order, capacities and regular no-token execution. This is `0.9.3-oneiron.36`;
+  source resolution, cell operations, cloning, allocation, boxing and native
+  work-budget/hard-time coverage remain PART. No new clock, quota, cap, default
+  or corpus/timing claim.
+
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.35`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.36`.
 
 ## Vendored, modified snapshots
 
