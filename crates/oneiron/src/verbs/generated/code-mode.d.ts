@@ -4434,11 +4434,11 @@ declare namespace Sdk {
   type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };
   type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean };
-  type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; before?: number | null; limit?: number | null };
+  type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null };
   type MailStage = "headers" | "body";
   type MailPresence = "present" | { source_deleted: { at: number } } | { forgotten: { at: number } };
   type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean };
-  type MailInboxPage = { items: MailInboxItem[]; next_before?: number | null };
+  type MailInboxPage = { items: MailInboxItem[]; next_cursor?: string | null };
   type MailThreadRequest = { thread_ref: string };
   type MailThreadView = { thread_ref: string; source_ref: string; messages: MailInboxItem[]; shared_with?: string[] };
   type MailComplianceSearchRequest = { query: string; purpose: string; limit?: number | null };

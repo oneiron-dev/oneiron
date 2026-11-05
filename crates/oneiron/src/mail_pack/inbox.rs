@@ -27,10 +27,10 @@ pub struct MailInboxRequest {
     /// Lists messages deleted at the provider and kept, labelled, too.
     #[serde(default)]
     pub include_source_deleted: bool,
-    /// Only messages received before this time (Unix seconds): the previous
-    /// page's `next_before`.
+    /// Only the messages after this place in the newest-first order: the
+    /// previous page's `next_cursor`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub before: Option<u64>,
+    pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
@@ -64,9 +64,9 @@ pub struct MailInboxItem {
 #[serde(deny_unknown_fields)]
 pub struct MailInboxPage {
     pub items: Vec<MailInboxItem>,
-    /// The `before` of the next page; absent on the last.
+    /// The `cursor` of the next page; absent on the last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_before: Option<u64>,
+    pub next_cursor: Option<String>,
 }
 
 /// `vault.mail.threads.read`'s input.
@@ -107,6 +107,27 @@ fn item(source: EntityId, occurrence: &MailOccurrence, shared: bool) -> Option<M
     })
 }
 
+/// An inbox place: a message's receive time and its TURN, the order the
+/// inbox lists newest first by, so two messages received in the same second
+/// both list.
+type InboxPlace = (u64, EntityId);
+
+fn place_of(item: &MailInboxItem) -> MemoryResult<InboxPlace> {
+    Ok((item.received_at, EntityId::from_hex(&item.turn_ref)?))
+}
+
+fn cursor_text(place: InboxPlace) -> String {
+    format!("{}:{}", place.0, place.1.to_hex())
+}
+
+fn parse_cursor(cursor: &str) -> MemoryResult<InboxPlace> {
+    let bad = || MemoryError::bad_request("the inbox cursor is not one this inbox gave");
+    let (at, turn) = cursor.split_once(':').ok_or_else(bad)?;
+    let at = at.parse::<u64>().map_err(|_| bad())?;
+    let turn = EntityId::from_hex(turn).map_err(|_| bad())?;
+    Ok((at, turn))
+}
+
 /// The mailbox sources by their audience policy, for finding a thread's
 /// source.
 pub(super) fn sources_by_audience_in(
@@ -136,6 +157,7 @@ impl Memory<'_> {
             .map(EntityId::from_hex)
             .transpose()?;
         let limit = input.limit.unwrap_or(DEFAULT_INBOX_PAGE).max(1) as usize;
+        let after = input.cursor.as_deref().map(parse_cursor).transpose()?;
         let vault = self.vault();
         let actor = self.actor();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -163,9 +185,7 @@ impl Memory<'_> {
                     MailPresence::Forgotten { .. } => false,
                 };
                 if !listed
-                    || input
-                        .before
-                        .is_some_and(|before| occurrence.received_at >= before)
+                    || after.is_some_and(|after| (occurrence.received_at, occurrence.turn) >= after)
                 {
                     continue;
                 }
@@ -182,10 +202,16 @@ impl Memory<'_> {
                 }
             }
         }
-        items.sort_by(|a, b| b.received_at.cmp(&a.received_at));
-        let next_before = (items.len() > limit).then(|| items[limit - 1].received_at);
+        items.sort_by(|a, b| {
+            (b.received_at, &b.turn_ref).cmp(&(a.received_at, &a.turn_ref))
+        });
+        let next_cursor = if items.len() > limit {
+            Some(cursor_text(place_of(&items[limit - 1])?))
+        } else {
+            None
+        };
         items.truncate(limit);
-        Ok(MailInboxPage { items, next_before })
+        Ok(MailInboxPage { items, next_cursor })
     }
 
     /// One mail thread's messages, oldest first, to a reader of the thread:
