@@ -396,6 +396,7 @@ impl ClaimMaterialization {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at: now,
+            row_version: None,
             data: data.clone(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
