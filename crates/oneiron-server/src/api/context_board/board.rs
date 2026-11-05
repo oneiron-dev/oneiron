@@ -5,6 +5,7 @@
 
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
+use super::tasks_budget::TasksRowBudget;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -73,10 +74,18 @@ pub(crate) struct ContextBoardRenderBudget {
     floor_exceeds_cap: bool,
     /// The shed ranks applied, in order.
     applied_shed: Vec<String>,
+    /// Concrete TASK-row projection budget, when the caller asked for one.
+    /// Pre-frame projection after pins/tags, not final delivered cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    tasks: Option<TasksRowBudget>,
 }
 
 impl ContextBoardRenderBudget {
-    pub(super) fn of(render: &oneiron::context_board::BoardRender) -> Self {
+    pub(super) fn of(
+        render: &oneiron::context_board::BoardRender,
+        tasks: Option<TasksRowBudget>,
+    ) -> Self {
         Self {
             budget_tok: render.metadata.budget_tok,
             rendered_tok: render.metadata.rendered_tok,
@@ -87,6 +96,7 @@ impl ContextBoardRenderBudget {
                 .iter()
                 .map(|rank| rank.as_str().to_owned())
                 .collect(),
+            tasks,
         }
     }
 }
@@ -189,6 +199,9 @@ pub(super) struct BoardParts {
     pub(super) you: Option<String>,
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
+    /// Concrete TASK-row projection budget, when the caller asked for one.
+    /// Post hook/tag, pre whole-frame; the response carries it beside TASKS.
+    pub(super) tasks_budget: Option<TasksRowBudget>,
     pub(super) room: Option<Vec<String>>,
     /// Where the ROOM rows sit in the room's whole stream.
     pub(super) room_page: Option<ContextBoardRoomPage>,
@@ -205,6 +218,8 @@ pub(super) struct BoardParts {
 }
 
 /// Assembles every section the board renders for this caller.
+/// `tasks_budget_tok` is this render's concrete TASK-row allotment, when the
+/// caller asked for one; project/fanout lead rows ride outside it.
 pub(super) fn board_parts(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -215,6 +230,7 @@ pub(super) fn board_parts(
     reads: &SessionReadSet,
     people: &PeopleView<'_>,
     hook_pins: &[oneiron::context_board::HookPin],
+    tasks_budget_tok: Option<usize>,
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -331,7 +347,10 @@ pub(super) fn board_parts(
             })
             .map_err(|error| core_engine_error("board children failed", error))?;
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
-            let mut tasks = rows.render();
+            let mut tasks = match tasks_budget_tok {
+                None => rows.render(),
+                Some(budget) => rows.render_with_token_budget(budget),
+            };
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
             (tasks, you)
         }
@@ -344,6 +363,7 @@ pub(super) fn board_parts(
         ),
     };
     let hook_blocks = tasks.tag_hook_pins(hook_pins);
+    let tasks_budget = tasks_budget_tok.map(|budget_tok| TasksRowBudget::of(&tasks, budget_tok));
     named.extend(
         tasks
             .rows
@@ -476,6 +496,7 @@ pub(super) fn board_parts(
         you,
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
+        tasks_budget,
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
