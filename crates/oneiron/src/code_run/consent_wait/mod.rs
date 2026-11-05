@@ -42,7 +42,8 @@ pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub use self::host::CodeConsentEffectHost;
 pub(crate) use self::replay::{
     CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
-    seal_parked_code_consent_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
+    consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
+    verify_parked_code_consent,
 };
 pub(crate) use self::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
