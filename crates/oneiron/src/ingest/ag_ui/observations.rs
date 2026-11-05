@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::AgUiDecodedEvent;
 use crate::{Error, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgUiObservationKind {
     Action,
@@ -18,7 +18,7 @@ pub enum AgUiObservationKind {
 }
 
 /// JSON pointers address the whole CUSTOM event, not an assumed payload schema.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgUiCustomMapping {
     pub name: String,
