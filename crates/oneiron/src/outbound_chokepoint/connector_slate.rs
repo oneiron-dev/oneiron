@@ -49,6 +49,8 @@ enum Release {
     Spent,
     /// No press: the call waits for the owner.
     Ask,
+    /// Native send readiness changed; leave the attempt's handoff intact.
+    CampaignHold(crate::campaign::enrollment::CampaignLegHold),
 }
 
 struct Candidate {
@@ -95,6 +97,7 @@ pub(super) fn send_boundary(
     pass_proof: Option<EffectDigest>,
     now_ms: u64,
     replayed: bool,
+    campaign_node: Option<u64>,
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
     match recovery_governance(vault, record)? {
         RecoveryGovernance::Allow => Ok(None),
@@ -116,7 +119,7 @@ pub(super) fn send_boundary(
         RecoveryGovernance::NeverAllow => never_allow(vault, record, now_ms, replayed).map(Some),
         // The Gate admitted this pass only on the press it spent.
         RecoveryGovernance::AlwaysAsk if pass_proof.is_some() => Ok(None),
-        RecoveryGovernance::AlwaysAsk => always_ask(vault, record, replayed),
+        RecoveryGovernance::AlwaysAsk => always_ask(vault, record, replayed, campaign_node),
     }
 }
 
@@ -148,6 +151,7 @@ fn always_ask(
     vault: &Vault,
     record: &IntentLedgerRecord,
     replayed: bool,
+    campaign_node: Option<u64>,
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
     let candidate = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
@@ -164,6 +168,11 @@ fn always_ask(
         else {
             return Ok(Release::Ask);
         };
+        if let Some(hold) =
+            super::campaign_leg::hold_in_txn(vault, wtxn, (&current).into(), campaign_node)?
+        {
+            return Ok(Release::CampaignHold(hold));
+        }
         match setting_in_txn(vault, wtxn, record)? {
             SlateDisposition::AlwaysAsk => {}
             // A later pass stops it.
@@ -201,6 +210,9 @@ fn always_ask(
         }
     })?;
     match release {
+        Release::CampaignHold(hold) => Ok(Some(super::campaign_leg::held_result(
+            record, hold, replayed,
+        ))),
         Release::Send => Ok(None),
         Release::Spent => {
             let subject = bytes_to_hex_lower(&record.id);

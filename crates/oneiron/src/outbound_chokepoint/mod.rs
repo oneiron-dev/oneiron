@@ -5,6 +5,7 @@
 
 mod admission;
 mod budget;
+mod campaign_leg;
 mod connector_slate;
 pub(crate) mod dedupe;
 mod ordinary_slate;

@@ -253,6 +253,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
         }
         // P1-2 #4499: a campaign live retry re-proves its lifecycle under
         // this writer before its gate is re-evaluated; other effects pass through.
+        if let Some(hold) = super::campaign_leg::hold_in_txn(
+            vault,
+            &wtxn,
+            (&record).into(),
+            transport.campaign_local_node_id(),
+        )? {
+            return Ok(super::campaign_leg::held_result(&record, hold, replayed));
+        }
         crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
         let invite = super::admission::calendar_admission_in_txn(vault, &wtxn, prepared)?;
         let required_grant_id = invite
@@ -368,10 +376,26 @@ fn send_pending_with_gate<T: OutboundTransport>(
     }
     // FIX 990: the last snapshot of the key, manifest, tool setting and
     // charters before the retry permit, the dedupe touch and the send.
-    if let Some(stop) =
-        super::connector_slate::send_boundary(vault, &record, pass_proof, now_ms, replayed)?
-    {
+    if let Some(stop) = super::connector_slate::send_boundary(
+        vault,
+        &record,
+        pass_proof,
+        now_ms,
+        replayed,
+        transport.campaign_local_node_id(),
+    )? {
         return Ok(stop);
+    }
+
+    // Last observed native readiness, before the retry permit or transport.
+    // No snapshot remains open across the network send that follows.
+    if let Some(node) = transport.campaign_local_node_id() {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if let Some(hold) =
+            super::campaign_leg::hold_in_txn(vault, &txn, (&record).into(), Some(node))?
+        {
+            return Ok(super::campaign_leg::held_result(&record, hold, replayed));
+        }
     }
 
     // A definite non-delivery permits retry even without provider-native
@@ -657,6 +681,7 @@ pub(super) fn effect_result(
         ask_consent: None,
         approval_actor: None,
         paced_until: None,
+        campaign_leg: None,
     }
 }
 
@@ -695,6 +720,7 @@ pub(super) fn gate_rejection(
         ask_consent: None,
         approval_actor: None,
         paced_until: None,
+        campaign_leg: None,
     }
 }
 

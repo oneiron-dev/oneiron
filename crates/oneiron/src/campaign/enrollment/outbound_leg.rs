@@ -332,7 +332,10 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
     now_ms: u64,
 ) -> std::result::Result<EnrollmentLegDrive, IntentLedgerError> {
     let authority = OutboundBindingAuthority::for_vault(vault)?;
-    let mut transport = SenderTransport(sender);
+    let mut transport = SenderTransport {
+        sender,
+        local_node_id,
+    };
     Ok(
         match run_enrollment_outbound_leg(
             vault,
@@ -342,6 +345,23 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
             &mut transport,
             now_ms,
         )? {
+            EnrollmentOutboundLeg::Dispatched(EnrollmentLegDispatch {
+                effect:
+                    OutboundEffectResult {
+                        campaign_leg: Some(hold),
+                        ..
+                    },
+                ..
+            }) => match hold {
+                super::frozen_leg::CampaignLegHold::NotHomeNode(designation) => {
+                    EnrollmentLegDrive::NotHomeNode(designation)
+                }
+                super::frozen_leg::CampaignLegHold::NoHomeNode => EnrollmentLegDrive::NoHomeNode,
+                super::frozen_leg::CampaignLegHold::MembershipNotReady
+                | super::frozen_leg::CampaignLegHold::UnresolvableBody => {
+                    EnrollmentLegDrive::NothingOwed
+                }
+            },
             EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.paced_until {
                 // FIX 12176: a paced result sent nothing; re-arm the leg at
                 // retry_at instead of completing the attempt.
@@ -368,23 +388,30 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
 /// The host's result sender as the chokepoint's transport. The leg keeps no
 /// result body, so only the send's outcome, its remote task, and its
 /// provider wait pass through.
-struct SenderTransport<'a, S>(&'a mut S);
+struct SenderTransport<'a, S> {
+    sender: &'a mut S,
+    local_node_id: u64,
+}
 
 impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
-        self.0.send(call).outcome
+        self.sender.send(call).outcome
     }
 
     fn remote_task(&self) -> Option<RemoteTaskHandle> {
-        self.0.remote_task()
+        self.sender.remote_task()
     }
 
     fn provider_wait(&self) -> Option<ProviderWait> {
-        self.0.provider_wait()
+        self.sender.provider_wait()
     }
 
     fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
-        self.0.reported_cost()
+        self.sender.reported_cost()
+    }
+
+    fn campaign_local_node_id(&self) -> Option<u64> {
+        Some(self.local_node_id)
     }
 }
 

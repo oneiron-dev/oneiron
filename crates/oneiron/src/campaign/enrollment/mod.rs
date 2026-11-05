@@ -128,6 +128,6 @@ use crate::outbound_intent_ledger::IntentDispatchResult;
 use crate::saved_query::{EVIDENCE_HASH_LEN, MembershipCause, MembershipTransition};
 
 pub(crate) use frozen_leg::{
-    CampaignLegReadiness, FrozenCampaignLeg, admit_frozen_campaign_leg_in_txn,
+    CampaignLegCall, CampaignLegHold, FrozenCampaignLeg, admit_frozen_campaign_leg_in_txn,
     frozen_campaign_effect,
 };
