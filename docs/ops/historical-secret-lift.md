@@ -59,7 +59,8 @@ abandoned or retired) remain unknown. Booked message-stream contribution sources
 the seed's deletion, but a proposal has no stored source: once its seed row is gone, even
 a closed proposal passes as unknown. No historical source is reconstructed from a stream
 receipt, saved text or run totals.
-A parentless eval case views the content of the native attempt receipts it names.
+An eval case views the content of its directly named native attempt receipts, even when
+it also has parents. Parent lineage remains untraced.
 The lift reader resolves each actual receipt in the same transaction and uses its
 original frozen, complete read set. It does not use the case's mutable `source_rows`,
 which erasure can shrink, or treat a case id, label, actor or receipt spelling as source
@@ -68,7 +69,7 @@ Missing, malformed or source-unknown receipts add no known dependency. They and 
 labels never cancel a dependency another receipt proves. If any proven source is withheld,
 the row, its outcome, its retry and its proposal are each omitted once. On-device counts
 still include every contributor once. This is a set of known dependencies, not a claim
-that every dependency is known. Parent-derived cases, label-only sources, synthetic
+that every dependency is known. Parent lineage, label-only sources, synthetic
 sources and other untraced dependencies remain unknown. Booked sources stay durable;
 a proposal uses current case and receipt bindings and becomes unknown if those disappear.
 The same verified mapping projects pending retry counts and newly booked

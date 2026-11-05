@@ -153,8 +153,8 @@ pub(super) fn path(key: &[u8]) -> String {
 /// source is the first. A repo-mutation proposal's key is its own admitted
 /// journal claim. An LFS object's source is its live native manifest ASSET
 /// binding in this transaction. A MESSAGE continuation names its live
-/// MESSAGE. Parentless eval cases view their native receipts, whose frozen
-/// read sets establish known dependencies independently of unknown labels.
+/// MESSAGE. Eval cases' direct native receipts establish known dependencies
+/// from frozen read sets, independently of untraced parents and labels.
 /// Other formats remain unknown.
 pub(super) fn source_in_txn(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<Source> {
     let Some((decl, row_key)) = carrier_of(key) else {
