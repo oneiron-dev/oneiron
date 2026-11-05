@@ -66,13 +66,16 @@ pub struct FoldedOutput {
     pub said: Vec<FoldedSpeech>,
 }
 
-/// One speech call a folded program made: its verb and its text, as the
-/// call dispatched it.
+/// One speech call a folded program made: its verb and the bridge call that
+/// made it. The ledger keeps no words of it: the stub reads the call's text
+/// from the run's record each time it renders, with custody values masked,
+/// so a value custody learns after the fold lands is masked too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldedSpeech {
     /// `self.speak`, `self.think` or `self.express`.
     pub verb: String,
-    pub text: String,
+    /// The call's index in the run's bridge calls.
+    pub call: u64,
 }
 
 /// The bound of a fold by kind that names none: past every step, and the
@@ -240,7 +243,7 @@ impl FoldRecord {
         let kind = self.kind?;
         let output = self.outputs.iter().find(|output| output.step == seq)?;
         if kind == FoldKind::Program {
-            return Some(self.program_stub(output, with_note));
+            return self.program_stub(seq, with_note, |_| None);
         }
         let mut stub = format!("⟨{} · {} folded⟩", fold_handle(self.fold), kind.as_str());
         if with_note && let Some(note) = &self.note {
@@ -265,9 +268,18 @@ impl FoldRecord {
         Some(stub)
     }
 
-    /// A folded program's stub: comment lines, so the exec frame it stands
-    /// in still holds a program. Every text is JSON-quoted on its own line.
-    fn program_stub(&self, output: &FoldedOutput, with_note: bool) -> String {
+    /// A folded program's stub for step `seq`: comment lines, so the exec
+    /// frame it stands in still holds a program. `text_of` reads a speech
+    /// call's text (masked) from the run's record; a call it cannot read
+    /// shows its verb and call. Every text is JSON-quoted on its own line.
+    /// `None` when this fold did not fold the step.
+    pub fn program_stub(
+        &self,
+        seq: u64,
+        with_note: bool,
+        text_of: impl Fn(&FoldedSpeech) -> Option<String>,
+    ) -> Option<String> {
+        let output = self.outputs.iter().find(|output| output.step == seq)?;
         let quote = |text: &str| serde_json::to_string(text).unwrap_or_default();
         let mut lines = vec![format!(
             "⟨{} · program folded⟩ self.unfold({{fold: \"{}\"}}) brings it back",
@@ -278,7 +290,10 @@ impl FoldRecord {
             lines.push(format!("note: {}", quote(note)));
         }
         for speech in &output.said {
-            lines.push(format!("{}: {}", speech.verb, quote(&speech.text)));
+            lines.push(match text_of(speech) {
+                Some(text) => format!("{}: {}", speech.verb, quote(&text)),
+                None => format!("{} (call {})", speech.verb, speech.call),
+            });
         }
         if !output.ids.is_empty() {
             lines.push(format!(
@@ -286,10 +301,12 @@ impl FoldRecord {
                 output.ids[..output.ids.len().min(STUB_IDS)].join(", ")
             ));
         }
-        lines
-            .iter()
-            .map(|line| format!("// {line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        Some(
+            lines
+                .iter()
+                .map(|line| format!("// {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 }

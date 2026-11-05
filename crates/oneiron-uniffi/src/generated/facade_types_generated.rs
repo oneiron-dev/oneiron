@@ -68469,8 +68469,8 @@ pub enum FoldKind {
 pub struct FoldedSpeech {
     #[serde(rename = "verb")]
     pub verb: String,
-    #[serde(rename = "text")]
-    pub text: String,
+    #[serde(rename = "call")]
+    pub call: u64,
 }
 
 /// `oneiron::compaction::fold_kinds::FoldedOutput`.

@@ -8480,7 +8480,7 @@ export type FoldReply<T> = T | { error: string }
 /** `oneiron::compaction::fold_kinds::FoldKind` */
 export type FoldKind = "repl_output" | "program"
 /** `oneiron::compaction::fold_kinds::FoldedSpeech` */
-export type FoldedSpeech = { verb: string; text: string }
+export type FoldedSpeech = { verb: string; call: number }
 /** `oneiron::compaction::fold_kinds::FoldedOutput` */
 export type FoldedOutput = { step: number; handles: string[]; ids: string[]; said?: FoldedSpeech[] }
 /** `oneiron::compaction::folds::FoldDescription` */

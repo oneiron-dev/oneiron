@@ -751,10 +751,10 @@ impl EngineNativeExecutor<'_> {
     }
 }
 
-/// Each speech call step `seq` made, in order, with the text it dispatched
-/// (a hook's rewrite where one rewrote it): read from the step's own bridge
-/// calls, as its checkpoint records them. A step whose checkpoint keeps no
-/// range, or a call that did not emit, gives none.
+/// Each speech call step `seq` made, in order, by its bridge call: read from
+/// the step's own bridge calls, as its checkpoint records them. No text is
+/// kept; the stub reads it, masked, when it renders. A step whose checkpoint
+/// keeps no range, or a call that did not emit, gives none.
 fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction::FoldedSpeech> {
     let Some(range) = record
         .step_checkpoints
@@ -769,21 +769,10 @@ fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction:
         .get(range)
         .unwrap_or_default()
         .iter()
-        .filter(|call| call.emitted_speech())
-        .filter_map(|call| {
-            let rmpv::Value::Map(entries) =
-                call.rewritten_request.as_ref().unwrap_or(&call.request)
-            else {
-                return None;
-            };
-            let text = entries
-                .iter()
-                .find(|(key, _)| key.as_str() == Some("text"))
-                .and_then(|(_, value)| value.as_str())?;
-            Some(crate::compaction::FoldedSpeech {
-                verb: call.effect.as_str().to_owned(),
-                text: text.to_owned(),
-            })
+        .filter(|call| call.emitted_speech() && super::compaction::speech_call_text(call).is_some())
+        .map(|call| crate::compaction::FoldedSpeech {
+            verb: call.effect.as_str().to_owned(),
+            call: call.seq,
         })
         .collect()
 }

@@ -22087,7 +22087,7 @@ FoldReply = T | FoldReplyRefused
 FoldKind = Literal["repl_output", "program"]
 class FoldedSpeech(TypedDict):
     verb: str
-    text: str
+    call: int
 class FoldedOutput(TypedDict):
     step: int
     handles: list[str]

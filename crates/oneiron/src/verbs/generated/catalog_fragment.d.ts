@@ -371,7 +371,7 @@ declare namespace Sdk {
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
   type FoldKind = "repl_output" | "program";
-  type FoldedSpeech = { verb: string; text: string };
+  type FoldedSpeech = { verb: string; call: number };
   type FoldedOutput = { step: number; handles: string[]; ids: string[]; said?: FoldedSpeech[] };
   type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type Care = "light" | "medium" | "high" | "xhigh" | "max";

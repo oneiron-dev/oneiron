@@ -2,7 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
-use super::super::store::load_script_context;
+use super::super::store::{load_script_context, mask_known_text};
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -219,8 +219,16 @@ impl EngineNativeExecutor<'_> {
                 .folds
                 .kind_covering(crate::compaction::FoldKind::Program, seq as u64)
             {
+                // Each speech text is read from the run's record and
+                // masked at every render, never kept in the fold.
                 Some(fold) => fold
-                    .output_stub(seq as u64, noted.insert(fold.fold))
+                    .program_stub(seq as u64, noted.insert(fold.fold), |speech| {
+                        let call = record
+                            .bridge_calls
+                            .get(usize::try_from(speech.call).ok()?)?;
+                        let text = super::compaction::speech_call_text(call)?;
+                        mask_known_text(&self.storage, text).ok()
+                    })
                     .unwrap_or_default(),
                 None => load_script_context(
                     &self.storage,
