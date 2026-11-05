@@ -242,6 +242,27 @@ fn complete(
             result_ref: AttemptResultRef::new(entry.source.handle())?,
             now,
         })?;
+        match AgentDispatcher::new(vault).attach_agent_run_attribution_output(
+            attempt,
+            LEASE_OWNER,
+            &outcome.replay_record,
+            now,
+        ) {
+            Ok(Some(output)) => {
+                if let Err(error) = oneiron::skill_attribution::witness_agent_run_close(
+                    vault,
+                    attempt,
+                    LEASE_OWNER,
+                    output,
+                ) {
+                    tracing::warn!(kind = ?error.kind(), "self-settled run close was not witnessed");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "self-settled run output was not recorded");
+            }
+        }
     } else {
         // The run's durable result: the TASK's Done names it.
         let output = AgentDispatcher::new(vault).attach_agent_run_result(

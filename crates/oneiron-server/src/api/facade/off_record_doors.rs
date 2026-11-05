@@ -411,8 +411,13 @@ pub(crate) async fn vault_off_record_witness(
                     turn: input.turn,
                     summary: input.summary,
                 };
-                return owner_off_record::witness(vault, owner, &request, server.embedder.as_ref())
-                    .map_err(|error| refusal(VERB, error));
+                return owner_off_record::witness(
+                    vault,
+                    owner,
+                    &request,
+                    server.embedder_slot().as_ref(),
+                )
+                .map_err(|error| refusal(VERB, error));
             }
             Caller::Principal { who, credential } => (*who, credential),
         };
@@ -428,7 +433,7 @@ pub(crate) async fn vault_off_record_witness(
                 .map_err(|error| session_refusal(error, session_ref))?;
             // FIX 3817 (a): the turn's vector is embedded after bind, before
             // the verb, never under the witness writer.
-            let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
+            let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &input.turn);
             return memory.witness_into_session_as_member(
                 &session,
                 &input.turn,
@@ -442,7 +447,7 @@ pub(crate) async fn vault_off_record_witness(
             .map_err(|error| session_refusal(error, session_ref))?;
         // FIX 3817 (a): the turn's vector is embedded after bind, before the
         // verb, never under the witness writer.
-        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
+        let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &input.turn);
         session.witness_as_creator(&memory, &input.turn, summary, credential, turn_vector)
     })
     .await

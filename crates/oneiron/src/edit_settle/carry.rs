@@ -858,7 +858,7 @@ impl Vault {
         let key = settlement_key_parts(artifact, &held.run_ref);
         let manifest_hash = manifest_ref(&held.manifest)?;
         let (head, record) = self.with_write_txn_grouped(|wtxn| {
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
             }
@@ -870,6 +870,7 @@ impl Vault {
                 settled_at: learned_at,
                 actor_ref: Some(actor.entity_ref().to_hex()),
                 brief_ref: consent.brief_ref().map(str::to_owned),
+                grant_ref,
                 before_version: held.base_version,
                 version: Some(head.version),
                 content_hash: Some(head.content_hash),

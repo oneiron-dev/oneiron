@@ -90,6 +90,8 @@ pub struct VaultImportStageReceipt {
     pub receipt_id: [u8; 32],
     pub manifest_digest: [u8; 32],
     pub remote_update_digest: [u8; 32],
+    /// BLAKE3 of the ordered per-window admitted-update carrier, including
+    /// every destination key and its exact update bytes.
     pub admitted_update_digest: Option<[u8; 32]>,
     pub window_key: String,
     pub source: ForeignVaultImportSource,
@@ -98,7 +100,7 @@ pub struct VaultImportStageReceipt {
     pub confirmed_by: Option<EntityId>,
     pub confirmed_at_secs: Option<u64>,
     pub failure: Option<VaultImportFailure>,
-    /// The blake3 digest of the record of facet stamps a Pending receipt
+    /// The blake3 digest of the ordered per-window records of facet stamps a Pending receipt
     /// keeps (`VAULT_IMPORT_STAMPS`), the empty record included, which its confirmation
     /// checks before it holds them again. `None` on a Failed receipt and on
     /// one staged before the record existed.
@@ -108,6 +110,7 @@ pub struct VaultImportStageReceipt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedVaultImport {
     pub(crate) receipt: VaultImportStageReceipt,
+    /// The encoded ordered per-window carrier bound by the receipt's digest.
     pub(crate) admitted_update: Vec<u8>,
 }
 

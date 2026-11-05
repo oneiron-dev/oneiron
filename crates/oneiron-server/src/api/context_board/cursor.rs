@@ -6,8 +6,6 @@ use std::collections::BTreeMap;
 
 use super::super::CoreContextPackEvidence;
 
-pub(crate) const MEMORIES_CURSOR_SESSION_ID_MAX_BYTES: usize = 256;
-
 pub(crate) const MEMORIES_CURSOR_LAST_RESULT_IDS_MAX: usize = 256;
 
 pub(crate) const SHARED_SESSION_SCOPE_IDS: &[&str] =

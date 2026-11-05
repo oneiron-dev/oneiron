@@ -270,7 +270,9 @@ pub fn fork_executor_run(
         model_locality: body.model_locality,
         seat_effort: body.seat_effort,
         global_tier: body.global_tier,
-        determinism: prefix.determinism,
+        determinism: prefix
+            .determinism
+            .ok_or(ContinuationRefusal::SourceMissing)?,
         limits: EngineExecutorLimits {
             soft_steps: body.soft_steps,
         },
@@ -345,7 +347,7 @@ impl ChildSeed<'_> {
         storage: &ExecutorStorage<'_>,
         child: &CodeRunReplayRecord,
     ) -> Result<(), ContinuationRefusal> {
-        if child.determinism != self.config.determinism {
+        if child.determinism != Some(self.config.determinism) {
             return Err(ContinuationRefusal::Occupied);
         }
         match validate_executor_config_marker(

@@ -217,7 +217,7 @@ side_tables! {
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored [accepts: crate::store::send_receipt_attempt_audit_accepts_masked];
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason) and its
@@ -367,7 +367,7 @@ side_tables! {
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
     SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
-        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+        [refs: CALLABLE_CASE_REFS] [accepts: crate::skill::skill_callable_case_accepts_masked] => crate::skill::erase_callable_case_actor_in_txn;
     /// The frozen callable cases by what they were made from, so an erase reads only the cases
     /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
     /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.

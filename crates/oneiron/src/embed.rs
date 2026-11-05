@@ -45,6 +45,7 @@ pub(crate) use repo_projection::{
 };
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
+pub(crate) use space::checkpoint;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings, MediaRefused,

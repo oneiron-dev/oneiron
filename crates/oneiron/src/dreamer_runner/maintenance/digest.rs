@@ -17,6 +17,7 @@ mod after_notice;
 mod assembly;
 mod pending;
 mod policy;
+pub(super) mod policy_author;
 mod private_sources;
 mod urgent;
 mod view;
@@ -78,7 +79,7 @@ pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
 pub const JUDGE_ASK_GROUP: &str = "coach.judge_ask";
 /// The derived group the recipient's eval label asks render under.
 pub const EVAL_LABEL_ASK_GROUP: &str = "coach.eval_label_ask";
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
     pub period_secs: u64,
@@ -87,7 +88,7 @@ pub struct ProactivityCadence {
 }
 /// Agent-authored, owner-confirmed presentation row. Templates and voice are
 /// data, not engine-owned prompt or persona text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityPresentation {
     /// Maps the derived facet group to a display group.
@@ -139,7 +140,7 @@ impl ProactivityPresentation {
 /// Typed request payload for the existing `vault.claims.put` agent verb.
 /// The host may build it from a chat request; no natural-language parser or
 /// product persona is embedded in the engine.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityPolicyRequest {
     pub cadence: ProactivityCadence,

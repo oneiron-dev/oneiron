@@ -511,6 +511,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// after that proof. The standalone loopback preview authority is unchanged,
 /// and this version stays 3.
 ///
+/// Native private-preview routing (FIX 292,
+/// [`PreviewRouteRequest`](crate::PreviewRouteRequest)): the managed
+/// `--preview-socket` flag and its held registration/data listener carry a
+/// separate build floor, at the engine revision they merged in. A supervisor
+/// passes the flag only to installed engines at or after that floor, and
+/// selects its fixed per-vault socket only for an explicitly configured preview
+/// domain. `preview_origin_revision = 1` proves the label codec above, not this
+/// argv flag or listener. The route ack binds the exact manifest and current
+/// generation; its held connection retires hosted ingress without revoking the
+/// standalone loopback lease. This native surface does not extend the vault-VM
+/// typed ledger carrier, and this version stays 3.
+///
 /// Managed widen body transcripts (FIX 5767,
 /// [`ManagedWidenTranscript`](crate::ManagedWidenTranscript)): a body spooled
 /// and counted first is hashed in its exact pieces under the widen action's

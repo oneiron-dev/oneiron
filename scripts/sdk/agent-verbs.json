@@ -3960,6 +3960,22 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.fit.set",
+      "description": "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert.",
+      "input": "SkillFitSetRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_fit_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fit.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",
@@ -5701,6 +5717,23 @@
       "openapi": true
     },
     {
+      "name": "vault.sync.retained_work.wait.set",
+      "description": "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.",
+      "input": "crate::task_verb::sdk::RetainedWorkWaitSetRequest",
+      "output": "u64",
+      "call": "crate::task_verb::sdk::set_retained_work_wait_secs_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.retained_work.wait.set\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.burst.ingress",
       "description": "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt.",
       "input": "crate::task_verb::sdk::ConnectDelivery",
@@ -6763,6 +6796,22 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.outbound_calls.request.erase",
+      "description": "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting.",
+      "input": "OutboundCallRequestEraseRequest",
+      "output": "crate::task_verb::sdk::OutboundCallRequestErased",
+      "call": "crate::task_verb::sdk::erase_outbound_call_request_as_owner(memory.vault(), &memory.embedded_owner(\"vault.outbound_calls.request.erase\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },

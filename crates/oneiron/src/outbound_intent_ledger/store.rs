@@ -27,6 +27,11 @@ pub(super) use self::validate::validate_record;
 /// Key: hash32 (the intent id).
 const LEDGER: SideTable<[u8; 32], IntentLedgerRecord, Raw> =
     SideTable::new(&side_table::OUTBOUND_INTENT_LEDGER_RECORD);
+/// Whether a masked copy of a `OUTBOUND_INTENT_LEDGER_RECORD` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn outbound_intent_ledger_record_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<IntentLedgerRecord, Raw>(bytes)
+}
 
 /// Unique logical call -> immutable intent id, committed with the Pending row.
 /// Key: id16(attempt) + u64be(call seq).

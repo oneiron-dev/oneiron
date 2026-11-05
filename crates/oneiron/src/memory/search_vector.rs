@@ -117,7 +117,8 @@ impl Memory<'_> {
         input: &VectorSearchRequest,
     ) -> MemoryResult<ScopedReadResult<VectorSearchResult>> {
         input.validate()?;
-        let (mut limit, mut limit_clamped) = caps::clamp_search_limit(input.limit);
+        let mut limit = input.limit;
+        let mut limit_clamped = false;
         let skip_rescore = input.lane == VectorSearchLane::VoiceHot;
         if skip_rescore {
             let reduced =

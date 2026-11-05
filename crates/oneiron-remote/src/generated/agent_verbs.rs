@@ -777,6 +777,9 @@ impl OneironClient {
                 "vault.skills.code_auto_install.set" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
+                "vault.skills.fit.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
@@ -1134,6 +1137,9 @@ impl OneironClient {
                 "vault.federation.burst.policy.set" => remote_agent_verb_output::<
                     oneiron::sync::federation_burst::FederationBurstPolicy,
                 >(client, verb, &input),
+                "vault.sync.retained_work.wait.set" => {
+                    remote_agent_verb_output::<u64>(client, verb, &input)
+                }
                 "vault.federation.burst.ingress" => remote_agent_verb_output::<
                     oneiron::sync::federation_burst::FederationBurstReceipt,
                 >(client, verb, &input),
@@ -1349,6 +1355,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.records.erase_sweep" => remote_agent_verb_output::<
                     Option<oneiron::memory::erase_sweep::RecordEraseSweep>,
+                >(client, verb, &input),
+                "vault.outbound_calls.request.erase" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OutboundCallRequestErased,
                 >(client, verb, &input),
                 "vault.research.create_child" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResearchChildReceipt,
@@ -6879,6 +6888,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.skills.code_auto_install.set", value)
     }
+    pub fn vault_skills_fit_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillFitSetRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.fit.set", value)
+    }
     pub fn vault_skills_permissions_approve(
         &self,
         input: &oneiron::task_verb::sdk::HubSkillPermissionRequest,
@@ -8287,6 +8308,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.federation.burst.policy.set", value)
     }
+    pub fn vault_sync_retained_work_wait_set(
+        &self,
+        input: &oneiron::task_verb::sdk::RetainedWorkWaitSetRequest,
+    ) -> Result<u64, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.retained_work.wait.set", value)
+    }
     pub fn vault_federation_burst_ingress(
         &self,
         input: &oneiron::task_verb::sdk::ConnectDelivery,
@@ -9131,6 +9164,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.records.erase_sweep", value)
+    }
+    pub fn vault_outbound_calls_request_erase(
+        &self,
+        input: &oneiron::task_verb::sdk::OutboundCallRequestEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::OutboundCallRequestErased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.outbound_calls.request.erase", value)
     }
     pub fn vault_research_create_child(
         &self,

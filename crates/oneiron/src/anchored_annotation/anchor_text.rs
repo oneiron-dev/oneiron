@@ -16,12 +16,13 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_docedit::xlsx_body::read_xlsx_cells;
 use oneiron_xlsx_formula::cell_display_text;
 
-use super::model::{A1Range, ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
+use super::model::{ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
 
-/// Cells joined in a range snapshot: across a row, then down rows.
-const CELL_SEPARATOR: char = '\t';
-const ROW_SEPARATOR: char = '\n';
+mod xlsx;
+
+use xlsx::{find_in_sheets, xlsx_range_text};
+
 /// Paragraphs joined in a shape's text.
 const PARAGRAPH_SEPARATOR: char = '\n';
 /// The most places one reattach offer lists.
@@ -519,141 +520,6 @@ fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
         }
     }
     out
-}
-
-/// Each sheet's cells that `wanted` picks, as a person sees them (a
-/// formula's saved result under the cell's number format), in workbook
-/// order. The workbook is read under the live package ceilings. A resource
-/// refusal is the engine's error (FIX 10587), never `None`.
-fn sheet_texts(
-    bytes: &[u8],
-    limits: &TextLimits,
-    wanted: &dyn Fn(&str, &CellRef) -> bool,
-) -> crate::Result<Option<Vec<(String, BTreeMap<CellRef, String>)>>> {
-    let book = match read_xlsx_cells(
-        bytes,
-        limits.package,
-        &crate::office_body::document_resources(),
-    ) {
-        Ok(book) => book,
-        Err(error) => {
-            if let Some(refusal) = error.resource() {
-                return Err(crate::office_body::document_refused(refusal));
-            }
-            return Ok(None);
-        }
-    };
-    Ok(Some(
-        book.sheets
-            .iter()
-            .map(|sheet| {
-                let cells = sheet
-                    .cells
-                    .iter()
-                    .map(|cell| {
-                        let at = CellRef {
-                            col: cell.col,
-                            row: cell.row,
-                        };
-                        (at, cell)
-                    })
-                    .filter(|(at, _)| wanted(sheet.name.as_str(), at))
-                    .map(|(at, cell)| (at, cell_display_text(&book, cell)))
-                    .collect();
-                (sheet.name.clone(), cells)
-            })
-            .collect(),
-    ))
-}
-
-fn xlsx_range_text(
-    bytes: &[u8],
-    sheet: &str,
-    range: A1Range,
-    limits: &TextLimits,
-) -> crate::Result<Option<String>> {
-    let Some(sheets) = sheet_texts(bytes, limits, &|name, cell| {
-        name == sheet && in_range(cell, range)
-    })?
-    else {
-        return Ok(None);
-    };
-    let Some((_, cells)) = sheets.into_iter().find(|(name, _)| name == sheet) else {
-        return Ok(None);
-    };
-    let rows: Vec<String> = (range.row_start..=range.row_end)
-        .map(|row| {
-            (range.col_start..=range.col_end)
-                .map(|col| {
-                    cells
-                        .get(&CellRef { col, row })
-                        .cloned()
-                        .unwrap_or_default()
-                })
-                .collect::<Vec<_>>()
-                .join(&CELL_SEPARATOR.to_string())
-        })
-        .collect();
-    let text = rows.join(&ROW_SEPARATOR.to_string());
-    Ok((!text.trim().is_empty()).then_some(text))
-}
-
-fn in_range(cell: &CellRef, range: A1Range) -> bool {
-    (range.col_start..=range.col_end).contains(&cell.col)
-        && (range.row_start..=range.row_end).contains(&cell.row)
-}
-
-/// Same-shaped ranges whose cells read exactly as the snapshot. A resource
-/// refusal is the engine's error (FIX 10587), never an empty offer list.
-fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> crate::Result<Vec<Locator>> {
-    let rows: Vec<Vec<&str>> = text
-        .split(ROW_SEPARATOR)
-        .map(|row| row.split(CELL_SEPARATOR).collect())
-        .collect();
-    let height = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-    let width = u32::try_from(rows.first().map_or(0, Vec::len)).unwrap_or(u32::MAX);
-    if height == 0 || width == 0 || rows.iter().any(|row| row.len() != width as usize) {
-        return Ok(Vec::new());
-    }
-    let Some(sheets) = sheet_texts(bytes, limits, &|_, _| true)? else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    for (sheet, cells) in sheets {
-        for (corner, value) in &cells {
-            if value != rows[0][0] {
-                continue;
-            }
-            let matches = (0..height).all(|dy| {
-                (0..width).all(|dx| {
-                    let cell = CellRef {
-                        col: corner.col + dx,
-                        row: corner.row + dy,
-                    };
-                    cells.get(&cell).map(String::as_str).unwrap_or_default()
-                        == rows[dy as usize][dx as usize]
-                })
-            });
-            if !matches {
-                continue;
-            }
-            if let Some(range) = A1Range::new(
-                corner.col,
-                corner.col + width - 1,
-                corner.row,
-                corner.row + height - 1,
-            ) {
-                out.push(Locator::Xlsx {
-                    sheet: sheet.clone(),
-                    range,
-                });
-                if out.len() >= MAX_OFFERS {
-                    return Ok(out);
-                }
-            }
-        }
-    }
-    Ok(out)
 }
 
 /// The units the existing office readers can address, in document order.

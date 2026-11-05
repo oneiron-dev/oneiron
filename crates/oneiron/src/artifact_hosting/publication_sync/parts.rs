@@ -15,7 +15,9 @@
 //! and applies the publication only once every part is there and the whole
 //! hashes to the digest every part names. Only that complete publication is
 //! answered, with the 33-byte receipt of digest and outcome; no part is
-//! acknowledged on its own. A change's first part replaces a transfer that
+//! acknowledged on its own. A socket's owner-gate denial may instead refuse
+//! a part immediately, echoing its supplied digest without keeping or
+//! settling any transfer. A change's first part replaces a transfer that
 //! did not finish; a later part never starts or revives one, and a settled
 //! transfer sent again is answered with its receipt, never applied again.
 //!
@@ -280,6 +282,20 @@ pub(crate) enum ArtifactPublicationStep {
 }
 
 impl Vault {
+    /// Refuses a part at the socket's owner gate without reading or changing
+    /// publication state. The receipt echoes only the supplied whole digest;
+    /// an unreadable part has no receipt, as on the admitted import path.
+    pub fn refused_artifact_publication_receipt(
+        entity: EntityId,
+        payload: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(part) = Envelope::parse(payload) else {
+            return Ok(None);
+        };
+        publication_receipt_frame(entity, part.digest, ArtifactPublicationOutcome::Refused)
+            .map(Some)
+    }
+
     /// The next part this device owes the sync server: the first outbox key
     /// after the cursor's, wrapping once, with a round under way, a change
     /// not spooled yet, or a spooled one `due` to go again. One step tries

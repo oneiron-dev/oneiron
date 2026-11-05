@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1276 code-mode rows (1236 host rows, 40 run rows), 4517 declarations.
-// Replies: 1091 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1279 code-mode rows (1239 host rows, 40 run rows), 4523 declarations.
+// Replies: 1094 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -1091,6 +1091,8 @@ declare namespace Sdk {
   type SkillLibraryForkRequest = { parent: EntityId; entity?: EntityId | null; skill_id: string };
   type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
   type SkillCodeAutoInstallRequest = { enabled: boolean };
+  type SkillFitChoice = "rule_fit" | "owner_asked";
+  type SkillFitSetRequest = { setting: SkillFitChoice };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
   type SkillOptimizeStartRequest = { skill?: EntityId | null; resident?: EntityId | null; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type SkillGovernanceView = { entity: EntityId; skill_id: string; version: string; lifecycle: SkillLibraryLifecycle; verdict: string; tier?: string | null; protected: boolean; optimizable: boolean };
@@ -1440,6 +1442,8 @@ declare namespace Sdk {
   type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
+  type RetainedWorkWaitSetRequest = { queue: RetainedWorkQueue; secs?: number | null };
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
   type ConnectDelivery = { body: ConnectWindow; signature: string };
   type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
@@ -1660,6 +1664,8 @@ declare namespace Sdk {
   type RecordEraseSweepRequest = { receipt_ref: string };
   type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null };
   type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
+  type OutboundCallRequestEraseRequest = { attempt: EntityId; call_seq: number };
+  type OutboundCallRequestErased = { erased: boolean };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -2425,10 +2431,10 @@ declare namespace Sdk {
   type GraphFsPathRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null };
   type GraphFsKind = "directory" | "file" | "symlink" | "cursor";
   type GraphFsEntryView = { name: string; kind: GraphFsKind; target?: string | null; cursor?: string | null; byte_len?: number | null };
-  type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null };
+  type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null; read_receipt?: ScopedReadReceipt | null };
   type GraphFsEncoding = "utf8" | "base64";
   type GraphFsPlan = "pushdown" | "walk";
-  type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan };
+  type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan; read_receipt?: ScopedReadReceipt | null };
   type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string };
   type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null };
   type GraphFsLsRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; by_time?: boolean };
@@ -6654,6 +6660,12 @@ declare const vault: Sdk.VaultHost & {
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
   };
+  outbound_calls: {
+    request: {
+      /** The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting. */
+      erase(input: Sdk.OutboundCallRequestEraseRequest): Promise<Sdk.OutboundCallRequestErased | StoredResult>;
+    };
+  };
   outbox: {
     diverged: {
       /** The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn. */
@@ -7421,6 +7433,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
     convert(input: Sdk.SkillConvertRequest): Promise<Sdk.SkillConvertReceipt | StoredResult>;
+    fit: {
+      /** The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert. */
+      set(input: Sdk.SkillFitSetRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
     /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
     fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
@@ -7552,6 +7568,14 @@ declare const vault: Sdk.VaultHost & {
     mint(input: Sdk.SupportGrantMintRequest): Promise<Sdk.SupportGrantMintAnswer | StoredResult>;
     /** The owner revokes one support grant; what support already read is not recalled. */
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
+  };
+  sync: {
+    retained_work: {
+      wait: {
+        /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
+        set(input: Sdk.RetainedWorkWaitSetRequest): Promise<number | StoredResult>;
+      };
+    };
   };
   tagging: {
     /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt. */

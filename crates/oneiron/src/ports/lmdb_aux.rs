@@ -195,6 +195,35 @@ fn list_changes(
     }
     Ok(result)
 }
+
+impl Vault {
+    /// [`BlobStore::port_blob_get`] with its file-plane bytes admitted before
+    /// they allocate: `admit` runs after the manifest admits, before the file
+    /// reads, and its guard rides with the bytes. Type and hash checks stay.
+    pub(crate) fn blob_get_with_file_admission<G, E>(
+        &self,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(Vec<u8>, Option<G>)>, super::BodyReadError<E>> {
+        let id = blob_artifact_asset_entity_id(hash)?;
+        let Some(pair) =
+            self.live_entity_in_txn_with_file_admission(&self.store, txn, &id, admit)?
+        else {
+            return Ok(None);
+        };
+        if pair.0.entity_type != crate::registry::ENTITY_TYPE_ASSET
+            || blake3::hash(&pair.0.body).as_bytes() != hash
+        {
+            return Err(super::BodyReadError::Store(Error::CorruptedIndex(
+                "blob content hash",
+            )));
+        }
+        let (row, guard) = pair;
+        Ok(Some((row.body, guard)))
+    }
+}
+
 impl BlobStore for Vault {
     fn port_blob_put(
         &self,
@@ -225,16 +254,12 @@ impl BlobStore for Vault {
         Ok(hash)
     }
     fn port_blob_get(&self, txn: &RoTxn<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
-        let id = blob_artifact_asset_entity_id(hash)?;
-        let Some(row) = self.port_entity_get(txn, &id)? else {
-            return Ok(None);
-        };
-        if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
-            || blake3::hash(&row.body).as_bytes() != hash
-        {
-            return Err(Error::CorruptedIndex("blob content hash"));
+        match self.blob_get_with_file_admission(txn, hash, |_| Ok::<(), Error>(())) {
+            Ok(Some((bytes, _guard))) => Ok(Some(bytes)),
+            Ok(None) => Ok(None),
+            Err(super::BodyReadError::Store(error)) => Err(error),
+            Err(super::BodyReadError::Admission(error)) => Err(error),
         }
-        Ok(Some(row.body))
     }
     /// FIX 3677: the body streams into the body directory, and a long one
     /// the asset plane files is bound as its ASSET's body file, under an

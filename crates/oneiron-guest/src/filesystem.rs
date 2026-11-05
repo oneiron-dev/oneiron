@@ -8,7 +8,7 @@ use oneiron_sandbox_contract::{MAX_WORKSPACE_DIRECTORIES, WorkspacePath, Workspa
 use std::{
     ffi::{CStr, CString},
     fs::File,
-    io::{Read, Write},
+    io::Read,
     os::{
         fd::{AsRawFd, FromRawFd, IntoRawFd},
         unix::{ffi::OsStrExt, fs::MetadataExt},
@@ -25,11 +25,11 @@ pub(crate) fn virtual_relative(path: &str) -> Result<&str> {
 /// Checks a file set against the shared tree rules and returns its shape.
 pub(crate) fn validate_files(files: &Snapshot) -> Result<WorkspaceShape> {
     let mut shape = WorkspaceShape::new();
-    for (path, bytes) in files {
+    for (path, len) in files {
         let checked =
             WorkspacePath::parse(path).map_err(|error| Error::Filesystem(error.reason()))?;
         shape
-            .add_file(&checked, bytes.len())
+            .add_file(&checked, *len)
             .map_err(|error| Error::Filesystem(error.reason()))?;
     }
     Ok(shape)
@@ -57,29 +57,16 @@ impl Workspace {
         Ok(Self { root })
     }
 
-    pub(crate) fn seed(&self, files: &Snapshot) -> Result<()> {
-        validate_files(files)?;
-        for (path, bytes) in files {
-            self.write(path, bytes, true)?;
-        }
-        Ok(())
+    /// Creates one fresh regular seed file through the checked descriptor tree.
+    /// The protocol writes its bounded chunks before untrusted execution starts.
+    pub(crate) fn create_seed(&self, path: &str) -> Result<File> {
+        let (parent, name) = self.parent(path, true)?;
+        open_regular(&parent, &name, true, true)
     }
 
     pub(crate) fn read(&self, path: &str) -> Result<Vec<u8>> {
         let (parent, name) = self.parent(path, false)?;
         read_regular(open_regular(&parent, &name, false, false)?)
-    }
-
-    fn write(&self, path: &str, bytes: &[u8], exclusive: bool) -> Result<()> {
-        if bytes.len() > MAX_FILE {
-            return Err(Error::Filesystem("write byte budget"));
-        }
-        let (parent, name) = self.parent(path, true)?;
-        let mut file = open_regular(&parent, &name, true, exclusive)?;
-        // Do not truncate until the opened descriptor itself passes the check.
-        file.set_len(0)?;
-        file.write_all(bytes)?;
-        Ok(())
     }
 
     fn parent(&self, path: &str, create: bool) -> Result<(File, CString)> {
@@ -120,11 +107,12 @@ impl Workspace {
                     .add_directory(&checked)
                     .map_err(|error| Error::Filesystem(error.reason()))?;
             } else {
-                let contents = read_regular(file)?;
+                let len = usize::try_from(file.metadata()?.len())
+                    .map_err(|_| Error::Filesystem("snapshot length overflow"))?;
                 shape
-                    .add_file(&checked, contents.len())
+                    .add_file(&checked, len)
                     .map_err(|error| Error::Filesystem(error.reason()))?;
-                files.insert(path, contents);
+                files.insert(path, len);
             }
             Ok(())
         })?;

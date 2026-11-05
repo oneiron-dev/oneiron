@@ -24,8 +24,8 @@ pub const LFS_POINTER_SIZE_CUTOFF: u64 = 1024;
 pub struct LfsPointerIntent {
     /// The repository the pointer landed in.
     pub repo_id: EntityId,
-    /// The repository-relative path of the pointer file.
-    pub path: String,
+    /// The repository-relative path bytes of the pointer file.
+    pub path: Vec<u8>,
     /// The object id the pointer names.
     pub oid: LfsOid,
     /// The byte length the pointer declares.
@@ -40,8 +40,8 @@ pub struct LfsPointerIntent {
 /// carries the first half so the second half is added exactly once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LfsPushedPointer {
-    /// The repository-relative path of the pointer file.
-    pub path: String,
+    /// The repository-relative path bytes of the pointer file.
+    pub path: Vec<u8>,
     /// The object id the pointer names.
     pub oid: LfsOid,
     /// The byte length the pointer declares.
@@ -64,7 +64,7 @@ impl LfsPushedPointer {
     /// `content` is the blob's bytes, split here on `\n`; a blank line, the
     /// trailing newline's included, is no field.
     #[must_use]
-    pub fn from_pointer_content(path: &str, content: &[u8]) -> Option<Self> {
+    pub fn from_pointer_content(path: impl AsRef<[u8]>, content: &[u8]) -> Option<Self> {
         let mut oid = None;
         let mut size_bytes = None;
         let mut fields = 0_usize;
@@ -88,7 +88,7 @@ impl LfsPushedPointer {
             return None;
         }
         Some(Self {
-            path: path.to_owned(),
+            path: path.as_ref().to_vec(),
             oid: oid?,
             size_bytes: size_bytes?,
         })

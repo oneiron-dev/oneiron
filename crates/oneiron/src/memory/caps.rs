@@ -22,7 +22,7 @@ pub use crate::request_limits::{
     MAX_CODEBASE_FILES, MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES,
     MAX_RECALL_DEADLINE_MS, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT,
     check_as_of, check_batch_len, check_blob_bytes, check_deadline_ms, check_deadline_ms_number,
-    check_dimensions, check_limit, check_limit_nonzero, check_payload_bytes, check_query,
+    check_dimensions, check_limit_nonzero, check_payload_bytes, check_query,
     check_token_budget_number, check_unix_seconds, clamp_search_limit,
 };
 

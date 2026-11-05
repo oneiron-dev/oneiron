@@ -107,7 +107,8 @@ pub(crate) async fn ai_anonymous_chat(
     }
 
     let target = AnonymousChatTarget::from(request.target);
-    let (model_request, offer) = match bind_target(&server, target, request.model.as_ref()) {
+    let (model_request, offer, worker) = match bind_target(&server, target, request.model.as_ref())
+    {
         Ok(binding) => binding,
         Err(_) => {
             return Err(ChatRefusal(
@@ -147,6 +148,7 @@ pub(crate) async fn ai_anonymous_chat(
         target,
         request: model_request,
         offer,
+        worker,
         budget: private_budget(server.ai.chat_settings().turn_budget_units),
     };
     let policy_backend = PolicyBackend {
@@ -221,6 +223,7 @@ struct AnonymousChatResponder<'a> {
     target: AnonymousChatTarget,
     request: LlmRequest,
     offer: ServedOffer,
+    worker: Option<oneiron_driver::InferenceWorker>,
     budget: BudgetGuard,
 }
 
@@ -260,9 +263,14 @@ impl Responder for AnonymousChatResponder<'_> {
                     text: text.to_owned(),
                 }],
             });
-            let response = generate_private(request, self.offer.clone(), self.budget.clone())
-                .await
-                .map_err(|_| oneiron::Error::InvalidConfig("anonymous model call failed".into()))?;
+            let response = generate_private(
+                request,
+                self.offer.clone(),
+                self.worker.clone(),
+                self.budget.clone(),
+            )
+            .await
+            .map_err(|_| oneiron::Error::InvalidConfig("anonymous model call failed".into()))?;
             Ok(response
                 .message
                 .content
@@ -280,7 +288,11 @@ fn bind_target(
     server: &SyncServer,
     target: AnonymousChatTarget,
     model: Option<&ModelId>,
-) -> oneiron::Result<(LlmRequest, ServedOffer)> {
+) -> oneiron::Result<(
+    LlmRequest,
+    ServedOffer,
+    Option<oneiron_driver::InferenceWorker>,
+)> {
     let unavailable = || oneiron::Error::InvalidConfig("anonymous model is not configured".into());
     let (locality, ladder) = match target {
         AnonymousChatTarget::HouseMind => server
@@ -363,10 +375,11 @@ impl LlmBackend for PolicyBackend<'_> {
                 .ai
                 .admit_role(&self.server.vault, ModelRole::Checker, request)
                 .map_err(|_| FatalLlmError::InvalidRequest)?;
-            let (request, offer) = call.ladder.anonymous_call(call.request, false)?;
+            let (request, offer, worker) = call.ladder.anonymous_call(call.request, false)?;
             generate_private(
                 request,
                 offer,
+                worker,
                 private_budget(self.server.ai.chat_settings().turn_budget_units),
             )
             .await
@@ -389,8 +402,24 @@ impl RunReceiptSink for DiscardReceipts {
 async fn generate_private(
     request: LlmRequest,
     offer: ServedOffer,
+    worker: Option<oneiron_driver::InferenceWorker>,
     budget: BudgetGuard,
 ) -> LlmResult<LlmResponse> {
+    // FIX 9199: hold the selected rung's exact worker before admission
+    // through settlement, as `hold_worker` does; never re-resolve.
+    let _lease: Option<oneiron_driver::WorkerLease> = match worker {
+        None => None,
+        Some(worker) => match worker.acquire().await {
+            Ok(lease) => {
+                if worker.admission_stopped() {
+                    drop(lease);
+                    return Err(oneiron::RetryableLlmError::DeviceAdmissionStopped.into());
+                }
+                Some(lease)
+            }
+            Err(_) => return Err(oneiron::RetryableLlmError::StreamCut.into()),
+        },
+    };
     let run =
         crate::models::undeclared_run("anonymous-chat", budget, None, Arc::new(DiscardReceipts));
     let call = RunCall {

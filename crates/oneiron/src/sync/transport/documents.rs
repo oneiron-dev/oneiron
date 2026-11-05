@@ -22,6 +22,43 @@ pub struct DocumentFrame<'a> {
     pub payload: &'a [u8],
 }
 
+/// The initiating operation of a nonterminal document open wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DocumentWaitedOut {
+    Update = document_sub_tags::UPDATE,
+    Request = document_sub_tags::REQUEST,
+}
+
+impl TryFrom<u8> for DocumentWaitedOut {
+    type Error = TransportError;
+
+    fn try_from(kind: u8) -> Result<Self, Self::Error> {
+        match kind {
+            document_sub_tags::UPDATE => Ok(Self::Update),
+            document_sub_tags::REQUEST => Ok(Self::Request),
+            _ => Err(TransportError::InvalidPayload(
+                "invalid document wait initiator",
+            )),
+        }
+    }
+}
+
+/// No body, vector, acknowledgement or settlement accompanies this answer.
+pub fn encode_document_waited_out(entity: EntityId, waited: DocumentWaitedOut) -> EncodedFrame {
+    encode_document(entity, document_sub_tags::WAITED_OUT, &[waited as u8])
+}
+
+/// Exactly one initiating-kind byte; all other payload shapes are invalid.
+pub fn decode_document_waited_out(payload: &[u8]) -> Result<DocumentWaitedOut, TransportError> {
+    let [kind] = payload else {
+        return Err(TransportError::InvalidPayload(
+            "invalid document wait payload",
+        ));
+    };
+    DocumentWaitedOut::try_from(*kind)
+}
+
 pub fn encode_document(entity: EntityId, kind: u8, payload: &[u8]) -> EncodedFrame {
     let result = (|| {
         checked_encoded_frame_len(18, payload.len())?;
@@ -60,7 +97,8 @@ fn validate_kind(kind: u8) -> Result<(), TransportError> {
         | document_sub_tags::NOTE_OPS
         | document_sub_tags::NOTE_RECEIPT
         | document_sub_tags::ARTIFACT_PUBLICATION
-        | document_sub_tags::ARTIFACT_RECEIPT => Ok(()),
+        | document_sub_tags::ARTIFACT_RECEIPT
+        | document_sub_tags::WAITED_OUT => Ok(()),
         _ => Err(TransportError::InvalidPayload("unknown document kind")),
     }
 }

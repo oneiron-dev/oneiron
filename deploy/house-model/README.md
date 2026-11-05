@@ -164,6 +164,8 @@ commit, the CMake flags and the binary's SHA-256. Before each launch,
 - hashes every GGUF part the launch loads (target and draft, each part of a
   split GGUF), in full, at every launch, and the binary;
 - reads the target's typed tokenizer metadata and its chat templates;
+- reads the target's observed architecture facts into the manifest's
+  optional `architecture` section (below);
 - records the launch's arguments, every `LLAMA_ARG_*` variable by name and
   value (one that may hold a credential, by its SHA-256) and any llama.cpp
   `config.ini` by its SHA-256 (with one present, the `model`, `tokenizer`
@@ -187,6 +189,22 @@ digest, epoch and configured model, and puts its digests into the record.
 A launch whose identity cannot be prepared (an unwritable directory, an
 unreadable file, a `config.ini` that sets an alias) starts as before: no
 alias, no manifest, and its records name only the reported build.
+
+The manifest's optional top-level `architecture` section carries the
+target's observed shape facts only: the `general.architecture` string and,
+for exactly that observed architecture, the scalar `block_count`,
+`attention.head_count_kv`, `embedding_length` and `attention.head_count`
+counts (llama.cpp `d81235049384534c167caea52b85a694f6103d14` vocabulary:
+`general.architecture`, `{arch}.block_count`,
+`{arch}.attention.head_count_kv`, `{arch}.embedding_length`,
+`{arch}.attention.head_count`; the name is a `STRING`, the counts scalar
+`UINT32`). A fact with the wrong type, an array where a scalar belongs, a
+missing key or an undecodable name is left out, and with a `config.ini`
+present the section stays absent, as `model` does; unknown facts are only
+missing evidence, never a refused answer. The section rides inside the same
+manifest bytes, so the alias digest, epoch and configured model bind it. It
+is not the effective cache dtype, the compute bytes, or a usable admission
+bound.
 
 **EXL3.** `weights_manifest.py prepare` lists every `*.safetensors` shard of
 the target with its size and SHA-256 (above). At each launch the server

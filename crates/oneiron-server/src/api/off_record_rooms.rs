@@ -364,7 +364,7 @@ pub(crate) async fn room_witness(
         let session = bind(vault, room, &request.session_ref, actor)?;
         // FIX 3817 (a): the turn's vector is embedded before the verb, on
         // this blocking thread, never under the witness writer.
-        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &request.turn);
+        let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &request.turn);
         vault
             .memory(actor, class)
             .at(locality)

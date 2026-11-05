@@ -11,7 +11,7 @@
 use heed::RoTxn;
 
 use super::{
-    RepoDerivedOwner, RepoDerivedReady, is_storage_error, pending_in, put_ready_in_txn,
+    RepoDerivedOwner, RepoDerivedReady, copy_in, is_storage_error, pending_in, put_ready_in_txn,
     republish_in_txn,
 };
 use crate::Vault;
@@ -25,6 +25,7 @@ use crate::origin::secret_projection::index::{
     repo_derived_index_sources_in,
 };
 use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
 use crate::settings::ReadDestination;
 
 /// A host model that writes the text standing in for one a model derived
@@ -282,8 +283,17 @@ fn source_copies_in(
         let Some(row) = vault.store.port_entity_record(txn, &source.id)? else {
             continue;
         };
+        let logical;
+        let body = match crate::store::asset_file_in_txn(&vault.store, txn, &source.id, &row.body)?
+        {
+            Some(manifest) => {
+                logical = vault.asset_file_body(txn, &manifest)?;
+                logical.as_slice()
+            }
+            None => row.body.as_slice(),
+        };
         if let Some(blob) = marks.source_of(&source.id) {
-            let input = marks.source_input_in_txn(vault, txn, &blob, row.body)?;
+            let input = marks.source_input_in_txn(vault, txn, &blob, body.to_vec())?;
             copies.push(if input.opaque() {
                 SourceCopy::placeholder(source.id)
             } else {
@@ -291,8 +301,35 @@ fn source_copies_in(
             });
             continue;
         }
+        if matches!(
+            row.entity_type,
+            ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY
+        ) {
+            let text =
+                match repo_derived_index_sources_in(vault, &vault.store, txn, marks, &source.id)? {
+                    Some(current) => {
+                        let Some(text) =
+                            copy_in(&vault.store, txn, RepoDerivedOwner::Text(source.id))?
+                                .and_then(|row| {
+                                    row.ready_under(&current.proof())
+                                        .map(|ready| ready.safe_text.clone())
+                                })
+                        else {
+                            return Ok(Vec::new());
+                        };
+                        Some(text)
+                    }
+                    None => super::derived_text_words(body)
+                        .map(|text| marks.text_in_txn(vault, txn, text))
+                        .transpose()?,
+                };
+            if let Some(text) = text {
+                copies.push(SourceCopy::text(source.id, text.into_bytes()));
+            }
+            continue;
+        }
         // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-        let Some((media_type, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
+        let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
             Ok(vault
                 .store
                 .port_entity_record(txn, blob)?

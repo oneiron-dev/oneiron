@@ -47,9 +47,10 @@ pub use window_pads::{
 };
 mod documents;
 pub use documents::{
-    DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
-    decode_document_batch, decode_node_batch, document_sub_tags, encode_document,
-    encode_document_batch, encode_node_batch,
+    DocumentFrame, DocumentWaitedOut, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT,
+    decode_document, decode_document_batch, decode_document_waited_out, decode_node_batch,
+    document_sub_tags, encode_document, encode_document_batch, encode_document_waited_out,
+    encode_node_batch,
 };
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
@@ -248,6 +249,9 @@ pub mod window_sub_tags {
     /// A window pad receipt for an owner-lane `UPDATE` that came sealed, or a receiver's
     /// `NotReady` for one it could not install.
     pub const WINDOW_PAD_RECEIPT: u8 = 16;
+    /// The home held this residence update without persisting or importing it.
+    /// The same window pad receipt binds the reply; the queued row stays owed.
+    pub const RESIDENCE_HELD: u8 = 17;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).

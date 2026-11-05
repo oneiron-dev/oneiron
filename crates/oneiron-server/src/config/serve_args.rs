@@ -217,6 +217,12 @@ pub struct ServeArgs {
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
 
+    /// Managed mode: the supervisor-selected absolute native preview socket.
+    /// It routes only already-held private preview bindings, not the vault API.
+    /// The supervisor passes this flag only at its installed-engine build floor.
+    #[arg(long = "preview-socket")]
+    pub preview_socket: Option<PathBuf>,
+
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
     /// over it. On a plain serve it is read as a config file layered over

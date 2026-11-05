@@ -57,8 +57,9 @@ pub(crate) struct ScopedSearchResponse {
     residence: Option<ResidenceAnswer>,
 }
 impl ScopedSearchResponse {
-    /// Says whether the request's `limit` was served at the ceiling; a page
-    /// its deadline cut says it too.
+    /// Says whether the request's `limit` was lowered to serve it: always
+    /// false, since the whole requested limit is served, on a deadline-cut
+    /// page too.
     fn limit_clamped(mut self, clamped: bool) -> Self {
         self.response.meta.limit_clamped = clamped;
         self
@@ -306,7 +307,7 @@ pub(crate) async fn search_vector(
             text,
         )?;
     }
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -381,7 +382,7 @@ pub(crate) async fn search_vector(
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
-        .map(|page| Json(page.limit_clamped(clamped)))
+        .map(|page| Json(page.limit_clamped(false)))
 }
 
 /// Query parameters for BM25 text search.
@@ -498,7 +499,7 @@ pub(crate) async fn search_text(
         "query",
         &params.query,
     )?;
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let deadline = search_deadline(params.deadline_ms)?;
     // An opened machine asks its home alongside its own page (OF-534).
     let home = ask_home(
@@ -526,7 +527,7 @@ pub(crate) async fn search_text(
         search_page_by_deadline(server, arrived, deadline, page),
         home
     );
-    page.map(|page| Json(page.limit_clamped(clamped).residence(residence)))
+    page.map(|page| Json(page.limit_clamped(false).residence(residence)))
 }
 
 /// A blank `queryText` is an ABSENT one.
@@ -899,7 +900,7 @@ pub(crate) async fn search_semantic(
         }
     };
     let count_mode = params.count_mode.for_search_response();
-    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let page_limit = params.limit;
     let (depth, view) = (params.depth, params.view.unwrap_or(View::Summary));
     let page_auth = auth.clone();
     let page_space = space.clone();
@@ -968,7 +969,7 @@ pub(crate) async fn search_semantic(
             .await?
         }
     };
-    let mut response = serde_json::to_value(page.limit_clamped(clamped))
+    let mut response = serde_json::to_value(page.limit_clamped(false))
         .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
         object.insert("embedder".to_owned(), embedder);

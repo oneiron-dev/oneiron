@@ -16,6 +16,8 @@
 //! receiving identity, its actor or its known counterparty leaves the job's
 //! event without its payload and takes the job's result with it.
 
+mod repair;
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};

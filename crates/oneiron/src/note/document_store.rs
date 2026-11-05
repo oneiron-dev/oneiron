@@ -470,11 +470,11 @@ impl Memory<'_> {
     }
 
     /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
-    /// transaction that commits. Without `through` it erases up to the oldest
-    /// pin, or up to the head when nothing pins the note. The receipt lands
-    /// beside the entity-text purge receipts. A legal hold on the note refuses
-    /// it (OF-470); with two or more live Owners it runs only through the
-    /// vault's `erase` veto window ([`Vault::start_text_history_erase`],
+    /// transaction that commits. Without `through` it erases up to the causal
+    /// floor shared by every pin, or up to the head when nothing pins the note.
+    /// The receipt lands beside the entity-text purge receipts. A legal hold on
+    /// the note refuses it (OF-470); with two or more live Owners it runs only
+    /// through the vault's `erase` veto window ([`Vault::start_text_history_erase`],
     /// Docs Q05).
     pub fn purge_note_history_as(
         &self,
@@ -557,13 +557,25 @@ impl Memory<'_> {
                 let through = match requested {
                     Some(bytes) => frontier(bytes)?,
                     None if pins.is_empty() => doc.doc.oplog_frontiers(),
-                    None => pins
-                        .iter()
-                        .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)))
-                        .cloned()
-                        .ok_or_else(|| {
-                            invalid("NOTE pins are causally incomparable; name a frontier")
-                        })?,
+                    None => {
+                        let oldest = pins
+                            .iter()
+                            .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
+                        match oldest {
+                            Some(oldest) => oldest.clone(),
+                            None => {
+                                let mut allowed = doc.doc.oplog_vv();
+                                for pin in &pins {
+                                    let vv = doc
+                                        .doc
+                                        .frontiers_to_vv(pin)
+                                        .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
+                                    allowed = allowed.intersection(&vv);
+                                }
+                                doc.doc.vv_to_frontiers(&allowed)
+                            }
+                        }
+                    }
                 };
                 if !pins.iter().all(|pin| at_or_before(&through, pin)) {
                     return Err(invalid("NOTE purge would pass a cited frontier").into());

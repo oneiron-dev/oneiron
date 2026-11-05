@@ -1,5 +1,5 @@
 //! The sources a text a model derived from repo bytes stands on (FIX 7608
-//! S3F, FIX 10405): a caption or transcript (ASSET_TEXT) is bound to each
+//! S3F, FIX 10405): a caption, transcript (ASSET_TEXT) or SUMMARY is bound to each
 //! ASSET it was written from by its own `DerivedFrom` edges, never by a
 //! path, a hash string or equal words.
 //!
@@ -31,7 +31,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
-use crate::registry::ENTITY_TYPE_ASSET_TEXT;
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 
@@ -87,7 +87,7 @@ impl RepoDerivedIndexSources {
     }
 }
 
-/// The sources of ASSET_TEXT `entity`, as `view` holds them in `txn`, when
+/// The sources of ASSET_TEXT or SUMMARY `entity`, as `view` holds them in `txn`, when
 /// any of them is marked; `None` for any other record, a text bound to no
 /// source, or one whose sources are all unmarked, which indexes as it
 /// always has.
@@ -107,7 +107,10 @@ pub(crate) fn repo_derived_index_sources_in(
     let Some(row) = view.port_entity_record(txn, entity)? else {
         return Ok(None);
     };
-    if row.entity_type != ENTITY_TYPE_ASSET_TEXT {
+    if !matches!(
+        row.entity_type,
+        ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY
+    ) {
         return Ok(None);
     }
     let mut visited = BTreeSet::from([*entity]);
@@ -305,6 +308,14 @@ pub(crate) fn repo_source_copy_stamp_in(
     id: &EntityId,
     body: &[u8],
 ) -> Result<Option<RepoIndexProjectionStamp>> {
+    let logical;
+    let body = match crate::store::asset_file_in_txn(&vault.store, txn, id, body)? {
+        Some(manifest) => {
+            logical = vault.asset_file_body(txn, &manifest)?;
+            logical.as_slice()
+        }
+        None => body,
+    };
     if let Some(source) = marks.source_of(id) {
         return Ok(marks
             .source_input_in_txn(vault, txn, &source, body.to_vec())?

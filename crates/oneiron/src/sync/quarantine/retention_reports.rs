@@ -2,12 +2,14 @@
 
 use super::keys_classifier::{
     LAST_QUARANTINE_SEQ_KEY, MAX_QUARANTINE_ROWS, QUARANTINE_BATCH_DROPS_KEY,
-    QUARANTINE_EVICTIONS_KEY, QUARANTINE_MAX_AGE_SECS, QUARANTINE_PREFIX, QuarantineRecord,
-    RECENT_REASON_CODES, decode_quarantine_seq, decode_record, decode_u64_le_counter,
+    QUARANTINE_EVICTIONS_KEY, QUARANTINE_MAX_AGE_SECS, QUARANTINE_PREFIX, QuarantineContainer,
+    QuarantineRecord, RECENT_REASON_CODES, decode_quarantine_seq, decode_record,
+    decode_u64_le_counter,
 };
 use super::remat_markers::pending_remat_windows;
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::origin::RepoProjectionHoldCause;
 use serde::Serialize;
 
 pub(super) fn allocate_next_quarantine_seq(
@@ -181,10 +183,18 @@ pub struct SyncQuarantineReport {
     /// [`drain_remat_markers`](crate::sync::drain_remat_markers) succeeds. Unparsable `rm:` rows surface here
     /// too (fail closed — never dropped).
     pub rm_pending_windows: Vec<String>,
+    /// Retained hash-only held-edit evidence ordered by stored seq: the
+    /// `x:` rows with `QuarantineContainer::Entities` and a
+    /// `RepoProjectionHoldCause::SealedFileEdited` /
+    /// `RepoProjectionHoldCause::ProjectionEditConflict` reason code.
+    /// Subject to the existing shared retention (cap/age); not live pending
+    /// work and not settlement status.
+    pub held_edits: Vec<(u64, QuarantineRecord)>,
 }
 
 /// Builds the sync doctor report: quarantine count, most-recent reason
-/// codes, eviction count, and pending `rm:` windows.
+/// codes, eviction count, pending `rm:` windows, and retained held-edit
+/// evidence.
 pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
     let records = quarantined_records(vault)?;
     let quarantine_count = records.len();
@@ -193,6 +203,14 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         .rev()
         .take(RECENT_REASON_CODES)
         .map(|(_, rec)| rec.reason_code.clone())
+        .collect();
+    let held_edits = records
+        .into_iter()
+        .filter(|(_, rec)| {
+            rec.container == QuarantineContainer::Entities
+                && (rec.reason_code == RepoProjectionHoldCause::SealedFileEdited.as_str()
+                    || rec.reason_code == RepoProjectionHoldCause::ProjectionEditConflict.as_str())
+        })
         .collect();
 
     let rtxn = vault.store.env.read_txn()?;
@@ -217,6 +235,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         eviction_count,
         batch_drop_count,
         rm_pending_windows,
+        held_edits,
     };
     if !report.rm_pending_windows.is_empty() {
         tracing::error!(

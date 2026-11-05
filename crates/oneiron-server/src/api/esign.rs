@@ -26,6 +26,8 @@ use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
 use std::time::Instant;
+const ANONYMOUS_GEOMETRY_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// The owner's field editor. Its shell mints an editor token into its page
 /// (FIX 5618, `editor_auth`). A computation POST carrying one is admitted
 /// from its head, waits for one of two slots and spools its raw body, which
@@ -37,7 +39,8 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/layout", post(presentation::layout))
         .route(
             "/sign/geometry",
-            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+            post(presentation::upload_geometry)
+                .layer(DefaultBodyLimit::max(ANONYMOUS_GEOMETRY_BODY_BYTES)),
         )
         .route_layer(axum::middleware::from_fn_with_state(
             Arc::clone(&desk.budget),

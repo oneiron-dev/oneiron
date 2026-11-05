@@ -165,6 +165,20 @@ connection floor and each address's unauthenticated share. Managed serve
 socket the supervisor names with `--artifact-http-socket` (an absolute path);
 without one, its `/a/` answers on the API socket alone.
 
+Managed serve's native preview listener is the unix socket the supervisor
+names with `--preview-socket` (an absolute path), only for an explicitly
+configured preview domain and installed engines at or after this flag's build
+floor (`oneiron-vault-contract`'s `CONTRACT_VERSION` docs). It serves only an
+already-held private preview on the exact origin the supervisor bound to that
+lease, never the vault API. The same owner, invitation, sharing tokens and
+revocations protect both origins; a public DNS name does not publish the app.
+Without the flag there is no registration caller or preview data socket, and
+the standalone loopback preview is unchanged. Losing a held registration stops
+hosted ingress and its streams, not the still-live loopback lease or its tokens.
+The trusted session runtime must install the actual process connector; HTTP
+input cannot install one. This ingress is native-only: the vault-VM typed
+ledger bridge does not carry preview registration.
+
 `artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
 comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
 `ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
@@ -354,6 +368,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without

@@ -65,6 +65,9 @@ fn live_skill_call(
     let mut record = vault
         .get_code_run_replay_record(&run)?
         .ok_or_else(|| MemoryError::bad_request("no live run record"))?;
+    let determinism = record
+        .determinism
+        .ok_or_else(|| MemoryError::bad_request("live run has unknown determinism"))?;
     let generation = record.generation()?;
     let seq = record.bridge_calls.len() as u64;
     let skill = EntityId::from_hex(&input.skill)?;
@@ -75,7 +78,7 @@ fn live_skill_call(
     dispatcher.observe_bridge_history(&record.bridge_calls);
     let author = crate::agent_def::AgentAuthorLease::from_leased(&leased)?;
     let _writes = crate::skill_attribution::enter_run_writes(&author);
-    let mut host = RecordingJsHost::new(dispatcher, run, seq, record.determinism, None)
+    let mut host = RecordingJsHost::new(dispatcher, run, seq, determinism, None)
         .with_recoverable_outputs(&storage, &record, Vec::new())
         .map_err(engine_error)?
         .with_skill_executor(executor)

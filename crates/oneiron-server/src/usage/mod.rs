@@ -5,6 +5,7 @@ mod ledger;
 mod limit;
 mod meters;
 mod model;
+mod pending;
 mod pricing;
 mod repair;
 mod retrieval_buffer;

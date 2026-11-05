@@ -255,6 +255,25 @@ pub(crate) async fn vault_skills_code_auto_install_set(
     .await
 }
 
+pub(crate) async fn vault_skills_fit_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillFitSetRequest,
+) -> Listed<HubConsentReceipt> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.fit.set",
+        move |server, owner| {
+            Ok((
+                sdk::skill_fit_set_as_owner(server.vault(), owner, &input)?,
+                Vec::new(),
+            ))
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_skills_convert(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

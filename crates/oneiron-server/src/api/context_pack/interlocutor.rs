@@ -3,7 +3,7 @@
 use super::super::{core_engine_error, parse_entity_id_param};
 use super::controls::{
     CoreInterlocutorControls, CoreInterlocutorParty, MAX_INTERLOCUTOR_COUNTERPARTY_BYTES,
-    MAX_INTERLOCUTOR_LABEL_BYTES, MAX_INTERLOCUTOR_THIRD_PARTIES,
+    MAX_INTERLOCUTOR_THIRD_PARTIES,
 };
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
@@ -441,12 +441,6 @@ pub(crate) fn core_interlocutor_party_input(
             if label.trim().is_empty() {
                 return Err(ApiError::bad_request(
                     "label must be non-empty",
-                    Some(&field_path("label")),
-                ));
-            }
-            if label.len() > MAX_INTERLOCUTOR_LABEL_BYTES {
-                return Err(ApiError::bad_request(
-                    format!("label must be at most {MAX_INTERLOCUTOR_LABEL_BYTES} bytes"),
                     Some(&field_path("label")),
                 ));
             }

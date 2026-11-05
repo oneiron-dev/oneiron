@@ -143,7 +143,8 @@ impl DreamerRunnerStore<'_> {
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask), the relationship-stewardship pass, the identity
+    /// many wakes ask), a proposed digest-rhythm pass, the relationship-
+    /// stewardship pass, the identity
     /// re-check, the action-mode refresh (one per owner, OF-335) and the
     /// harness self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
@@ -161,6 +162,7 @@ impl DreamerRunnerStore<'_> {
             run_id.clone(),
             now,
         )?;
+        self.enqueue_proactivity_policy_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_identity_recheck_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_action_mode_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
@@ -223,6 +225,9 @@ pub(crate) fn execute(
         }
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        digest::policy_author::PROACTIVITY_POLICY_FACET => {
+            digest::policy_author::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         stewardship::STEWARDSHIP_FACET => {
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;

@@ -6,6 +6,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
   `import`, `files`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+- [Retry a publisher issue signature](publisher-signature-retry.md) — an explicit owner new logical send after proved non-delivery, with the same frozen signature and normal outbound checks.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
   restore left pending, `secrets import-supplement` for an export's secret supplements, and a
@@ -16,6 +17,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
+  proposals, exact owner review and confirmation, and atomic run-tray approval.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,

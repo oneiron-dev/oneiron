@@ -57,8 +57,8 @@ pub(crate) struct CoreQueryRequest {
     /// valence, arousal and dominance sit.
     #[serde(default, alias = "queryAffect")]
     query_affect: Option<ContextPackQueryAffect>,
-    /// Maximum result count. A limit past 1,000 is served at 1,000 and
-    /// `meta.limitClamped` says so.
+    /// Maximum result count. The whole requested count is served, and
+    /// `meta.limitClamped` stays false.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     limit: usize,
@@ -131,7 +131,7 @@ pub(crate) async fn core_query(
         .as_ref()
         .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
         .transpose()?;
-    let (limit, limit_clamped) = oneiron::memory::caps::clamp_search_limit(req.limit);
+    let limit = req.limit;
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
@@ -230,7 +230,7 @@ pub(crate) async fn core_query(
         *target = staged;
     }
     let mut meta = search_meta(count_mode, total);
-    meta.limit_clamped = limit_clamped;
+    meta.limit_clamped = false;
 
     Ok(Json(CoreScopedQueryResponse {
         access: oneiron::access_grant::GrantedData::new(

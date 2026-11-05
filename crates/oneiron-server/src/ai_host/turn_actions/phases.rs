@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oneiron::conversation::{TurnAction, TurnActionAttempt};
 use oneiron::memory::WitnessAuthor;
-use oneiron::{LlmCapability, LlmMessage, LlmMessageRole, Vault};
+use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault};
 
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
@@ -22,8 +22,9 @@ pub(super) struct ActionText {
 }
 
 /// Admits the action's call, with `board` before its user turn where the
-/// board may ride, else as the call always was; the board's capture when
-/// it rode. The reason it was not admitted otherwise.
+/// board may ride, else as the call always was; the board's capture and
+/// rows when it rode (independent of whether a capture was available).
+/// The reason it was not admitted otherwise.
 pub(super) fn admit_action(
     vault: &Arc<Vault>,
     ai: &AiHandle,
@@ -32,7 +33,7 @@ pub(super) fn admit_action(
     text: ActionText,
     messages: Vec<LlmMessage>,
     board: Option<PromptBoard>,
-) -> Result<(RoleCall, Option<ChatContextCapture>), String> {
+) -> Result<(RoleCall, Option<ChatContextCapture>, Option<Vec<EntityId>>), String> {
     let admit = |messages| {
         ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages))
             .map_err(|refusal| refusal.to_string())
@@ -60,7 +61,7 @@ pub(super) fn admit_action(
     // A call its role does not admit with the board, first or with its
     // suffix, is admitted exactly as it always was, and so is the final call
     // admitted where the board may not go (FIX 7257), never sent with it.
-    let (admitted, board_context) = match board {
+    let (admitted, board_context, board_rows) = match board {
         Some(board) => {
             let mut framed = messages.clone();
             framed.insert(
@@ -68,19 +69,21 @@ pub(super) fn admit_action(
                 text_message(LlmMessageRole::User, board.board.block.clone()),
             );
             match request(framed) {
-                Ok(admitted) if board.rides(vault, &admitted) => (admitted, board.board.context),
-                Ok(_) => (request(messages)?, None),
+                Ok(admitted) if board.rides(vault, &admitted) => {
+                    (admitted, board.board.context, Some(board.board.rows))
+                }
+                Ok(_) => (request(messages)?, None, None),
                 Err(_) => {
                     tracing::info!(
                         "a turn action's call was not admitted with its context board; it goes without it"
                     );
-                    (request(messages)?, None)
+                    (request(messages)?, None, None)
                 }
             }
         }
-        None => (request(messages)?, None),
+        None => (request(messages)?, None, None),
     };
-    Ok((admitted, board_context))
+    Ok((admitted, board_context, board_rows))
 }
 
 /// Where the action's answer opens: more of its MESSAGE for a Continue, a

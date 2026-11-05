@@ -494,7 +494,8 @@ pub(crate) fn open_content(s: &Store, k: KeyRef, aad: &[u8], c: &[u8]) -> Result
 }
 
 /// Every retired key's copy a holder still keeps: what the carrier asks
-/// each holder to retire, once this custody retired its own.
+/// each holder to retire after local retirement and completion of that
+/// subject's custody journal obligations.
 ///
 /// # Errors
 /// Custody faults.
@@ -508,6 +509,10 @@ pub(crate) fn holder_retirements(s: &Store) -> Result<Vec<HolderRetirement>> {
             continue;
         };
         if custody.erasable_state(&item)? == EntryState::Retired {
+            let obligations = s.custody_obligations_of(&item.subject(&custody)?)?;
+            if obligations.is_empty() || obligations.iter().any(|(_, done)| !done) {
+                continue;
+            }
             owed.push(HolderRetirement {
                 key_ref: KeyRef(key_ref),
                 incarnation: Incarnation(item.incarnation),

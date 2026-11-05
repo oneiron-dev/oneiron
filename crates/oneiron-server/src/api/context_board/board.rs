@@ -576,7 +576,7 @@ pub(super) async fn board_people(
         .applied;
     let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
     people
-        .set_about(&mut |person| server.vault.person_about(person, ceiling))
+        .set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))
         .map_err(|error| core_engine_error("board people failed", error))?;
     people
         .disclose_names(&server.vault, read.actor_key())

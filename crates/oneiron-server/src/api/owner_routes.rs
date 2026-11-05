@@ -462,7 +462,7 @@ struct OwnerStatus {
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
-    /// Every sync link since this process started, summed per inner frame
+    /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
     /// The browser readiness a managed `Ping` carries, read from the same
@@ -1014,7 +1014,12 @@ async fn witness_off_record(
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let receipt = blocking(move || {
-        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+        off_record::witness(
+            server.vault(),
+            &owner,
+            &request,
+            server.embedder_slot().as_ref(),
+        )
     })
     .await?;
     Ok(Json(receipt))

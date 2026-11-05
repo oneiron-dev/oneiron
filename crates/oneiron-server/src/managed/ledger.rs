@@ -152,6 +152,15 @@ impl WakeLedger {
         })
     }
 
+    /// A distinct native preview caller with this ledger's exact spawn identity.
+    pub fn preview_route_client(&self) -> super::preview_route::PreviewRouteClient {
+        super::preview_route::PreviewRouteClient::new(
+            self.hypnos_socket.clone(),
+            self.vault_name.clone(),
+            self.token.clone(),
+        )
+    }
+
     pub(super) fn verify_widen_action(
         &self,
         action: &oneiron_vault_contract::ManagedWidenAction,

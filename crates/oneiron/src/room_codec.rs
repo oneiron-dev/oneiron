@@ -3,11 +3,13 @@
 //! The carrier and room-row part codecs, mounted here from their one source
 //! so canonical recovery rebuilds them with or without `sync`. `sync`
 //! re-exports both modules, so every old path keeps resolving and the codec
-//! compiles once. Codec logic and format are byte-identical; only the Loro
-//! byte-map import below differs per feature.
+//! compiles once. The same codec and wire formats run with either feature
+//! setting; only the Loro byte-map import below differs.
 
 #[path = "sync/carrier_parts.rs"]
 pub(crate) mod carrier_parts;
+
+pub(crate) mod offer_parts;
 
 #[path = "sync/room_parts.rs"]
 pub(crate) mod room_parts;

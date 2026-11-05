@@ -203,5 +203,6 @@ mod resident_tests;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::widen_record::agent_dispatch_widen_intent_accepts_masked;
 pub(crate) use self::widen_record::agent_dispatch_widen_slice_accepts_masked;
 pub(crate) use self::workflow_record::agent_workflow_record_accepts_masked;

@@ -760,16 +760,10 @@ pub(crate) fn project_hydrated_short_id(
     let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted { .. });
     let item = match bodies {
         Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, &body, view, mode),
-        _ => projection::project_entity_parts(
-            &id,
-            entity_type,
-            learned_at,
-            match &served {
-                oneiron::memory::HydratedAsset::Served { body: form, .. } => form,
-                _ => &body,
-            },
-            view,
-        ),
+        _ => projection::project_hydrated_asset_parts(&id, learned_at, &served, view)
+            .unwrap_or_else(|| {
+                projection::project_entity_parts(&id, entity_type, learned_at, &body, view)
+            }),
     };
     // A Summary item carries the image's label alone, so it serves no form.
     if !matches!(view, View::Summary)

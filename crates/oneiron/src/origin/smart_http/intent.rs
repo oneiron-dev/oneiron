@@ -151,10 +151,8 @@ pub(super) struct ReceivePackIntentRef {
     pub(super) outcome_id: String,
     pub(super) observed: bool,
     pub(super) status: ReceivePackRefStatus,
-    // The positions in the intent's pointers this ref is held to. A row from
-    // before refs were held to their own has none: it held each to all.
-    #[serde(default)]
-    pointers: Option<Vec<usize>>,
+    // The exact positions in the intent's pointers this ref is held to.
+    pointers: Vec<usize>,
 }
 
 impl ReceivePackIntentRef {
@@ -178,7 +176,7 @@ pub(super) struct ReceivePackIntent {
     // without this checkpoint has no measured transport totals.
     pub(super) transport_bytes: Option<(u64, u64)>,
     pub(super) refs: Vec<ReceivePackIntentRef>,
-    pointers: Vec<(String, String, u64)>,
+    pointers: Vec<(Vec<u8>, String, u64)>,
     #[serde(default)]
     pub(super) push: Option<GitPushStamp>,
     // What the scan came to, written with the push's marks (FIX 8032): the
@@ -631,7 +629,7 @@ impl Vault {
             }
             let mut settled_any = false;
             for (index, update) in realized {
-                let held = held_by_ref(&pointers, intent.refs[index].pointers.as_deref())
+                let held = held_by_ref(&pointers, Some(intent.refs[index].pointers.as_slice()))
                     .ok_or(Error::CorruptedIndex("receive-pack pointer position"))?;
                 let held: Vec<_> = held.into_iter().cloned().collect();
                 let outcome = ReceivePackOutcome {

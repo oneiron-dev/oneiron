@@ -113,7 +113,7 @@ pub(super) fn code_run_value(record: &CodeRunReplayRecord) -> Value {
         .collect();
     json!({
         "run": record.run_id.to_hex(),
-        "frozen_unix_ms": record.determinism.frozen_unix_ms,
+        "frozen_unix_ms": record.determinism.map(|determinism| determinism.frozen_unix_ms),
         "bridge_calls": calls,
         "step_checkpoints": checkpoints,
         "outputs": outputs,

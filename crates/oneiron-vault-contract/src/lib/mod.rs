@@ -124,6 +124,9 @@ pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,
     OwnerSigningRecoveryAck, valid_owner_signing_challenge,
 };
+pub use self::preview::{
+    PREVIEW_ROUTE_OPEN_OP, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest,
+};
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };

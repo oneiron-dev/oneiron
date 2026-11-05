@@ -212,30 +212,19 @@ impl VaultUsage {
                 // The call's identity, for its log line once the event moves
                 // into the ledger.
                 let idempotency_key = event.idempotency_key.clone();
-                match self.ledger.record_event_sourced(
+                match crate::usage::UsageLedger::prepare_settlement(
                     event,
                     source,
                     UsageEventOrigin::Engine,
                     source_rows,
                 ) {
-                    // Recorded with its counts and frozen rates, and no price:
-                    // its price at them does not fit in an amount (FIX 6407).
-                    Ok(recorded) if recorded.unpriced == Some(UnpricedReason::PriceOverflow) => {
-                        tracing::warn!(
-                            vault_id = %self.vault_id,
-                            %idempotency_key,
-                            replayed = recorded.replayed,
-                            reason = "price_overflow",
-                            "a settled call was recorded without a representable price"
-                        );
-                    }
-                    Ok(_) => {}
+                    Ok(raw) => self.record_settlement(raw, &idempotency_key),
                     Err(error) => {
                         tracing::error!(
                             vault_id = %self.vault_id,
                             %idempotency_key,
                             ?error,
-                            "served run usage could not be persisted"
+                            "served run usage could not be prepared"
                         );
                     }
                 }

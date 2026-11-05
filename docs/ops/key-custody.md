@@ -33,6 +33,14 @@ Passes run right after every backup (`oneiron backup`, the `[backup]` schedule a
 `POST /v1/owner/backups`), when `serve` starts, and every minute while anything is pending, on a
 managed host too. A save or a backup never waits on a pass and never fails because of one.
 
+An Owners' vault deletion keeps the automatic folder beside the configured backups until
+`backup_retain_until` on the vault's clock. A standing legal hold defers the drop. After that
+deadline without a hold, the folder's copy of this lineage goes: its sealed head, keyless log,
+stages and temporary files. Its automatic publisher does not recreate it. The shared parent,
+other lineages, local keys and independent targets stay untouched. The target stays registered,
+but its current acknowledgement is cleared and its status says pending; this is not a member
+drain, a deletion acknowledgement or completion of outstanding custody obligations.
+
 ## The anchor
 
 The anchor is the one optional step. It records the newest custody position somewhere that does
@@ -94,6 +102,27 @@ keys, claim keys and body instance keys alike: `custody: {"state": ..., "pending
 holds: its key retires with that holder's release. `recall` says bytes already read before the
 erase cannot be recalled. The erase itself is done and stays done on this host from the moment it
 returns; `custody` says where the old copies stand.
+
+## Credential values in an image
+
+A checkpoint or backup copies credential rows in their stored, sealed form. It never opens a
+credential value or carries its custody key. New captures use image format 4 and may record
+that a credential's exact generation had no live source key during capture. The observation
+is taken under the existing custody read guard and the same row snapshot. It binds the
+credential id, generation and digest of the captured row. A present entry is not proof that
+the value was readable, and a custody fault records no observation.
+
+A restore or side copy using required custody still leaves an unreadable credential sealed
+or withheld, pending. If the exact row has this capture-time observation, its pending note
+also says the source key was already unavailable. It does not claim when a key was lost.
+Without matching evidence the existing pending note is unchanged. These observations never
+decide whether a restore is allowed or authorize an erase. Re-entry, reissue and the existing
+pending-batch retry and confirmation remain available.
+
+Observations for rows moved into an owner-only payload compartment are omitted from the
+image-wide metadata, so it exposes neither their identities nor their key state. Their
+capture-time diagnostics remain incomplete. New-host/head routes and archived-vault
+activation keep their existing diagnostics.
 
 ## Body instances
 

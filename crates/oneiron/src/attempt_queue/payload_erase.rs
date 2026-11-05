@@ -60,6 +60,9 @@ use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::attempt_manifest::{
+    erase_manifest_revision_pins, scrub_hard_erased_manifest_revisions_in_txn,
+};
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
 use crate::{
@@ -281,6 +284,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
     let mut reply_body_events = BTreeSet::new();
+    let mut pin_candidates = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -289,6 +293,14 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if record.manifest.iter().any(|entry| {
+            entry
+                .revision
+                .as_ref()
+                .is_some_and(|(entity, _)| actors.contains(entity))
+        }) {
+            pin_candidates.insert(id);
+        }
         if let Some(event_id) =
             connector_reply::frozen_connector_event_id_for_erase(&record, actors)
         {
@@ -350,6 +362,23 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
+    // Payload rewrites win; a pin-only candidate is read only when no
+    // existing rewrite carries that row, so each archive mark moves once.
+    for (_, record) in &mut rewrites {
+        pin_candidates.remove(&record.id);
+        erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity));
+    }
+    for id in pin_candidates {
+        let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        let Ok(mut record) = decode_record(&raw, id) else {
+            continue;
+        };
+        if erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity)) {
+            rewrites.push((raw.into_owned(), record));
+        }
+    }
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
@@ -703,6 +732,7 @@ pub(crate) fn scrub_hard_erased_payload_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
+    scrub_hard_erased_manifest_revisions_in_txn(store, txn, &mut record.manifest);
     if record.kind == TURN_ACTION_ATTEMPT_KIND {
         // A turn action whose requester bears the marker writes back no
         // slip (FIX 10668), as the pass leaves it.

@@ -38,7 +38,7 @@ side_tables! {
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored
-        [refs: WIDEN_INTENT_REFS];
+        [refs: WIDEN_INTENT_REFS] [accepts: crate::agent_dispatch::agent_dispatch_widen_intent_accepts_masked];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw;
     /// OF-414: one agent's read state of one row of its own INBOX (open, later, done), the row's
@@ -100,7 +100,7 @@ side_tables! {
     /// (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Named;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
-    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored [accepts: crate::receipt::attempt_pack_attribution_accepts_masked]
         => crate::receipt::erase_attempt_attribution_scope_in_txn;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).

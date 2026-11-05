@@ -171,6 +171,7 @@ struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
     max_runs: Option<usize>,
+    step_wall_secs: Option<u64>,
     #[serde(default)]
     compaction: compaction::CompactionFile,
     #[serde(default)]
@@ -345,6 +346,11 @@ pub struct CodeModeSettings {
     /// from this machine's cores and memory by default. Past it, runs wait
     /// their turn, round-robin across credentials.
     pub max_runs: usize,
+    /// One step's time allowance for guest execution and new host calls.
+    /// `None` keeps the runtime's own default wall; a positive value replaces
+    /// only the wall. A spent allowance stops the step at its next safe point
+    /// with the typed `step_deadline` stop, never a failure.
+    pub step_wall: Option<std::time::Duration>,
     pub compaction: CompactionSettings,
     pub check: CodeCheckSettings,
 }
@@ -493,6 +499,20 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let step_wall = self
+            .code_mode
+            .step_wall_secs
+            .map(|secs| {
+                if secs == 0 {
+                    anyhow::bail!("models.code_mode.step_wall_secs must be greater than zero");
+                }
+                let wall = std::time::Duration::from_secs(secs);
+                if std::time::Instant::now().checked_add(wall).is_none() {
+                    anyhow::bail!("models.code_mode.step_wall_secs does not form a valid deadline");
+                }
+                Ok(wall)
+            })
+            .transpose()?;
         let code_mode = CodeModeSettings {
             prompt_package: self.code_mode.prompt_package.map(|path| match base {
                 Some(base) if path.is_relative() => base.join(path),
@@ -506,6 +526,7 @@ impl ModelsFile {
                 .code_mode
                 .max_runs
                 .unwrap_or_else(crate::mcp::CodeRunLimits::runs_for_this_machine),
+            step_wall,
             compaction: self.code_mode.compaction.resolve()?,
             check: self.code_mode.check.resolve(base)?,
         };

@@ -41,6 +41,7 @@ use crate::temporal::TimeRange;
 
 mod bindings;
 mod capabilities;
+pub(crate) mod checkpoint;
 pub(super) mod repo_projection;
 
 pub use crate::store::embedding::{

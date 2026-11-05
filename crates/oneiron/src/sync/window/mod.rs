@@ -31,6 +31,7 @@ mod pad_custody;
 mod project_history;
 mod rebootstrap;
 mod replacement;
+mod repo_manifest_conflict;
 mod reverse;
 mod sealed_membership;
 mod shallow;
@@ -78,6 +79,10 @@ pub use self::pad_custody::{
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{ReplacementByteBound, prepare_bounded_replacement};
+pub use self::repo_manifest_conflict::{
+    RepoManifestConflictDiscard, RepoManifestConflictReview,
+    discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
+};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::reverse::reverse_rematerialize_for_sealing;

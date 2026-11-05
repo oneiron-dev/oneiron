@@ -772,20 +772,25 @@ pub(super) async fn propose_deck(
         let vault = server.vault();
         let failed = |error| core_engine_error("deck proposal failed", error);
         let reader = made_by_reader(vault, &auth, request.made_by.as_ref())?;
-        match vault
-            .propose_blob_artifact_deck_edit(&id, &transaction, &request.run_ref, request.context)
-            .map_err(failed)?
-        {
+        let (outcome, read_rows) = vault
+            .propose_blob_artifact_deck_edit_with_reads(
+                &id,
+                &transaction,
+                &request.run_ref,
+                request.context,
+            )
+            .map_err(failed)?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => {
                 let now = vault.now_recorded_at();
                 vault
-                    .retain_edit_proposal(
+                    .retain_edit_proposal_with_reads(
                         &id,
                         &proposal,
                         request.made_by.as_ref(),
                         reader,
-                        actor,
-                        now,
+                        (actor, now),
+                        &read_rows,
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)

@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
 use super::ancestor::target_step;
-use super::{ContributionForkReceipt, ForkScoring, ForkTreatment, pair_digest, receipt_attempt};
+use super::{
+    ContributionForkReceipt, ForkScoring, ForkTreatment, anchor_hash, pair_digest, receipt_attempt,
+};
 use crate::skill_attribution::{ContributionCandidate, ContributionFork};
 use crate::{Result, Vault};
 
@@ -29,7 +31,9 @@ pub enum ForkMismatch {
     Unscored,
     /// A kept fork was scored otherwise than submitted.
     OtherScore,
-    /// The two forks were not scored against one anchor.
+    /// The two forks were not scored against one anchor: their stored
+    /// anchors differ, or a stored anchor is not the candidate's anchor
+    /// bound to its fork's frozen scoring identity.
     AnchorDiverged,
     /// A fork did not regenerate the capsule of the step the target's check
     /// regenerates as it stands: another capsule, request, model, route
@@ -84,6 +88,11 @@ pub(crate) fn matched_contribution_facts_in_txn(
         }
     }
     if with_fork.anchor != without_fork.anchor {
+        reasons.push(ForkMismatch::AnchorDiverged);
+    }
+    if anchor_hash(candidate, &with_fork.anchor_scoring)? != with_fork.anchor
+        || anchor_hash(candidate, &without_fork.anchor_scoring)? != without_fork.anchor
+    {
         reasons.push(ForkMismatch::AnchorDiverged);
     }
     let scoring = ForkScoring::of(candidate);

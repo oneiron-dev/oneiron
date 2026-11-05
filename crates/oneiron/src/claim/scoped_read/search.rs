@@ -389,10 +389,11 @@ impl ScopedRead<'_> {
 
     /// How many candidates a caller that filters this reader's rows after
     /// its own read fetches for `requested`: the request when no grant,
-    /// audience or peer read narrows the reader, otherwise the whole
-    /// [`crate::memory::caps::MAX_SEARCH_LIMIT`] window. Never past it,
-    /// however many rows the vault holds; the page is short when the window
-    /// holds fewer readable rows.
+    /// audience or peer read narrows the reader, otherwise the request over
+    /// the [`crate::memory::caps::MAX_SEARCH_LIMIT`] floor
+    /// ([`crate::request_limits::narrowed_candidate_window`]). Never the
+    /// index's population; the page is short when the window holds fewer
+    /// readable rows.
     pub fn search_candidate_limit(&self, requested: usize) -> Result<usize> {
         if requested == 0 {
             return Ok(0);
@@ -406,7 +407,7 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested.min(crate::request_limits::MAX_SEARCH_LIMIT));
+            return Ok(requested);
         }
         Ok(crate::request_limits::narrowed_candidate_window(requested))
     }

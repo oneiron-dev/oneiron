@@ -10,6 +10,11 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
+/// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
+/// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is
+/// no migration pass; rebuild the vault.
+///
 /// v23 (OF-190 B++ 2C): the `context:output:v1:` blob family is gone; a
 /// context output is a body of the `code_run:raw_output:v1:` family, keyed by
 /// its content. A step records its provider reply as evidence, and a verb
@@ -122,7 +127,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 24;
+pub const STORAGE_ABI_VERSION: u16 = 25;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

@@ -10,7 +10,8 @@ use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
-    load_observation_window, observation_output_path, recoverable_chunk_path, script_output_path,
+    load_observation_window, load_script_context, observation_output_path, recoverable_chunk_path,
+    script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
@@ -256,11 +257,11 @@ impl EngineNativeExecutor<'_> {
                 seq,
                 // A step's program, as its observation, is carried up to the
                 // window's bytes, read by range (FIX 311).
-                load_observation_window(
+                load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq),
-                    COMPACTION_OBSERVATION_WINDOW_BYTES,
+                    Some(COMPACTION_OBSERVATION_WINDOW_BYTES),
                 )?,
                 load_observation_window(
                     &self.storage,
@@ -553,10 +554,11 @@ impl EngineNativeExecutor<'_> {
                 }
                 for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
                     let turn = CodeRunHistoryTurn {
-                        code: load_context_output(
+                        code: load_script_context(
                             &self.storage,
                             record,
                             &script_output_path(step),
+                            None,
                         )?,
                         console: load_context_output(
                             &self.storage,

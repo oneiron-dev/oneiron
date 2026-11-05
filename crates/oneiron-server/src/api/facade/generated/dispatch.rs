@@ -7345,6 +7345,37 @@ async fn vault_skills_code_auto_install_set(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_skills_fit_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.fit.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.fit.set", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.skills.fit.set", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_skills_fit_set(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_skills_permissions_approve(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11306,6 +11337,41 @@ async fn vault_federation_burst_policy_set(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_sync_retained_work_wait_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.retained_work.wait.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.retained_work.wait.set", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.sync.retained_work.wait.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_sync_retained_work_wait_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_federation_burst_ingress(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13717,6 +13783,41 @@ async fn vault_records_erase_sweep(
     let mut hooks = facade_hooks_pre(server, call, "vault.records.erase_sweep", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_records_erase_sweep(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbound_calls_request_erase(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbound_calls.request.erase")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbound_calls.request.erase", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.outbound_calls.request.erase", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbound_calls_request_erase(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -39350,6 +39451,7 @@ async fn call_verb_row(
         "vault.skills.code_auto_install.set" => {
             Box::pin(vault_skills_code_auto_install_set(server, call, input)).await
         }
+        "vault.skills.fit.set" => Box::pin(vault_skills_fit_set(server, call, input)).await,
         "vault.skills.permissions.approve" => {
             Box::pin(vault_skills_permissions_approve(server, call, input)).await
         }
@@ -39630,6 +39732,9 @@ async fn call_verb_row(
         "vault.federation.burst.policy.set" => {
             Box::pin(vault_federation_burst_policy_set(server, call, input)).await
         }
+        "vault.sync.retained_work.wait.set" => {
+            Box::pin(vault_sync_retained_work_wait_set(server, call, input)).await
+        }
         "vault.federation.burst.ingress" => {
             Box::pin(vault_federation_burst_ingress(server, call, input)).await
         }
@@ -39818,6 +39923,9 @@ async fn call_verb_row(
         }
         "vault.records.erase_sweep" => {
             Box::pin(vault_records_erase_sweep(server, call, input)).await
+        }
+        "vault.outbound_calls.request.erase" => {
+            Box::pin(vault_outbound_calls_request_erase(server, call, input)).await
         }
         "vault.research.create_child" => {
             Box::pin(vault_research_create_child(server, call, input)).await

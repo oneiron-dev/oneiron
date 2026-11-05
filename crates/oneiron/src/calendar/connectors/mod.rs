@@ -74,6 +74,7 @@ use super::claims;
 use super::google_internal;
 
 pub use self::inbound::run_calendar_connector_sync;
+pub(crate) use self::outbound::calendar_connector_write_accepts_masked;
 pub use self::outbound::{
     CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState,
     calendar_remote_uid_for_href, write_calendar_event,

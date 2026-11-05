@@ -591,20 +591,20 @@ impl Vault {
         } else {
             self.authorize_settle(consent, actor)?;
             let reason = reason.trim();
-            let record = output_record(
-                &row,
-                SettleOutcomeKind::Discarded,
-                (consent, actor),
-                learned_at,
-                (None, None),
-            );
             let key = settlement_key_parts(artifact_id, proposal_ref);
             self.with_write_txn_grouped(|wtxn| {
-                self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
                 if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                     return Err(already_settled(&existing));
                 }
-                let mut record = record;
+                let mut record = output_record(
+                    &row,
+                    SettleOutcomeKind::Discarded,
+                    (consent, actor),
+                    learned_at,
+                    (None, None),
+                    grant_ref,
+                );
                 record.reason = (!reason.is_empty()).then(|| reason.to_owned());
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 Ok(record)
@@ -634,7 +634,7 @@ impl Vault {
             run_ref: row.proposal_ref.clone(),
         };
         let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
             }
@@ -692,6 +692,7 @@ impl Vault {
                 (consent, actor),
                 learned_at,
                 (Some(&version), replaced),
+                grant_ref,
             );
             RECORD.put(&self.store, wtxn, &key, &record)?;
             let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());

@@ -125,6 +125,28 @@ pub(super) struct LlamaIdentityManifest {
     /// The launch's explicit cache settings.
     #[serde(default)]
     cache_mode: Option<CacheDigest>,
+    /// The target's observed architecture facts, parsed from the manifest's
+    /// top-level `architecture` section only after the manifest verifies;
+    /// never read from the `identity` section.
+    #[serde(skip)]
+    target_architecture: Option<TargetArchitecture>,
+}
+
+/// The target's observed architecture facts (FIX 12383): the manifest's
+/// top-level `architecture` section, strictly typed. A missing or mistyped
+/// name, or any non-`u32` count, leaves the whole section unknown. Raw
+/// observed facts only: no derived widths, no admission bound.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(super) struct TargetArchitecture {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) block_count: Option<u32>,
+    #[serde(default)]
+    pub(super) head_count_kv: Option<u32>,
+    #[serde(default)]
+    pub(super) embedding_length: Option<u32>,
+    #[serde(default)]
+    pub(super) head_count: Option<u32>,
 }
 
 /// The manifest's fields this reader checks, beside its digests. Its other
@@ -138,6 +160,10 @@ struct ManifestWire {
     #[serde(default)]
     draft: Option<ManifestDraft>,
     identity: LlamaIdentityManifest,
+    /// The optional architecture facts as unparsed JSON, so a malformed
+    /// optional section never invalidates the manifest's digests.
+    #[serde(default)]
+    architecture: Option<JsonValue>,
 }
 
 /// The launch's draft GGUF, as its manifest lists it.
@@ -176,6 +202,16 @@ impl AnsweringIdentity {
             Some(manifest) if manifest.runtime.is_some() => WorkerBuildEvidence::VerifiedArtifacts,
             _ => WorkerBuildEvidence::Unknown,
         }
+    }
+
+    /// The answering launch's observed target architecture, when its
+    /// manifest verified and names the target model. Raw facts only; no
+    /// consumer reads capacity or geometry from it yet.
+    pub(super) fn target_architecture(&self) -> Option<&TargetArchitecture> {
+        self.manifest
+            .as_deref()
+            .filter(|manifest| manifest.model.is_some())
+            .and_then(|manifest| manifest.target_architecture.as_ref())
     }
 
     /// A chat answer's identity: the server rendered its prompt with the
@@ -341,5 +377,9 @@ fn verify(bytes: &[u8], alias: &LlamaAlias, target: &str) -> Option<LlamaIdentit
         .draft
         .and_then(|draft| draft.sha256)
         .filter(|digest| !digest.is_empty());
+    identity.target_architecture = manifest
+        .architecture
+        .and_then(|section| serde_json::from_value::<TargetArchitecture>(section).ok())
+        .filter(|arch| !arch.name.is_empty());
     Some(identity)
 }

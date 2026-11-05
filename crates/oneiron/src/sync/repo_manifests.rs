@@ -29,6 +29,7 @@
 //!   head lists.
 
 pub(super) mod checkpoint;
+pub(super) mod conflicts;
 
 use std::collections::BTreeSet;
 

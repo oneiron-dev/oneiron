@@ -1,5 +1,8 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod script_context;
+pub(super) use script_context::load_script_context;
+
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{

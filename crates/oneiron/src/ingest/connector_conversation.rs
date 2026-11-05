@@ -56,6 +56,17 @@ impl Vault {
         text: &str,
         now: u64,
     ) -> MemoryResult<ConnectorWitness> {
+        self.witness_connector_inbound_with_effect(agent, origin, text, now, |_, _| Ok(()))
+    }
+
+    pub(crate) fn witness_connector_inbound_with_effect(
+        &self,
+        agent: EntityId,
+        origin: &SurfaceConnectorPayload,
+        text: &str,
+        now: u64,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<ConnectorWitness> {
         let message = WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -82,6 +93,7 @@ impl Vault {
             message,
             origin.received_at,
             now,
+            effect,
         )
     }
 
@@ -100,6 +112,27 @@ impl Vault {
         text: &str,
         occurred_at: u64,
         now: u64,
+    ) -> MemoryResult<ConnectorWitness> {
+        self.witness_connector_reply_with_effect(
+            agent,
+            origin,
+            reply_ref,
+            text,
+            occurred_at,
+            now,
+            |_, _| Ok(()),
+        )
+    }
+
+    pub(crate) fn witness_connector_reply_with_effect(
+        &self,
+        agent: EntityId,
+        origin: &SurfaceConnectorPayload,
+        reply_ref: &str,
+        text: &str,
+        occurred_at: u64,
+        now: u64,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<ConnectorWitness> {
         let side = reply_side(origin, agent, reply_ref);
         let message = WitnessMessage {
@@ -122,7 +155,7 @@ impl Vault {
             order: 0,
             quote: None,
         };
-        self.witness_connector_turn(agent, origin, &side, message, occurred_at, now)
+        self.witness_connector_turn(agent, origin, &side, message, occurred_at, now, effect)
     }
 
     /// Every message of the conversation `origin` belongs to that `agent`'s
@@ -189,6 +222,7 @@ impl Vault {
         mut message: WitnessMessage,
         occurred_at: u64,
         now: u64,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<ConnectorWitness> {
         let conversation = connector_conversation_id(origin)?;
         let conversation_hex = conversation.to_hex();
@@ -208,11 +242,9 @@ impl Vault {
             conversation_body: conversation_body(origin)?,
             message_occurred: vec![occurred_at],
         };
-        let receipt = self.memory(agent, EdgeActorClass::Agent).witness_imported(
-            &turn,
-            &stamp,
-            |_| Ok(()),
-        )?;
+        let receipt =
+            self.memory(agent, EdgeActorClass::Agent)
+                .witness_imported(&turn, &stamp, |txn| effect(txn, conversation))?;
         let read_grant_repair = self
             .issue_connector_witness_read_grant(agent, conversation, now)
             .err()

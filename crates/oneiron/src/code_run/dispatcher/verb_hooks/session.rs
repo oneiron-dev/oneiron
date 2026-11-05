@@ -46,9 +46,7 @@ impl HostSelfDispatcher<'_> {
             ));
         };
         let effect = call.effect();
-        if !matches!(call, SelfCall::MemorySearch(_))
-            || !binding.session.verb_hooks_may_run(effect.as_str())
-        {
+        if !matches!(call, SelfCall::MemorySearch(_)) {
             return Ok(Ok((call, HookedCall(None, None))));
         }
         let invocation = self.verb_invocation(&call, site)?;

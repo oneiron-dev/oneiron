@@ -89,7 +89,7 @@ impl SyncServer {
         pass: PassControl,
         stop: impl Future<Output = ()> + Send + 'static,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.tagger.as_ref()?;
+        self.tagger_slot()?;
         let server = Arc::clone(self);
         let stop: StopFuture = Box::pin(stop);
         Some(tokio::spawn(server.tag_forever(pass, stop)))
@@ -155,10 +155,7 @@ impl SyncServer {
             if matches!(configured, TaggerConfigured::Refused) {
                 return None;
             }
-            if self
-                .tagger
-                .as_ref()
-                .is_some_and(|slot| slot.card().is_some())
+            if self.tagger_slot().is_some_and(|slot| slot.card().is_some())
                 && let Some(admission) = admit()
             {
                 break admission;
@@ -175,8 +172,7 @@ impl SyncServer {
         let built = tokio::task::spawn_blocking(move || {
             let _admission = admission;
             let slot = server
-                .tagger
-                .as_ref()
+                .tagger_slot()
                 .ok_or(oneiron::Error::InvariantViolation(
                     "tagging worker started without a tagger",
                 ))?;
@@ -230,8 +226,7 @@ impl SyncServer {
         let server = Arc::clone(self);
         let selected = tokio::task::spawn_blocking(move || {
             server
-                .tagger
-                .as_ref()
+                .tagger_slot()
                 .map(|slot| slot.selected_by(server.vault()))
         })
         .await;
@@ -255,7 +250,7 @@ impl SyncServer {
         }
         let server = Arc::clone(self);
         let probed = tokio::task::spawn_blocking(move || {
-            let slot = server.tagger.as_ref()?;
+            let slot = server.tagger_slot()?;
             Some(match slot.tagger().probe() {
                 Ok(ProbeOutcome::Ready(card)) => {
                     slot.accept_card(card);

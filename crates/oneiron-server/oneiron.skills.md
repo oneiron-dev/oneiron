@@ -835,7 +835,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -875,7 +875,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Request body:
 
 - `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -928,7 +928,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -1070,7 +1070,7 @@ Request body:
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
 - `media` optional: `{ "space", "mime", "bytes_b64" }`. The server embeds the base64 bytes (at most `[limits].retrieval_query_bytes` as sent) into the declared embedding space `space` through the `ai.embed` rung its id names (a rung id from `GET /v1/ai/options`, then `@` and the `[models]` provider key that binds that rung), on the query tower `mime` picks (`image/*`, `audio/*`, or UTF-8 `text/*`), and searches that space as one more ranked list. It may stand in for `query` and `query_vector`. With no `ai.embed` rung for the space the pack answers 503; the vault's inference policy still admits the call. `POST /v1/core/query` takes the same `media`. On the one-space preset (the vault's text kind slot bound to a declared space), both doors also embed `query` through that space's text tower and search it there, in place of the vault's own vector index.
-- `limit` optional: maximum entities to retrieve, default `10`; past `1000` it is served at `1000` and `limit_clamped` says so.
+- `limit` optional: maximum entities to retrieve, default `10`; the whole requested limit is served, and `limit_clamped` stays false.
 - `depth` optional: `edge_hop` and `max_neighbors` controls.
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
 - `time` optional: `since`, occurred range, or learned range filters.

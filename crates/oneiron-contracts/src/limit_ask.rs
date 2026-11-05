@@ -522,6 +522,11 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Result rows one search, recall or context-pack door was asked for:
+    /// the caller's requested count, measured where the door serves it.
+    /// Past it the row asks whether everything is okay and the whole
+    /// requested count is served.
+    RequestedResultRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

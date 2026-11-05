@@ -122,7 +122,7 @@ impl Memory<'_> {
         input: &TemporalSearchRequest,
     ) -> MemoryResult<ScopedReadResult<TemporalSearchResult>> {
         input.validate()?;
-        let (limit, _) = caps::clamp_search_limit(input.limit);
+        let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let (filter, policy) = lane.recall_plan()?;
         // The ranges here, then the actor gate under one authority per

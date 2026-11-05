@@ -181,7 +181,7 @@ impl TaggingReconciler {
     /// leaves the device only behind the host egress predicate, which no
     /// tagger door has yet; so it is refused here.
     pub fn new(vault: Arc<Vault>, encoder: Arc<dyn ExtractionEncoder>) -> Result<Self> {
-        let config = vault.config.tagging.clone().ok_or_else(|| {
+        let config = vault.tagging_marker_config().ok_or_else(|| {
             Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
         })?;
         if encoder.locality() != EmbedderLocality::OnDevice {

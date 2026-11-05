@@ -26,6 +26,17 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
     answer: Answer,
     sources: Option<Vec<EntityId>>,
 ) -> Result<Answering, AnswerRefused> {
+    begin_sourced_answer_with_fallback(ai, answer, sources.clone(), sources)
+}
+
+/// An answer whose captured call and today's fallback were read from
+/// different rows. Both handles share the same run, budget and meter.
+pub(crate) fn begin_sourced_answer_with_fallback(
+    ai: &AiHandle,
+    answer: Answer,
+    sources: Option<Vec<EntityId>>,
+    today_sources: Option<Vec<EntityId>>,
+) -> Result<Answering, AnswerRefused> {
     let Answer {
         vault,
         agent,
@@ -121,8 +132,14 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
                     class: WorkClass::Foreground,
                     ..Default::default()
                 });
-            compaction::open_stream(&run.sourced(sources), admitted, today, pending.as_ref())
-                .map_err(|error| format!("chat budget: {error:?}"))
+            compaction::open_stream(
+                &run.sourced(sources),
+                &run.sourced(today_sources),
+                admitted,
+                today,
+                pending.as_ref(),
+            )
+            .map_err(|error| format!("chat budget: {error:?}"))
         });
     let stream = match started {
         Ok(stream) => stream,

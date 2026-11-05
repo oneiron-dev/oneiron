@@ -150,7 +150,9 @@ mod host;
 pub use host::{
     bind_agent_run_attribution, bind_dreamer_weave_attribution, witness_agent_run_close,
 };
-pub(crate) use host::{run_executor_model, run_executor_model_in_txn};
+pub(crate) use host::{
+    run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
+};
 mod judge_binding;
 pub(crate) use judge_binding::finalize_run_judge_in_txn;
 mod derivation_witness;
