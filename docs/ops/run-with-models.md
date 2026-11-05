@@ -1206,13 +1206,15 @@ Gate record with the handle, generation, effector, operation and send status.
 
 A served host also supplies `native_mail.jmap` against its installed native
 mail server and `broker.models` against a configured broker-backed
-OpenAI-compatible or Gemini provider. The latter takes
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
 `arguments: {"provider": "<configured provider name>"}` and returns one actual
-provider JSON response: `/v1/models` for OpenAI-compatible providers or
-`/v1beta/models` for Gemini. Any provider pagination token is returned as-is;
-this operation does not fetch later pages or claim a complete catalog. It
-presents the requested handle, not the provider's configured secret, under the
-existing `broker:model` binding.
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
 The host uses one actual model rung only as the broker's bodyless-request
 binding; it does not filter the listing or claim that model is serving.
 The broker is connected before custody releases the value. Both result and
