@@ -2984,7 +2984,7 @@ export_facade! {
 "vault.lenses.result_set.action" => fn vault_lenses_result_set_action(&self, input: LensResultSetActionRequest) -> LensResultSetActionResult = |client| {
     let input: oneiron::lens::LensResultSetActionRequest = crate::codec::lower_record("vault.lenses.result_set.action", input)?;
     let output = client.vault_lenses_result_set_action(&input)?;
-    crate::codec::lift_record("vault.lenses.result_set.action", &output)
+    Lift::lift(output)
 };
 "vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultLensFrameCard = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;

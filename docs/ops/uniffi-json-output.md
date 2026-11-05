@@ -111,6 +111,12 @@ inside outcome strings stays opaque text; it is not parsed or validated again.
 The same native action, owner/ceiling checks and typed client calls still
 complete before conversion.
 
+`vault.lenses.result_set.action` consumes its required outcome into `WireJson`
+before converting the finite scoped-read receipt. The same `readReceipt`
+record, entity-kind spelling, float conversion and count widths remain intact.
+Required null stays present, and JSON held inside strings remains opaque. The
+same native selection, action dispatch, input and client call are unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

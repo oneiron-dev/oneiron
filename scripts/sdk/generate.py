@@ -2174,6 +2174,7 @@ UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
     'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
     'crate::policy_setting_doors::PolicyActionOutcome': 'PolicyActionOutcome',
+    'crate::lens::LensResultSetActionResult': 'LensResultSetActionResult',
     'crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>': 'ScopedReadResultDiagnosticEventViewList',
     'crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>': 'ScopedReadResultOptionalDiagnosticEventView',
     'crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>': 'ScopedReadResultCoachInspectionView',
