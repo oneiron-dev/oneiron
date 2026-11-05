@@ -38,7 +38,7 @@
 //! 2722, [`KnownValues::growing`]).
 
 mod entries;
-mod forms;
+use oneiron_store::known_value_index::forms;
 mod rolling;
 mod run;
 mod writer_index;

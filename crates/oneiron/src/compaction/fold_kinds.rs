@@ -185,6 +185,7 @@ impl FoldRecord {
             kind: Some(kind),
             note: mark.note.clone(),
             outputs,
+            marked_at: mark.marked_at,
         }
     }
 
