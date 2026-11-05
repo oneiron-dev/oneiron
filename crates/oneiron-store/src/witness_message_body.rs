@@ -66,6 +66,15 @@ const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
 
+/// One durable ordered MESSAGE part. Custody references carry no part bytes;
+/// revealing one still requires the existing secret entry grant.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum StoredMessagePart {
+    Inline(oneiron_model::llm::ContentPart),
+    Custody { custody: String },
+}
+
 /// One MESSAGE envelope, exactly as the write door will encode it.
 ///
 /// `metadata` is the rmpv value the body carries (the engine converts JSON to
@@ -80,7 +89,7 @@ pub struct WitnessMessageEnvelope<'a> {
     /// Text content, BM25-indexed by the caller when non-empty.
     pub content: &'a str,
     /// Ordered terminal parts owned by the MESSAGE, never its editable text.
-    pub parts: Option<Vec<oneiron_model::llm::ContentPart>>,
+    pub parts: Option<Vec<StoredMessagePart>>,
     /// Opaque passenger data, or `None`.
     pub metadata: Option<Value>,
     /// Whether the row is part of the visible transcript.
@@ -218,7 +227,7 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
     let mut author: Option<&str> = None;
     let mut message_type: Option<&str> = None;
     let mut content: Option<&str> = None;
-    let mut parts: Option<Vec<oneiron_model::llm::ContentPart>> = None;
+    let mut parts: Option<Vec<StoredMessagePart>> = None;
     let mut metadata: Option<Value> = None;
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;
