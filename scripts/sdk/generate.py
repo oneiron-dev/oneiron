@@ -2156,6 +2156,12 @@ UNIFFI_RESULTS = {
     'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
     'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
 }
+# Generated records with an owned codec for a nested opaque JSON result.
+# `types.root()` still emits their public records before this codec is selected.
+UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+}
+
 # A typed binding argument the client takes as is: its foreign type and how it
 # is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
 UNIFFI_ARGUMENTS = {
@@ -2263,7 +2269,11 @@ def uniffi_export(row, types, census):
             output, result = record, 'Lift::lift(output)'
             sides.append('typed')
         elif mirror := types.root(row['output']):
-            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            owned = uniffi_record(row['output'], UNIFFI_GENERATED_RESULT_LIFTS)
+            if owned and owned != mirror:
+                raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
+            output = mirror
+            result = 'Lift::lift(output)' if owned else f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
             output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
