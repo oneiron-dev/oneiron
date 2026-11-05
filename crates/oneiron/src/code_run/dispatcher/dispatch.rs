@@ -58,7 +58,7 @@ impl HostSelfDispatcher<'_> {
                 let turn = std::sync::Arc::new(self.task_work_turn()?);
                 self.dispatch_tasks_wait(call, run_id, turn)
             }
-            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
+            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call, read_as),
             // The landing reads its refs under the key its door admitted it with.
             SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
