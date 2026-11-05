@@ -89,6 +89,7 @@ impl ActionRegistry {
             owner_surface: Some(surface),
             live_run: None,
             planner: None,
+            slip_issuer: None,
         };
         self.execute(vault, actor, principal, call, binding)
     }
@@ -106,6 +107,7 @@ impl ActionRegistry {
             owner_surface,
             live_run,
             planner,
+            slip_issuer,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -248,6 +250,10 @@ impl ActionRegistry {
             Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
+        let dispatcher = match slip_issuer {
+            Some(issuer) => dispatcher.with_slip_issuer(issuer),
+            None => dispatcher,
+        };
         let result = dispatcher
             .dispatch_for_executor_run(
                 super::ExecutorCallSite {
@@ -274,6 +280,7 @@ impl ActionRegistry {
             Err(error) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: error.to_string(),
+                code: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the
