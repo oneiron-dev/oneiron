@@ -35,14 +35,15 @@ pub use self::reservation::{
     EffectorBudgetApproval, EffectorBudgetDebit, EffectorSpendReservationRow,
 };
 pub(crate) use self::reservation::{
-    release_effector_debits_in_txn, restore_effector_debits_in_txn,
-    set_effector_debits_reserved_in_txn,
+    fire_settled_effector_debits_in_txn, release_effector_debits_in_txn,
+    restore_effector_debits_in_txn, set_effector_debits_reserved_in_txn,
 };
 pub(crate) use self::row::EFFECTOR_BUDGET_ROW_KEY_LEN;
 pub(crate) use self::row::budget_exhausted_reason;
 use self::row::row_ordinal;
 pub use self::row::{
-    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
+    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId,
+    EffectorBudgetRowSource, EffectorBudgetSettlementEvents,
 };
 pub(crate) use self::spend_reserve::{
     SpendReserve, reconcile_connector_spend_in_txn, reserve_connector_spend_in_txn,
@@ -424,6 +425,19 @@ pub struct EffectorBudgetCharge {
     pub debits: Vec<EffectorBudgetDebit>,
 }
 
+pub(crate) fn append_effector_steering_messages<'a>(
+    messages: &mut Vec<String>,
+    events: impl IntoIterator<Item = &'a EffectorBudgetLadderEvent>,
+) {
+    for event in events {
+        if let Some(signal) = &event.steering
+            && !messages.contains(&signal.message)
+        {
+            messages.push(signal.message.clone());
+        }
+    }
+}
+
 impl EffectorBudgetCharge {
     /// The steering messages this charge fired (FIX 3759, FIX 3761): its
     /// key's ladder events, then its catalog pool's, each threshold that
@@ -433,13 +447,7 @@ impl EffectorBudgetCharge {
     pub fn steering_messages(&self) -> Vec<String> {
         let pool = self.pool.iter().flat_map(|pool| &pool.ladder_events);
         let mut messages: Vec<String> = Vec::new();
-        for event in self.ladder_events.iter().chain(pool) {
-            if let Some(signal) = &event.steering
-                && !messages.contains(&signal.message)
-            {
-                messages.push(signal.message.clone());
-            }
-        }
+        append_effector_steering_messages(&mut messages, self.ladder_events.iter().chain(pool));
         messages
     }
 }

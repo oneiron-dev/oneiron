@@ -41,9 +41,13 @@ All of these changes commit with the existing ledger outcome transaction.
 The native row read now separates reserved and settled amounts while keeping
 combined used capacity, percentages, pacing, suspension, and ladder thresholds.
 Zero estimates and unpriced spend targets keep their original approval for
-Done-time actual-cost reconciliation without inventing an estimate debit. The
-ladder's warning time remains separate work. Budget limits, defaults, authority,
-transport, provider clocks and window geometry are unchanged.
+Done-time actual-cost reconciliation without inventing an estimate debit.
+Admission warnings keep their existing timing. A confirmed Done also emits any
+still-unfired threshold of its own surviving non-Spend rows from the SAME writer,
+using the original approval and exact debit identity. New, Resume and the public
+remote-task settlement return those events only after commit; they do not create
+a fresh admission charge or duplicate an early warning. Budget limits, defaults,
+authority, transport, provider clocks and window geometry are unchanged.
 
 See [usage lifecycle](effector-usage-lifecycle.md) and
 [charter approvals](charter-budget-reservations.md) for the strict entry-ID and

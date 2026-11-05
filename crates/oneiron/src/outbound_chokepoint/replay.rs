@@ -429,7 +429,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
                     now_ms / 1_000,
                 );
             })?;
-            Ok(effect_result(&done, Some(outcome), replayed, None))
+            let mut result = effect_result(&done.record, Some(outcome), replayed, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
             let uncertain = record_possible_delivery(vault, record.id)?;
@@ -645,6 +647,7 @@ pub(super) fn effect_result(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
@@ -683,6 +686,7 @@ pub(super) fn gate_rejection(
             .map(|reason| (*reason).to_owned())
             .collect(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,

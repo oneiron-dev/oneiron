@@ -111,6 +111,7 @@ fn paced_result(intent_id: IntentId, next_eligible_at: u64, reason: &str) -> Out
         gate_reason_codes: vec![reason.to_owned()],
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,

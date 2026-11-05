@@ -46,10 +46,40 @@ reset entries are not recreated by marking or release. The raw usage codec
 requires the new four-field entry `[id, at, amount, reserved]`; reservation debits
 require `entry_id`. There is no old-format reader or migration.
 
+## Confirmed-delivery warnings
+
+Admission keeps its existing early warnings. Confirmed Done also checks the
+send's own surviving non-Spend entries after settlement, in that SAME terminal
+writer. It uses each original charter approval, actual entry ID, amount and time,
+and the current row's native window. Expired, missing, reset and obsolete-approval
+entries emit nothing. Spend remains outside incremental ladder delivery (M3b).
+
+Both paths use combined live usage and ONE per-window `fired` memory. Done emits
+only crossed thresholds not already fired: it never repeats an admission warning.
+For example, a certain non-delivery releases an entry, a later rolling-window
+touch re-arms a threshold, and the retry restores that original entry without
+firing. Its confirmed Done can now emit the still-unfired threshold once. This is
+not a settled-only capacity or warning percentage.
+
+Events leave the terminal transaction only after commit and force-sync, beside
+the record. Synchronous New and Resume carry them separately from the admission
+charge, so a charge-less resume needs no invented charge or meter snapshot.
+`OutboundDispatchResult` and `ScopedMcpDispatchResult` expose the key-owned events
+and `steering_messages()`. A scoped call includes those messages in its existing
+`budget_steering` reply on both Delivered and AwaitingInput. Status and audit
+replay emit no messages.
+
+`Vault::settle_remote_outbound_task` returns `RemoteTaskSettlement`, not just an
+`IntentState`: its state, key-owned budget events and `steering_messages()` belong
+to that committed observation. The trusted status caller forwards them to its
+existing next-turn steering queue. No second ledger, durable warning queue or
+background publisher is added. A process failure after commit can still lose the
+reply; a replay does not re-emit a fired event.
+
 ## Remaining scope
 
-FIX11027 remains PART. Ladder signals still fire from combined charge-time usage;
-no Done-time steering channel or settled-only ladder policy is added. Charter
-non-delivery retry release and restoration use the original approval binding.
-This document states the source contract, not a compile, runtime, delivery, or
-timing result.
+FIX11027 remains PART for host-side consumption beyond these native return
+contracts; the ordinary dispatch's existing raw ladder-event field has no
+in-repository reader. No universal next-turn injection, crash-replay delivery,
+compile, runtime, delivery or timing result is claimed here. Charter
+non-delivery retry release and restoration retain the original approval binding.

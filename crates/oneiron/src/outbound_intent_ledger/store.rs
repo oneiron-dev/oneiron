@@ -472,7 +472,7 @@ pub(crate) fn complete_record_bridged(
     id: [u8; 32],
     now_ms: u64,
     bridge: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentCompletion> {
     transition_record_with_outcome_and(
         vault,
         id,
@@ -707,6 +707,12 @@ fn transition_record_with_outcome(
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
+        .map(|completion| completion.record)
+}
+
+pub(crate) struct IntentCompletion {
+    pub(crate) record: IntentLedgerRecord,
+    pub(crate) budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
 }
 
 fn transition_record_with_outcome_and(
@@ -716,15 +722,18 @@ fn transition_record_with_outcome_and(
     outcome: RecordedOutboundOutcome,
     now_ms: u64,
     also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentCompletion> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let mut record =
+    let (mut record, budget_events) =
         match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
-            transition::Transitioned::Moved(record) => record,
+            transition::Transitioned::Moved(record, budget_events) => (record, budget_events),
             transition::Transitioned::Replayed(mut record) => {
                 open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
-                return Ok(record);
+                return Ok(IntentCompletion {
+                    record,
+                    budget_events: Vec::new(),
+                });
             }
         };
     open_payload_in_txn(vault, &wtxn, &mut record)?;
@@ -735,7 +744,10 @@ fn transition_record_with_outcome_and(
     // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
     vault.wake_owner_shed();
     synced?;
-    Ok(record)
+    Ok(IntentCompletion {
+        record,
+        budget_events,
+    })
 }
 
 /// Writes `record`, which a read door may have opened, back over its row in the stored form the

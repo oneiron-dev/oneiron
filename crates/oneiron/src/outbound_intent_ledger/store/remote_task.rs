@@ -2,13 +2,18 @@
 //! to Deferred with the task's handle, and its settlement by what the
 //! provider later reports of that task.
 
-use super::super::settlement::{RemoteTaskHandle, RemoteTaskObservation, keep_remote_task_in_txn};
+use super::super::settlement::{
+    RemoteTaskHandle, RemoteTaskObservation, RemoteTaskSettlement, keep_remote_task_in_txn,
+};
 use super::super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
 };
 use super::transition::{Transitioned, transition_record_in_txn};
-use super::{force_sync, get_ledger_record, open_payload_in_txn, transition_record_with_outcome};
+use super::{
+    IntentCompletion, force_sync, get_ledger_record, open_payload_in_txn,
+    transition_record_with_outcome_and,
+};
 use crate::Vault;
 use crate::error::Error;
 
@@ -30,7 +35,7 @@ pub(crate) fn defer_record(
         RecordedOutboundOutcome::Deferred,
         now_ms,
     )? {
-        Transitioned::Moved(record) => record,
+        Transitioned::Moved(record, _) => record,
         Transitioned::Replayed(mut record) => {
             open_payload_in_txn(vault, &wtxn, &mut record)?;
             return Ok(record);
@@ -52,7 +57,7 @@ fn settle_deferred_record(
     id: [u8; 32],
     observation: RemoteTaskObservation,
     now_ms: u64,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentCompletion> {
     let (next, outcome) = match observation {
         RemoteTaskObservation::Completed => (IntentState::Done, RecordedOutboundOutcome::Acked),
         RemoteTaskObservation::Failed => (
@@ -74,7 +79,7 @@ fn settle_deferred_record(
             });
         }
     }
-    transition_record_with_outcome(vault, id, next, outcome, now_ms)
+    transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
 }
 
 impl Vault {
@@ -83,7 +88,9 @@ impl Vault {
     /// task is the send's Done and settles its reserved budget; a failed one
     /// stops the send and gives that budget back. The caller is the trusted
     /// transport that read the provider's own status answer. Returns the
-    /// row's state after.
+    /// row's state and newly fired budget thresholds after commit. The caller
+    /// forwards their steering to its existing next-turn queue. A replay
+    /// emits no thresholds.
     ///
     /// # Errors
     /// A row that is missing, is not Deferred, or does not read; storage
@@ -92,8 +99,12 @@ impl Vault {
         &self,
         intent_id: &[u8; 32],
         observation: RemoteTaskObservation,
-    ) -> IntentLedgerResult<IntentState> {
-        settle_deferred_record(self, *intent_id, observation, self.now_recorded_at())
-            .map(|record| record.state)
+    ) -> IntentLedgerResult<RemoteTaskSettlement> {
+        settle_deferred_record(self, *intent_id, observation, self.now_recorded_at()).map(
+            |completion| RemoteTaskSettlement {
+                state: completion.record.state,
+                budget_events: completion.budget_events,
+            },
+        )
     }
 }

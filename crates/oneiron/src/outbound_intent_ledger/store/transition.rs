@@ -14,7 +14,10 @@ use crate::Vault;
 pub(super) enum Transitioned {
     /// The row moved to the next state with the outcome: the writer owes
     /// its commit.
-    Moved(IntentLedgerRecord),
+    Moved(
+        IntentLedgerRecord,
+        Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+    ),
     /// The row already stood in that state with the same outcome: nothing
     /// was written.
     Replayed(IntentLedgerRecord),
@@ -71,6 +74,6 @@ pub(super) fn transition_record_in_txn(
         // unknown. Keep its conservative floor anchored to this transition.
         crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, wtxn, &id)?;
     }
-    super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
-    Ok(Transitioned::Moved(record))
+    let budget_events = super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
+    Ok(Transitioned::Moved(record, budget_events))
 }
