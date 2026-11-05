@@ -57,7 +57,7 @@ impl ReceivedHomeClaimVector {
             return Ok(None);
         }
         let source = self.vector.source.as_slice();
-        let body = decode_claim_body(&source[ENTITY_METADATA_HEADER_LEN..])?;
+        let body = decode_claim_body(&source[ENTITY_METADATA_HEADER_LEN..], true)?;
         let origin_kind = OriginClaimKind::of(&body.predicate);
         let original_origin_actors = origin_kind.and_then(|kind| claim_actors(kind, &body));
         let response = match ResponseFamily::of_row(ResponseDb::Entities, id.as_bytes(), source) {
