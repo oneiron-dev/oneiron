@@ -78,9 +78,9 @@ impl BodySpool {
     }
 
     /// The declared string members, using reader room admitted with the text sink.
-    pub(super) fn string_object_admitted(
+    pub(super) fn string_object_admitted<const N: usize>(
         &mut self,
-        bulk: &mut [BulkMember<'_>],
+        bulk: &mut [BulkMember<'_>; N],
         memory: &mut crate::machine::MemoryLease,
     ) -> Result<(), JsonInvalid> {
         let reader = BufReader::with_capacity(SPOOL_PIECE, &mut self.file);

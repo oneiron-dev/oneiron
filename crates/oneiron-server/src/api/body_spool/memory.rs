@@ -18,7 +18,8 @@ impl Drop for StopOnDrop {
 
 impl BodySpool {
     /// Admits one text sink and one JSON reader before either allocates.
-    /// The schema-sized name vector and native proposal decode are separate.
+    /// Schema-name matching uses the caller's fixed-size stack array;
+    /// native proposal decoding is separate.
     /// Called only on the transfer worker, outside every vault transaction.
     pub(in crate::api) fn admit_string_decode_buffers(&self) -> Result<MemoryLease, MemoryRefusal> {
         MachineMemory::process().lease_untimed((2 * SPOOL_PIECE) as u64, &|| {
