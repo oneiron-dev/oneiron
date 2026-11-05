@@ -246,6 +246,7 @@ impl Vault {
                 name: format!("{}{}", holder.seat.names(&holder.run), id.to_hex()),
                 class: CustodyClass::CustodyDeviceBound,
                 device_only: true,
+                model_reveal_allowed: true,
                 value_bytes: std::mem::take(&mut *value),
                 status: SecretCustodyStatus::Active,
                 registered_at: self.store.clock.now_recorded_at(),

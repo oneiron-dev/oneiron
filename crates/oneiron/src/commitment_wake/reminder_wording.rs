@@ -40,7 +40,7 @@ const UNSENT_WORDING_RUN_PREFIX: &str = "commitment-reminder-wording-unsent:";
 
 /// Who words the owner's reminders in place of the fixed wording: the host's
 /// model, in the voice of the persona `persona_ref` names when set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderVoice {
     #[serde(default)]
