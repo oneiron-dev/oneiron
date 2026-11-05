@@ -357,6 +357,7 @@ impl HostSelfDispatcher<'_> {
         let Some(finding) = call.bound else {
             return Ok(failed("finding_not_own"));
         };
+        let reference = finding.reference()?;
         let reported = self.storage.report_reader_finding(
             call.task,
             child.generation,
@@ -370,7 +371,7 @@ impl HostSelfDispatcher<'_> {
         };
         Ok(SelfDispatchOutcome::ReaderReport(ReaderReportReceipt {
             task: call.task,
-            finding: finding.handle,
+            finding: reference,
             replay,
         }))
     }

@@ -195,7 +195,7 @@ pub fn collect_scoped_child(
         settled_at_ms: None,
         settled: None,
     };
-    let result = reduce_task_wait_set(&set, &[(task, job)], now_ms);
+    let result = reduce_task_wait_set(&set, &[(task, job)], now_ms)?;
     Ok(result.done.then_some((row, result)))
 }
 
