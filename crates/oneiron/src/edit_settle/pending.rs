@@ -336,6 +336,26 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
+        self.propose_native_output_with_reads(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            &[],
+        )
+    }
+
+    /// [`Self::propose_native_output`] with additional rows the producer
+    /// declares it read. A waiting-proposal reader must admit each row.
+    /// This declaration grants no authority and does not prove completeness.
+    pub fn propose_native_output_with_reads(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
+        (actor, retained_at): (WriteActor, u64),
+        read_rows: &[EntityId],
+    ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
             output,
@@ -344,6 +364,7 @@ impl Vault {
             None,
             None,
             false,
+            read_rows,
         )
     }
 
@@ -367,6 +388,7 @@ impl Vault {
             None,
             fork_base,
             true,
+            &[],
         )
     }
 
@@ -390,6 +412,7 @@ impl Vault {
             Some((base, hold)),
             None,
             false,
+            &[],
         )
     }
 
@@ -402,6 +425,7 @@ impl Vault {
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
         base_override: Option<(u64, [u8; 32])>,
         authorize_content_write: bool,
+        read_rows: &[EntityId],
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -418,7 +442,7 @@ impl Vault {
         // retention: Keep preserves this envelope instead of rebinding it to
         // the keeper, and the provenance matches what Keep settles under
         // (blind review of #4554).
-        let row = output_retention::native_output_pending_row(
+        let mut row = output_retention::native_output_pending_row(
             output,
             (actor, self.get_entity_type(&actor.entity_ref())?),
             retained_at,
@@ -427,6 +451,9 @@ impl Vault {
             deck.map(|(_, hold)| hold),
             report,
         );
+        row.read_rows.extend_from_slice(read_rows);
+        row.read_rows.sort_unstable();
+        row.read_rows.dedup();
         if authorize_content_write {
             self.put_pending_with_content_write_grant(artifact_id, &row, reader, actor)
         } else {
