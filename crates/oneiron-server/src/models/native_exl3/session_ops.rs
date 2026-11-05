@@ -86,6 +86,55 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
     serde_json::from_value(frame.body).map_err(|_| OpFault::Cut)
 }
 
+pub(in crate::models) enum ReleasedOpFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+}
+
+pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
+    socket: &Path,
+    epoch: &str,
+    op: SessionOp,
+    body: &B,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+) -> Result<R, ReleasedOpFault> {
+    if !lease.has_dispatch_release() {
+        return send(socket, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedOpFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let bytes = serde_json::to_vec(conversation).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let mut channel = Channel::connect(socket)
+        .await
+        .map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_released(op.wire_name(), Some(epoch), body, input.outbound(), lease)
+        .await
+        .map_err(|error| match error {
+            super::transport::ReleasedExchangeError::Transport(_) => {
+                ReleasedOpFault::Op(OpFault::Cut)
+            }
+            super::transport::ReleasedExchangeError::Release(error) => {
+                ReleasedOpFault::Release(error)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedOpFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedOpFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))
+}
+
 /// `session.export` of `body` to the incarnation `epoch` names: its answer
 /// and the snapshot region the answer's frame passed, both checked. The
 /// answer names `body`'s checkpoint exactly, and a region described as one
