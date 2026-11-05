@@ -1,0 +1,270 @@
+//! The source audiences a window carries (Engine A, 6 Nov 03:46), through
+//! canonical capture and rebuild. A window rebuilt from the artifact alone
+//! gets back each final row's binding and its policy closure, so a restored
+//! row reads to the people it read to.
+//!
+//! Capture keeps each binding of a final row the window carries, and every
+//! revision of a policy those bindings reach, a thread's source included;
+//! and beside them this vault's current binding and closure of each final
+//! row. A carried value that contradicts this vault's refuses the capture.
+//! Validation refuses a key or bytes not in their canonical form and keys
+//! out of order: a restriction is never dropped. Before a recovery checks,
+//! writes or compares anything ([`CanonicalSnapshot::settle_source_audiences_here`]),
+//! a policy this vault holds stands in for the artifact's whole family of it
+//! at its current revision; one it does not hold keeps the artifact's
+//! revisions, none naming an actor this vault erased (the highest one's
+//! redaction rides under a revision of its own); and a binding this vault
+//! holds otherwise refuses the restore. A closure the artifact does not
+//! carry stays unresolved: its rows read to no one, never to all.
+
+#[cfg(feature = "sync")]
+use std::collections::{BTreeMap, BTreeSet};
+
+use loro::LoroDoc;
+#[cfg(feature = "sync")]
+use loro::{LoroValue, ValueOrContainer};
+use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "sync")]
+use super::{ByteBudget, id};
+use super::{CanonicalSnapshot, insert};
+#[cfg(feature = "sync")]
+use crate::EntityId;
+use crate::error::Result;
+#[cfg(feature = "sync")]
+use crate::source_audience::carried::{
+    Carrier, encode_binding, encode_policy, policy_key, record_key,
+};
+#[cfg(feature = "sync")]
+use crate::source_audience::{self, SourceAudienceKind, SourceAudiencePolicy};
+
+/// The window root map of source audiences, as sync files it.
+const SOURCE_AUDIENCES: &str = "source_audiences";
+
+/// One carried binding or policy revision: its key and its bytes, as the
+/// window map holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalSourceAudience {
+    pub key: String,
+    pub value: Vec<u8>,
+}
+
+/// Files `value` under `key` in `rows`; a different value under the same key
+/// refuses.
+#[cfg(feature = "sync")]
+fn keep(rows: &mut BTreeMap<String, Vec<u8>>, key: String, value: Vec<u8>) -> Result<()> {
+    match rows.get(&key) {
+        Some(held) if *held != value => Err(super::invalid(
+            "a carried source audience contradicts this vault's",
+        )),
+        Some(_) => Ok(()),
+        None => {
+            rows.insert(key, value);
+            Ok(())
+        }
+    }
+}
+
+/// Carries, sorted by key, the binding of each row of the snapshot's final
+/// entity set and the revisions of every policy those bindings reach: the
+/// window's carriers first, then this vault's current binding and published
+/// closure of each row. Each is measured, never refused, as a birth is: an
+/// overrun is logged.
+#[cfg(feature = "sync")]
+pub(super) fn capture(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    snapshot: &mut CanonicalSnapshot,
+    budget: &mut ByteBudget,
+) -> Result<()> {
+    // The root resolves as in `binary_rows`, without creating it.
+    let LoroValue::Map(containers) = doc.get_value() else {
+        return Err(super::invalid("window root"));
+    };
+    let map = match containers.get(SOURCE_AUDIENCES) {
+        None => None,
+        Some(LoroValue::Container(id)) => Some(
+            doc.try_get_map(id)
+                .ok_or(super::invalid("nonmap Layer-1 carrier"))?,
+        ),
+        Some(_) => return Err(super::invalid("nonmap Layer-1 carrier")),
+    };
+    let mut finals = BTreeSet::new();
+    for entity in &snapshot.entity_blobs {
+        finals.insert(id(entity.id)?);
+    }
+    let mut rows = BTreeMap::new();
+    if let Some(map) = &map {
+        let mut carried = Vec::new();
+        let mut nonbinary = false;
+        map.for_each(|key, value| match value {
+            ValueOrContainer::Value(LoroValue::Binary(bytes)) => {
+                carried.push((key.to_owned(), bytes.to_vec()));
+            }
+            _ => nonbinary = true,
+        });
+        if nonbinary {
+            return Err(super::invalid("nonbinary Layer-1 carrier"));
+        }
+        let mut decoded = Vec::with_capacity(carried.len());
+        for (key, value) in carried {
+            let entry = crate::source_audience::carried::carrier(&key, &value)
+                .map_err(|_| super::invalid("source audience carrier"))?;
+            decoded.push((key, value, entry));
+        }
+        let bound: BTreeSet<EntityId> = decoded
+            .iter()
+            .filter_map(|(_, _, entry)| match entry {
+                Carrier::Record { row, policy } if finals.contains(row) => Some(*policy),
+                _ => None,
+            })
+            .collect();
+        let mut reached = bound.clone();
+        for (_, _, entry) in &decoded {
+            if let Carrier::Policy {
+                id,
+                policy:
+                    SourceAudiencePolicy {
+                        kind: SourceAudienceKind::Thread { source, .. },
+                        ..
+                    },
+            } = entry
+                && bound.contains(id)
+            {
+                reached.insert(*source);
+            }
+        }
+        for (key, value, entry) in decoded {
+            let kept = match &entry {
+                Carrier::Record { row, .. } => finals.contains(row),
+                Carrier::Policy { id, .. } => reached.contains(id),
+            };
+            if kept {
+                keep(&mut rows, key, value)?;
+            }
+        }
+    }
+    for row in &finals {
+        let Some(policy) = source_audience::binding_in(vault, txn, row)? else {
+            continue;
+        };
+        let Some(closure) = source_audience::published_closure_in(vault, txn, &policy)? else {
+            continue;
+        };
+        keep(&mut rows, record_key(row), encode_binding(&policy)?)?;
+        for (id, held) in closure {
+            keep(
+                &mut rows,
+                policy_key(&id, held.revision),
+                encode_policy(&held)?,
+            )?;
+        }
+    }
+    let mut overrun = None;
+    for (key, value) in rows {
+        if let Some(over) = budget.measure(key.len() + value.len()) {
+            overrun = Some(over);
+        }
+        snapshot
+            .source_audiences
+            .push(CanonicalSourceAudience { key, value });
+    }
+    if let Some(overrun) = overrun {
+        tracing::warn!(
+            required = overrun.required,
+            limit = overrun.limit,
+            "canonical recovery measured source audiences past its budget"
+        );
+    }
+    Ok(())
+}
+
+/// Each carrier is in its canonical form, and the keys sort strictly: a
+/// binding or a revision is never carried twice.
+pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut previous: Option<&str> = None;
+    for row in &snapshot.source_audiences {
+        if previous.is_some_and(|previous| previous >= row.key.as_str()) {
+            return Err(super::invalid("source audiences out of key order"));
+        }
+        crate::source_audience::carried::carrier(&row.key, &row.value)
+            .map_err(|_| super::invalid("source audience carrier"))?;
+        previous = Some(&row.key);
+    }
+    Ok(())
+}
+
+/// Files one carrier back in the rebuilt window's map.
+pub(super) fn rebuild_row(doc: &LoroDoc, row: &CanonicalSourceAudience) -> Result<()> {
+    insert(doc, SOURCE_AUDIENCES, &row.key, &row.value)
+}
+
+#[cfg(feature = "sync")]
+impl CanonicalSnapshot {
+    /// The source audiences as this vault recovers them: a policy it holds
+    /// at its current revision, in place of the artifact's whole family of
+    /// it; one it does not hold, the artifact's revisions but each naming an
+    /// actor this vault erased, the highest one's redaction filed under its
+    /// own next revision; and each binding as carried, unless this vault
+    /// binds the row otherwise, which refuses the restore.
+    pub(in crate::recovery) fn settle_source_audiences_here(
+        &mut self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        let mut rows = BTreeMap::new();
+        let mut held = BTreeMap::new();
+        let mut foreign: BTreeMap<EntityId, Vec<(String, Vec<u8>, SourceAudiencePolicy)>> =
+            BTreeMap::new();
+        for row in std::mem::take(&mut self.source_audiences) {
+            let entry = crate::source_audience::carried::carrier(&row.key, &row.value)
+                .map_err(|_| super::invalid("source audience carrier"))?;
+            match entry {
+                Carrier::Record { row: bound, policy } => {
+                    if source_audience::binding_in(vault, txn, &bound)?
+                        .is_some_and(|here| here != policy)
+                    {
+                        return Err(super::invalid(
+                            "a restored binding contradicts this vault's",
+                        ));
+                    }
+                    rows.insert(row.key, row.value);
+                }
+                Carrier::Policy { id, policy } => {
+                    if let Some(current) = source_audience::policy_in(vault, txn, &id)? {
+                        held.insert(id, current);
+                    } else {
+                        foreign
+                            .entry(id)
+                            .or_default()
+                            .push((row.key, row.value, policy));
+                    }
+                }
+            }
+        }
+        for (id, current) in held {
+            rows.insert(policy_key(&id, current.revision), encode_policy(&current)?);
+        }
+        for (id, revisions) in foreign {
+            let highest = revisions.iter().map(|(_, _, policy)| policy.revision).max();
+            for (key, value, policy) in revisions {
+                if !source_audience::names_erased_actor_in(vault, txn, &policy)? {
+                    rows.insert(key, value);
+                } else if Some(policy.revision) == highest {
+                    let redacted = source_audience::redacted_successor_in(vault, txn, &policy)?;
+                    rows.insert(
+                        policy_key(&id, redacted.revision),
+                        encode_policy(&redacted)?,
+                    );
+                }
+            }
+        }
+        self.source_audiences = rows
+            .into_iter()
+            .map(|(key, value)| CanonicalSourceAudience { key, value })
+            .collect();
+        Ok(())
+    }
+}

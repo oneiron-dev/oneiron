@@ -23,14 +23,19 @@
 //! to those who read what it came from ([`walk`]): the facts learned from a
 //! personal mailbox stay with its owner.
 //!
-//! Policies, bindings and the share events are vault metadata, and they do
-//! not travel with a replica. So a bound row, and a row whose words came
-//! from one, stay out of window replication
+//! Bindings and policies travel with their rows on the owner's full-window
+//! lane only (Engine A, 6 Nov 03:46; [`replica`]): the highest revision of a
+//! policy wins and a binding never moves. The share events, the thread index
+//! and every other lane carry none, so a bound row whose policy does not
+//! resolve, a row whose words came from a row bound otherwise, and every
+//! bound row on another lane stay out of replication
 //! ([`withheld_from_replication_in`]); and a row a source landed, read where
 //! its binding is absent, reads to no one. A vault that holds no policy
 //! binds no row, and the conjunct answers at once for every row no source
 //! landed.
 
+pub(crate) mod carried;
+mod replica;
 mod walk;
 
 use std::collections::BTreeSet;
@@ -41,7 +46,12 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
-pub(crate) use walk::{readable_with_read_in, withheld_from_replication_in};
+pub(crate) use replica::{
+    ReplicaMerge, bind_replicated_in_txn, merge_policy_in_txn, names_erased_actor_in,
+    policy_closure_in, policy_conflicts_in, policy_in, publishable_in, published_closure_in,
+    redacted_successor_in, thread_source_in,
+};
+pub(crate) use walk::{ReplicationScope, readable_with_read_in, withheld_from_replication_in};
 
 /// One policy, by its id.
 const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =
@@ -581,7 +591,10 @@ pub(crate) fn events_in(
 
 /// An actor's erase takes its id out of every policy and event (FIX 3520):
 /// out of a source's readers and a thread's shares, so the erased person
-/// reads nothing, and out of each `created_by` and event field.
+/// reads nothing, and out of each `created_by` and event field. A policy it
+/// changes takes its next revision, so a replica that has not heard of the
+/// erase takes the redaction as the newer policy, not as a conflict; and
+/// every window this vault stores drops the revisions that named the actor.
 pub(crate) fn erase_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -601,6 +614,7 @@ pub(crate) fn erase_actor_in_txn(
             }
         }
         if changed {
+            policy.revision = replica::next_revision(policy.revision)?;
             POLICIES.put(&vault.store, wtxn, &id, &policy)?;
         }
     }
@@ -619,5 +633,9 @@ pub(crate) fn erase_actor_in_txn(
             EVENTS.put(&vault.store, wtxn, &key, &event)?;
         }
     }
+    // Every stored window's revisions naming the actor go with them; each
+    // changed policy's successor rides in their place.
+    #[cfg(feature = "sync")]
+    crate::sync::source_audiences::erase_carriers_in_txn(vault, wtxn, actor)?;
     Ok(())
 }
