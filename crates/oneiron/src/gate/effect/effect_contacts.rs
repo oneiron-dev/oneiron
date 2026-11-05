@@ -156,9 +156,11 @@ pub(crate) fn counterparty_send_override_in_txn(
     channel_class: &str,
     send_ref: Option<&str>,
 ) -> Result<Option<SendOverrideMatch>> {
-    let Some(party) = comm_result(crate::comm::resolve_party_ref_from_store_in_txn(
-        store, txn, party_ref,
-    ))?
+    let Some(party) = comm_result(
+        store
+            .record_hooks
+            .resolve_party_ref_from_store_in_txn(store, txn, party_ref),
+    )?
     else {
         return Ok(None);
     };
