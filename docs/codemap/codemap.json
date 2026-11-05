@@ -63485,6 +63485,7 @@
      "notable": [
       "ManifestSource",
       "OwnerSecretRegistration",
+      "PrivateCopySecret",
       "RequestedBinding",
       "SecretRegistered"
      ],
@@ -63492,8 +63493,8 @@
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
-      "struct": 4
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -63737,7 +63738,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/storage_seal.rs",
-     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
+     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 4, with required…",
      "surface": {
       "crate-vis": 23
      }
