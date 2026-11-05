@@ -61,7 +61,7 @@ pub(crate) use self::plan::{
 pub(crate) use self::reader::BodyFile;
 pub(crate) use self::response::owners::{
     bind_missing_response_owners_in_txn, bind_retained_response_owner_in_txn,
-    response_owners_bound_in_txn,
+    response_instance_owner_in_rows, response_instance_owner_in_txn, response_owners_bound_in_txn,
 };
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
