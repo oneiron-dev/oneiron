@@ -17,6 +17,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Coach jobs in an embedded wake executor](dreamer-coach-embedded-executor.md) — explicit
+  executor support for Coach host jobs and heals, with normal wake admission and settlement.
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
   proposals, exact owner review and confirmation, and atomic run-tray approval.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
@@ -55,5 +57,11 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   decision table and the image manifest's revision floors.
 - [Cloud registration](cloud-registration.md) — the pins file, `oneiron account login`, `status`, `refresh` and `logout`, the link/refresh/logout/erase lifecycle, key rollover, and what the client wipes.
 - [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
+- [Proposal birth attribution](proposal-birth-attribution.md) — captured draft attempts,
+  snapshot/finalize retention, and the evidence-door fallback order.
+- [Coach pilot answer release](coach-pilot-release.md) — frozen source rows for pilot
+  replies, device-local details and invocation replay.
+- [Frozen pattern revision witnesses](planned-spawn-revisions.md) — hard-erase scrubs,
+  late intent writes, and launch comparison without changing the frozen pack body.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).
