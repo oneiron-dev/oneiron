@@ -117,6 +117,9 @@ impl Vault {
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let (out, landed) = self.with_write_txn_grouped(|txn| {
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
+                return Err(refusal);
+            }
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
@@ -182,6 +185,9 @@ impl Vault {
             // A shared vault's role and record scope, whether the update lands
             // or is retained for review (FIX 9846).
             self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, &request.entity)? {
+                return Err(refusal);
+            }
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
