@@ -799,6 +799,10 @@ pub struct MemoryStaleStamp {
 /// One memory pack item.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryItem {
+    /// The ASSET id for a media or text asset hit.
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    pub embedding_matches: Vec<crate::EmbeddingMatchEvidence>,
     /// Short ref, hydratable through `vault.hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `short_id@source_revision_ref` hydrates it.
