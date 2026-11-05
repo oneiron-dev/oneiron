@@ -20,4 +20,3 @@ pub struct Routing {
     pub kind: String,
     pub payload: Vec<u8>,
 }
-
