@@ -32,9 +32,9 @@ use crate::server::{SyncServer, blocking};
 /// prompt that goes back to the requester and as far as the chat role's live
 /// route from `seat`, on `ai`, may take the call (FIX 7257); the call that
 /// carries it is judged again once admitted ([`PromptBoard::rides`]). `None`
-/// when the action reads none. TASKS sizing follows this same answering
-/// agent's staged ROOT layout; only the actual answer that used the admitted
-/// board can activate its candidate through the existing history writer.
+/// when the action reads none. The board renders under this same answering
+/// agent's board layout (BOARD-LAYOUT); only the actual answer that used the
+/// admitted board activates its pending batch, through the history writer.
 pub(crate) async fn action_board(
     server: &Arc<SyncServer>,
     ai: &AiHandle,

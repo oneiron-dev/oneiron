@@ -57,7 +57,14 @@ pub(super) enum McpCarrierPolicy {
 /// One connector's CURRENT board: the sections, the state-derived snapshot
 /// epoch, and the scope label the header states.
 pub(super) struct McpBoardState {
+    /// The sections as their producers built them: what `describe` opens.
     pub(super) sections: Vec<oneiron::context_board::BoardSection>,
+    /// The same sections under the actor's own board layout (BOARD-LAYOUT):
+    /// what the keyframe renders and the epoch hashes.
+    pub(super) laid_out: Vec<oneiron::context_board::BoardSection>,
+    /// The layout batch this board projected; the render that shows it
+    /// activates it.
+    pub(super) layout_candidate: Option<oneiron::context_board::BoardLayoutCandidate>,
     pub(super) scope_label: String,
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,

@@ -18,11 +18,11 @@ mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::describe_self_for_run;
+mod layout;
 mod scratchpad;
 mod session;
 mod standing;
 mod tasks_budget;
-mod tasks_layout;
 mod turn_actions;
 
 pub(crate) use board::{
@@ -32,11 +32,11 @@ pub(crate) use board::{
 pub(crate) use cursor::*;
 pub(crate) use explain::*;
 pub(crate) use history::*;
+pub(crate) use layout::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
-pub(crate) use tasks_layout::*;
 pub(crate) use turn_actions::action_board;
 
 use super::CoreContextPackRequest;
@@ -112,15 +112,15 @@ pub(crate) struct ContextBoardRequest {
     /// and the overflow footer. Project/fanout lead rows ride outside it.
     /// `Some(0)` is a literal zero for optional rows; the footer and any
     /// hook pins may exceed it and are reported, never withheld. `None`
-    /// uses the actor's stored layout: pending for an explicit TURN, live
-    /// otherwise. No stored value keeps the 100-row behavior. Stored budgets
-    /// clamp to the effective board cap; explicit values cannot exceed it.
+    /// uses the TASKS share of the actor's board layout (`self.board.size`):
+    /// pending for an explicit TURN, live otherwise. No share keeps the
+    /// 100-row behavior. An explicit value cannot exceed the board cap.
     #[serde(default)]
     #[schema(example = 400)]
     tasks_budget_tok: Option<usize>,
-    /// Server-internal answering-agent layout actor for a native chat turn
-    /// (FIX 12570, chat slice); never on the wire. `None` keeps the
-    /// auth-derived caller actor.
+    /// Server-internal answering agent whose board layout a native chat
+    /// turn renders under (BOARD-LAYOUT); never on the wire. `None` keeps
+    /// the auth-derived caller actor.
     #[serde(skip)]
     #[schema(ignore)]
     chat_layout_actor: Option<oneiron::EntityId>,
@@ -518,29 +518,18 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
-    // ROOT TASKS layout (FIX 12570, HTTP slice + native chat pending
-    // consumer): an explicit per-request budget wins with its exact value
-    // and never consumes pending (no candidate then); otherwise the staged
-    // snapshot projects now (TURN selects pending when present else live)
-    // and the SAME accepted TURN commit activates the exact candidate.
-    // Without TURN and without a chat layout actor this reads live only
-    // and never activates; a native chat turn projects its answering
-    // agent's row with native has_turn=true and activates it in the SAME
-    // accepted answer-history commit.
-    let (tasks_budget_tok, tasks_keep, tasks_layout_candidate) = match req.tasks_budget_tok {
-        Some(explicit) => (Some(explicit), Vec::new(), None),
-        None => {
-            let cap_tok =
-                oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
-            tasks_layout::hydrate_tasks_selection(
-                &server,
-                &auth,
-                board_turn.is_some(),
-                cap_tok,
-                req.chat_layout_actor,
-            )?
-        }
-    };
+    // The actor's own board layout (BOARD-LAYOUT): a TURN, or a native
+    // chat turn's answering agent, projects the pending batch now and the
+    // SAME accepted TURN commit activates the exact candidate; without a
+    // TURN the board renders under the live layout and activates nothing.
+    // An explicit per-request TASKS budget still wins over the TASKS share.
+    let cap_tok = oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
+    let layout = layout::hydrate_layout_selection(
+        &server,
+        &auth,
+        board_turn.is_some(),
+        req.chat_layout_actor,
+    )?;
     let mut parts = board::board_parts(
         &server,
         &auth,
@@ -551,8 +540,9 @@ pub(crate) async fn context_board_hydrate(
         &observed_reads,
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &hook_pins,
-        tasks_budget_tok,
-        &tasks_keep,
+        req.tasks_budget_tok,
+        &layout,
+        cap_tok,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -575,6 +565,13 @@ pub(crate) async fn context_board_hydrate(
         parts.sections.push(section);
         rows
     });
+    // The layout applies over the assembled sections; each fold its batch
+    // starts keeps the live counts it starts from (BOARD-LAYOUT).
+    let laid_out =
+        oneiron::context_board::apply_board_layout(&parts.sections, &layout.layout, cap_tok);
+    let layout_candidate = layout
+        .candidate
+        .map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
     let board_render = oneiron::context_board::render_board_block(
         &oneiron::context_board::BoardFrame {
             header: &oneiron::context_board::BoardBlockHeader {
@@ -582,21 +579,22 @@ pub(crate) async fn context_board_hydrate(
                 scope: parts.scope.clone(),
             },
             legend: &oneiron::context_board::BoardLegend::canonical(),
-            sections: &parts.sections,
+            sections: &laid_out.sections,
             you: parts.you.as_deref(),
             changes: Some(&changed_line),
         },
         board_budget_request,
     )
     .map_err(board::board_frame_error)?;
-    let board_budget = ContextBoardRenderBudget::of(&board_render, parts.tasks_budget.clone());
+    let board_budget =
+        ContextBoardRenderBudget::of(&board_render, parts.tasks_budget.clone(), &laid_out);
     // What a chat turn's context records keep of this render (FIX 6921).
     let chat_context = chat_emit::capture_chat_context(
         &auth,
         memories.as_ref(),
         &parts.authority,
         &board_render,
-        tasks_layout_candidate.clone(),
+        layout_candidate.clone(),
     );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.
@@ -675,13 +673,13 @@ pub(crate) async fn context_board_hydrate(
         // check runs inside the recording transaction, with the real record:
         // a refused hydration leaves the turn free to record its board.
         Some(target) => {
-            record_board_turn_with_tasks_layout(
+            record_board_turn_with_layout(
                 &server,
                 &read,
                 target,
                 &parts.authority,
                 &mut response,
-                tasks_layout_candidate,
+                layout_candidate,
                 within_standing_budget,
             )?;
         }
@@ -907,8 +905,8 @@ pub(crate) struct ChatBoard {
 /// credential where it reads. `reader`, the answering agent's definition,
 /// shapes the optional recall by its profile; `conversation`, when it
 /// exists, narrows the read to its room's audience. `chat_layout_actor`, the
-/// answering agent for a native chat turn, selects that agent's ROOT TASKS
-/// row only and never widens content scope; `None` keeps caller behavior.
+/// answering agent for a native chat turn, selects that agent's board layout
+/// only and never widens content scope; `None` keeps caller behavior.
 /// A refusal answers its status.
 pub(crate) async fn chat_board(
     server: &Arc<SyncServer>,

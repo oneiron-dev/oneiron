@@ -101,8 +101,16 @@ pub(crate) async fn execute_mcp_setup(
             scope: board.scope_label,
         };
         let mut payload =
-            crate::mcp::mcp_setup_payload(&header, &board.sections, args.board_budget_request())
+            crate::mcp::mcp_setup_payload(&header, &board.laid_out, args.board_budget_request())
                 .map_err(mcp_setup_payload_error)?;
+        // The keyframe shows the connector actor's layout batch, so its
+        // render activates it (BOARD-LAYOUT).
+        if let Some(candidate) = &board.layout_candidate {
+            server
+                .vault
+                .activate_board_layout_now(candidate)
+                .map_err(|error| mcp_engine_error("board layout activation failed", error))?;
+        }
         payload.instructions =
             crate::mcp::setup_instructions_for(server.code_execution_host().is_some());
         let keyframe = board

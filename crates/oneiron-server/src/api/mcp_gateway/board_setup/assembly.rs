@@ -33,7 +33,20 @@ pub(in crate::api::mcp_gateway) async fn mcp_current_board(
         .map_err(mcp_board_frame_error)?,
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
-    let mut state_rows = mcp_board_state_rows(&sections);
+    // The connector actor's own board layout (BOARD-LAYOUT): the pending
+    // batch projects here and the render that shows it activates it.
+    let (layout, layout_candidate) = server
+        .vault
+        .select_board_layout(actor.actor_ref, true)
+        .map_err(|error| mcp_engine_error("board layout selection failed", error))?;
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &sections,
+        &layout,
+        crate::mcp::MCP_BOARD_BUDGET_TOK,
+    );
+    let layout_candidate =
+        layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
+    let mut state_rows = mcp_board_state_rows(&laid_out.sections);
     // Own outcomes and connector changes are deliveries, not board state:
     // the epoch hashes the line before they were fitted in, so acknowledging
     // one never makes the epoch just returned stale.
@@ -49,6 +62,8 @@ pub(in crate::api::mcp_gateway) async fn mcp_current_board(
         .observe_pack_inventory(&packs);
     Ok(McpBoardState {
         sections,
+        laid_out: laid_out.sections,
+        layout_candidate,
         scope_label,
         epoch,
         changes,
@@ -290,9 +305,16 @@ pub(super) fn mcp_board_sections(
             .is_none_or(|overflow| overflow.source_exhausted),
     };
     let worlds_section = mcp_worlds_section(server, actor, served)?;
+    // A folded TASKS line on a connector's board counts the rows its scope
+    // admitted: those it lists and those its window left off (BOARD-LAYOUT).
+    let tasks_total = tasks.rows.len()
+        + tasks
+            .overflow
+            .map_or(0, |overflow| overflow.known_omitted_rows);
     let tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, mcp_fanout_rows(server, actor)?)
-            .map_err(mcp_board_frame_error)?;
+            .map_err(mcp_board_frame_error)?
+            .with_fold_summary(oneiron::context_board::FoldSummary::total(tasks_total));
     let mut sections = vec![verb_section, worlds_section];
     let room = mcp_bound_room(server, actor);
     if let Some(memories) =

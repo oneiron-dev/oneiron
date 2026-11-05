@@ -98,10 +98,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/scratchpad/recall",
             post(context_board_scratchpad_recall),
         )
-        .route(
-            "/context-board/layout/tasks",
-            get(context_board_tasks_layout).post(context_board_tasks_layout_stage),
-        )
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))

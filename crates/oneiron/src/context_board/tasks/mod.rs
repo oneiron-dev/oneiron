@@ -9,6 +9,7 @@
 
 mod authority_state;
 mod budget;
+mod fold;
 mod keep;
 mod projection;
 mod render;
