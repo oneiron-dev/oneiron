@@ -40,7 +40,7 @@ use crate::store::checkpoint_payload::rows::{
 use crate::sync::checkpoint_payload::{
     AtomHome, AtomRef, CapturedSyncRow, CapturedSyncRows, KindPlacement, LoroCarrier, OpenedAtom,
     OpenedSyncAtoms, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncSkeleton,
-    SyncUnclassified, project_checkpoint_documents, project_checkpoint_sync,
+    SyncUnclassified, captured_row_window, project_checkpoint_documents, project_checkpoint_sync,
     project_checkpoint_windows, read_document_basis, restore_checkpoint_documents,
     restore_checkpoint_sync, restore_checkpoint_windows,
 };
@@ -277,12 +277,7 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         let at_of = |row: &DocumentCarrierRow| {
             RowLocator::row(sync_carrier(row.carrier).db(), row.key.clone())
         };
-        let captured = rows.iter().map(|row| CapturedSyncRow {
-            carrier: sync_carrier(row.carrier),
-            key: &row.key,
-            value: &row.value,
-        });
-        let captured = CapturedSyncRows::new(captured.collect());
+        let captured = CapturedSyncRows::new(rows.iter().map(captured_row).collect());
         let owners = RegistryOwners {
             aliases: &self.aliases,
         };
@@ -301,21 +296,42 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             .enumerate()
             .map(|(place, row)| (at_of(row), place))
             .collect();
+        // A window any of whose carriers holds another custody client's
+        // copy, or a value the image does not take, stays whole, named: its
+        // snapshot and its updates alike, so no window is half split.
+        let mut whole: BTreeSet<&str> = BTreeSet::new();
+        for carrier in &projection.carriers {
+            for copy in carrier.slots.iter().flat_map(|slot| &slot.copies) {
+                let (home, atom) = staged(&emitted, copy)?;
+                if matches!(home, AtomHome::Client(_))
+                    || !filter.takes_window_value(&carrier.window, &atom.at, &atom.value)
+                {
+                    whole.insert(carrier.window.as_str());
+                }
+            }
+        }
+        // A window whose rows a projection left unsplit stays whole too.
+        let unsplit: BTreeSet<String> = projection
+            .unclassified
+            .iter()
+            .filter_map(|row| match row {
+                SkeletonRow::Unclassified { at, .. } => index.get(at).copied(),
+                _ => None,
+            })
+            .filter_map(|place| captured_row_window(&captured_row(&rows[place])))
+            .collect();
+        let whole: BTreeSet<String> = whole
+            .into_iter()
+            .map(str::to_owned)
+            .chain(unsplit)
+            .collect();
         let mut placed = BTreeSet::new();
         for carrier in projection.carriers {
-            let copies: Vec<&SlotCopy> =
-                carrier.slots.iter().flat_map(|slot| &slot.copies).collect();
-            // A window whose copies another custody client holds, or one
-            // with a value the image does not take, stays whole, named.
-            let mut whole = false;
-            for copy in &copies {
-                let (home, atom) = staged(&emitted, copy)?;
-                whole |= matches!(home, AtomHome::Client(_))
-                    || !filter.takes_window_value(&carrier.window, &atom.at, &atom.value);
-            }
-            if whole {
+            if whole.contains(&carrier.window) {
                 continue;
             }
+            let copies: Vec<&SlotCopy> =
+                carrier.slots.iter().flat_map(|slot| &slot.copies).collect();
             let mut structure = Vec::new();
             for copy in &copies {
                 let (home, atom) = staged(&emitted, copy)?;
@@ -426,6 +442,15 @@ pub(super) fn prune_carrier_structure(
         pruned += before - rows.len();
     }
     pruned
+}
+
+/// A buffered window row as the sync projection reads it.
+fn captured_row(row: &DocumentCarrierRow) -> CapturedSyncRow<'_> {
+    CapturedSyncRow {
+        carrier: sync_carrier(row.carrier),
+        key: &row.key,
+        value: &row.value,
+    }
 }
 
 /// The copy a window capture staged under `copy`'s ordinal.

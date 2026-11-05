@@ -581,6 +581,13 @@ pub(crate) fn project_checkpoint_windows(
     self::operations::project(&rows.rows, owners, emit)
 }
 
+/// The window a captured Loro row belongs to: its snapshot's, its pending
+/// update's or its queued update's. `None` for any other row, and for one
+/// that does not read.
+pub(crate) fn captured_row_window(row: &CapturedSyncRow<'_>) -> Option<String> {
+    self::operations::window_of(row)
+}
+
 /// Puts each of `carriers`' rows back (KS7-3b), each carrier joined from
 /// the copies `opened` holds: a value goes only when none of its copies
 /// opened, an actor that did not open leaves its family's no-one form, and
