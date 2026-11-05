@@ -35,7 +35,9 @@ use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
 
+mod caller;
 mod execute;
+pub use caller::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 mod planning;
 mod provenance;
 
@@ -61,12 +63,16 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// summary is overlay-only (see [`Memory::witness_into_session`]).
     Session {
         session: &'a OffRecordSession<'v>,
+        /// An already captured native caller route; existing one-shot doors mint one.
+        route: Option<&'a SessionWriteRoute>,
         summary: Option<&'a str>,
         admit: Option<Admit<'a>>,
         /// The room whose roster admits speech into its overlay.
         rostered: Option<EntityId>,
         /// The server's pre-embedded turn vector, staged once on mint/extend.
         turn_vector: Option<TurnVector>,
+        /// Native RAM streaming finality, written beside the actual new MESSAGE.
+        terminal: Option<&'a super::stream::SessionStreamTerminal>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },

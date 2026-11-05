@@ -6,11 +6,17 @@ pub(super) fn finalize_batch_indexes(
     config: &crate::config::VaultConfig,
     wtxn: &mut RwTxn<'_>,
     materialized_entity_ids: &BTreeSet<EntityId>,
+    question_arrival_ids: &BTreeSet<EntityId>,
     pending_hnsw_rebuild: bool,
     had_graph_mutation: bool,
     had_vector_mutation: bool,
 ) -> Result<()> {
-    crate::llm::decision::questions::project_arrivals_in_txn(store, wtxn, materialized_entity_ids)?;
+    crate::llm::decision::questions::project_arrivals_for_changes_in_txn(
+        store,
+        wtxn,
+        materialized_entity_ids,
+        question_arrival_ids,
+    )?;
 
     crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;
 
