@@ -463,7 +463,7 @@ impl ArtifactTaintState {
 /// Reads the value-less admission projection, never the full record: a
 /// taint check has no business materializing plaintext.
 pub(crate) fn taint_state_for_refs_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     refs: &[SecretTaintRef],
 ) -> Result<ArtifactTaintState> {
