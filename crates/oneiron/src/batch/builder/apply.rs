@@ -24,7 +24,15 @@ impl BatchBuilder<'_> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
     }
 
     /// [`Self::apply`] for the replicated put a sync window's ingest door
@@ -41,6 +49,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
+        record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         self.apply_with_gate_mode(
             wtxn,
@@ -48,13 +57,22 @@ impl BatchBuilder<'_> {
             None,
             authority_beside,
             own_device,
+            record_document,
         )
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(true, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
@@ -66,6 +84,8 @@ impl BatchBuilder<'_> {
             Some(actor),
             None,
             None,
+            #[cfg(feature = "sync")]
+            None,
         )
     }
 
@@ -76,6 +96,7 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
@@ -148,7 +169,7 @@ impl BatchBuilder<'_> {
             .collect();
         let mut derived = crate::embed::repo_derived_batch(&ops);
         if let Some(actor) = actor {
-            apply_actor_ops(
+            crate::batch::actor_content::apply_actor_ops_beside(
                 vault,
                 wtxn,
                 &actor,
@@ -156,6 +177,8 @@ impl BatchBuilder<'_> {
                 text_index_trusted,
                 gate_mode,
                 self.origin,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
         } else {
             apply_ops_with_authority_beside(
@@ -169,6 +192,8 @@ impl BatchBuilder<'_> {
                 self.origin,
                 authority_beside,
                 own_device,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
         }
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;

@@ -30,6 +30,7 @@ pub(super) fn apply_put_arm(
     text_index_trusted: bool,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
+    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -167,6 +168,8 @@ pub(super) fn apply_put_arm(
                 posture: config.privacy.posture,
                 owner_authored: None,
                 pending_prompt: pending_prompt.as_deref(),
+                #[cfg(feature = "sync")]
+                record_document,
             },
         },
         authority_beside,

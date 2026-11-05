@@ -225,6 +225,8 @@ pub(super) fn apply_ops_with_origin(
         origin,
         None,
         None,
+        #[cfg(feature = "sync")]
+        None,
     )
 }
 
@@ -251,6 +253,7 @@ pub(super) fn apply_ops_with_authority_beside(
     origin: BaseWriteOrigin<'_>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
+    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
@@ -448,6 +451,8 @@ pub(super) fn apply_ops_with_authority_beside(
                     text_index_trusted,
                     authority_beside,
                     own_device,
+                    #[cfg(feature = "sync")]
+                    record_document,
                 )?;
             }
             BatchOp::ClaimCandidate {

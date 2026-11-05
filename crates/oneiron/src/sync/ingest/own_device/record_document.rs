@@ -187,21 +187,24 @@ pub(in crate::sync) fn selected_in_txn<'a>(
         ) => doc,
         _ => return Ok(None),
     };
+    let transport = RECORD_DOCUMENT_SPAN.with(|slot| {
+        slot.borrow().as_ref().and_then(|span| {
+            if span.vault != ctx.vault.store.env.path() || span.window != ctx.window_key {
+                return None;
+            }
+            let digest = *span.pairs.get(entity)?;
+            Some((span.machine, Rc::downgrade(&span.scope), digest))
+        })
+    });
+    let Some((machine, scope, expected)) = transport else {
+        return Ok(None);
+    };
     let Some((head, snapshot)) = selected_record_document(doc, entity, raw)? else {
         return Ok(None);
     };
-    let digest = PairDigest::of(raw, &head, &snapshot)?;
-    let machine = RECORD_DOCUMENT_SPAN.with(|slot| {
-        slot.borrow().as_ref().and_then(|span| {
-            (span.vault == ctx.vault.store.env.path()
-                && span.window == ctx.window_key
-                && span.pairs.get(entity) == Some(&digest))
-            .then(|| (span.machine, Rc::downgrade(&span.scope)))
-        })
-    });
-    let Some((machine, scope)) = machine else {
+    if PairDigest::of(raw, &head, &snapshot)? != expected {
         return Ok(None);
-    };
+    }
     if crate::sync::ingest::peer_row_in_txn(ctx.vault, txn, ctx.window_key, entity, raw)? {
         return Ok(None);
     }
