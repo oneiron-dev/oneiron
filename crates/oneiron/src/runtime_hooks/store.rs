@@ -623,10 +623,11 @@ fn hook_run_read_rows_in(
 }
 
 /// The source rows of a room Hook receipt's run (FIX 5429): the rows its
-/// verb run read and the rows its input showed, sorted. `None` when the run
-/// is not a saved verb run, or its input also showed content no host names
-/// rows for: that receipt's provenance is unknown, so a room tail withholds
-/// it.
+/// verb run read and the rows its input showed, sorted. `None` when that
+/// receipt's provenance is unknown, so a room tail withholds it: the run is
+/// not a saved verb run, its input also showed content no host names rows
+/// for, or it ran on a write, whose args and answer are its caller's own
+/// content and name no row another reader could be checked against.
 pub(super) fn hook_verb_run_source_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -635,7 +636,9 @@ pub(super) fn hook_verb_run_source_rows_in(
     let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
         return Ok(None);
     };
-    if run.unattributed {
+    if run.unattributed
+        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+    {
         return Ok(None);
     }
     let mut rows: Vec<EntityId> = run

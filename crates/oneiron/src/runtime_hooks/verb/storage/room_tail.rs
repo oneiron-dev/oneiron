@@ -8,8 +8,9 @@
 //! it reaches each hook of the call's chain only when that hook's own view
 //! (its grant reader, predicates and worlds) shows them too
 //! (`Chain::project_tail`). A run whose input showed content no host names
-//! rows for, or whose saved run is unknown, is withheld: its provenance is
-//! unknown.
+//! rows for, a run on a write (its args and answer are its caller's own
+//! content, which names no row), or one whose saved run is unknown, is
+//! withheld: its provenance is unknown.
 
 use crate::claim::ScopedReadActorKey;
 use crate::receipt::ReceiptRecord;

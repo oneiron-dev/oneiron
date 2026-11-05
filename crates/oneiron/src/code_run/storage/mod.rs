@@ -20,6 +20,8 @@ pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 mod session_write;
+// FIX 5426: the caller's view a room write's receipt keeps.
+pub(crate) use self::session_write::{KeptCallerView, kept_caller_view};
 mod spawn_erase;
 mod speech_identity;
 mod type_diagnostics;
