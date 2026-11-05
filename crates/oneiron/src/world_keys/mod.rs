@@ -63,7 +63,7 @@ pub use self::bundle::{
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
-pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
+pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 #[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
 pub use self::doors::WorldKeyStatus;
@@ -125,9 +125,9 @@ pub(crate) use self::page_seal::{
     read_sealed, seal_read_only,
 };
 pub use self::page_seal::{
-    PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_incarnations, page_seal_vault_id,
-    refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation,
+    PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, finish_restore_archive_mirror,
+    new_delivered_page_seal, new_page_seal, page_seal_custody_path, page_seal_incarnations,
+    page_seal_vault_id, refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation,
     reopen_delivered_page_seal, unlock_page_seal, vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
