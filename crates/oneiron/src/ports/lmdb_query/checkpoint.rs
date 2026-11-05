@@ -12,8 +12,10 @@
 //! is its tree's as it stands, and one with a live author stays under the
 //! vault-wide seal until a restore derives its raw-derived refs again
 //! (`crate::note::checkpoint::CORE_RAW_REFS`); the join that puts an opened
-//! author back is NOTE's own. Nothing calls this until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! author back is NOTE's own. A sync copy of a CLAIM or NOTE row, in a window
+//! or a thin cache, is placed by the same rule from its own bytes
+//! ([`entity_row_placement`], FIX 10279). Nothing calls this until KS7-5,
+//! and only once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -47,7 +49,7 @@ const IDENTITY_OP_ACTORS: &str = "identity op body names its actors";
 const ORIGIN_CLAIM_ACTORS: &str = "origin claim body names its actor";
 
 /// Where an entity row's bytes go.
-enum Placement {
+pub(crate) enum EntityRowPlacement {
     /// Its own entity tree's compartment.
     Owner,
     /// Another custody client's.
@@ -56,24 +58,26 @@ enum Placement {
     Unclassified(Unresolved),
 }
 
-/// Where an entity row's bytes go, by its kind.
-fn placement(value: &[u8]) -> Placement {
+/// Where an entity row's bytes go, by its kind and, for a CLAIM or a NOTE,
+/// by what its own bytes hold: the one rule for the row and for every sync
+/// copy of it (FIX 10279).
+pub(crate) fn entity_row_placement(value: &[u8]) -> EntityRowPlacement {
     let Some(header) = EntityMetadataHeader::parse(value) else {
-        return Placement::Unclassified(Unresolved::Undecodable);
+        return EntityRowPlacement::Unclassified(Unresolved::Undecodable);
     };
     match header.entity_type {
         kind if entity_type_registry_entry(kind).is_none() => {
-            Placement::Unclassified(Unresolved::UnknownKind)
+            EntityRowPlacement::Unclassified(Unresolved::UnknownKind)
         }
-        ENTITY_TYPE_SECRET_CUSTODY => Placement::Other(OtherClient::Credential),
-        ENTITY_TYPE_WORLD_KEY_PAD => Placement::Other(OtherClient::WorldPad),
-        ENTITY_TYPE_ASSET => Placement::Other(OtherClient::Body),
+        ENTITY_TYPE_SECRET_CUSTODY => EntityRowPlacement::Other(OtherClient::Credential),
+        ENTITY_TYPE_WORLD_KEY_PAD => EntityRowPlacement::Other(OtherClient::WorldPad),
+        ENTITY_TYPE_ASSET => EntityRowPlacement::Other(OtherClient::Body),
         ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT => {
-            Placement::Unclassified(Unresolved::ActorSplit(IDENTITY_OP_ACTORS))
+            EntityRowPlacement::Unclassified(Unresolved::ActorSplit(IDENTITY_OP_ACTORS))
         }
         ENTITY_TYPE_CLAIM => claim_placement(&value[ENTITY_METADATA_HEADER_LEN..]),
         ENTITY_TYPE_NOTE => note_placement(value),
-        _ => Placement::Owner,
+        _ => EntityRowPlacement::Owner,
     }
 }
 
@@ -82,14 +86,14 @@ fn placement(value: &[u8]) -> Placement {
 /// live author's erase would change the raw bytes the revision refs, the
 /// short id and the citation views are derived from, which no restore
 /// derives again yet, so that core stays under the vault-wide seal.
-fn note_placement(value: &[u8]) -> Placement {
+fn note_placement(value: &[u8]) -> EntityRowPlacement {
     if value.len() == ENTITY_METADATA_HEADER_LEN {
-        return Placement::Owner;
+        return EntityRowPlacement::Owner;
     }
     match split_core_row(value) {
-        Ok(split) if split.actors.is_empty() => Placement::Owner,
-        Ok(_) => Placement::Unclassified(Unresolved::ActorSplit(CORE_RAW_REFS)),
-        Err(reason) => Placement::Unclassified(Unresolved::ActorSplit(reason)),
+        Ok(split) if split.actors.is_empty() => EntityRowPlacement::Owner,
+        Ok(_) => EntityRowPlacement::Unclassified(Unresolved::ActorSplit(CORE_RAW_REFS)),
+        Err(reason) => EntityRowPlacement::Unclassified(Unresolved::ActorSplit(reason)),
     }
 }
 
@@ -100,16 +104,16 @@ fn is_note(value: &[u8]) -> bool {
 
 /// A CLAIM's place, by its predicate: a dreamer step's holds a model
 /// response; an origin claim names its actor with no lossless split.
-fn claim_placement(body: &[u8]) -> Placement {
+fn claim_placement(body: &[u8]) -> EntityRowPlacement {
     match decode_claim_body(body, true) {
         Ok(claim) if claim.predicate == crate::model_step_record::DREAMER_STEP_PREDICATE => {
-            Placement::Other(OtherClient::Response)
+            EntityRowPlacement::Other(OtherClient::Response)
         }
         Ok(claim) if OriginClaimKind::of(&claim.predicate).is_some() => {
-            Placement::Unclassified(Unresolved::ActorSplit(ORIGIN_CLAIM_ACTORS))
+            EntityRowPlacement::Unclassified(Unresolved::ActorSplit(ORIGIN_CLAIM_ACTORS))
         }
-        Ok(_) => Placement::Owner,
-        Err(_) => Placement::Unclassified(Unresolved::Undecodable),
+        Ok(_) => EntityRowPlacement::Owner,
+        Err(_) => EntityRowPlacement::Unclassified(Unresolved::Undecodable),
     }
 }
 
@@ -124,10 +128,10 @@ fn entity_row(out: &mut Captured, key: Vec<u8>, value: Vec<u8>) {
         return;
     };
     let owner = OwnerRef::entity(&id);
-    match placement(&value) {
-        Placement::Owner => out.exact(owner, at, value),
-        Placement::Other(client) => out.dispatch(client, at, value),
-        Placement::Unclassified(reason) => out.unclassified(at, Some(owner), reason),
+    match entity_row_placement(&value) {
+        EntityRowPlacement::Owner => out.exact(owner, at, value),
+        EntityRowPlacement::Other(client) => out.dispatch(client, at, value),
+        EntityRowPlacement::Unclassified(reason) => out.unclassified(at, Some(owner), reason),
     }
 }
 
@@ -187,8 +191,8 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
 /// back), or an `authored_by` edge.
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     match at.db {
-        RowDb::Entities if entity_key(&at.key).is_some() => match placement(value) {
-            Placement::Owner => Ok(()),
+        RowDb::Entities if entity_key(&at.key).is_some() => match entity_row_placement(value) {
+            EntityRowPlacement::Owner => Ok(()),
             _ if is_note(value) && reads_core_row(value) => Ok(()),
             _ => Err(rows::bad_part()),
         },
