@@ -25,14 +25,13 @@ struct Enrolled {
 pub(super) fn enroll(args: RecoveryKitAuthorityArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
     let (vault, secret) = open_material(&config, &args)?;
-    let machine = match &args.machine {
-        Some(machine) => EntityId::from_hex(machine)
-            .map_err(|error| anyhow::anyhow!("--machine {machine}: {error}"))?,
-        None => vault
-            .local_machine()?
-            .map(|machine| machine.id)
-            .ok_or_else(|| anyhow::anyhow!("this install has no machine in the vault"))?,
-    };
+    let named = args
+        .machine
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()?;
+    let machine = crate::owner::recovery_kit::authority_holding_machine(&vault, named)?
+        .ok_or_else(|| anyhow::anyhow!("this install has no machine in the vault"))?;
     let authority = ActAuthority::Owner(local_owner(&vault)?, ActSurface::ThisInstall);
     let seed = RecoveryRootSeed::from_restored_kit(secret)?;
     let issuer = host_issuer(&config, &vault, false)?;
