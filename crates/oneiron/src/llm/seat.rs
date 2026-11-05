@@ -446,12 +446,12 @@ impl SeatPool {
         {
             return Err(invalid("seat task, facet and warm scope are required"));
         }
-        let owner_pin = if task.override_model.is_none() {
-            learning::owner_model_pin(vault, task.learning.as_ref())?
+        let owner_choices = if task.override_model.is_none() {
+            learning::owner_model_choices(vault, task.learning.as_ref())?
         } else {
-            None
+            Default::default()
         };
-        let pinned_task = owner_pin.map(|model| {
+        let pinned_task = owner_choices.pin.map(|model| {
             let mut pinned = task.clone();
             pinned.override_model = Some(model);
             pinned
@@ -658,8 +658,13 @@ impl SeatPool {
             task.learning.as_ref(),
             candidates.iter().map(|candidate| candidate.model.clone()),
         );
+        let owner_seed = owner_choices.seeds.iter().find(|seed| {
+            candidates
+                .iter()
+                .any(|candidate| candidate.model == seed.model)
+        });
         let (index, picked, readings) =
-            decisions.pick_before(task, &candidates, &learned, &deadline)?;
+            decisions.pick_before(task, &candidates, &learned, owner_seed, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,

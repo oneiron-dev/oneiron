@@ -15,9 +15,9 @@ pub struct SeatLearningContext {
     pub project: Option<EntityId>,
     pub agent: EntityId,
     pub type_ref: TaskTypeRef,
-    /// A direct call's model pin, including one its receipt marks unapplied.
-    /// An owner default must not replace the caller's fixed choice.
-    pub call_model_pin: Option<ModelId>,
+    /// The actual direct call's model-choice mode, even when marked unapplied.
+    /// Call pins bypass owner rows; call seeds keep owner seeds from applying.
+    pub call_model_choice: Option<crate::learning_setting::SettingMode>,
 }
 
 /// Optional evidence never prevents an otherwise eligible seat from being
@@ -54,20 +54,28 @@ pub(crate) fn learned_models(
     }
 }
 
-/// The fixed owner model for a fresh native task, using its actual scopes.
-pub(super) fn owner_model_pin(
+/// The owner model rows for a fresh native task, using its actual scopes.
+pub(super) fn owner_model_choices(
     vault: &Vault,
     context: Option<&SeatLearningContext>,
-) -> crate::Result<Option<ModelId>> {
+) -> crate::Result<crate::learning_setting_choice::OwnerSpawnModelChoices> {
     let Some(context) = context else {
-        return Ok(None);
+        return Ok(Default::default());
     };
-    if context.call_model_pin.is_some() {
-        return Ok(None);
+    if context.call_model_choice == Some(crate::learning_setting::SettingMode::Pin) {
+        return Ok(Default::default());
     }
     let txn = vault.store.env.read_txn()?;
     let type_ref = crate::learning::TypeRef::from(&context.type_ref);
     let scopes =
         crate::learning_setting::read_scopes_in_txn(vault, &txn, context.project, Some(&type_ref))?;
-    crate::learning_setting_choice::owner_spawn_model_pin_in_txn(&vault.store, &txn, &scopes)
+    let mut choices = crate::learning_setting_choice::owner_spawn_model_choices_in_txn(
+        &vault.store,
+        &txn,
+        &scopes,
+    )?;
+    if context.call_model_choice == Some(crate::learning_setting::SettingMode::Seed) {
+        choices.seeds.clear();
+    }
+    Ok(choices)
 }

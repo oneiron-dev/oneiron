@@ -89,6 +89,7 @@ impl SeatDecisions {
         task: &SeatTask,
         candidates: &[SeatCandidate],
         learned: &BTreeMap<ModelId, MeasuredRate>,
+        owner_seed: Option<&crate::learning_setting_choice::OwnerModelSeed>,
         deadline: &RetrievalDeadline,
     ) -> Result<(usize, Option<ReasoningEffort>, SeatPickReadings)> {
         let ladder = self.ladder.ladder();
@@ -97,7 +98,7 @@ impl SeatDecisions {
                 read,
                 self.principal,
                 &[],
-                &bounded_state(task, asked, chosen, learned),
+                &bounded_state(task, asked, chosen, learned, owner_seed),
                 self.dial,
                 &self.bands,
                 Reversibility::ReversibleRead,
@@ -184,6 +185,7 @@ fn bounded_state(
     candidates: &[SeatCandidate],
     chosen: Option<&ModelId>,
     learned: &BTreeMap<ModelId, MeasuredRate>,
+    owner_seed: Option<&crate::learning_setting_choice::OwnerModelSeed>,
 ) -> Value {
     let longest = candidates
         .iter()
@@ -216,6 +218,11 @@ fn bounded_state(
                     && let Some(rate) = learned.get(&candidate.model)
                 {
                     row["learned"] = json!(rate);
+                }
+                if chosen.is_none()
+                    && let Some(seed) = owner_seed.filter(|seed| seed.model == candidate.model)
+                {
+                    row["owner_seed_prior"] = json!(seed);
                 }
                 row
             })

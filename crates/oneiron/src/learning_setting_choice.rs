@@ -376,26 +376,49 @@ fn rows_in_order(
     Ok(out)
 }
 
-/// The first owner model pin in the spawn's actual scopes. A fixed value
-/// applies before model evidence is read; seeds remain model priors, never
-/// fixed overrides.
-///
-/// # Errors
-///
-/// Storage errors or a row that does not decode.
-pub(crate) fn owner_spawn_model_pin_in_txn(
+/// An owner model seed is a soft prior, separate from measured model evidence.
+#[derive(Debug, Clone, Serialize)]
+pub struct OwnerModelSeed {
+    pub model: ModelId,
+    pub weight_runs: f64,
+    pub source: SpawnChoiceSource,
+}
+
+/// One read of the actual owner rows; candidate eligibility selects a seed later.
+#[derive(Debug, Default)]
+pub(crate) struct OwnerSpawnModelChoices {
+    pub pin: Option<ModelId>,
+    pub seeds: Vec<OwnerModelSeed>,
+}
+
+pub(crate) fn owner_spawn_model_choices_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     scopes: &[SettingScope],
-) -> Result<Option<ModelId>> {
-    Ok(rows_in_order(store, txn, scopes, SpawnChoice::Model)?
-        .into_iter()
-        .find_map(|(row, _)| match row {
+) -> Result<OwnerSpawnModelChoices> {
+    let mut choices = OwnerSpawnModelChoices::default();
+    for (row, source) in rows_in_order(store, txn, scopes, SpawnChoice::Model)? {
+        match row {
             SpawnOverride::Pin {
                 value: ChoiceValue::Model(model),
-            } => Some(model),
-            _ => None,
-        }))
+            } => {
+                choices.pin = Some(model);
+                return Ok(choices);
+            }
+            SpawnOverride::Seed {
+                value: ChoiceValue::Model(model),
+                weight_runs,
+            } => {
+                choices.seeds.push(OwnerModelSeed {
+                    model,
+                    weight_runs,
+                    source,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(choices)
 }
 
 /// Lays the owner's choices under one spawn's need: each field takes the
