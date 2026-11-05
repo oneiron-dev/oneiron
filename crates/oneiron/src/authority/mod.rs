@@ -380,7 +380,8 @@ pub use work_rebind::{
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use act_standing::{
-    CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
+    CausalPoints, ExternalAct, ExternalActStanding, NativeSkillCarrier, NativeSkillOrigin,
+    act_heads, causal_points_in_txn, native_skill_origins_in_txn,
 };
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
