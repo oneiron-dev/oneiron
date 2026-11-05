@@ -27,6 +27,7 @@ pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
+pub use oneiron_model::llm::BudgetCheckpoint;
 pub use oneiron_model::llm::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
