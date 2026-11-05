@@ -1,12 +1,18 @@
-# Per-agent model lists on reader calls
+# Per-agent model lists on code-mode calls
 
 An agent's `models` list names engine model ids, not provider wire names.
 A reader, summary or scoped child inherits the frozen list of the run that
 spawned it. An empty list keeps the existing house-routed behavior.
 `compaction_model` is separate and need not appear in that list.
 
-With the served code-mode backend, the inherited list now follows the
-reader's own metered backend. The backend checks the model selected by role
+With the served code-mode backend, the frozen list follows resident steps,
+planned-run steps, pattern launches and the reader's own metered backend.
+Resident entries use the definition frozen for that dispatch, not a fresh
+agent-definition lookup. An unscoped entry gets a copy of its actual ordinary
+backend with only the model list changed; scoped and planned entries retain
+their existing guards, payers and live leases.
+
+The backend checks the model selected by role
 admission, not only the configured model checked before that admission. An
 off-list selected model follows the existing admission-denied path; the
 server log records the list check's reason.
@@ -18,8 +24,10 @@ original receipt positions are retained. An off-list fallback cannot be
 sent; another eligible listed fallback can still answer. No exact-model-only
 shortcut replaces the normal walk.
 
-This is the served reader-backend slice. Ordinary resident and planned-run
-backends that do not yet carry their agent's list retain their existing
-routing. Injected or custom providers are not covered by a claim that they
-cannot substitute models. The live compaction admission remains separate;
-this reader-call check does not constrain its explicitly independent model.
+This covers the served backends carrying the actual frozen list. MCP
+`execute_code`, off-record own steps and other paths without that carrier
+retain their existing routing. Injected or custom providers and the planner's
+own model calls are not covered by a claim that they cannot substitute models.
+The pattern funding probe remains a probe, not a list refusal. The live
+compaction admission remains separate; this check does not constrain its
+explicitly independent model.
