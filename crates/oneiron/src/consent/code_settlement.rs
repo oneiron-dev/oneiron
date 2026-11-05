@@ -17,6 +17,13 @@ pub(crate) struct FrozenCodeConsentSettlement {
     pub(crate) policy: ResolvedCodeConsentSettlement,
     effect_bound: Vec<u8>,
     pub(crate) holders: BTreeSet<EntityId>,
+    browser_scope: Option<FrozenCodeConsentBrowserScope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct FrozenCodeConsentBrowserScope {
+    pub(super) project: Option<EntityId>,
+    pub(super) audience: Option<String>,
 }
 
 impl FrozenCodeConsentSettlement {
@@ -41,6 +48,15 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         effect: &ExternalEffectGateInput,
     ) -> Result<Option<FrozenCodeConsentSettlement>> {
+        self.freeze_code_consent_settlement_for_scope_in_txn(txn, effect, None)
+    }
+
+    pub(super) fn freeze_code_consent_settlement_for_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        effect: &ExternalEffectGateInput,
+        browser_scope: Option<FrozenCodeConsentBrowserScope>,
+    ) -> Result<Option<FrozenCodeConsentSettlement>> {
         let Some(required) =
             crate::gate::code_consent_settlement::code_consent_action_requirement(effect)
         else {
@@ -57,12 +73,24 @@ impl Vault {
         };
         let mut holders = BTreeSet::new();
         if !policy.conflicting_authored_rows {
-            for holder in self.ask_authority_holders_in_txn(txn, class, envelope)? {
-                if policy.eligible.admits(holder)
-                    && super::doors::person_is_live_for_store_in_txn(&self.store, txn, &holder)?
-                    && self
+            let browser_holders = browser_scope
+                .as_ref()
+                .map(|scope| self.code_consent_browser_holder_powers_in_txn(txn, class, scope))
+                .transpose()?;
+            let candidates = match &browser_holders {
+                Some(powers) => powers.keys().copied().collect(),
+                None => self.ask_authority_holders_in_txn(txn, class, envelope)?,
+            };
+            for holder in candidates {
+                let covered = match &browser_holders {
+                    Some(powers) => powers.contains_key(&holder),
+                    None => self
                         .code_consent_holder_power_in_txn(txn, holder, class, envelope)?
-                        .is_some()
+                        .is_some(),
+                };
+                if covered
+                    && policy.eligible.admits(holder)
+                    && super::doors::person_is_live_for_store_in_txn(&self.store, txn, &holder)?
                 {
                     holders.insert(holder);
                 }
@@ -78,6 +106,7 @@ impl Vault {
             policy,
             effect_bound,
             holders,
+            browser_scope,
         }))
     }
 
@@ -151,8 +180,14 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Some(grant_ref) = self.code_consent_holder_power_in_txn(txn, actor, class, envelope)?
-        else {
+        let grant_ref = match &frozen.browser_scope {
+            Some(scope) => self
+                .code_consent_browser_holder_powers_in_txn(txn, class, scope)?
+                .get(&actor)
+                .cloned(),
+            None => self.code_consent_holder_power_in_txn(txn, actor, class, envelope)?,
+        };
+        let Some(grant_ref) = grant_ref else {
             return Ok(None);
         };
         Ok(Some(CodeConsentHolderPolicy {

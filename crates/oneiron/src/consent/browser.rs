@@ -165,6 +165,42 @@ pub fn browser_approve_once_digest(facts: &BrowserConsentFacts) -> Result<Effect
 }
 
 impl Vault {
+    /// Addressable human holders whose current grant covers this exact
+    /// browser scope, using the send's own native project/audience matcher.
+    pub(super) fn code_consent_browser_holder_powers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        class: &ActionClass,
+        frozen: &super::code_settlement::FrozenCodeConsentBrowserScope,
+    ) -> Result<std::collections::BTreeMap<EntityId, String>> {
+        let mut powers = std::collections::BTreeMap::new();
+        for grant in self.active_standing_consent_grants_in_txn(txn)? {
+            let super::BoundSubject::Actor(subject) = grant.bound().subject() else {
+                continue;
+            };
+            let Ok(person) = EntityId::from_hex(subject.actor_ref()) else {
+                continue;
+            };
+            let scope = BrowserSendScope {
+                actor: person,
+                actor_class: EdgeActorClass::Human,
+                project: frozen.project,
+                audience: frozen.audience.clone(),
+            };
+            if !scope.covered_by(&grant, class.as_str()) {
+                continue;
+            }
+            let reference = grant.bound().digest().to_hex();
+            if self
+                .consent_grant_in_txn(txn, &reference)?
+                .is_some_and(|row| row.is_active())
+            {
+                powers.entry(person).or_insert(reference);
+            }
+        }
+        Ok(powers)
+    }
+
     /// Freezes the real browser send's policy beside its held code wait,
     /// using the same pinned input builder as the effect's approval digest.
     pub(crate) fn freeze_browser_code_consent_settlement_in_txn(
@@ -172,7 +208,14 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         facts: &BrowserConsentFacts,
     ) -> Result<Option<super::code_settlement::FrozenCodeConsentSettlement>> {
-        self.freeze_code_consent_settlement_in_txn(txn, &browser_pinned_gate_input(facts))
+        self.freeze_code_consent_settlement_for_scope_in_txn(
+            txn,
+            &browser_pinned_gate_input(facts),
+            Some(super::code_settlement::FrozenCodeConsentBrowserScope {
+                project: facts.scope.project,
+                audience: facts.scope.audience.clone(),
+            }),
+        )
     }
 }
 
