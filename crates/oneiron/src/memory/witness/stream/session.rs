@@ -151,6 +151,8 @@ impl SessionMessageStream {
         let mut state = lock(&self.state)?;
         state.check()?;
         check_caller_locked(vault, &mut state)?;
+        resolve_pending_locked(vault, &mut state)?;
+        state.check()?;
         if state.text.len().saturating_add(delta.len()) > MAX_MESSAGE_STREAM_BYTES {
             return Err(MessageStreamError::BufferOverflow);
         }
@@ -175,6 +177,8 @@ impl SessionMessageStream {
         let mut state = lock(&self.state)?;
         state.check()?;
         check_caller_locked(vault, &mut state)?;
+        resolve_pending_locked(vault, &mut state)?;
+        state.check()?;
         let author = native_author(vault, state.agent, state.sitting);
         let admit = admit_turn(&state.birth, state.text.clone());
         state.binding.admit_stream(&author, &admit)?;
@@ -193,6 +197,7 @@ impl SessionMessageStream {
     pub fn completion(&self, vault: &Vault) -> MessageStreamResult<MessageCompletion> {
         let mut state = lock(&self.state)?;
         check_caller_locked(vault, &mut state)?;
+        resolve_pending_locked(vault, &mut state)?;
         Ok(state.completion.clone().unwrap_or(MessageCompletion {
             incomplete: true,
             generating: !state.terminal,
@@ -484,20 +489,8 @@ fn finish_locked(
     parts: Vec<ContentPart>,
 ) -> MessageStreamResult<SessionStreamOutcome> {
     check_caller_locked(vault, state)?;
-    // A failed postcommit read is not evidence of rollback. Resolve that exact
-    // generation before any retry can mint another MESSAGE.
-    if let Some(candidate) = state.pending_receipt.clone() {
-        match state.binding.stream_terminal_receipt(vault, &candidate)? {
-            Some(found) if found == candidate => return retained_locked(vault, state, found),
-            None => state.pending_receipt = None,
-            Some(_) => {
-                return Err(MessageStreamError::Memory(Box::new(MemoryError::new(
-                    MEMORY_CODE_INTERNAL,
-                    "session terminal receipt changed",
-                    &["Retry after repairing the stored stream receipt."],
-                ))));
-            }
-        }
+    if let Some(receipt) = resolve_pending_locked(vault, state)? {
+        return Ok(SessionStreamOutcome::Retained(receipt));
     }
     let author = native_author(vault, state.agent, state.sitting);
     let turn = terminal_turn(&state.birth, state.text.clone(), assertions, parts);
@@ -552,6 +545,32 @@ fn finish_locked(
                 Err(read_error) => Err(read_error.into()),
             }
         }
+    }
+}
+
+// A failed postcommit read proves neither commit nor rollback. Resolve the
+// exact generation before accepting more text or minting another MESSAGE.
+fn resolve_pending_locked(
+    vault: &Vault,
+    state: &mut SessionState,
+) -> MessageStreamResult<Option<MessageStreamReceipt>> {
+    let Some(candidate) = state.pending_receipt.clone() else {
+        return Ok(None);
+    };
+    match state.binding.stream_terminal_receipt(vault, &candidate)? {
+        Some(found) if found == candidate => {
+            retained_locked(vault, state, found.clone())?;
+            Ok(Some(found))
+        }
+        None => {
+            state.pending_receipt = None;
+            Ok(None)
+        }
+        Some(_) => Err(MessageStreamError::Memory(Box::new(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "session terminal receipt changed",
+            &["Retry after repairing the stored stream receipt."],
+        )))),
     }
 }
 
