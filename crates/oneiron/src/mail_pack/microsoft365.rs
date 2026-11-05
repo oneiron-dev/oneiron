@@ -86,8 +86,6 @@ const SKIPPED_FOLDERS: [&str; 5] = [
 const TRASH_FOLDERS: [&str; 2] = ["deleteditems", "junkemail"];
 /// The most folders one source's anchor tracks.
 const MAX_FOLDERS: usize = 1_000;
-/// The deepest folder nesting walked up to a well-known folder.
-const MAX_FOLDER_DEPTH: usize = 64;
 /// How far before a folder read the mail its delta links take in starts,
 /// for clock skew between the host and Graph.
 const CLOCK_MARGIN_SECS: u64 = 300;
@@ -138,10 +136,11 @@ impl FolderTree {
     /// # Errors
     ///
     /// A folder that does not reach a well-known one through folders read,
-    /// or only deeper than [`MAX_FOLDER_DEPTH`].
+    /// or whose parents loop.
     fn class(&self, id: &str) -> Result<&'static str> {
         let mut at = id;
-        for _ in 0..=MAX_FOLDER_DEPTH {
+        // A walk longer than the folders read has met a loop.
+        for _ in 0..=self.parents.len() {
             if let Some(name) = self.names.get(at) {
                 return Ok(*name);
             }
@@ -150,7 +149,7 @@ impl FolderTree {
                 .get(at)
                 .ok_or_else(|| refused("graph_mail_folder_unresolved"))?;
         }
-        Err(refused("graph_mail_folder_too_deep"))
+        Err(refused("graph_mail_folder_parents_loop"))
     }
 
     fn knows(&self, id: &str) -> bool {
@@ -281,15 +280,17 @@ impl<'v> HttpGraphMailWire<'v> {
     /// does not know and was not read again for already.
     fn tree_knowing(&self, source: &MailSyncSource, folder: &str) -> Result<FolderTree> {
         let tree = self.tree(source)?;
-        if folder.is_empty()
-            || tree.knows(folder)
-            || !self
-                .reread
-                .borrow_mut()
-                .insert((source.source_ref, folder.to_owned()))
-        {
+        let met = (source.source_ref, folder.to_owned());
+        if folder.is_empty() || tree.knows(folder) || self.reread.borrow().contains(&met) {
             return Ok(tree);
         }
+        let tree = self.reread_tree(source)?;
+        self.reread.borrow_mut().insert(met);
+        Ok(tree)
+    }
+
+    /// The source's folders read again, and held.
+    fn reread_tree(&self, source: &MailSyncSource) -> Result<FolderTree> {
         let tree = self.read_tree(source)?;
         self.folders
             .borrow_mut()
@@ -398,10 +399,7 @@ impl<'v> HttpGraphMailWire<'v> {
 
 impl MailProviderWire for HttpGraphMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
-        let tree = self.read_tree(source)?;
-        self.folders
-            .borrow_mut()
-            .insert(source.source_ref, tree.clone());
+        let tree = self.reread_tree(source)?;
         let mut anchor = GraphAnchor {
             since: tree.read_at,
             ..GraphAnchor::default()
@@ -603,15 +601,8 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                     return Err(Error::InvalidConfig(format!("graph_mail_status_{status}")));
                 }
             };
-            let tree = self.tree_knowing(source, folder)?;
-            let now_skipped = tree.skipped(folder)?;
-            if cursor.link.is_none() && !was_skipped && now_skipped {
-                // Moved under a folder not copied: each message copied from
-                // it is looked up again.
-                changes.push(MailHistoryChange::LabelGone {
-                    label: tree.label(folder),
-                });
-            }
+            // A move of the folder itself is reconciled when the round ends.
+            let now_skipped = self.tree_knowing(source, folder)?.skipped(folder)?;
             // A folder not copied is read for the mail that leaves it.
             let from_skipped = was_skipped || now_skipped;
             for entry in array(&listed, "value") {
@@ -628,20 +619,16 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             if let Some(next) = text_of(listed.get("@odata.nextLink")) {
                 cursor.link = Some(next);
             } else {
-                let reached = if was_skipped && !now_skipped {
-                    // Out from under a folder not copied: its next round
-                    // lists all its mail.
-                    delta_link(folder, None)?
-                } else {
-                    text_of(listed.get("@odata.deltaLink")).unwrap_or_else(|| delta.clone())
-                };
+                let reached =
+                    text_of(listed.get("@odata.deltaLink")).unwrap_or_else(|| delta.clone());
                 cursor.reached.insert(folder.clone(), reached);
                 cursor.folder += 1;
                 cursor.link = None;
             }
         }
         if cursor.folder >= folders.len() {
-            let tree = self.tree(source)?;
+            // The round ends against the folders as they stand now.
+            let tree = self.reread_tree(source)?;
             let mut reached = GraphAnchor {
                 folders: cursor.reached,
                 skipped: BTreeSet::new(),
@@ -659,9 +646,29 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                         .insert(folder.clone(), delta_link(folder, Some(stood.since))?);
                 }
             }
-            for folder in reached.folders.keys() {
-                if tree.knows(folder) && tree.skipped(folder)? {
-                    reached.skipped.insert(folder.clone());
+            let held: Vec<String> = reached.folders.keys().cloned().collect();
+            for folder in held {
+                if !tree.knows(&folder) {
+                    continue;
+                }
+                let now_skipped = tree.skipped(&folder)?;
+                let was_skipped = stood.skipped.contains(&folder);
+                if stood.folders.contains_key(&folder) && !was_skipped && now_skipped {
+                    // Moved under a folder not copied: each message copied
+                    // from it is looked up again.
+                    changes.push(MailHistoryChange::LabelGone {
+                        label: tree.label(&folder),
+                    });
+                }
+                if stood.folders.contains_key(&folder) && was_skipped && !now_skipped {
+                    // Out from under a folder not copied: its next round
+                    // lists all its mail.
+                    reached
+                        .folders
+                        .insert(folder.clone(), delta_link(&folder, None)?);
+                }
+                if now_skipped {
+                    reached.skipped.insert(folder);
                 }
             }
             return Ok(MailHistoryRead::Page(MailHistoryPage {
