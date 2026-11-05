@@ -1,19 +1,18 @@
-//! Retrieval-telemetry record, trace, signal, and blend-weight types.
+//! Core half of `store::retrieval_telemetry::types`: its store-layer items live in `oneiron_store::retrieval_telemetry::types` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
+pub(crate) use oneiron_store::retrieval_telemetry::types::*;
 
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
+use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
 use crate::store::retrieval_signal::Signal;
-
-use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
-
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use uuid::Uuid;
 // The signal and blend-weight vocabulary is defined in `oneiron-contracts` (retrieval's
 // fusion scores with it); `From<Signal>` stays here with the pipeline's channel enum.
 pub use oneiron_contracts::retrieval_telemetry::{
@@ -69,19 +68,6 @@ pub enum RetrievalAction {
     /// carry this tag (the end-of-utterance full-quality pass logs as
     /// `Pipeline`) — that is what makes wasted-retrieval budget measurable.
     Speculative,
-}
-
-impl From<Signal> for RetrievalSignal {
-    fn from(signal: Signal) -> Self {
-        match signal {
-            Signal::Vector => Self::Vector,
-            Signal::Text => Self::Text,
-            Signal::Phonetic => Self::Phonetic,
-            Signal::Temporal => Self::Temporal,
-            Signal::Ppr => Self::Ppr,
-            Signal::Hyde => Self::Hyde,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
