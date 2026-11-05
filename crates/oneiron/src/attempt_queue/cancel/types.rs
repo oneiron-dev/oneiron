@@ -159,9 +159,10 @@ impl ForceCancelAuthority {
             wtxn,
             &std::collections::BTreeSet::from([actor]),
         )?;
-        crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
+        let mut cancelled = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
         let (vault, wtxn, _) = erase.parts();
-        Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)
+        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(cancelled)
     }
 
     /// Scrubs and cancels the authenticated image writer's owned BYOA
@@ -177,9 +178,10 @@ impl ForceCancelAuthority {
             wtxn,
             &erased,
         )?;
-        crate::deletion::erase_restored_byoa_exhausts_in_txn(restore, &owned)?;
+        let mut cancelled = crate::deletion::erase_restored_byoa_exhausts_in_txn(restore, &owned)?;
         let (vault, wtxn, _) = restore.parts();
-        Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)
+        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(cancelled)
     }
 
     fn cancel_erased_payloads_in_txn(
