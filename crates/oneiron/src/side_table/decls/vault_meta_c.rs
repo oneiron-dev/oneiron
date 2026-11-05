@@ -510,6 +510,10 @@ side_tables! {
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
     CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;
+    /// Actor-staged TASKS-row token budget: the live default one actor's board
+    /// renders under, and its pending staged write. Key: id16 (actor).
+    CONTEXT_BOARD_TASKS_BUDGET: VaultMeta b"context_board.tasks_budget.v1:" Named Engine
+        => crate::context_board::erase_tasks_budget_actor_in_txn;
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.

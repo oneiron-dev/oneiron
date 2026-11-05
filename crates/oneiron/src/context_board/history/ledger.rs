@@ -7,6 +7,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, ScopedRead,
     ScopedReadActorKey, decode_claim_body,
 };
+use crate::context_board::tasks_layout::{TasksLayoutCandidate, activate_tasks_layout_in_txn};
 use crate::error::Error;
 use crate::side_table::{self, LegacyCompact, Named, Raw, SideTable};
 use crate::temporal::TimeRange;
@@ -158,6 +159,23 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// [`Self::record_board_turn_with_tasks_layout_now`] without a TASKS
+    /// layout candidate: every existing caller keeps its exact signature and
+    /// behavior (chat answers and trusted doors never activate a layout).
+    pub fn record_board_turn_now(
+        &self,
+        turn: EntityId,
+        owner: EntityId,
+        memories: Option<&crate::context_board::MemoriesSection>,
+        worlds: Option<&crate::claim::world_access::ResolvedWorldAuthority>,
+        caller: &ScopedRead<'_>,
+        accept: impl FnOnce(&BoardTurnReceipt) -> bool,
+    ) -> Result<Option<BoardTurnReceipt>> {
+        self.record_board_turn_with_tasks_layout_now(
+            turn, owner, memories, worlds, caller, None, accept,
+        )
+    }
+
     /// The per-turn board path: `caller`, the board owner, records the board
     /// `memories` rendered for its own `turn`, at the vault clock. A turn
     /// recorded in the same second as the owner's last one moves one second
@@ -180,13 +198,25 @@ impl Vault {
     /// `accept` sees the receipt inside the recording transaction, before it
     /// commits: a caller that declines it (a response that no longer fits
     /// its budget with the receipt in it) records nothing, and gets `None`.
-    pub fn record_board_turn_now(
+    ///
+    /// `candidate` is the exact ROOT TASKS selection this explicit TURN
+    /// projected (FIX 12570, HTTP slice): it activates in the SAME returned
+    /// `RwTxn` after `stage_board_turn` succeeded and before accept/commit,
+    /// so it commits if and only if the accepted response commits. A
+    /// candidate whose actor is not `owner` is the existing `NotTurnAuthor`;
+    /// any other drift (erased row, incarnation ABA, or a live revision
+    /// another TURN already advanced) skips silently, keeps any newer
+    /// pending batch, and never refuses the current board. `None` (chat
+    /// answers, no-TURN hydrates, explicit per-request overrides, and all
+    /// pre-existing callers) writes no layout.
+    pub fn record_board_turn_with_tasks_layout_now(
         &self,
         turn: EntityId,
         owner: EntityId,
         memories: Option<&crate::context_board::MemoriesSection>,
         worlds: Option<&crate::claim::world_access::ResolvedWorldAuthority>,
         caller: &ScopedRead<'_>,
+        candidate: Option<TasksLayoutCandidate>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
         if EntityId::from_hex(caller.actor_key().actor_ref()).ok() != Some(owner) {
@@ -223,13 +253,16 @@ impl Vault {
             selection.served_revisions(memories)
         });
         let now = self.now_recorded_at();
-        let (txn, receipt) =
+        let (mut txn, receipt) =
             self.stage_board_turn(turn, owner, &selection, Some((caller, &served)), |last| {
                 match last {
                     Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
                     None => (now, now),
                 }
             })?;
+        if let Some(candidate) = candidate {
+            activate_tasks_layout_in_txn(self, &mut txn, &owner, &turn, &candidate)?;
+        }
         if !accept(&receipt) {
             return Ok(None);
         }
