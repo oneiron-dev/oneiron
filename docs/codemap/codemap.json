@@ -14962,7 +14962,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 5,
       "re-export": 1
      }
@@ -50664,7 +50664,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 48,
       "re-export": 19
      }
     },
@@ -51282,7 +51282,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "struct": 9
