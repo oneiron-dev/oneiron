@@ -7965,6 +7965,7 @@ dependencies = [
  "rand_distr 0.4.3",
  "regex",
  "reqwest 0.12.28",
+ "rmp",
  "rmp-serde",
  "rmpv",
  "rrule",

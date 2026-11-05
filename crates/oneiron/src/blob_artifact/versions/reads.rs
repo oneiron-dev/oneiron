@@ -227,7 +227,8 @@ impl Vault {
     /// without reading them (FIX 12304), so a reader can admit their memory
     /// first: a body kept in its ASSET's file by its manifest, any other by
     /// its row's body, seen in place. A body an entity document holds (text,
-    /// never opaque bytes) is resolved to measure it. `None` where that read
+    /// never opaque bytes) is counted through the same encoder without copying
+    /// its resolved text or output bytes. `None` where that read
     /// finds no version, or the body reads as absent.
     pub(crate) fn blob_artifact_version_len_in_txn(
         &self,
@@ -257,8 +258,8 @@ impl Vault {
                 return Ok(Some(manifest.facts.len));
             }
             if crate::entity_doc::has_record_head(store, rtxn, &asset)? {
-                let resolved = crate::entity_doc::resolve_record_body(store, rtxn, &asset, body)?;
-                return Ok(Some(resolved.len() as u64));
+                return crate::entity_doc::resolve_record_body_len(store, rtxn, &asset, body)
+                    .map(Some);
             }
             Ok(Some(body.len() as u64))
         })?;
