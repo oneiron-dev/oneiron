@@ -784,6 +784,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.origin.publish.approve", post(facade_route))
         .route("/vault.code.origin.publish.execute", post(facade_route))
         .route("/vault.code.origin.publish.cancel", post(facade_route))
+        .route("/vault.devices.predecessor.name", post(facade_route))
         .route("/vault.code.origin.authority.get", post(facade_route))
         .route("/vault.code.origin.authority.set", post(facade_route))
         .route("/vault.code.origin.publications", post(facade_route))

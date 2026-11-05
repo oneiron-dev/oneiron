@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1248 facade rows, 4524 declarations.
-Inputs: 1179 of 1248 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1083 of 1248 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1249 facade rows, 4525 declarations.
+Inputs: 1180 of 1249 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1084 of 1249 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -13172,6 +13172,9 @@ class OriginPublishApproveRequest(TypedDict):
     request_id: EntityId
     review_digest: str
     code_repo: NotRequired[EntityId | None]
+class DevicePredecessor(TypedDict):
+    client: str
+    device_key: str
 OriginResidence = Literal["local-vault", "cloud-vault"]
 class OriginAuthority(TypedDict):
     epoch: int
