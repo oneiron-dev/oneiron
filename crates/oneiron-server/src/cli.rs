@@ -69,7 +69,7 @@ pub use recovery_kit_args::{
     RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
     RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
-pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs, SiwcLoginArgs};
 pub use secret_control_args::{
     SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs,
     SecretShowSupplementArgs, SecretUnbindArgs,
@@ -1067,6 +1067,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
         Command::Oneironer(command) => commands::oneironer(command),
+        Command::Seat(SeatCommand::SiwcLogin(args)) => commands::seat_siwc_login(*args).await,
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
         Command::Seat(SeatCommand::Runners) => commands::seat_runners(),

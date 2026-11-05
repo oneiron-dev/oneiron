@@ -23,6 +23,26 @@ pub enum SeatCommand {
     /// effective order: which runner takes Dreamer work, and where the work
     /// goes when a seat's quota is spent.
     RunnerPolicy(Box<SeatRunnerPolicyArgs>),
+    /// Sign in locally with ChatGPT and save one protected account record.
+    /// Prints the URL for you to open; never starts a browser or prints tokens.
+    SiwcLogin(Box<SiwcLoginArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SiwcLoginArgs {
+    /// Protected local record for this account, outside every vault and repo.
+    #[arg(long)]
+    pub credential_file: PathBuf,
+    /// Protected stable host identifier, shared by this host's SIWC accounts.
+    #[arg(long)]
+    pub host_id_file: PathBuf,
+    /// Registered HTTP callback on 127.0.0.1. Port 0 selects an available port;
+    /// the scheme, host and path stay fixed on later sign-ins.
+    #[arg(long)]
+    pub callback_uri: String,
+    /// Your app's actual name, kept consistent across installations.
+    #[arg(long)]
+    pub agent_name: String,
 }
 
 #[derive(Args, Clone, Debug)]
