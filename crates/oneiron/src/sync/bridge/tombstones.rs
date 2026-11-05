@@ -520,6 +520,7 @@ fn apply_tombstone_in_savepoint(
         }
     }
 }
+
 // Top-level write transactions this delta's tombstone batch opened
 // (ONE-521 acceptance). Nested savepoints are deliberately NOT counted —
 // they add no durability boundary — and neither are the pre-batch door
