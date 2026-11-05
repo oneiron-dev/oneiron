@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use oneiron::claim::{PointRead, ScopedRead};
 use oneiron::context_board::{
-    BoardHistoryError, BoardRender, MemoryRow, MemoryTier, SectionView, TasksLayoutCandidate,
+    BoardHistoryError, BoardLayoutCandidate, BoardRender, MemoryRow, MemoryTier, SectionView,
 };
 use oneiron::memory::ReadMode;
 use oneiron::pipeline::ResolvedWorldAuthority;
@@ -53,9 +53,9 @@ pub(crate) struct ChatContextCapture {
     worlds: ResolvedWorldAuthority,
     rendered_fingerprint: String,
     read_auth: CoreAuth,
-    /// The exact ROOT TASKS selection this chat render projected (FIX 12570);
+    /// The exact board layout batch this chat render projected (BOARD-LAYOUT);
     /// `None` when no activation follows.
-    tasks_candidate: Option<TasksLayoutCandidate>,
+    layout_candidate: Option<BoardLayoutCandidate>,
 }
 
 /// A capture frozen against the call admitted with it. Its emit fields are
@@ -96,7 +96,7 @@ struct Awaited {
 /// The capture of one rendered board, read as `auth` read it. Pure: it
 /// projects what it was handed and reads nothing. A MEMORIES section the
 /// settled render does not account for row by row is no capture, logged; the
-/// board and its frame are as they were. `tasks_candidate` is the exact
+/// board and its frame are as they were. `layout_candidate` is the exact
 /// selection captured BEFORE render; it rides ONLY with this SAME admitted
 /// board context.
 pub(super) fn capture_chat_context(
@@ -104,7 +104,7 @@ pub(super) fn capture_chat_context(
     memories: Option<&MemoriesSection>,
     worlds: &ResolvedWorldAuthority,
     render: &BoardRender,
-    tasks_candidate: Option<TasksLayoutCandidate>,
+    layout_candidate: Option<BoardLayoutCandidate>,
 ) -> Option<ChatContextCapture> {
     let memories = match memories {
         Some(memories) => {
@@ -123,7 +123,7 @@ pub(super) fn capture_chat_context(
         worlds: worlds.clone(),
         rendered_fingerprint: blake3::hash(render.text.as_bytes()).to_hex().to_string(),
         read_auth: auth.clone(),
-        tasks_candidate,
+        layout_candidate,
     })
 }
 
@@ -159,13 +159,17 @@ fn settled_memories(memories: &MemoriesSection, render: &BoardRender) -> Option<
                 continue;
             }
             matched += rows.len();
+            // A row the actor's board layout folded or fitted away is not
+            // shown: only the ids the section still shows are (BOARD-LAYOUT).
+            let shown = |row: &MemoryRow| match &section.shown_ids {
+                Some(ids) => EntityId::from_hex(&row.id).is_ok_and(|id| ids.contains(&id)),
+                None => section.view != SectionView::Counts,
+            };
             for pinned in [true, false] {
-                if !pinned && section.view == SectionView::Counts {
-                    continue;
-                }
                 for row in rows
                     .iter()
                     .filter(|row| (row.tier == MemoryTier::Pinned) == pinned)
+                    .filter(|row| pinned || shown(row))
                 {
                     let mut shown = MemoryRow::clone(row);
                     if foreign {
@@ -546,13 +550,13 @@ fn keep_chat_history(
             return Err("a captured row or world is not readable by the answering agent");
         }
     }
-    match vault.record_board_turn_with_tasks_layout_now(
+    match vault.record_board_turn_with_layout_now(
         answered.turn,
         answered.agent,
         capture.memories.as_ref(),
         Some(&capture.worlds),
         &author,
-        capture.tasks_candidate.clone(),
+        capture.layout_candidate.clone(),
         |_| true,
     ) {
         Ok(Some(_)) => Ok(()),

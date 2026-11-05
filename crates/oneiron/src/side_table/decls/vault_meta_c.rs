@@ -503,6 +503,10 @@ side_tables! {
     /// Immutable derived text summary of one output, keyed by source content hash and summarization-
     /// recipe hash. Key: hash32 + hash32.
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;
+    /// One actor's own board layout (BOARD-LAYOUT): the live layout its board
+    /// renders under and its one pending batch. Key: id16 (actor).
+    CONTEXT_BOARD_LAYOUT: VaultMeta b"context_board.layout.v1:" Named Engine
+        => crate::context_board::erase_board_layout_actor_in_txn;
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored [accepts: crate::context_board::context_board_plugin_block_accepts_masked];
@@ -510,10 +514,6 @@ side_tables! {
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
     CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;
-    /// Actor-staged TASKS-row token budget: the live default one actor's board
-    /// renders under, and its pending staged write. Key: id16 (actor).
-    CONTEXT_BOARD_TASKS_BUDGET: VaultMeta b"context_board.tasks_budget.v1:" Named Engine
-        => crate::context_board::erase_tasks_budget_actor_in_txn;
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.

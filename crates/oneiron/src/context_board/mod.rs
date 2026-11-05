@@ -97,10 +97,11 @@ pub use stream::{
     PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
     SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
+mod layout;
+mod layout_store;
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
-mod tasks_layout;
 
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
@@ -113,6 +114,15 @@ pub use frame::{
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,
 };
+pub use layout::{
+    BOARD_FILTER_STATUSES_MAX, BOARD_FOLD_KEEP_MAX, BOARD_FOLD_NOTE_MAX_BYTES,
+    BOARD_LAYOUT_SECTIONS_MAX, BOARD_SECTION_KEY_MAX_BYTES, BoardActorClass, BoardLayout,
+    BoardLayoutError, BoardWhoFilter, FOLD_ATTENTION_ROWS_MAX, FoldBaseline, FoldCount,
+    FoldSummary, LaidOutBoard, SectionFilter, SectionFold, SectionLayout, apply_board_layout,
+    fold_line, is_section_key, unfold_command,
+};
+pub use layout_store::{BoardLayoutCandidate, BoardLayoutState};
+pub(crate) use layout_store::{erase_board_layout_actor_in_txn, inherit_board_layout_in_txn};
 pub use memories::{
     CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor,
     MemoriesSection, MemoryRow, MemorySlot, MemorySource,
@@ -154,8 +164,6 @@ pub use tasks::{
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
-pub use tasks_layout::{TasksLayoutCandidate, TasksLayoutPendingState, TasksLayoutState};
-pub(crate) use tasks_layout::{erase_tasks_budget_actor_in_txn, inherit_tasks_layout_in_txn};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,

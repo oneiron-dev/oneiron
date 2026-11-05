@@ -84,8 +84,6 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/v1/core/explain/gate/{receipt}"),
     ("POST", "/v1/core/context-board/scratchpad"),
     ("POST", "/v1/core/context-board/scratchpad/recall"),
-    ("GET", "/v1/core/context-board/layout/tasks"),
-    ("POST", "/v1/core/context-board/layout/tasks"),
     ("POST", "/v1/core/hydrate"),
     ("POST", "/v1/core/batch/shortId/hydrate"),
     ("GET", "/v1/core/run-tree"),

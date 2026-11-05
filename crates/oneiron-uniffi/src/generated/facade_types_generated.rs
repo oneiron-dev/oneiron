@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4487 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
+// UniFFI census: 1238 facade rows, 4500 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1190.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -1052,6 +1052,149 @@ pub struct ScratchpadWriteReply {
 pub struct ScratchpadSealRequest {
     #[serde(rename = "session_id")]
     pub session_id: String,
+}
+
+/// `oneiron::context_board::layout::FoldBaseline`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldBaseline {
+    #[serde(rename = "total")]
+    pub total: u64,
+    #[serde(rename = "counts", default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<std::collections::HashMap<String, u64>>,
+}
+
+/// `oneiron::context_board::layout::SectionFold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionFold {
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<Vec<String>>,
+    #[serde(rename = "baseline", default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<FoldBaseline>,
+}
+
+/// `oneiron::context_board::layout::BoardActorClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BoardActorClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::context_board::layout::BoardWhoFilter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum BoardWhoFilter {
+    #[serde(rename = "mine")]
+    Mine,
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "actor")]
+        actor: String,
+    },
+    #[serde(rename = "class")]
+    Class {
+        #[serde(rename = "class")]
+        class: BoardActorClass,
+    },
+    #[serde(rename = "group")]
+    Group {
+        #[serde(rename = "group")]
+        group: String,
+    },
+}
+
+/// `oneiron::context_board::layout::SectionFilter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionFilter {
+    #[serde(rename = "who", default, skip_serializing_if = "Option::is_none")]
+    pub who: Option<BoardWhoFilter>,
+    #[serde(rename = "status", default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<Vec<String>>,
+}
+
+/// `oneiron::context_board::layout::SectionLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionLayout {
+    #[serde(rename = "share_pct", default, skip_serializing_if = "Option::is_none")]
+    pub share_pct: Option<u8>,
+    #[serde(rename = "fold", default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<SectionFold>,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<SectionFilter>,
+}
+
+/// `oneiron::context_board::layout::BoardLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardLayout {
+    #[serde(rename = "sections", default, skip_serializing_if = "Option::is_none")]
+    pub sections: Option<std::collections::HashMap<String, SectionLayout>>,
+}
+
+/// `oneiron::context_board::layout_store::BoardLayoutState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BoardLayoutState {
+    #[serde(rename = "live")]
+    pub live: BoardLayout,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<BoardLayout>,
+}
+
+/// `oneiron::verbs::board_layout::BoardFoldRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFoldRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::board_layout::BoardSectionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSectionRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+}
+
+/// `oneiron::verbs::board_layout::BoardSizeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSizeRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "share_pct", default, skip_serializing_if = "Option::is_none")]
+    pub share_pct: Option<u8>,
+}
+
+/// `oneiron::verbs::board_layout::BoardFilterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFilterRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<SectionFilter>,
+}
+
+/// `oneiron::verbs::board_layout::BoardReplaceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardReplaceRequest {
+    #[serde(rename = "layout")]
+    pub layout: BoardLayout,
 }
 
 /// `oneiron::verbs::self_verbs::DiaryEntryRequest`.

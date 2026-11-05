@@ -88,11 +88,6 @@ use super::{
     ContextBoardScratchpadRequest, ContextBoardScratchpadResponse,
 };
 use super::{
-    __path_context_board_tasks_layout, __path_context_board_tasks_layout_stage,
-    ContextBoardTasksLayoutPending, ContextBoardTasksLayoutStageRequest,
-    ContextBoardTasksLayoutState,
-};
-use super::{
     __path_core_explain_gate, __path_core_explain_memory, ExplainGateNotice, ExplainGateResponse,
     ExplainMemoryResponse,
 };
@@ -158,8 +153,6 @@ use utoipa::OpenApi;
         context_board_turn_history,
         context_board_scratchpad,
         context_board_scratchpad_recall,
-        context_board_tasks_layout,
-        context_board_tasks_layout_stage,
         core_explain_memory,
         core_explain_gate,
         core_run_tree,
@@ -389,9 +382,6 @@ use utoipa::OpenApi;
         ContextBoardScratchpadRecallRequest,
         ContextBoardScratchpadRecallResponse,
         ContextBoardScratchpadRecallLine,
-        ContextBoardTasksLayoutPending,
-        ContextBoardTasksLayoutStageRequest,
-        ContextBoardTasksLayoutState,
         ContextBoardSession,
         ContextBoardNotification,
         ContextBoardUnprocessedItem,
