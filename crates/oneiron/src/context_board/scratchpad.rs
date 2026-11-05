@@ -544,7 +544,7 @@ impl Memory<'_> {
                 .note_program_document(pad)?
                 .ok_or_else(corrupt_pad)?;
             let end = doc.anchor(doc.text().chars().count())?;
-            let note = self.resolve_ref(&pad.to_hex())?;
+            let note = pad;
             let edit = NoteProgramEdit::InsertAfter {
                 anchor: end,
                 text: line,
