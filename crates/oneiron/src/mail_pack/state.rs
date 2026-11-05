@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::source::MailCopySetting;
 use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
@@ -22,6 +23,12 @@ pub(super) const OCCURRENCES: SideTable<(EntityId, [u8; 32]), MailOccurrence, Na
 /// and the BLAKE3 of the provider's id. The value is the provider's id.
 pub(super) const BODY_QUEUE: SideTable<(EntityId, u64, [u8; 32]), String, Named> =
     SideTable::new(&side_table::MAIL_PACK_BODY_QUEUE);
+/// The rows each provider message landed as, so an erase of any of them
+/// reaches the message: by the row (its CONVERSATION, TURN or a MESSAGE
+/// revision), the source and the BLAKE3 of the provider's id. The value is
+/// when it was recorded.
+const OCCURRENCE_ROWS: SideTable<(EntityId, EntityId, [u8; 32]), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_OCCURRENCE_ROW);
 
 /// Where one source's import stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -37,9 +44,19 @@ pub(super) struct MailSyncState {
     /// The cutoff the listing runs under (recent months), so a changed
     /// setting starts it over.
     pub(super) backfill_newer_than: Option<u64>,
+    /// The copy setting the listing runs under; a changed setting, or
+    /// `None` after an expired anchor, starts it over with a fresh cutoff.
+    #[serde(default)]
+    pub(super) backfill_copy: Option<MailCopySetting>,
     /// Bumped each time the listing starts over (an expired anchor, a
     /// changed copy setting).
     pub(super) generation: u64,
+    /// The change feed's next page, read from `history_page_anchor`: a feed
+    /// longer than one step's budget goes on from it at the next step.
+    #[serde(default)]
+    pub(super) history_page: Option<String>,
+    #[serde(default)]
+    pub(super) history_page_anchor: Option<String>,
     pub(super) landed: u64,
     pub(super) bodies: u64,
     pub(super) deleted_at_provider: u64,
@@ -123,6 +140,78 @@ pub(super) fn body_queue_key(
         u64::MAX - received_at,
         *blake3::hash(provider_id.as_bytes()).as_bytes(),
     )
+}
+
+impl MailOccurrence {
+    /// Forgets what the message said: its sender, subject, labels, thread
+    /// key, ids and content hashes go, and only the provider id stays, as a
+    /// fence a later listing does not land again.
+    pub(super) fn scrub(&mut self, at: u64) {
+        self.presence = MailPresence::Forgotten { at };
+        self.thread_key.clear();
+        self.content_hashes.clear();
+        self.labels.clear();
+        self.rfc_message_id = None;
+        self.from = None;
+        self.subject = None;
+        self.attachments.clear();
+        self.updated_at = at;
+    }
+}
+
+/// Records that `rows` landed for the provider message keyed `key`, so an
+/// erase of any of them reaches it.
+pub(super) fn record_occurrence_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, [u8; 32]),
+    rows: &[EntityId],
+    at: u64,
+) -> Result<()> {
+    for row in rows {
+        OCCURRENCE_ROWS.put(&vault.store, txn, &(*row, key.0, key.1), &at)?;
+    }
+    Ok(())
+}
+
+/// The entity eraser (deletion/derived_rows.rs): an erased CONVERSATION,
+/// TURN or MESSAGE of an imported message scrubs that message's occurrence,
+/// so the inbox, the thread and the compliance search no longer list its
+/// sender or subject, and its body leaves the queue. A no-op for any other
+/// entity.
+pub(crate) fn erase_occurrence_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let keys = OCCURRENCE_ROWS.scan_keys(store, txn, id.as_bytes())?;
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let at = crate::unix_seconds_now();
+    for (row, source, hash) in keys {
+        OCCURRENCE_ROWS.delete(store, txn, &(row, source, hash))?;
+        let key = (source, hash);
+        let Some(mut occurrence) = OCCURRENCES.get(store, txn, &key)? else {
+            continue;
+        };
+        if !matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
+            BODY_QUEUE.delete(
+                store,
+                txn,
+                &body_queue_key(source, occurrence.received_at, &occurrence.provider_id),
+            )?;
+        }
+        occurrence.scrub(at);
+        OCCURRENCES.put(store, txn, &key, &occurrence)?;
+        super::attachments::forget_message_attachments_in_txn(
+            store,
+            txn,
+            source,
+            &occurrence.provider_id,
+        )?;
+    }
+    Ok(())
 }
 
 /// The provider ids of up to `limit` messages waiting for their bodies,
