@@ -87,6 +87,7 @@ impl VerifiedClaimTransition {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at: header.learned_at,
+            row_version: Some(header.row_version),
             data: data.clone(),
             allow_maintenance: false,
             allow_reserved_predicate: true,

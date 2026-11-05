@@ -159,6 +159,7 @@ impl Vault {
                     end: header.occurred_end,
                 },
                 learned_at: header.learned_at,
+                row_version: Some(header.row_version),
                 data: data.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
