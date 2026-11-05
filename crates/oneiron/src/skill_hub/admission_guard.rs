@@ -193,6 +193,7 @@ impl crate::Vault {
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
