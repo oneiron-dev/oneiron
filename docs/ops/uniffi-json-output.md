@@ -133,3 +133,12 @@ speed or runtime claim follows.
 Input parsing, input canonicalization, hook masking, admission and receipts
 are unchanged. No end-to-end depth, memory, speed or runtime claim follows from
 this output conversion alone.
+
+
+The `self.browser.batch` output also uses its complete owned answer conversion.
+It consumes every `decisions` value and the optional session manifest's
+`image_release` before the shared finite record conversion. Empty decisions
+remain absent. A missing or null image release remains absent; null decision
+array elements remain JSON null. The wrapper, manifest and all other batch
+fields keep their existing serde shape. The browser records, client, hooks and
+input conversion do not change.

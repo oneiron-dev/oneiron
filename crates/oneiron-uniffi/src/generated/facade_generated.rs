@@ -6124,7 +6124,7 @@ export_facade! {
 "self.browser.batch" => fn self_browser_batch(&self, input: LiveRunRequestBatchInput) -> BrowserAnswerBatchOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserBatchInput> = crate::codec::lower_record("self.browser.batch", input)?;
     let output = client.self_browser_batch(&input)?;
-    crate::codec::lift_record("self.browser.batch", &output)
+    Lift::lift(output)
 };
 "self.browser.library.find" => fn self_browser_library_find(&self, input: LiveRunRequestLibraryFindInput) -> BrowserAnswerLibraryFindOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryFindInput> = crate::codec::lower_record("self.browser.library.find", input)?;
