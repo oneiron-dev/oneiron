@@ -13,6 +13,7 @@ pub mod lifecycle;
 pub mod repo_projection;
 pub mod retained;
 pub mod retire;
+pub mod retire_selected;
 pub mod rows;
 pub mod segment;
 
