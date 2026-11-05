@@ -103,7 +103,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> bool {
         let Some(reader) = self.grant_reader() else {
@@ -166,7 +166,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         request: Option<&RetrievalFilter>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: &Scope,
     ) -> Result<bool> {
         if !self.grant_admits_position_in(rtxn, id, raw, grant)? {

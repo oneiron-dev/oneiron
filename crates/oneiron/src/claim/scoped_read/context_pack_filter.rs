@@ -171,7 +171,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
         entities: Vec<ContextEntity>,
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
     ) -> Result<(Vec<ContextEntity>, usize, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;

@@ -404,7 +404,7 @@ impl<'v> ScopedRead<'v> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let admitted = self.admit_in(txn, &id, || {
             self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
@@ -427,7 +427,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         mode: ReadMode,
         suppressed: usize,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> usize {
         if suppressed == 0 {
             return 0;
@@ -457,7 +457,7 @@ impl<'v> ScopedRead<'v> {
         short_id: &str,
         content_hash: u8,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let hydrated = match mode {
             ReadMode::Pinned(revision) => {

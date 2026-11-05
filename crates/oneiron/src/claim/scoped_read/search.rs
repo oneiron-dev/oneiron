@@ -480,7 +480,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         ceilings: &[(&PolicyManifestResolution, &ResolvedRetrievalFilter)],
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
     ) -> Result<bool> {
         for (policy, ceiling) in ceilings {
             if !self.is_entity_retrievable_held_in(txn, policy, ceiling, id, held)? {
@@ -529,7 +529,7 @@ impl<'v> ScopedRead<'v> {
     fn snapshot_candidate_in(
         &self,
         snapshot: &heed::RoTxn<'_>,
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,

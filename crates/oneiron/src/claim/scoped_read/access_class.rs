@@ -315,7 +315,7 @@ fn class_judge_in<'v>(
     txn: &heed::RoTxn<'_>,
     reader: &ClassReader<'_>,
     view: &ClassView<'_>,
-    authority: &HeldAuthority<'v>,
+    authority: &HeldAuthority,
 ) -> Result<bool> {
     let key = reader.key;
     let record = view.record();
@@ -327,7 +327,7 @@ fn class_judge_in<'v>(
             record: record.clone(),
         };
         if !authority.relationship_allows_in(vault, txn, key.principal_ref, |context| {
-            read.allowed_by(context)
+            read.allowed_by_snapshot(context)
         })? {
             return Ok(false);
         }
@@ -380,7 +380,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         header: &EntityMetadataHeader,
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: Option<&Scope>,
     ) -> Result<Option<bool>> {
         if !self.reads_by_class() || raw.len() <= ENTITY_METADATA_HEADER_LEN {
@@ -462,7 +462,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         body: &ClaimBody,
         principal: Option<EntityId>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
             return Ok(false);
