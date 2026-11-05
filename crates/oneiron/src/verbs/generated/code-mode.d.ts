@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4543 declarations.
-// Replies: 1097 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1284 code-mode rows (1244 host rows, 40 run rows), 4549 declarations.
+// Replies: 1098 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -3851,6 +3851,12 @@ declare namespace Sdk {
   type EsignSigningImageView = { image_ref: string };
   type EsignSigningSignatureRequest = { token: string; image_ref: string };
   type EsignSigningSignatureView = { image_ref: string; image_base64: string };
+  type EsignSigningPreviewRequest = { token: string; item: number };
+  type PageGeometry = { crop: number[]; rotation: number; user_unit: number };
+  type PdfFieldRect = { x: number; y: number; width: number; height: number };
+  type FieldMark = { kind: "text"; value: string; x: number; y: number; size: number } | { kind: "rectangle"; x: number; y: number; width: number; height: number } | { kind: "line"; x1: number; y1: number; x2: number; y2: number } | { kind: "signature"; image_ref: string; rect: PdfFieldRect };
+  type FieldLayout = { presentation: FieldPresentation; rect: PdfFieldRect; marks: FieldMark[] };
+  type EsignSigningPreviewView = { pages: PageGeometry[]; fields: FieldLayout[] };
   type EsignSealGetRequest = { document_ref: string };
   type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
   type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string; profile: SealProfileEvidence };
@@ -6130,6 +6136,8 @@ declare const vault: Sdk.VaultHost & {
       image(input: Sdk.EsignSigningImageRequest): Promise<Sdk.EsignSigningImageView | StoredResult>;
       /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
       pdf(input: Sdk.EsignSigningPdfRequest): Promise<Sdk.EsignSigningPdfView | StoredResult>;
+      /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
+      preview(input: Sdk.EsignSigningPreviewRequest): Promise<Sdk.EsignSigningPreviewView | StoredResult>;
       /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
       signature(input: Sdk.EsignSigningSignatureRequest): Promise<Sdk.EsignSigningSignatureView | StoredResult>;
     };

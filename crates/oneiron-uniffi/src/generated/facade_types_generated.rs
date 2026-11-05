@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4487 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
+// UniFFI census: 1233 facade rows, 4493 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1185.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -59833,6 +59833,111 @@ pub struct EsignSigningSignatureView {
     pub image_ref: String,
     #[serde(rename = "image_base64")]
     pub image_base64: String,
+}
+
+/// `oneiron::blob_artifact::esign::door::preview::EsignSigningPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPreviewRequest {
+    #[serde(rename = "token")]
+    pub token: String,
+    #[serde(rename = "item")]
+    pub item: u64,
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::PageGeometry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PageGeometry {
+    #[serde(rename = "crop")]
+    pub crop: Vec<f64>,
+    #[serde(rename = "rotation")]
+    pub rotation: u16,
+    #[serde(rename = "user_unit")]
+    pub user_unit: f64,
+}
+
+/// `oneiron::blob_artifact::esign::render::PdfFieldRect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PdfFieldRect {
+    #[serde(rename = "x")]
+    pub x: f64,
+    #[serde(rename = "y")]
+    pub y: f64,
+    #[serde(rename = "width")]
+    pub width: f64,
+    #[serde(rename = "height")]
+    pub height: f64,
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::FieldMark`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum FieldMark {
+    #[serde(rename = "text")]
+    Text {
+        #[serde(rename = "value")]
+        value: String,
+        #[serde(rename = "x")]
+        x: f64,
+        #[serde(rename = "y")]
+        y: f64,
+        #[serde(rename = "size")]
+        size: f64,
+    },
+    #[serde(rename = "rectangle")]
+    Rectangle {
+        #[serde(rename = "x")]
+        x: f64,
+        #[serde(rename = "y")]
+        y: f64,
+        #[serde(rename = "width")]
+        width: f64,
+        #[serde(rename = "height")]
+        height: f64,
+    },
+    #[serde(rename = "line")]
+    Line {
+        #[serde(rename = "x1")]
+        x1: f64,
+        #[serde(rename = "y1")]
+        y1: f64,
+        #[serde(rename = "x2")]
+        x2: f64,
+        #[serde(rename = "y2")]
+        y2: f64,
+    },
+    #[serde(rename = "signature")]
+    Signature {
+        #[serde(rename = "image_ref")]
+        image_ref: String,
+        #[serde(rename = "rect")]
+        rect: PdfFieldRect,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::render::presentation::FieldLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FieldLayout {
+    #[serde(rename = "presentation")]
+    pub presentation: FieldPresentation,
+    #[serde(rename = "rect")]
+    pub rect: PdfFieldRect,
+    #[serde(rename = "marks")]
+    pub marks: Vec<FieldMark>,
+}
+
+/// `oneiron::blob_artifact::esign::door::preview::EsignSigningPreviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPreviewView {
+    #[serde(rename = "pages")]
+    pub pages: Vec<PageGeometry>,
+    #[serde(rename = "fields")]
+    pub fields: Vec<FieldLayout>,
 }
 
 /// `oneiron::blob_artifact::esign::door::EsignSealGetRequest`.

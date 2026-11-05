@@ -1079,6 +1079,7 @@ vaultEsignSigningAct(input: unknown): unknown
 vaultEsignSigningPdf(input: unknown): unknown
 vaultEsignSigningImage(input: unknown): unknown
 vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSigningPreview(input: unknown): unknown
 vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown

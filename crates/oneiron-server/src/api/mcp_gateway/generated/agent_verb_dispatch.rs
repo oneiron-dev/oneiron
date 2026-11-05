@@ -1305,6 +1305,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.esign.signing.pdf" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.signing.image" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.signing.signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.seal.get" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
@@ -4725,6 +4726,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.signing.signature" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.signing.preview" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.seal.get" => {
@@ -23059,6 +23063,14 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_esign_signing_signature(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.signing.preview" => {
+            let input: oneiron::blob_artifact::esign::EsignSigningPreviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_signing_preview(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
