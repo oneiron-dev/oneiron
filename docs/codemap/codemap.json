@@ -116540,6 +116540,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/pairing_paths.rs",
+     "purpose": "Pairing and slip-revocation operations for the routes in `api/pairing.rs`",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -129134,7 +129144,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 664,
+     "files": 665,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129647,7 +129657,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1560,
+   "source_files": 1561,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
