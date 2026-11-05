@@ -200,6 +200,17 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
+and `app` with an `artifact_id` from stored published pointers whose labels
+fit the existing per-app host codec. Preview pointers are excluded. These are
+publication facts, not public DNS, artifact availability or a change to any
+serve tier or credential check. The supervisor joins its own public slug and
+domains; this report does not enable `artifact_domains` or hosted ingress.
+Origins share the existing bounded pages and digest with wake entries, and an
+origin-only change advances the report. Engine, supervisor and vault-VM
+readers must all include the FIX 11004 build floor documented under
+`CONTRACT_VERSION`; the new fields are required, with no old reader.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each
@@ -219,8 +230,21 @@ else `{"state": "active", "check": ...}`, a
 check of kind `inspect_connection_pool_pressure` that names the episode, the
 `limits.max_connections` row and the episode's current bound, the credentials holding the most
 open request bodies, the pool's connections and the remedy. The check observes
-only: it pauses, revokes and refuses nothing, and it does not promise that a
-revocation releases a body already open.
+only: it pauses, revokes and refuses nothing.
+
+An explicit revoke does end the revoked credential's already-open counted TCP
+request body at its next read: a verified slip or a delegation parent captured
+at its successful verification must carry a current explicit `SlipRevoke`, or
+the node must receive a punch for the accepted account key. A later colliding
+mint cannot replace that admitted ancestry. The body fails with typed
+`credential_revoked`. When that cut precedes the routed reply, the reply is 401 with that error code and `connection: close`,
+even if a body parser would otherwise report a parse error. A reply already
+streaming cannot change its HTTP headers. The node remembers a punch for each accepted
+body's lifetime, independently of the verdict lease and temporary punch record.
+Expiry, grant changes, cache misses and unreadable revocation state do not end
+an admitted body through this check. Slip reads run off-thread, one received
+frame at a time, and their wait does not consume the network-idle limit. Mesh
+and in-process bodies keep their existing behavior.
 
 ```toml
 [limits]

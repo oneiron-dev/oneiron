@@ -79,3 +79,6 @@ pub const REKEY_STEPS_ENVIRONMENT: &[&str] = &[
 /// message about the gate, not an engine error.
 pub const START_REFUSED_WITHOUT_DISCLOSURE: &str =
     "Recording is closed until the disclosure is confirmed.";
+
+/// The fixed OS viewing reason contains neither the value nor the owner's input.
+pub const PRIVATE_COPY_VIEW_REASON: &str = "View a private copy in your vault.";

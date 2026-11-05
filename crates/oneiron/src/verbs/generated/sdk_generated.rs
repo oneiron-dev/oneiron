@@ -1285,6 +1285,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillFitSetRequest>(),
             ),
             (
+                "vault.skills.advisory_ask.set",
+                crate::code_run::vault_read::request_schema::<SkillAdvisoryAskRequest>(),
+            ),
+            (
                 "vault.skills.permissions.approve",
                 crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
             ),
@@ -7268,6 +7272,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.rules.set",
     "vault.skills.code_auto_install.set",
     "vault.skills.fit.set",
+    "vault.skills.advisory_ask.set",
     "vault.skills.permissions.approve",
     "vault.skills.optimize.start",
     "vault.skills.optimize.result",
@@ -8470,6 +8475,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.skills.fit.set" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
+        "vault.skills.advisory_ask.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
         "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
@@ -9004,7 +9012,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Option<crate::skill_optimize::offer_doors::OfferPassResult>,
         >(),
         "vault.coach.training_offers.answer" => crate::code_run::vault_read::request_schema::<
-            crate::skill_optimize::OfferAnswerRecord,
+            crate::skill_optimize::offer_doors::OfferAnswerReply,
         >(),
         "vault.coach.training_offers.undo" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::offer_doors::OfferUndoReceipt,
@@ -12403,6 +12411,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.fit.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.advisory_ask.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20100,6 +20115,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.fit.set" => {
             let _input: SkillFitSetRequest = decode(value.clone())?;
         }
+        "vault.skills.advisory_ask.set" => {
+            let _input: SkillAdvisoryAskRequest = decode(value.clone())?;
+        }
         "vault.skills.permissions.approve" => {
             let _input: HubSkillPermissionRequest = decode(value.clone())?;
         }
@@ -24002,6 +24020,9 @@ pub fn invoke(
             encode(vault_skills_code_auto_install_set(memory, decode(value)?)?)
         }
         "vault.skills.fit.set" => encode(vault_skills_fit_set(memory, decode(value)?)?),
+        "vault.skills.advisory_ask.set" => {
+            encode(vault_skills_advisory_ask_set(memory, decode(value)?)?)
+        }
         "vault.skills.permissions.approve" => {
             encode(vault_skills_permissions_approve(memory, decode(value)?)?)
         }
@@ -28271,6 +28292,16 @@ pub fn vault_skills_fit_set(
         &input,
     )
 }
+pub fn vault_skills_advisory_ask_set(
+    memory: &Memory<'_>,
+    input: SkillAdvisoryAskRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_advisory_ask_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.advisory_ask.set")?,
+        &input,
+    )
+}
 pub fn vault_skills_permissions_approve(
     memory: &Memory<'_>,
     input: HubSkillPermissionRequest,
@@ -30049,7 +30080,7 @@ pub fn vault_coach_training_offers_result(
 pub fn vault_coach_training_offers_answer(
     memory: &Memory<'_>,
     input: crate::skill_optimize::offer_doors::OfferAnswerRequest,
-) -> MemoryResult<crate::skill_optimize::OfferAnswerRecord> {
+) -> MemoryResult<crate::skill_optimize::offer_doors::OfferAnswerReply> {
     crate::skill_optimize::offer_doors::answer(
         memory.vault(),
         &memory.embedded_owner("vault.coach.training_offers.answer")?,
@@ -32922,6 +32953,7 @@ pub fn vault_artifacts_propose_output(
         "vault.artifacts.propose_output",
         &input,
         &[
+            "/read_rows/*",
             "/made_by/inputs/*/row",
             "/made_by/trigger/task",
             "/made_by/trigger/ask",
