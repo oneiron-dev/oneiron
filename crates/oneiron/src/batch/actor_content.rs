@@ -12,6 +12,10 @@ use crate::write_envelope::WriteActor;
 use oneiron_authority::federation::Scope;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod inputs;
+pub(crate) use inputs::ContentWriteInputs;
+use inputs::authorize_content_write;
+
 /// The semantic change to one content owner; indexes and receipts follow its
 /// transaction, rather than needing their own independent membership grants.
 #[derive(Debug)]
@@ -40,11 +44,19 @@ struct EffectEntry {
     old: Option<Scope>,
     local_put: bool,
     derived_parent: bool,
+    before_inputs: Option<crate::federation::OwnedSharedVaultWriteInputs>,
+    after_inputs: Option<crate::federation::OwnedSharedVaultWriteInputs>,
 }
 
 /// No facade supplies a list of changed parents: the batch's own ChildOf
 /// overlay and candidate computation determine them before any operation runs.
 pub(super) struct ContentWriteSet {
+    // None comes only from the original personal-vault creation lookup.
+    shared: Option<SharedContentWriteSet>,
+    native_target: Option<EntityId>,
+}
+
+struct SharedContentWriteSet {
     vault_id: u64,
     entries: BTreeMap<EntityId, EffectEntry>,
 }
@@ -55,9 +67,13 @@ impl ContentWriteSet {
         txn: &heed::RoTxn<'_>,
         actor: &WriteActor,
         ops: &[BatchOp],
-    ) -> Result<Option<Self>> {
+        native_target: Option<EntityId>,
+    ) -> Result<Self> {
         let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
-            return Ok(None);
+            return Ok(Self {
+                shared: None,
+                native_target,
+            });
         };
         let mut ids = BTreeSet::new();
         let mut local_puts = BTreeSet::new();
@@ -120,6 +136,7 @@ impl ContentWriteSet {
             ids,
             local_puts,
             derived_parents,
+            native_target,
         )
     }
 
@@ -133,10 +150,13 @@ impl ContentWriteSet {
         actor: &WriteActor,
         bodies: &[(EntityId, crate::claim::ClaimBody)],
     ) -> Result<()> {
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
         for (_, body) in bodies {
             vault.authorize_shared_vault_write_in_txn(
                 txn,
-                self.vault_id,
+                shared.vault_id,
                 actor,
                 &SharedVaultWrite::Content(body.record_scope("read")),
             )?;
@@ -163,7 +183,9 @@ impl ContentWriteSet {
             ids.iter().copied().collect(),
             local_puts.iter().copied().collect(),
             BTreeSet::new(),
+            None,
         )
+        .map(Some)
     }
 
     fn capture(
@@ -174,16 +196,20 @@ impl ContentWriteSet {
         ids: BTreeSet<EntityId>,
         local_puts: BTreeSet<EntityId>,
         derived_parents: BTreeSet<EntityId>,
-    ) -> Result<Option<Self>> {
+        native_target: Option<EntityId>,
+    ) -> Result<Self> {
         let mut entries = BTreeMap::new();
         for id in ids {
+            let mut before_inputs = None;
             let old = if vault.get_raw_in(txn, &id)?.is_some() {
                 let old = vault.content_scope_in_txn(txn, id)?;
-                vault.authorize_shared_vault_write_in_txn(
+                authorize_content_write(
+                    vault,
                     txn,
                     vault_id,
                     actor,
                     &SharedVaultWrite::Content(old.clone()),
+                    (native_target == Some(id)).then_some(&mut before_inputs),
                 )?;
                 Some(old)
             } else {
@@ -195,22 +221,36 @@ impl ContentWriteSet {
                     old,
                     local_put: local_puts.contains(&id),
                     derived_parent: derived_parents.contains(&id),
+                    before_inputs,
+                    after_inputs: None,
                 },
             );
         }
-        Ok(Some(Self {
-            vault_id: vault_id,
-            entries,
-        }))
+        Ok(Self {
+            shared: Some(SharedContentWriteSet { vault_id, entries }),
+            native_target,
+        })
     }
 
     pub(super) fn after(
-        self,
+        mut self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         actor: &WriteActor,
     ) -> Result<()> {
-        for (id, effect) in self.entries {
+        self.after_collecting(vault, txn, actor)
+    }
+
+    fn after_collecting(
+        &mut self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &WriteActor,
+    ) -> Result<()> {
+        let Some(shared) = &mut self.shared else {
+            return Ok(());
+        };
+        for (&id, effect) in &mut shared.entries {
             if effect.local_put
                 && let Some(raw) = vault.get_raw_in(txn, &id)?
             {
@@ -237,7 +277,7 @@ impl ContentWriteSet {
                 .get_raw_in(txn, &id)?
                 .map(|_| vault.content_scope_in_txn(txn, id))
                 .transpose()?;
-            let transition = match (effect.old, new) {
+            let transition = match (effect.old.clone(), new) {
                 (None, Some(to)) => RecordTransition::Create { id, to },
                 (Some(from), Some(to)) if effect.derived_parent => {
                     RecordTransition::Derived { id, from, to }
@@ -249,21 +289,25 @@ impl ContentWriteSet {
             match transition {
                 RecordTransition::Create { id, to } => {
                     let _ = id;
-                    vault.authorize_shared_vault_write_in_txn(
+                    authorize_content_write(
+                        vault,
                         txn,
-                        self.vault_id,
+                        shared.vault_id,
                         actor,
                         &SharedVaultWrite::Content(to),
+                        (self.native_target == Some(id)).then_some(&mut effect.after_inputs),
                     )?;
                 }
                 RecordTransition::Replace { id, from, to }
                 | RecordTransition::Derived { id, from, to } => {
                     let _ = (id, from); // The old position was checked before applying.
-                    vault.authorize_shared_vault_write_in_txn(
+                    authorize_content_write(
+                        vault,
                         txn,
-                        self.vault_id,
+                        shared.vault_id,
                         actor,
                         &SharedVaultWrite::Content(to),
+                        (self.native_target == Some(id)).then_some(&mut effect.after_inputs),
                     )?;
                 }
                 RecordTransition::Remove { id, from } => {
@@ -287,7 +331,7 @@ pub(crate) fn apply_actor_ops(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    apply_actor_ops_beside(
+    apply_actor_ops_collecting(
         vault,
         txn,
         actor,
@@ -298,11 +342,10 @@ pub(crate) fn apply_actor_ops(
         #[cfg(feature = "sync")]
         None,
     )
+    .map(|_| ())
 }
 
-/// Carries selected transport data through the same actor-bound before and
-/// after checks. It supplies neither an actor nor native write permission.
-pub(super) fn apply_actor_ops_beside(
+pub(super) fn apply_actor_ops_collecting(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: &WriteActor,
@@ -311,14 +354,21 @@ pub(super) fn apply_actor_ops_beside(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
     #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
-) -> Result<()> {
+) -> Result<(super::base_apply::PendingNativeSkillBatch, ContentWriteSet)> {
     if !matches!(origin, BaseWriteOrigin::Ordinary) {
         return Err(Error::InvariantViolation(
             "actor content cannot be replay origin",
         ));
     }
-    let effects = ContentWriteSet::before(vault, txn, actor, &ops)?;
-    apply_ops_with_authority_beside(
+    #[cfg(feature = "sync")]
+    let native_target = gate_mode
+        .skill_state_write
+        .as_ref()
+        .map(|write| write.entity());
+    #[cfg(not(feature = "sync"))]
+    let native_target = None;
+    let mut effects = ContentWriteSet::before(vault, txn, actor, &ops, native_target)?;
+    let pending = super::base_apply::apply_ops_with_authority_beside_collecting(
         &vault.store,
         &vault.config,
         &vault.analyzer,
@@ -329,11 +379,14 @@ pub(super) fn apply_actor_ops_beside(
         origin,
         None,
         None,
+        Some(NativePublicationContext {
+            vault,
+            actor: Some(*actor),
+            content_writes: Some(&effects),
+        }),
         #[cfg(feature = "sync")]
         record_document,
     )?;
-    if let Some(effects) = effects {
-        effects.after(vault, txn, actor)?;
-    }
-    Ok(())
+    effects.after_collecting(vault, txn, actor)?;
+    Ok((pending, effects))
 }

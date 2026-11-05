@@ -36,6 +36,50 @@ pub(crate) fn prepare_artifact_pads(vault: &Vault) {
     }
 }
 
+/// An in-process source for native EntityDoc facts, captured from the
+/// actual Store heads in the capture below. Decoding an artifact cannot
+/// construct this source. It grants no authority to the other window rows.
+pub(crate) struct StoreCapturedCanonical {
+    snapshot: CanonicalSnapshot,
+}
+
+impl StoreCapturedCanonical {
+    pub(crate) fn snapshot(&self) -> &CanonicalSnapshot {
+        &self.snapshot
+    }
+
+    pub(crate) fn require_entity_document(&self, row: &CanonicalEntityDocument) -> Result<()> {
+        if !self
+            .snapshot
+            .entity_documents
+            .iter()
+            .any(|captured| captured == row)
+        {
+            return Err(invalid(
+                "native EntityDoc row differs from its Store capture",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Preserve the source only through an exact round trip of its OWN bytes.
+    pub(crate) fn roundtrip_within(self, limit: usize) -> Result<(Self, [u8; 32])> {
+        let bytes = self.snapshot.encode_within(limit)?;
+        let digest = *blake3::hash(&bytes).as_bytes();
+        let snapshot = CanonicalSnapshot::decode(&bytes)?;
+        if snapshot != self.snapshot {
+            return Err(invalid("canonical Store capture round trip differs"));
+        }
+        Ok((Self { snapshot }, digest))
+    }
+
+    #[cfg(feature = "sync")]
+    pub(crate) fn erase_actors_here(&mut self, vault: &Vault) -> Result<()> {
+        self.snapshot = self.snapshot.with_actors_erased_here(vault)?;
+        Ok(())
+    }
+}
+
 /// [`capture_canonical_window`] holding at most `limit` bytes of copies: the
 /// window's rows and their keys, documents, receipts and NOTE workflows. A
 /// copy that would pass `limit` is refused with
@@ -49,6 +93,16 @@ pub(crate) fn capture_canonical_window_within(
     doc: &LoroDoc,
     limit: usize,
 ) -> Result<(CanonicalSnapshot, Option<RecoveryBudgetOverrun>)> {
+    let (captured, measured) = capture_canonical_window_from_store(vault, window, doc, limit)?;
+    Ok((captured.snapshot, measured))
+}
+
+pub(crate) fn capture_canonical_window_from_store(
+    vault: &Vault,
+    window: &str,
+    doc: &LoroDoc,
+    limit: usize,
+) -> Result<(StoreCapturedCanonical, Option<RecoveryBudgetOverrun>)> {
     let budget = &mut ByteBudget::new(limit);
     // The shallow value names the roots without copying what they hold.
     let LoroValue::Map(containers) = doc.get_value() else {
@@ -500,5 +554,5 @@ pub(crate) fn capture_canonical_window_within(
             ));
         }
     }
-    Ok((snapshot, measured))
+    Ok((StoreCapturedCanonical { snapshot }, measured))
 }

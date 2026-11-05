@@ -289,6 +289,13 @@ fn atoms_at(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<Vec<Atom>> {
 /// its updates at sequence keys. Each row's bytes, by its locator, for the
 /// restore's join to write.
 pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
+    join_checked(opened, |_, _| Ok(()))
+}
+
+pub(super) fn join_checked(
+    opened: &OpenedOwnerRows,
+    mut check_entity_doc: impl FnMut(EntityId, &[Vec<u8>]) -> Result<()>,
+) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
     let mut slots: BTreeMap<String, OpenedSlot<'_>> = BTreeMap::new();
     for part in &opened.rows {
         let RowPart::NoActor { at, value } = part else {
@@ -330,6 +337,7 @@ pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<
             let bytes = super::loro::join(&group)?;
             let first = bytes.first().ok_or_else(rows::bad_part)?;
             super::loro::check_snapshot(first, Some(&entity))?;
+            check_entity_doc(entity, &bytes)?;
             bytes
         };
         if bytes.len() != order.len() {

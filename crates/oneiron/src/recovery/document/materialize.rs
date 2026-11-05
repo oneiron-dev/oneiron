@@ -255,11 +255,30 @@ pub(super) fn run(vault: &Vault, doc: &LoroDoc, snapshot: &CanonicalSnapshot) ->
     vault.with_write_txn_grouped(|txn| run_in_txn(vault, txn, doc, snapshot))
 }
 
+pub(super) fn run_with_source(
+    vault: &Vault,
+    doc: &LoroDoc,
+    snapshot: &CanonicalSnapshot,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| run_in_txn_with_source(vault, txn, doc, snapshot, source))
+}
+
 pub(crate) fn run_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &LoroDoc,
     snapshot: &CanonicalSnapshot,
+) -> Result<()> {
+    run_in_txn_with_source(vault, txn, doc, snapshot, None)
+}
+
+pub(crate) fn run_in_txn_with_source(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &LoroDoc,
+    snapshot: &CanonicalSnapshot,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
 ) -> Result<()> {
     let mut admitted = BTreeSet::new();
     let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
@@ -397,7 +416,7 @@ pub(crate) fn run_in_txn(
         NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &bundle.id, &value)?;
     }
     for row in &snapshot.entity_documents {
-        crate::entity_doc::restore_canonical(vault, txn, row)?;
+        crate::entity_doc::restore_canonical_with_source(vault, txn, row, source)?;
     }
     crate::entity_doc::restore_canonical_proposals(vault, txn, &snapshot.entity_documents)?;
     Ok(())

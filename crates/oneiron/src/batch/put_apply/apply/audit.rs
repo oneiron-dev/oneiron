@@ -135,13 +135,12 @@ pub(super) fn audit_and_stage_body(
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
     }
-    stage_entity_body_row(
+    super::super::put_staging::stage_entity_body_row_with_storage(
         store,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        fixed.occurred,
-        fixed.learned_at,
+        fixed.storage_body_and_times(data)?,
         data,
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {

@@ -28,6 +28,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+mod native_skill;
+
+pub(crate) use native_skill::{NativeSkillCarrier, NativeSkillOrigin, native_skill_origins_in_txn};
+
 use super::adopted_fold::{AdoptedImageFold, AdoptedTail};
 use super::fold_resume::{FoldCapture, ImageFold};
 use super::machine_standing::{InstallHold, Mark, Standing, StandingView, every_chain};

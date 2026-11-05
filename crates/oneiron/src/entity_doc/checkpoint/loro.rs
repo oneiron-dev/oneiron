@@ -3,7 +3,8 @@
 //! receipt actors ([`super::message_receipts`], FIX 6479), split out and put
 //! back through the shared projection
 //! ([`crate::store::checkpoint_payload::loro`]). Every other operation of the
-//! document's schema (its body text and its metadata map) names no one; an
+//! document's schema (its body text, metadata and exact native SKILL state
+//! codec) names no caller; an
 //! operation outside that schema, or a message that is no engine stamp,
 //! keeps its whole group under the vault-wide seal. A birth or stamp whose
 //! actor did not open reads as no one, never as an actor some binding of its
@@ -20,6 +21,7 @@ use super::super::EntityDoc;
 use super::super::doc_actor::DocActor;
 use super::super::document::{BIRTH, BODY, Birth, META, cut_stamp, decode_frontier};
 use super::super::forks::ForkStatus;
+use super::super::native_skill_state;
 use super::{hex_id, message_receipts};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -65,7 +67,9 @@ impl LoroActorCodec for EntityDocActors {
         }
         // A replayed commit restates the row's birth and names no one (FIX
         // 10929).
-        if message == super::super::commit_receipts::ROW_BIRTH_RESTATED {
+        if message == super::super::commit_receipts::ROW_BIRTH_RESTATED
+            || message == native_skill_state::ANONYMOUS_COMMIT
+        {
             return Ok(SplitValue::kept(message.to_owned()));
         }
         let (head, id, tail) = cut_stamp(message).ok_or(NOT_A_STAMP)?;
@@ -96,6 +100,10 @@ impl LoroActorCodec for EntityDocActors {
         key: &str,
         value: &LoroValue,
     ) -> Split<LoroValue> {
+        if native_skill_state::is_checkpoint_root(container) {
+            native_skill_state::check_checkpoint_insert(key, value).map_err(|_| OUTSIDE_SCHEMA)?;
+            return Ok(SplitValue::kept(value.clone()));
+        }
         if !is_root(container, META, ContainerType::Map) {
             return Err(OUTSIDE_SCHEMA);
         }
@@ -141,6 +149,9 @@ impl LoroActorCodec for EntityDocActors {
         match &op.content {
             JsonOpContent::Text(_) if is_root(&op.container, BODY, ContainerType::Text) => Ok(()),
             JsonOpContent::Map(_) if is_root(&op.container, META, ContainerType::Map) => Ok(()),
+            JsonOpContent::Map(_) if native_skill_state::is_checkpoint_root(&op.container) => {
+                native_skill_state::check_checkpoint_op(op).map_err(|_| OUTSIDE_SCHEMA)
+            }
             _ => Err(OUTSIDE_SCHEMA),
         }
     }

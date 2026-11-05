@@ -18,6 +18,7 @@ mod lift;
 mod message_parts;
 mod message_stream;
 mod metadata;
+mod native_skill_state;
 pub mod office;
 mod pins;
 mod promotion_evidence;
@@ -57,6 +58,7 @@ pub(crate) use pins::pin_body_quote_at_birth_in_txn;
 pub(crate) use recovery::{
     capture as capture_canonical, restore as restore_canonical,
     restore_proposals as restore_canonical_proposals,
+    restore_with_source as restore_canonical_with_source,
 };
 mod verbs;
 
@@ -75,6 +77,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+#[cfg(feature = "sync")]
+pub(crate) use native_skill_state::SkillStateSnapshot;
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;

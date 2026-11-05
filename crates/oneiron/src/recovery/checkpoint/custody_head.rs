@@ -48,7 +48,7 @@ use crate::store::custody_protocol::{
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients, CustodyRoute, CustodySourceAt, FileAnchor,
-    FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients, route_custody,
+    FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients,
     standing_retirements_in_txn,
 };
 use crate::{EntityId, Result, Vault, VaultConfig};
@@ -527,21 +527,13 @@ impl Vault {
         recovery: Option<&CustodyRecovery<'_>>,
         finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
-        let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
+        let mut image = read_image_required(path, key)?;
         image.drop_machine_identity();
-        let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
+        let artifact_holds = image.artifact_host_holds(key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
         let source = recovery.map(CustodyRecovery::source);
-        let route = route_custody(
-            image
-                .databases
-                .get_mut("vault_meta")
-                .ok_or_else(codec_error)?,
-            required.as_ref(),
-            &std::path::absolute(destination)?,
-            key.custody_wrap(),
-            source.as_ref(),
-        )?;
+        let route =
+            image.route_custody(&std::path::absolute(destination)?, key, source.as_ref())?;
         let (custody, mut landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
             CustodyRoute::Landed(landing) => (Custody::Landed, Some(landing)),
@@ -549,8 +541,6 @@ impl Vault {
         };
         let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
-            bodies,
             destination,
             config,
             reason,

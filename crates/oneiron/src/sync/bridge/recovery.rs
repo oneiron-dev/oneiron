@@ -30,6 +30,16 @@ pub(crate) fn preflight_canonical_recovery(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
 ) -> Result<()> {
+    preflight_canonical_recovery_with_source(vault, materializer, snapshot, doc, None)
+}
+
+pub(crate) fn preflight_canonical_recovery_with_source(
+    vault: &Vault,
+    materializer: &Materializer,
+    snapshot: &CanonicalSnapshot,
+    doc: &LoroDoc,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
+) -> Result<()> {
     snapshot.validate()?;
     let analyzer = vault
         .analyzer
@@ -45,7 +55,7 @@ pub(crate) fn preflight_canonical_recovery(
     let mut parent = vault.store.env.write_txn()?;
     let refusals = vault.store.begin_refusal_attempt();
     let preflight = match vault.store.env.nested_write_txn(&mut parent) {
-        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn),
+        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn, source),
         Err(err) => Err(err.into()),
     };
     drop(guard);
@@ -60,6 +70,7 @@ fn preflight_in_txn(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     txn: &mut RwTxn<'_>,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, txn)?;
@@ -156,7 +167,9 @@ fn preflight_in_txn(
         let entity = EntityId::from_bytes(tombstone.id)?;
         vault.apply_replayed_tombstone_in_txn(txn, &entity, &tombstone.value)?;
     }
-    crate::recovery::materialize_recovery_notes_in_txn(vault, txn, doc, snapshot)?;
+    crate::recovery::materialize_recovery_notes_with_source_in_txn(
+        vault, txn, doc, snapshot, source,
+    )?;
     // The caller drops `txn`, aborting it even on success; in particular
     // lease/quota debits and all quarantine rows remain speculative and are
     // never committed here.
