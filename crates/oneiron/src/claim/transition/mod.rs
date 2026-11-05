@@ -204,6 +204,7 @@ impl crate::Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data: crate::claim::encode_claim_body(&approved)?,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,

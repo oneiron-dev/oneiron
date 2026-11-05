@@ -109,6 +109,7 @@ fn session_served_form_carrier(
             entity_type: ENTITY_TYPE_RECEIPT_RECORD,
             occurred,
             learned_at: at,
+            row_version: None,
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,

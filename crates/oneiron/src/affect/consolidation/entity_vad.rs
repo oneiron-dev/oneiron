@@ -71,6 +71,7 @@ impl Vault {
                         end: annotation.annotated_at,
                     },
                     learned_at: annotation.annotated_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
