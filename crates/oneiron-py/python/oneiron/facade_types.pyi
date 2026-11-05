@@ -11229,6 +11229,7 @@ class WidenProposalAnswer(TypedDict):
     proposal_id: str
 class ClaimProposalReviewRequest(TypedDict):
     claim_ref: str
+    grant_ref: NotRequired[str | None]
 class ClaimProposalReview(TypedDict):
     review_id: str
     proposal_ref: str
@@ -11240,14 +11241,19 @@ class ClaimSettleRequest(TypedDict):
     claim_ref: str
     review_id: str
     decision: ClaimSettleDecision
+    grant_ref: NotRequired[str | None]
 ClaimSettlementVerdict = Literal["landed", "rejected"]
 class ClaimChangeVerdict(TypedDict):
     claim_ref: str
     verdict: ClaimSettlementVerdict
-class ClaimSettlementAnswer(TypedDict):
+class ClaimSettlementAnswerWord(TypedDict):
     kind: Literal["word"]
     person_ref: str
-ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementAnswerGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+ClaimSettlementAnswer = ClaimSettlementAnswerWord | ClaimSettlementAnswerGrant
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined", "gate.claim.settle.holder_approved", "gate.claim.settle.holder_declined"]
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
