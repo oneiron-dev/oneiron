@@ -56,6 +56,7 @@ pub(crate) use pins::pin_body_quote_at_birth_in_txn;
 pub(crate) use recovery::{
     capture as capture_canonical, restore as restore_canonical,
     restore_proposals as restore_canonical_proposals,
+    restore_with_source as restore_canonical_with_source,
 };
 mod verbs;
 

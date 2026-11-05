@@ -6,8 +6,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::canonical::{capture_canonical_window_within, invalid};
-use super::{CanonicalSnapshot, RecoveryBudget, RecoveryBudgetOverrun, RecoveryTier};
+use super::canonical::{
+    capture_canonical_window_from_store, capture_canonical_window_within, invalid,
+};
+use super::{RecoveryBudget, RecoveryBudgetOverrun, RecoveryTier};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::store::legal_hold::HoldActor;
@@ -159,18 +161,22 @@ impl Vault {
         // prepared into current custody first (KS-5, FIX 7313).
         super::canonical::prepare_artifact_pads(self);
         let (captured, mut measured_budget_overrun) =
-            capture_canonical_window_within(self, window, &doc, budget.max_bytes)?;
-        let bytes = captured.encode_within(budget.max_bytes)?;
-        let snapshot_blake3 = *blake3::hash(&bytes).as_bytes();
-        let snapshot = CanonicalSnapshot::decode(&bytes)?;
-        drop(bytes);
+            capture_canonical_window_from_store(self, window, &doc, budget.max_bytes)?;
+        let (captured, snapshot_blake3) = captured.roundtrip_within(budget.max_bytes)?;
         create_private_dir(dir)?;
         let manifest_path = dir.join(format!("{window}.manifest"));
         // The recovery's pages take the owner's turns on the vault's
         // task-work line (FIX 8821).
-        let prepared =
-            super::work::RecoveryWork::new(&manifest_path, &snapshot, budget, Some(principal))
-                .drain(self, &crate::sync::bridge::Materializer::new())?;
+        // Keep the original equivalence reference, as before recovery. This
+        // plain value cannot mint the native source the work owns.
+        let snapshot = captured.snapshot().clone();
+        let prepared = super::work::RecoveryWork::from_store_capture(
+            &manifest_path,
+            captured,
+            budget,
+            Some(principal),
+        )
+        .drain(self, &crate::sync::bridge::Materializer::new())?;
         let installed = if rebootstrap {
             // The recovery left the rebuilt document equivalent to the
             // artifact; the window's own cut of it must be too.

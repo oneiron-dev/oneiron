@@ -3,7 +3,10 @@
 #[cfg(feature = "sync")]
 mod materialize;
 #[cfg(feature = "sync")]
-pub(crate) use materialize::run_in_txn as materialize_recovery_notes_in_txn;
+pub(crate) use materialize::{
+    run_in_txn as materialize_recovery_notes_in_txn,
+    run_in_txn_with_source as materialize_recovery_notes_with_source_in_txn,
+};
 mod retained;
 mod workflow;
 pub(super) use retained::carried as retained_parents;
@@ -441,6 +444,16 @@ pub(crate) fn materialize_window_documents(
     snapshot: &CanonicalSnapshot,
 ) -> Result<()> {
     materialize::run(vault, doc, snapshot)
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn materialize_window_documents_with_source(
+    vault: &Vault,
+    doc: &LoroDoc,
+    snapshot: &CanonicalSnapshot,
+    source: Option<&super::StoreCapturedCanonical>,
+) -> Result<()> {
+    materialize::run_with_source(vault, doc, snapshot, source)
 }
 
 pub(super) fn validate_workflows(snapshot: &CanonicalSnapshot) -> Result<()> {

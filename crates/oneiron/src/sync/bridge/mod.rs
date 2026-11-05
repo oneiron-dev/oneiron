@@ -36,7 +36,7 @@ pub(in crate::sync) use parent_retry::{
     submit as submit_parent_in_txn, wake_in_txn as wake_parent_retry_in_txn,
 };
 mod recovery;
-pub(crate) use recovery::preflight_canonical_recovery;
+pub(crate) use recovery::{preflight_canonical_recovery, preflight_canonical_recovery_with_source};
 mod regenerates;
 pub(in crate::sync) use regenerates::{
     owe_regenerates, settle_regenerates, wake_regenerates_after_document,

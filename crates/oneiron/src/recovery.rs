@@ -30,11 +30,15 @@ mod work;
 pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
 pub(crate) use validation::trusted_soft_addressing_edge;
 
+pub(crate) use canonical::StoreCapturedCanonical;
 pub use canonical::*;
 pub(crate) use document::note_fork_decided;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
-pub(crate) use document::{materialize_window_documents, validate_window_documents};
+pub(crate) use document::{
+    materialize_window_documents, materialize_window_documents_with_source,
+    validate_window_documents,
+};
 pub use ladder::*;
 #[cfg(feature = "sync")]
 pub use maintenance::{WindowRebootstrapReport, WindowRecoveryReport};
@@ -351,7 +355,9 @@ mod maintenance_tests;
 mod tests;
 
 #[cfg(feature = "sync")]
-pub(crate) use document::materialize_recovery_notes_in_txn;
+pub(crate) use document::{
+    materialize_recovery_notes_in_txn, materialize_recovery_notes_with_source_in_txn,
+};
 
 mod privacy_kit;
 pub use privacy_kit::{
