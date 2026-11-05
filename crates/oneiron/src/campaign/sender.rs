@@ -48,23 +48,29 @@ use crate::outbound_intent_ledger::{
 /// native campaign identity; no other keys are admitted.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CampaignOutboundEnvelope {
+pub(super) struct CampaignOutboundEnvelope {
     target: String,
-    content_ref: String,
+    pub(super) content_ref: String,
     counterparty_ref: String,
     actor: String,
-    trigger_ref: String,
-    campaign_leg: super::enrollment::FrozenCampaignLeg,
+    pub(super) trigger_ref: String,
+    pub(super) campaign_leg: super::enrollment::FrozenCampaignLeg,
     /// Email-only: the program row's subject.
     #[serde(default)]
-    subject: Option<String>,
+    pub(super) subject: Option<String>,
     /// Email-only: the enrollment event's detection time (Unix seconds),
     /// frozen as the mail `Date:`.
     #[serde(default)]
-    composed_at: Option<u64>,
+    pub(super) composed_at: Option<u64>,
     /// Email-only: the step's sticky sender identity, entity hex.
     #[serde(default)]
-    sender_ref: Option<String>,
+    pub(super) sender_ref: Option<String>,
+}
+
+pub(super) fn decode_campaign_outbound_envelope(
+    payload: &[u8],
+) -> serde_json::Result<CampaignOutboundEnvelope> {
+    serde_json::from_slice(payload)
 }
 
 /// The frozen email keys of one campaign send (FIX 11641), required iff
@@ -363,8 +369,7 @@ impl CampaignChannelSender {
 
 impl OutboundResultSender for CampaignChannelSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
-        let Ok(envelope) = serde_json::from_slice::<CampaignOutboundEnvelope>(call.payload())
-        else {
+        let Ok(envelope) = decode_campaign_outbound_envelope(call.payload()) else {
             return self.invalid();
         };
         // K1: an unresolvable body is InvalidRequest, never the served

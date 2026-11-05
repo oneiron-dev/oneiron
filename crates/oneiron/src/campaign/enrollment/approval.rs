@@ -60,8 +60,12 @@ pub(super) struct LegAsk {
 /// The frozen body digest, with the optional email subject framed explicitly.
 /// Non-email payloads keep their existing digest byte-for-byte.
 fn outbound_payload_digest(outbound: &CampaignProgramOutbound) -> [u8; 32] {
-    let body = crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload);
-    let Some(subject) = outbound.subject.as_deref() else {
+    payload_digest(&outbound.payload, outbound.subject.as_deref())
+}
+
+pub(super) fn payload_digest(payload: &[u8], subject: Option<&str>) -> [u8; 32] {
+    let body = crate::outbound_intent_ledger::hash_frozen_payload(payload);
+    let Some(subject) = subject else {
         return body;
     };
     let mut hasher = blake3::Hasher::new();

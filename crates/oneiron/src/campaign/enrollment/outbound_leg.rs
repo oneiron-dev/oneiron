@@ -16,10 +16,7 @@ use crate::attempt_queue::AttemptRecord;
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{
-    ApprovalTarget, CampaignLegFacts, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
-    GateProvenanceHandles,
-};
+use crate::gate::{CampaignLegFacts, ExternalEffectGateInput};
 use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
     PreparedAuthorization, PreparedEffect, execute_outbound_effect,
@@ -430,39 +427,11 @@ fn enrollment_gate_input(
     event: &CampaignEnrollmentEvent,
     target: CampaignLegFacts,
 ) -> ExternalEffectGateInput {
-    ExternalEffectGateInput {
-        actor: GateActor {
-            actor_class: "agent".to_owned(),
-            actor_ref: Some(step.sender_ref.to_hex()),
-            delegation_grant_ref: None,
-        },
-        provenance: GateProvenanceHandles {
-            actor_entity_ref: Some(step.sender_ref),
-            // FIX 6424 part 2a: a press pins this consequence's call.
-            approval_target: Some(ApprovalTarget::Campaign(target)),
-            ..GateProvenanceHandles::default()
-        },
-        verb: outbound.verb.clone(),
-        channel: step.channel.clone(),
-        // FIX 11641 (L06-A ruling 30 Oct): email legs leave this unset,
-        // exactly as slack/line do. Populating it hard-errors every
-        // campaign email send in the gate's may-send check (the bound
-        // agent never equals the asserted sender identity), before any
-        // hold logic. The cold-recipient hold stays skipped for campaign
-        // mail: a named policy gap for FIX 11514 / a campaign
-        // actor-assertion redesign, not this pack.
-        channel_identity_ref: None,
-        counterparty: Some(event.entity_ref.to_hex()),
-        brief_ref: Some(event.campaign_ref.to_hex()),
-        send_ref: Some(event.event_ref.to_hex()),
-        standing_grant_ref: None,
-        scoped_mcp_call: None,
-        counterparty_first_touch: None,
-        counterparty_opted_out: false,
-        counterparty_opt_out_receipt_reason: None,
-        has_opted_in: true,
-        has_permission: true,
-        policy_risk: ExternalEffectPolicyRisk::Normal,
-        send_autonomy: None,
-    }
+    super::frozen_leg::gate_input(
+        target,
+        step.sender_ref,
+        &step.channel,
+        &outbound.verb,
+        &event.event_ref.to_hex(),
+    )
 }

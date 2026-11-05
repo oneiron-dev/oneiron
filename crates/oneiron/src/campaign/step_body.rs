@@ -172,6 +172,17 @@ impl Vault {
     /// # Errors
     /// The version does not read, or its bytes are not text.
     pub fn campaign_step_body_text(&self, content_ref: &str) -> Result<Option<String>> {
+        let txn = self.store.env.read_txn()?;
+        self.campaign_step_body_text_in_txn(&txn, content_ref)
+    }
+
+    /// Resolves the exact frozen version under the caller's snapshot, not the
+    /// mutable program's latest body.
+    pub(crate) fn campaign_step_body_text_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        content_ref: &str,
+    ) -> Result<Option<String>> {
         let Some((artifact, version)) = content_ref
             .strip_prefix(CAMPAIGN_STEP_BODY_PREFIX)
             .and_then(|rest| rest.split_once('@'))
@@ -181,11 +192,13 @@ impl Vault {
         let (Ok(artifact_id), Ok(version)) = (EntityId::from_hex(artifact), version.parse()) else {
             return Ok(None);
         };
-        match self.get_blob_artifact(&artifact_id)? {
+        match self.get_blob_artifact_in_txn(txn, &artifact_id)? {
             Some(body) if body.media_type == STEP_BODY_MEDIA_TYPE => {}
             _ => return Ok(None),
         }
-        let Some(record) = self.blob_artifact_version_metadata(&artifact_id, version)? else {
+        let Some(record) =
+            self.blob_artifact_version_metadata_in_txn(txn, &artifact_id, version)?
+        else {
             return Ok(None);
         };
         if !matches!(
@@ -194,7 +207,8 @@ impl Vault {
         ) {
             return Ok(None);
         }
-        let Some(bytes) = self.read_blob_artifact_version(&artifact_id, version)? else {
+        let Some(bytes) = self.read_blob_artifact_version_in_txn(txn, &artifact_id, version)?
+        else {
             return Ok(None);
         };
         String::from_utf8(bytes)

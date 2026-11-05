@@ -216,8 +216,15 @@ pub fn campaign_home_node_designation(
     vault: &Vault,
 ) -> Result<Option<CampaignHomeNodeDesignation>> {
     let rtxn = vault.store.env.read_txn()?;
+    campaign_home_node_designation_in_txn(vault, &rtxn)
+}
+
+fn campaign_home_node_designation_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<CampaignHomeNodeDesignation>> {
     HOME_NODE
-        .get(&vault.store, &rtxn, &())?
+        .get(&vault.store, txn, &())?
         .map(validate_designation)
         .transpose()
 }
@@ -234,7 +241,20 @@ pub fn require_campaign_home_node(
     if local_node_id == 0 {
         return Err(invalid("campaign home node_id must be nonzero"));
     }
-    Ok(match campaign_home_node_designation(vault)? {
+    let txn = vault.store.env.read_txn()?;
+    require_campaign_home_node_in_txn(vault, &txn, local_node_id)
+}
+
+/// The same designation check in the caller's snapshot; no identity is minted.
+pub(super) fn require_campaign_home_node_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    local_node_id: u64,
+) -> Result<CampaignHomeNodeAdmission> {
+    if local_node_id == 0 {
+        return Err(invalid("campaign home node_id must be nonzero"));
+    }
+    Ok(match campaign_home_node_designation_in_txn(vault, txn)? {
         None => CampaignHomeNodeAdmission::NoHomeNode,
         Some(designation) if designation.node_id == local_node_id => {
             CampaignHomeNodeAdmission::Designated(designation)

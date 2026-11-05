@@ -609,14 +609,32 @@ pub(super) fn enrollment_consequence_id(
     event: &CampaignEnrollmentEvent,
     step: &CampaignProgramStep,
 ) -> Result<AttemptId> {
+    consequence_id(
+        event.query_ref,
+        event.entity_ref,
+        event.epoch,
+        event.campaign_ref,
+        step.program_ref,
+        step.step_ref,
+    )
+}
+
+pub(super) fn consequence_id(
+    query_ref: EntityId,
+    entity_ref: EntityId,
+    epoch: u64,
+    campaign_ref: EntityId,
+    program_ref: EntityId,
+    step_ref: EntityId,
+) -> Result<AttemptId> {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.campaign.enrollment.consequence.v1");
-    hasher.update(event.query_ref.as_bytes());
-    hasher.update(event.entity_ref.as_bytes());
-    hasher.update(event.epoch.to_be_bytes());
-    hasher.update(event.campaign_ref.as_bytes());
-    hasher.update(step.program_ref.as_bytes());
-    hasher.update(step.step_ref.as_bytes());
+    hasher.update(query_ref.as_bytes());
+    hasher.update(entity_ref.as_bytes());
+    hasher.update(epoch.to_be_bytes());
+    hasher.update(campaign_ref.as_bytes());
+    hasher.update(program_ref.as_bytes());
+    hasher.update(step_ref.as_bytes());
     AttemptId::from_bytes(&hasher.finalize()[..16])
 }
 
@@ -660,7 +678,27 @@ pub(super) fn enrollment_intent_id(
 /// its own. A lookup that cannot be read or decoded holds nothing: the call
 /// goes as it did before this check, with a warning.
 pub(super) fn membership_sends(vault: &Vault, event: &CampaignEnrollmentEvent) -> bool {
-    match effective_member_state(vault, event.entity_ref, event.campaign_ref) {
+    membership_send_state(effective_member_state(
+        vault,
+        event.entity_ref,
+        event.campaign_ref,
+    ))
+}
+
+pub(super) fn membership_sends_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_ref: EntityId,
+    campaign_ref: EntityId,
+) -> bool {
+    membership_send_state(
+        super::reconcile::effective_member_in_txn(vault, txn, entity_ref, campaign_ref)
+            .map(|member| member.map(|member| member.value.state)),
+    )
+}
+
+fn membership_send_state(state: Result<Option<CampaignMemberState>>) -> bool {
+    match state {
         Ok(state) => matches!(state, None | Some(CampaignMemberState::Enrolled)),
         Err(error) => {
             tracing::warn!(
