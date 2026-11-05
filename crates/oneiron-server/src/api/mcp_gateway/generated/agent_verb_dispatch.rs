@@ -22524,7 +22524,7 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.calendar.occurrences" => {
-            let input: oneiron::calendar::query::CalendarOccurrencesRequest =
+            let input: oneiron::calendar::query::CalendarOccurrencesPageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_calendar_occurrences(&memory, input)
                 .map_err(mcp_facade_error)?;
@@ -22558,7 +22558,7 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.calendar.search" => {
-            let input: oneiron::calendar::CalendarSearchRequest =
+            let input: oneiron::calendar::query::CalendarSearchPageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_calendar_search(&memory, input)
                 .map_err(mcp_facade_error)?;
@@ -22566,7 +22566,7 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.calendar.freebusy" => {
-            let input: oneiron::task_verb::sdk::CalendarFreebusyRequest =
+            let input: oneiron::calendar::query::CalendarFreebusyPageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_calendar_freebusy(&memory, input)
                 .map_err(mcp_facade_error)?;
