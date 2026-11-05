@@ -1,7 +1,7 @@
 //! Core half of `origin::smart_http::hooks`: its store-layer items live in `oneiron_store::origin::smart_http::hooks` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::origin::smart_http::hooks::*;
+pub(crate) use oneiron_store::origin::smart_http::hooks::*;
 
 use super::bounds::ScanBounds;
 use super::paths::{
