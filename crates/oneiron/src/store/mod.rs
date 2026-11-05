@@ -262,7 +262,7 @@ pub(crate) mod checkpoint_payload;
 pub mod claim_descriptors;
 mod claim_vad_owed;
 pub mod code_artifact_body;
-pub mod code_document_values;
+pub use oneiron_store::code_document_values;
 pub mod code_memory_values;
 pub mod code_snapshot;
 pub(crate) use oneiron_store::query_memo_codec;
@@ -595,7 +595,7 @@ pub use oneiron_store::repo_import_predicate;
 
 pub(crate) mod habit_streak;
 pub(crate) mod own_rate_rows;
-pub mod persona_snapshot_record;
+pub use oneiron_store::persona_snapshot_record;
 
 pub mod query_health;
 pub(crate) mod query_memo_lifetime;
@@ -606,7 +606,7 @@ pub(crate) mod snapshot_lifecycle;
 
 pub(crate) use oneiron_store::authority_rows;
 pub use oneiron_store::channel_class;
-pub mod claim_source_ranking;
+pub use oneiron_store::claim_source_ranking;
 pub mod code_document_receipt;
 pub(crate) use oneiron_store::container_output;
 pub(crate) mod identity_redirect_rows;

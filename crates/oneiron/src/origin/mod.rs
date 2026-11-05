@@ -9,7 +9,6 @@ pub(crate) mod actor_erase;
 mod document_candidate_types;
 mod document_candidates;
 mod document_ingress;
-pub(crate) mod git_ref_change;
 pub use document_candidate_types::{
     CodePushCandidateState, CodePushCandidateView, ReceivedCandidateRef, ReceivedRefIngress,
     ReceivedRefSource,
@@ -20,6 +19,7 @@ pub use document_candidates::projected::{
 };
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
+pub(crate) use oneiron_store::origin::git_ref_change;
 pub use secret_projection::clearance::RepoProjectionHoldCause;
 pub mod lfs;
 pub mod publication;

@@ -1,6 +1,6 @@
 //! Repository references, immutable snapshot manifests and their wire codecs.
 
-mod file_mode;
+use oneiron_store::code_snapshot::file_mode;
 mod ids;
 pub(crate) mod repo_ref;
 pub(crate) mod snapshot;
