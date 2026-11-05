@@ -109500,7 +109500,7 @@
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -109540,7 +109540,17 @@
      "path": "src/ai_host/training_pack/trainer.rs",
      "purpose": "The question-head trainer (FIX 7263), the one `TrainingConnector` this host ships",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/trainer/cleanup.rs",
+     "purpose": "Owner-requested removal of a completed trainer job's staged inputs",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -126914,7 +126924,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 111,
+     "files": 112,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127434,7 +127444,7 @@
    },
    "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1573,
+   "source_files": 1574,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
