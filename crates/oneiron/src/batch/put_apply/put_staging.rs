@@ -56,8 +56,9 @@ pub(in crate::batch) fn stage_entity_body_row(
     )
 }
 
-/// Keep logical indexes beside an explicitly selected physical row. Native
-/// headed SKILL state changes retain the original CORE body and timestamps.
+/// Keep logical history and indexes beside an explicitly selected physical
+/// row. Native headed SKILL state changes retain the original CORE body and
+/// timestamps.
 pub(super) fn stage_entity_body_row_with_storage(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
@@ -86,8 +87,12 @@ pub(super) fn stage_entity_body_row_with_storage(
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
     payload.0.extend_from_slice(&row_version.to_be_bytes());
-    payload.0.extend_from_slice(physical_body);
+    payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
+    if physical_body != data {
+        payload.0.truncate(ENTITY_METADATA_HEADER_LEN);
+        payload.0.extend_from_slice(physical_body);
+    }
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
