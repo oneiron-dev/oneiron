@@ -14,8 +14,9 @@ use heed::{RoTxn, RwTxn};
 use super::super::write_payload_hit;
 use super::{Done, LiftCause, Page, hex, table_page};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self as t, SideDb, SideTableDecl};
+use crate::side_table::{self as t, SideDb, SideKey, SideTableDecl};
 
 /// The carriers, in walk order. A cursor's first byte is a carrier's place
 /// here.
@@ -141,13 +142,19 @@ pub(super) fn path(key: &[u8]) -> String {
 }
 
 /// Typed-body documents and codebase snapshots are keyed by their actual
-/// source entity. No source is inferred for other carrier formats.
+/// source entity; a typed-body fork pairs that entity with its fork id.
+/// No source is inferred for other carrier formats.
 pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
     let (decl, row_key) = carrier_of(key)?;
     source_of(decl, row_key)
 }
 
 fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
+    if std::ptr::eq(decl, &t::TYPED_BODY_FORK_DOC) {
+        let (entity, _): (EntityId, EntityId) =
+            SideKey::decode_key(row_key.strip_prefix(decl.prefix)?)?;
+        return Some(entity);
+    }
     if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT) {
         return None;
     }
