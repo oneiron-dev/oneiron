@@ -43,6 +43,15 @@ class and target envelope. A granting Owner's identity is not a substitute for
 a subject match. Non-addressable principal-label grants are not guessed into
 PERSON identities by this supplier.
 
+Browser sends also retain their actual hold-time project and audience. Both
+candidate discovery and the answering writer use `BrowserSendScope::covered_by`
+on each person's current human-bound grant. This is the same native selector,
+target and budget treatment as a browser send, including its existing unknown
+project/audience behavior. A project-scoped grant is not compared with a
+made-up generic `browser` target, and its granting Owner is not substituted
+for the person who holds it. The frozen browser scope is covered by the same
+binding digest as the rest of the settlement value.
+
 On the answering snapshot, the policy/power evidence reader revalidates the
 real person's native authentication, frozen eligibility, exact current policy
 witness and current action-grant cover. It returns actual actor, principal,
