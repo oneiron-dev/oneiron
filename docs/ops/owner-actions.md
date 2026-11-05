@@ -1532,6 +1532,23 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Answer a Coach training offer
+
+`POST /v1/owner/coach/training-offers/answer` takes the shown `offer`, its `digest`,
+and an `answer`: `keep_baseline`, `approve_switch`, `approve_train`, `decline` or
+`postpone`. A train approval may also name its prepared `training` choice. The SDK
+verb `vault.coach.training_offers.answer` takes the same offer, digest and answer;
+its training run is authorized separately.
+
+Both replies contain `answer` (the immutable answer record) and `staged` (the
+current embedder binding for that offer). The binding is read after the answer
+commits, not copied into its stored record. `staged` is `null` when no binding row
+exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
+`undone`, including settled moves. The SDK's `vault.coach.training_offers` and
+`.get` views also include `staged`, read anew on each request. An embedder approval
+can therefore be shown as waiting or filling while the old index still serves;
+answering the offer does not mean that its new binding is already applied.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
