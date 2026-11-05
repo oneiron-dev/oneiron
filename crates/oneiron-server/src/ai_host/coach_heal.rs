@@ -198,16 +198,7 @@ fn run_one(
         principal,
         dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
-        wording: server
-            .config
-            .models
-            .as_ref()
-            .map(|models| models.dreamer.wording.coach_heal_route().to_owned())
-            .unwrap_or_else(|| {
-                crate::config::models::DreamerWording::default()
-                    .coach_heal_route()
-                    .to_owned()
-            }),
+        wording: server.ai.dreamer_wording().coach_heal_route().to_owned(),
         budget: DECIDE_BUDGET,
     };
     // A case's or a report's `skill_edit` heal drafts its revision on the

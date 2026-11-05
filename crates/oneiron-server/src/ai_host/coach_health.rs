@@ -65,16 +65,7 @@ pub(super) fn run(
         vault.coach_authority()?,
     )?;
     let model = HostModel {
-        wording: server
-            .config
-            .models
-            .as_ref()
-            .map(|models| models.dreamer.wording.coach_health_draft().to_owned())
-            .unwrap_or_else(|| {
-                crate::config::models::DreamerWording::default()
-                    .coach_health_draft()
-                    .to_owned()
-            }),
+        wording: server.ai.dreamer_wording().coach_health_draft().to_owned(),
         vault,
         runtime,
         run: runtime.undeclared_run(run_id, guard),
