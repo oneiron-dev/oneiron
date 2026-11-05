@@ -4,6 +4,9 @@ An accepted hard erase or authenticated checkpoint restore clears the existing
 copies of a selected source's BYOA input before cancelling its owned runner
 attempts. The queue's existing native force-cancel operation remains the only
 terminal transition. Terminal rows keep their native no-op behavior.
+A full accepted hard purge carries its actual purge context even when that
+transaction writes the hard marker later. Marker-bound scrub-only callers keep
+their existing marker requirement. The other actor-scrub guards are unchanged.
 
 The payload cursor records the exact original source set for each owned attempt.
 A direct task reference or typed development reference selects it. The original
