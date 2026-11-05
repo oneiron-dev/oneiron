@@ -270,7 +270,8 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool)?;
+        let floor = self.vault.host_net_floor();
+        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool, floor)?;
         let output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         for file in &output.outputs {
