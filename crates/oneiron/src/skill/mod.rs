@@ -50,7 +50,7 @@ pub(crate) use self::loaded_revision::{
     pin_loaded_in_txn, pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
 #[cfg(feature = "sync")]
-pub(crate) use self::native_state::SkillStateWrite;
+pub(crate) use self::native_state::{SkillStateWrite, SkillSupersessionRead};
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{
