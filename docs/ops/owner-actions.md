@@ -2601,6 +2601,12 @@ oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ```
 
+## Shared-merge evidence questions
+
+Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
+evidence question's bound. The value must be a positive integer. The default remains
+4,096 rows; the override does not change the question policy.
+
 ## Limits today
 
 - Erase does not reach local backups yet. A backup keeps the plaintext of anything erased after
