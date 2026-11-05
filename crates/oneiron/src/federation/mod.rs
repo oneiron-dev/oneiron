@@ -53,9 +53,11 @@ mod booking_payer;
 mod membership_gate;
 pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;
-pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
+pub(crate) use membership_gate::{
+    SharedVaultWriteInputs, authenticated_grant_membership_for_store_in_txn,
+};
 pub(crate) mod grant_scope;
 mod ruling_integrity;
 mod rulings;

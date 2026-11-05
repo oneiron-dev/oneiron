@@ -16,6 +16,9 @@ use std::collections::BTreeSet;
 
 pub use crate::batch::shared_vault_write::SharedVaultWrite;
 
+mod write_inputs;
+pub(crate) use write_inputs::SharedVaultWriteInputs;
+
 fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {
         reason: "shared-vault role or named power does not authorize this write",
@@ -42,103 +45,7 @@ impl Vault {
         writer: &WriteActor,
         requested: &SharedVaultWrite,
     ) -> Result<()> {
-        // A folder's note-import MACHINE writes as the member its own stored
-        // record names as both its importer and its maker: that member's
-        // binding and live grant decide, as for the member's own write, and
-        // a refusal there is final. The stored actor stays the MACHINE. Every
-        // other writer, and a MACHINE that names no such member, writes on
-        // its own standing.
-        let principal = match crate::note::folder_import_creator_in_txn(
-            &self.store,
-            txn,
-            &writer.entity_ref(),
-        )? {
-            Some(importer) => {
-                let member = WriteActor::new(importer, EdgeActorClass::Human);
-                match writer.authority_frontier() {
-                    Some(frontier) => member.with_authority_frontier(frontier),
-                    None => member,
-                }
-            }
-            None => *writer,
-        };
-        let fold = self.verify_write_actor_in_txn(txn, &principal)?;
-        // A deleted shared vault takes no further write of any kind.
-        if vault_id == 0
-            || matches!(requested, SharedVaultWrite::PersonalVault)
-            || self.shared_vault_deletion_in_txn(txn)?.is_some()
-        {
-            return Err(denied());
-        }
-        let member = principal.entity_ref();
-        for entry in self
-            .store
-            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(txn, &id)?
-                .ok_or_else(denied)?
-                .encode();
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(denied());
-            }
-            // A deleted grant is no membership: its shell is skipped here, and a
-            // stored body counts only while its row is live, checked last.
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.scope != FederationGrantScope::vault(vault_id)
-                || grant.member_ref != member
-                || grant
-                    .expires_at
-                    .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
-                || matches!(
-                    federation_grant_activation(&fold, &id),
-                    FederationGrantActivation::Inactive(_)
-                )
-                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            if let SharedVaultWrite::Content(scope) = requested {
-                if grant_allows_content_write(&grant, scope) {
-                    return Ok(());
-                }
-                continue;
-            }
-            let role_permits = match requested {
-                SharedVaultWrite::Admin(_)
-                | SharedVaultWrite::RuleConflict
-                | SharedVaultWrite::WorkspaceSettings => grant.role.is_admin(),
-                SharedVaultWrite::OrgRoot | SharedVaultWrite::Veto => {
-                    grant.role == FederationGrantRole::Owner
-                }
-                SharedVaultWrite::PersonalVault | SharedVaultWrite::Content(_) => false,
-            };
-            if !role_permits {
-                continue;
-            }
-            let (verb, mut record) = match requested {
-                SharedVaultWrite::Admin(power) => (power.as_str(), Scope::top()),
-                SharedVaultWrite::RuleConflict => ("admin", Scope::top()),
-                SharedVaultWrite::WorkspaceSettings => ("write", Scope::top()),
-                SharedVaultWrite::OrgRoot => ("org:root", Scope::top()),
-                SharedVaultWrite::Veto => ("owner:veto", Scope::top()),
-                SharedVaultWrite::PersonalVault | SharedVaultWrite::Content(_) => unreachable!(),
-            };
-            record.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
-            if grant.authority_scope.admits(verb, &record, &Scope::top()) {
-                return Ok(());
-            }
-        }
-        Err(denied())
+        self.authorize_shared_vault_write_observing_in_txn(txn, vault_id, writer, requested, None)
     }
 }
 
