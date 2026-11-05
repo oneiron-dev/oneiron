@@ -151,7 +151,7 @@ pub struct Memory<'v> {
 /// The actual transport metadata a host observed on one signing request.
 /// This is audit context, never signer identity or authority. It is not
 /// serialized or saved for a later request; an absent peer stays absent.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SigningRequestTransport {
     peer_ip: Option<std::net::IpAddr>,
     user_agent: Option<String>,
