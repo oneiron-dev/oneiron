@@ -39,9 +39,11 @@ layout, either unchanged or with the existing mask filler in place of keys.
 A handle-substituted or rebuilt copy with no such mapping yields no quote;
 it never falls back to raw text or a nearby match.
 
-The Unattached list retains its existing row admission. Reattach offers first
-read the head through the same sight and match the admitted projected
-snapshot against that projected head. Only then are match boundaries mapped
+The Unattached list retains its existing row admission. Dedicated HTTP reads
+also project File snapshots and offers for masked callers with no record
+caveats, without adding record admission or dropping the listed thread.
+Reattach offers first read the head through the same sight and match the
+admitted projected snapshot against that projected head. Only then are match boundaries mapped
 back to raw character coordinates. A sealed or withheld head does not bypass
 its existing read error. Final reattachment still checks the native stored
 snapshot and remains an explicit act; an offer is not an attachment.

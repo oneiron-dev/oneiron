@@ -54,6 +54,79 @@ impl Vault {
         self.unattached_scoped_in_txn(&rtxn, &admits, artifact_id, sight)
     }
 
+    /// The unrestricted Unattached list with File snapshots projected to
+    /// `sight`. Row membership, held tasks and non-File snapshots keep the
+    /// raw listing's behavior; a missing File version loses only its quote.
+    pub fn unattached_annotation_threads_file_sighted(
+        &self,
+        artifact_id: &EntityId,
+        sight: SecretSight,
+    ) -> Result<Vec<UnattachedThread>> {
+        let mut threads = self.unattached_annotation_threads(artifact_id)?;
+        let rtxn = self.store.env.read_txn()?;
+        for detached in &mut threads {
+            let Locator::File {
+                char_start,
+                char_end,
+            } = &detached.thread.anchor.locator
+            else {
+                continue;
+            };
+            if detached.snapshot.is_none() {
+                continue;
+            }
+            let pinned = detached.thread.anchor.version;
+            detached.snapshot = match self.read_blob_artifact_version_sighted_in_txn(
+                &rtxn,
+                artifact_id,
+                pinned,
+                sight,
+            )? {
+                Some(sighted) => {
+                    match self.read_blob_artifact_version_in_txn(&rtxn, artifact_id, pinned)? {
+                        Some(raw) => file_quote_for_sight(&raw, &sighted, *char_start, *char_end),
+                        None => None,
+                    }
+                }
+                None => None,
+            };
+        }
+        Ok(threads)
+    }
+
+    /// Unrestricted File offers use the projected File snapshots and head,
+    /// without adding record admission. Other formats keep the raw offers.
+    pub fn annotation_reattach_offers_file_sighted(
+        &self,
+        artifact_id: &EntityId,
+        sight: SecretSight,
+    ) -> Result<Vec<ReattachOffer>> {
+        let rtxn = self.store.env.read_txn()?;
+        let file_text = self
+            .get_blob_artifact_in_txn(&rtxn, artifact_id)?
+            .is_some_and(|body| {
+                matches!(
+                    UnitFormat::from_media_type(&body.media_type),
+                    Some(UnitFormat::FileText)
+                )
+            });
+        if !file_text {
+            drop(rtxn);
+            return self.annotation_reattach_offers(artifact_id);
+        }
+        let unattached = self.unattached_annotation_threads_file_sighted(artifact_id, sight)?;
+        if unattached.iter().all(|thread| thread.snapshot.is_none()) {
+            return Ok(Vec::new());
+        }
+        let Some(head) = read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)? else {
+            return Ok(Vec::new());
+        };
+        let bytes = self
+            .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
+            .ok_or(Error::EntityNotFound)?;
+        self.file_text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached)
+    }
+
     /// [`Vault::annotation_reattach_offers`] for `lane` (FIX 8063): offers
     /// start from the threads [`Self::unattached_annotation_threads_scoped`]
     /// serves it, in the same snapshot, and the head is read through `sight`
