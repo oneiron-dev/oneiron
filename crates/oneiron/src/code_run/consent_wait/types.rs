@@ -218,6 +218,13 @@ pub(crate) struct CodeConsentCheckpoint {
     pub(crate) last_state_hash: [u8; 32],
 }
 
+/// The holder's grant and policy basis; identity stays in the answer stamp.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CodeConsentHolderAnswerBasis {
+    pub(crate) grant_ref: String,
+    pub(crate) policy: crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement,
+}
+
 /// The first authenticated answer. Kept once: a later answer drops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentAnswerStamp {
@@ -225,15 +232,16 @@ pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) word_ref: EntityId,
     pub(crate) answerer: EntityId,
     pub(crate) principal_ref: String,
-    /// The authentication the owner answered under.
+    /// The authentication the person answered under.
     pub(crate) authentication: GateDecisionId,
     /// The consent act's own receipt: approve-once or denied.
     pub(crate) decision: GateDecisionId,
     /// The slate a stop-asking answer changed, at its new revision.
     pub(crate) remembered: Option<(EntityId, u64)>,
-    /// The policy manifest frontier the answer was judged under. The owner
-    /// gate decided it; no settlement-policy row is named (CALLS).
+    /// The policy manifest frontier the answer was judged under.
     pub(crate) policy_frontier: [u8; 32],
+    /// Present only for an act admitted by the frozen holder settlement policy.
+    pub(crate) holder_basis: Option<CodeConsentHolderAnswerBasis>,
     pub(crate) answered_at_ms: u64,
 }
 
