@@ -856,6 +856,16 @@ manifest the `[models]` ladder is the role's binding.
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
 
+A chat turn's context board rides in two parts (I1 = C): its state part
+(worlds, tasks, loaded skills, room, inbox and the changed line) right
+before the user's message, and its query part (the memories and the skills
+that message found) right after it. Both come from one read, under one
+board budget. `turn_opener` under `[models.chat]` closes a turn whose board
+rides: `clock` (the default) adds `<turn now="…"/>`, the vault clock's
+instant in UTC, after the query part; `off` adds nothing. A turn whose board
+is held or not read ends at the user's message, as before. `POST
+/v1/core/context-board` and `ai.reply` still render the one frame.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
