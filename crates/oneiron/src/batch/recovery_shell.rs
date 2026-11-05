@@ -63,6 +63,9 @@ pub(crate) fn restore_recovery_shell_in_txn(
             None
         };
     crate::ports::EntityStoreMaintenance::port_retained_shell_restore(&vault.store, txn, id, blob)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        crate::ports::claim_order::observe_in_txn(&vault.store, txn, header.row_version)?;
+    }
     // A definition's shell keeps no body to bound its id by: it pins the id
     // at `Proposed` (on its seed's lineage, or with the lineage unread for
     // the next put to name) unless the id already answers to a pin, so
