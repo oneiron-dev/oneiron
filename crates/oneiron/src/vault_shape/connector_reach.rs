@@ -1,13 +1,14 @@
 //! The reach's connector rows (ARCH-0070 `shape:reach-line`): each key's
-//! outward tools under the setting its slate gives them. It also holds the
-//! reach lines that the slate stamp and every ramp offer carry. Each line is
+//! outward tools under its slate and its per-grant holder narrows. It holds
+//! the reach lines that the slate stamp and every ramp offer carry. Each line is
 //! the plan card's whole-set projection, recomputed with the one change in
 //! place. It informs the owner's tap and never blocks it.
 use super::ShapePlanReach;
 use super::reach::{ReachConnector, reach_projection};
 use crate::connector_key::{
-    ConnectorGrantSlate, ConnectorKeyRecord, ConnectorKeyStatus, SlateDisposition,
+    ConnectorGrantSlate, ConnectorKeyRecord, ConnectorKeyStatus, KeySlateNarrows, SlateDisposition,
     SlateOwnerOverride, decode_connector_key_body, governing_slate_in_txn,
+    narrowed_settings_in_txn,
 };
 use crate::consent_graduation::RampScope;
 use crate::error::Result;
@@ -27,6 +28,7 @@ fn outward_tools(
     key: &ConnectorKeyRecord,
     slate: &ConnectorGrantSlate,
     overrides: &BTreeMap<String, SlateOwnerOverride>,
+    narrows: Option<&KeySlateNarrows>,
     qualified: bool,
 ) -> Vec<ReachConnector> {
     slate
@@ -44,6 +46,10 @@ fn outward_tools(
                     }
                     row.effective_disposition()
                 });
+            let setting = narrows
+                .filter(|_| !overrides.contains_key(&tool.name))
+                .and_then(|narrows| narrows.rows.get(&tool.name))
+                .map_or(setting, |narrow| narrow.disposition.max(setting));
             ReachConnector {
                 key: id,
                 connector: key.connector.clone(),
@@ -96,7 +102,13 @@ impl Vault {
             }
             let overrides = stamped.map_or(&unchanged, |(_, overrides)| overrides);
             let qualified = stamped.is_some() && key.status == ConnectorKeyStatus::Pending;
-            let mut outward = outward_tools(*id, key, &slate, overrides, qualified);
+            let narrows = if key.slate_ref.is_none() {
+                narrowed_settings_in_txn(&self.store, txn, id)?
+            } else {
+                None
+            };
+            let mut outward =
+                outward_tools(*id, key, &slate, overrides, narrows.as_ref(), qualified);
             if key.actor_entity_ref.is_none() {
                 let except: Vec<EntityId> = own
                     .iter()
