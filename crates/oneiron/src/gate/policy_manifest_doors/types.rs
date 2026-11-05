@@ -90,6 +90,9 @@ pub struct SourceTrustRow {
     pub max_auto_sensitivity: Option<SensitivityBand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    /// Native checker selected for this source and actor binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_checker: Option<String>,
     #[serde(default)]
     pub receipted: bool,
     #[serde(default)]

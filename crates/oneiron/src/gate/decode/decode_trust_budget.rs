@@ -4,13 +4,13 @@ use rmpv::Value;
 
 use crate::claim::{ClaimSource, sensitivity_band_from_value};
 use crate::entity_id::EntityId;
-use crate::gate::ceiling::{SourceTrustCeiling, SourceTrustRow};
+use crate::gate::ceiling::{NativeAutoChecker, SourceTrustCeiling, SourceTrustRow};
 use crate::gate::constants::{
     ACTOR_REF_KEY, BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
     BUDGET_POLICY_PURPOSE_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
     GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
-    GATE_RETENTION_PRECEDENCE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, POLICY_AUTO_CHECKER_KEY, SOURCE_TRUST_AUTO_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use crate::gate::resolution::{
     GateDecisionRetentionPolicy, GateRetentionOverrideCeiling, GateRetentionPrecedence,
@@ -52,12 +52,14 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
             receipted: false,
             warned: false,
             actor_ref: None,
+            auto_checker: None,
         }),
         Value::Integer(_) | Value::String(_) => Some(SourceTrustRow {
             max_auto_sensitivity: sensitivity_band_from_value(value),
             receipted: false,
             warned: false,
             actor_ref: None,
+            auto_checker: None,
         }),
         Value::Map(entries) => {
             let mut max_auto_sensitivity = None;
@@ -65,6 +67,11 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
             let mut receipted = false;
             let mut warned = false;
             let mut actor_ref = None;
+            let auto_checker = match single_map_value(entries, POLICY_AUTO_CHECKER_KEY) {
+                MapValue::Missing => None,
+                MapValue::Duplicate => return None,
+                MapValue::Present(value) => Some(NativeAutoChecker::parse(value.as_str()?)?),
+            };
 
             for (key, value) in entries {
                 match key.as_str()? {
@@ -101,6 +108,7 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                 receipted,
                 warned,
                 actor_ref,
+                auto_checker,
             })
         }
         _ => None,

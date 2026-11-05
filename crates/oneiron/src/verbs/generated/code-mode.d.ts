@@ -2154,7 +2154,7 @@ declare namespace Sdk {
   type PolicySource = "user_stated" | "observed" | "inferred" | "generated" | "imported" | "tool_output";
   type SensitivityName = "public" | "private" | "internal" | "sensitive" | "restricted";
   type SensitivityBand = number | SensitivityName;
-  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean };
+  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; auto_checker?: string | null; receipted?: boolean; warned?: boolean };
   type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand;
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
