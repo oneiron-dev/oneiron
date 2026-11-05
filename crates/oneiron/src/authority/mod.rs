@@ -70,6 +70,7 @@ mod current_scope;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
+mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
