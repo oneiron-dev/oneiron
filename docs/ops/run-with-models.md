@@ -16,6 +16,15 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+An embedded binding that uses `embedded_serve_config` retains its explicit
+vault path and optional dimensions for first-run model setup on the open
+vault. Setup replays those inputs over the file and environment; dimensions
+not supplied by the binding still come from those layers, so a later sizing
+change is still detected. A caller that constructs `ServeConfig` directly can
+state the same inputs in `embedded_holder_overrides`; leaving it unset keeps
+that caller's existing setup behavior. Managed argv/settings-only holders
+still have no config rewrite target, and setup writes no managed settings file.
+
 ## 2. Point a seat at a model
 
 Each provider is one entry of data. Pick any of the three levels below. HIGH
@@ -2876,6 +2885,12 @@ The named tier's row sets `model_dir` and the identity keys. `oneiron init
 --oneironer local --oneironer-model-dir <dir> --oneironer-tier tiny` writes
 the first row. A vault whose manifest binds `extraction_encoder` at another
 tier's checkpoint stops tagging and names that tier in the log.
+
+`language` is optional: `language = "ja"` in `[oneironer]`, or
+`ONEIRON_ONEIRONER_LANGUAGE=ja` in the environment, names the vault turns'
+configured processing language as a lowercase ISO 639 code. It covers every
+vault turn the tagger reads. Leave it unset when the vault's language is
+unknown or mixed; unset sends no configured language.
 
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses

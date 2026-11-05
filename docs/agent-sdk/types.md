@@ -1012,6 +1012,7 @@ class Oneiron:
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
+    def with_read_credential(self, credential: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
@@ -1359,6 +1360,13 @@ class Oneiron:
             """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
         def supersede(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
             """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
+        @property
+        def reminder_route(self) -> "Oneiron._VaultCommitmentsReminderRouteVerbs": ...
+    class _VaultCommitmentsReminderRouteVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CommitmentReminderRouteReply:
+            """Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing."""
+        def set(self, spec: Facade.CommitmentReminderRouteSetRequest) -> Facade.CommitmentReminderRouteReply:
+            """Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -3042,8 +3050,8 @@ class Oneiron:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
         @property
         def body(self) -> "Oneiron._VaultArtifactsBodyVerbs": ...
-        def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionView:
-            """Appends one version of bytes to a blob artifact's append-only chain."""
+        def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionAppendOutcome:
+            """Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
     class _VaultArtifactsLivePreviewVerbs:

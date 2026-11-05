@@ -331,6 +331,21 @@ impl NativeClient {
         Ok(self.rebound(inner))
     }
 
+    /// Returns a NEW handle whose every read runs under the credential a
+    /// delegated reader presented (FIX 647): the paired credential `pair`
+    /// returned, verified once against this vault as the server's door
+    /// verifies a served request's. Reads refuse when the slip's holder is
+    /// not this handle's actor; rebindings keep the same proof, so every
+    /// read still checks it against the bound actor. A handle without one
+    /// reads as before. Refuses when connected: a connected handle reads
+    /// under the credential it connected with.
+    fn with_read_credential(&self, py: Python<'_>, credential: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.with_read_credential(&credential))
+            .map_err(raise)?;
+        Ok(self.rebound(inner))
+    }
+
     /// The lasting call receipt the last verb's reply stated, as
     /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
     /// handle, before any call, after a call that reached no server, and for
@@ -498,6 +513,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.commitments.supersede")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.commitments.supersede", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_reminder_route_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.reminder_route.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.commitments.reminder_route.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_reminder_route_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.reminder_route.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.commitments.reminder_route.set", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
