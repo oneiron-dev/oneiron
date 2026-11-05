@@ -109,3 +109,4 @@
     dropped layer and the PNG predictor's row buffers. The xref table admits
     a map node share per entry, and the admitted `/Prev`-merge helper per
     entry a merge adds.
+  - `src/parser/mod.rs` + `src/parser/cmap_parser.rs` (FIX 12777 CMap metadata): shared `name_byte` factored from `name`; new `name_skip` validates the same `/`-name grammar via `many0_count` without building the discarded `Vec<u8>`; `cmap_name` uses `name_skip`. Removes only the discarded CMapName allocation on the ToUnicode path. `CIDSystemInfo` dictionaries, sections, maps and admission plumbing unchanged. No new cap/refusal/format/policy.
