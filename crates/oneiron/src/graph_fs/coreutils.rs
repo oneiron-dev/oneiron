@@ -195,11 +195,24 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub fn cat(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsCommandOutput> {
+        self.cat_with_reader(
+            path,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn cat_with_reader(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let offset = parse_byte_cursor(cursor)?;
         let mut next_cursor = None;
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         let bytes = if let Some(file) = &read.value {
             let bytes = file.bytes();
             let start = offset.min(bytes.len());

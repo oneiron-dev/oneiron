@@ -9,7 +9,7 @@ use super::model::{
 use super::paging::{PageBuilder, SealedPosition};
 use super::readdir::GraphFsFileRead;
 use crate::claim::ScopedRead;
-use crate::codebase::read_asset_blob_sighted_in_txn;
+use crate::codebase::read_asset_blob_sighted_in_txn_with_reader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::PointRead;
@@ -219,6 +219,14 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub(super) fn snapshot_file(&self, path: &str) -> Result<GraphFsFileRead> {
+        self.snapshot_file_with_reader(path, &crate::batch::secret_scan::ContainerReader::default())
+    }
+
+    pub(super) fn snapshot_file_with_reader(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsFileRead> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         let read = self.scoped_read.read_projected_opaque(
             &[PointRead::id(repo)],
@@ -259,7 +267,11 @@ impl GraphFsResolver<'_, '_> {
                 let marked = if owner {
                     None
                 } else {
-                    vault.repo_marked_asset_copy_in_txn(txn, &file.content_hash)?
+                    vault.repo_marked_asset_copy_in_txn_with_reader(
+                        txn,
+                        &file.content_hash,
+                        reader,
+                    )?
                 };
                 Ok(Some(GraphFsFile {
                     path: path.to_owned(),
@@ -268,7 +280,7 @@ impl GraphFsResolver<'_, '_> {
                     // read, as the hosted door reads it (FIX 6557).
                     bytes: match marked {
                         Some(copy) => copy.into_bytes(),
-                        None => read_asset_blob_sighted_in_txn(
+                        None => read_asset_blob_sighted_in_txn_with_reader(
                             vault,
                             txn,
                             &file.content_hash,
@@ -277,6 +289,7 @@ impl GraphFsResolver<'_, '_> {
                             } else {
                                 crate::file_secret_marks::SecretSight::Masked
                             },
+                            reader,
                         )?,
                     },
                 }))
