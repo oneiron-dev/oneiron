@@ -1,7 +1,7 @@
 //! Plain per-paragraph story-table text. Unmodeled cell siblings stay in the package.
 
 use super::super::invalid;
-use super::stories::{child_list, order_ids, story_line};
+use super::stories::{child_list, order_ids};
 use super::{LOCK, TEXT, cell_key, child_map, lock_token, loro, loro_text, parse_cell_key, string};
 use crate::error::Result;
 use loro::{LoroDoc, LoroList, LoroMap, LoroText, UpdateOptions};
@@ -164,7 +164,6 @@ pub(super) fn set_text(
     paragraph: &str,
     text: &str,
 ) -> Result<()> {
-    story_line(text)?;
     editable(doc, scope, table, row, col, paragraph)?
         .update(text, UpdateOptions::default())
         .map_err(|_| invalid("story cell paragraph update"))?;
@@ -183,7 +182,6 @@ pub(super) fn splice(
     delete: usize,
     insert: &str,
 ) -> Result<()> {
-    story_line(insert)?;
     let text = editable(doc, scope, table, row, col, paragraph)?;
     let end = at
         .checked_add(delete)
@@ -235,7 +233,6 @@ pub(super) fn changes(
                 if paragraph.locked {
                     return Err(invalid("a read-only story cell paragraph changed"));
                 }
-                story_line(&paragraph.text)?;
                 changes.push(DocxChange::SetStoryCell {
                     scope: scope.clone(),
                     block: now.id.clone(),
