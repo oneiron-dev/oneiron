@@ -3,7 +3,7 @@
 //! mailbox source.
 //!
 //! Each provider call reads the source's own credential at its door
-//! ([`Vault::with_mail_source_token_at_door`]), effector `connector:gmail`.
+//! ([`Vault::with_source_token_at_door`]), effector `connector:gmail`.
 //! HTTPS only, no redirects; the Bearer header exists only inside the door
 //! callback, marked sensitive. Refreshing the token is the host's custody
 //! job. Before a source's first read the wire checks that the credential
@@ -19,6 +19,7 @@ use base64::Engine as _;
 use reqwest::header::AUTHORIZATION;
 use serde_json::Value;
 
+use super::credential::WireReads;
 use super::rest::{
     self, RestAnswer, array, bearer_header, header_value, html_text, refused, text_of,
 };
@@ -83,8 +84,9 @@ impl<'v> HttpGmailMailWire<'v> {
             return Err(refused("gmail_mail_wire_reads_google_mailboxes_only"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_mail_source_token_at_door(
+        let _receipt = self.vault.with_source_token_at_door(
             source,
+            WireReads::Mailbox,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;

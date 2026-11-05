@@ -165,7 +165,10 @@ impl Memory<'_> {
     /// The PERSON the bound actor is, or acts for (a pen through its
     /// subject anchor; the embedded owner of a vault with no authority root
     /// through the owner it stands for), in `txn`.
-    fn mail_caller_person_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
+    pub(super) fn mail_caller_person_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<EntityId> {
         let vault = self.vault();
         let actor = self.actor();
         let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;

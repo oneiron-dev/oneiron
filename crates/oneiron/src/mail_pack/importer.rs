@@ -418,6 +418,9 @@ impl crate::memory::Memory<'_> {
         if !reads && !manages {
             return Err(unknown());
         }
+        if row.kind == MailSourceKind::Calendar {
+            return Ok(super::calendar::calendar_status_view_in(vault, &txn, id)?);
+        }
         Ok(super::state::status_view_in(vault, &txn, id)?)
     }
 }
