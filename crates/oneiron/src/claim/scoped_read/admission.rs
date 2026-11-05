@@ -445,6 +445,7 @@ impl ScopedRead<'_> {
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && !self.outside_credential_facets_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
+            && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_none()
         {
             Ok(ReadAdmission::Suppressed)
         } else {
@@ -604,7 +605,7 @@ impl ScopedRead<'_> {
     /// What `id`, a row this lane does not read, adds to a receipt's
     /// suppressed count: exactly [`ReadAdmission::suppression`] for it, one
     /// for an ordinary policy denial and none for a row any other rule keeps
-    /// absent (world, credential, room turn, secret custody), so a caller's
+    /// absent (world, credential, room turn, secret custody, use limit), so a caller's
     /// sum of it discloses nothing the lane's own reads would not.
     pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
         let txn = self.grant_read_txn()?;
