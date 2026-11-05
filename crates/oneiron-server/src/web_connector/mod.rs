@@ -91,9 +91,6 @@ pub(crate) fn call_listing(
         (WebCall::Search(_), None) => Err(ProviderError::message("no provider key")),
     };
     drop(key);
-    if let Some(permit) = charge {
-        charge::settle(permit, answer.is_ok());
-    }
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (reply, usage) = match answer {
         Ok(answer) => {
@@ -141,6 +138,9 @@ pub(crate) fn call_listing(
             (delivered(tool, output, true), usage)
         }
     };
+    if let Some(permit) = charge {
+        charge::settle(server, permit, &usage);
+    }
     record(server, &usage);
     Ok((reply, None))
 }

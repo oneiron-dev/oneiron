@@ -73,11 +73,11 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
     crate::ingest::history::erase_message_in_txn,
     // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
-    crate::counterparty_contact::erase_trusted_contact_rows_in_txn,
+    erase_trusted_contact_rows_in_txn,
     // FIX 11952: a TASK's comm receipt-import skip marker.
-    crate::comm::erase_skipped_send_receipt_in_txn,
+    erase_skipped_send_receipt_in_txn,
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
-    crate::calendar::inbox_card::erase_inbox_cards_in_txn,
+    erase_inbox_cards_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
@@ -92,6 +92,34 @@ const ERASERS: &[EntitySideRowEraser] = &[
 /// The room side-row eraser slot: the engine's, through the store's hooks.
 fn erase_room_side_rows(store: &Store, wtxn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     store.record_hooks.erase_room_side_rows(store, wtxn, id)
+}
+
+fn erase_skipped_send_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_skipped_send_receipt_in_txn(store, wtxn, id)
+}
+
+fn erase_trusted_contact_rows_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .record_hooks
+        .erase_trusted_contact_rows_in_txn(store, wtxn, id)
+}
+
+fn erase_inbox_cards_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.record_hooks.erase_inbox_cards_in_txn(store, wtxn, id)
 }
 
 fn erase_voice_recognition_for_subject_in_txn(

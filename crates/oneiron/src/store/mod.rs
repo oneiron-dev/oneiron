@@ -313,6 +313,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_handle_purpose;
 pub(crate) mod secret_name_index;
 pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
@@ -500,6 +501,7 @@ pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;
 pub(crate) use page_bound::{PageLayout, TreeRows};
 pub(in crate::store) use pending_embedding::*;
+pub(crate) use pending_gate_consent::hashed_string_index_matches;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]

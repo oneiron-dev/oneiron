@@ -81,6 +81,7 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
+pub(crate) use payload_erase::feedback_triage::erase_feedback_triage_as_in_txn;
 pub(crate) use payload_erase::{
     attempt_row_opaque, dispatch_payload_actor, erase_attempt_payload_actor_in_txn,
     erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
