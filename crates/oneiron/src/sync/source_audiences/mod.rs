@@ -603,6 +603,12 @@ pub(crate) fn apply_record_in_txn(
     source_audience::bind_replicated_in_txn(vault, txn, id, &policy)
 }
 
+/// The refusal a row takes whose carried binding names a policy closure
+/// that has not arrived: it waits for it, pending, never landing unbound.
+pub(crate) fn pending_error() -> Error {
+    refused("the row's source audience policy has not arrived")
+}
+
 /// The refusal a row takes whose carried binding or policy contradicts
 /// what this vault holds.
 pub(crate) fn conflict_error() -> Error {
