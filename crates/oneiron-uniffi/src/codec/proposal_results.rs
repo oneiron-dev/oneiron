@@ -1,6 +1,6 @@
-//! Owned lifts for nested pending-proposal results (FIX 12936).
+//! Owned lifts for proposal and connector results (FIX 12936).
 //!
-//! Each outcome below consumes its nested `proposed` leaf first through the
+//! Proposal outcomes consume their nested `proposed` leaf first through the
 //! existing `PendingProposalView` lift, then converts its finite siblings
 //! through the shared record shape. Caller-named JSON leaves (`unit`,
 //! `requested_schema`) move owned into `WireJson::lift`; no `lift_record`
@@ -241,6 +241,120 @@ impl Lift<oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAsk
             oneiron::task_verb::sdk::ActAnswer::Done(outcome) => {
                 Ok(Self::Done(crate::ArtifactAskOutcome::lift(outcome)?))
             }
+        }
+    }
+}
+
+impl Lift<oneiron::code_run::ConnectorToolResult> for crate::ConnectorToolResult {
+    fn lift(value: oneiron::code_run::ConnectorToolResult) -> Result<Self, OneironError> {
+        let oneiron::code_run::ConnectorToolResult {
+            source,
+            foreign,
+            content,
+            structured_content,
+            is_error,
+            rpc_error,
+        } = value;
+        let content = WireJson::lift(content);
+        let structured_content = match structured_content {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => WireJson::lift(value).map(Some),
+        };
+        let rpc_error = match rpc_error {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => WireJson::lift(value).map(Some),
+        };
+        Ok(Self {
+            source,
+            foreign,
+            content: content?,
+            structured_content: structured_content?,
+            is_error,
+            rpc_error: rpc_error?,
+        })
+    }
+}
+
+impl Lift<oneiron::outbound_consent::ConnectorQuestion> for crate::ConnectorQuestion {
+    fn lift(value: oneiron::outbound_consent::ConnectorQuestion) -> Result<Self, OneironError> {
+        let oneiron::outbound_consent::ConnectorQuestion {
+            key,
+            message,
+            requested_schema,
+        } = value;
+        Ok(Self {
+            key,
+            message,
+            requested_schema: WireJson::lift(requested_schema)?,
+        })
+    }
+}
+
+impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
+    fn lift(value: oneiron::code_run::ConnectorCallReply) -> Result<Self, OneironError> {
+        match value {
+            oneiron::code_run::ConnectorCallReply::Delivered {
+                result,
+                reasons,
+                budget_steering,
+            } => Ok(Self::Delivered {
+                result: result.map(crate::ConnectorToolResult::lift).transpose()?,
+                reasons: if reasons.is_empty() {
+                    None
+                } else {
+                    Some(reasons)
+                },
+                budget_steering: if budget_steering.is_empty() {
+                    None
+                } else {
+                    Some(budget_steering)
+                },
+            }),
+            oneiron::code_run::ConnectorCallReply::Held {
+                call_ref,
+                decision_ref,
+                reasons,
+                approval_digest,
+            } => Ok(Self::Held {
+                call_ref,
+                decision_ref,
+                reasons,
+                approval_digest,
+            }),
+            oneiron::code_run::ConnectorCallReply::Refused {
+                decision_ref,
+                reasons,
+            } => Ok(Self::Refused {
+                decision_ref,
+                reasons,
+            }),
+            oneiron::code_run::ConnectorCallReply::PendingDelivery { call_ref, reasons } => {
+                Ok(Self::PendingDelivery { call_ref, reasons })
+            }
+            oneiron::code_run::ConnectorCallReply::AwaitingInput {
+                handle,
+                call_ref,
+                source,
+                foreign,
+                questions,
+                live_until_ms,
+                reasons,
+            } => Ok(Self::AwaitingInput {
+                handle,
+                call_ref,
+                source,
+                foreign,
+                questions: questions
+                    .into_iter()
+                    .map(crate::ConnectorQuestion::lift)
+                    .collect::<Result<Vec<_>, _>>()?,
+                live_until_ms,
+                reasons: if reasons.is_empty() {
+                    None
+                } else {
+                    Some(reasons)
+                },
+            }),
         }
     }
 }

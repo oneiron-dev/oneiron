@@ -4559,7 +4559,7 @@ export_facade! {
 "ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> ActAnswerLiveVoiceToolReply = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.voice.tool", input)?;
     let output = client.ai_voice_tool(&input)?;
-    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), other => crate::codec::lift_record("ai.voice.tool", &other) }
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), other => crate::codec::lift_record("ai.voice.tool", &other) }
 };
 "ai.voice.end" => fn ai_voice_end(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.end", input)?;
@@ -4839,7 +4839,7 @@ export_facade! {
 "connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ActAnswerConnectorCallReply = |client| {
     let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
     let output = client.connector_call(&input)?;
-    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerConnectorCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("connector.call", &other) }
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerConnectorCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), oneiron::task_verb::sdk::ActAnswer::Done(reply) => Ok(ActAnswerConnectorCallReply::Done(crate::ConnectorCallReply::lift(reply)?)), other => crate::codec::lift_record("connector.call", &other) }
 };
 "connector.schema" => fn connector_schema(&self, input: ConnectorSchemaRequest) -> ConnectorSchemaReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSchemaRequest = crate::codec::lower_record("connector.schema", input)?;
@@ -5974,7 +5974,7 @@ export_facade! {
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;
-    crate::codec::lift_record("connector.answer", &output)
+    Lift::lift(output)
 };
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> BrowserAnswerObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;

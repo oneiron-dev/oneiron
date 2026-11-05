@@ -2163,6 +2163,7 @@ UNIFFI_GENERATED_RESULT_LIFTS = {
     'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
     'crate::office_body::DeckExportView': 'DeckExportView',
     'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
     'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
     'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
 }
@@ -2291,11 +2292,26 @@ def uniffi_export(row, types, census):
                         'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
                         'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
                     )
+                owned_done = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(reply) => '
+                        f'Ok({mirror}::Done(crate::ConnectorCallReply::lift(reply)?)), '
+                    )
+                elif row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), '
+                    )
                 # Other variants keep the existing whole-record conversion.
                 result = (
                     f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
                     f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
-                    f'{nested_voice}'
+                    f'{nested_voice}{owned_done}'
                     f'other => crate::codec::lift_record({name}, &other) }}'
                 )
             else:
