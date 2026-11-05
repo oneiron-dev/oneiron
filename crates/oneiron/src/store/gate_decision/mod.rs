@@ -7,6 +7,8 @@ use super::*;
 mod actor_erase;
 mod checkpoint_custody;
 mod claim_refs;
+mod clone_source;
+pub(crate) use clone_source::GateCloneComponent;
 mod context;
 mod keys;
 #[cfg(feature = "sync")]
