@@ -10,7 +10,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::{FolderFileState, FolderSource};
 use serde::Serialize;
 
-use super::{OwnerError, OwnerResult};
+use super::{OwnerError, OwnerResult, entity_id};
 use crate::files_intake::{Rescanned, canonical_folder, rescanned};
 
 /// A folder just attached, with its first rescan, as `import folder attach`
@@ -56,11 +56,13 @@ pub(crate) fn attach(
     path: &str,
     include: Vec<String>,
     kind: &str,
+    world: Option<&str>,
 ) -> OwnerResult<AttachedFolder> {
     let folder = canonical_folder(Path::new(path))
         .map_err(|error| OwnerError::Invalid(error.to_string()))?;
+    let world = world.map(|world| entity_id("world", world)).transpose()?;
     let source = vault
-        .attach_folder_source(owner, &folder, include, kind)
+        .attach_folder_source(owner, &folder, include, kind, world)
         .map_err(invalid)?;
     let rescan = rescanned(vault, owner, &source);
     Ok(AttachedFolder { source, rescan })

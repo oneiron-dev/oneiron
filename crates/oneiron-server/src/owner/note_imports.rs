@@ -77,6 +77,9 @@ pub(crate) struct NoteBatch {
     /// The folder the notes came from; with a note's path it names the note
     /// across imports.
     pub(crate) folder: String,
+    /// The owner's selected existing epistemic WORLD; omitted keeps base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) world: Option<String>,
     pub(crate) notes: Vec<NoteFile>,
     pub(crate) links: Vec<NoteLink>,
     /// Files held by name only, with the bytes the walk read (FIX 11587).
@@ -226,6 +229,11 @@ pub(crate) fn engine_batch(batch: NoteBatch) -> OwnerResult<ImportedNoteBatch> {
     Ok(ImportedNoteBatch {
         request_id,
         folder: batch.folder,
+        world: batch
+            .world
+            .as_deref()
+            .map(|world| entity_id("world", world))
+            .transpose()?,
         notes: batch
             .notes
             .into_iter()
@@ -302,6 +310,7 @@ impl From<ImportedNoteBatch> for NoteBatch {
             request_id: batch.request_id.to_hex(),
             source_id: NOTES_IMPORT_SOURCE.to_owned(),
             folder: batch.folder,
+            world: batch.world.map(|world| world.to_hex()),
             notes: batch
                 .notes
                 .into_iter()

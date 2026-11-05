@@ -153,22 +153,32 @@ pub(in crate::commands) fn import_folder(command: ImportFolderCommand) -> anyhow
                 path,
                 include,
                 kind,
+                world,
                 serve,
             } = *args;
+            let world = world
+                .as_deref()
+                .map(|world| crate::owner::entity_id("world", world))
+                .transpose()?;
             let folder = canonical_folder(&path)?;
             let config = resolve_serve_config(&serve)?;
             match super::super::try_open_vault(&config)? {
                 super::super::VaultOpen::Open(vault) => {
                     let owner = crate::owner::local_owner(&vault)?;
-                    let source = vault.attach_folder_source(&owner, &folder, include, &kind)?;
+                    let source =
+                        vault.attach_folder_source(&owner, &folder, include, &kind, world)?;
                     let rescanned = rescanned(&vault, &owner, &source);
                     serde_json::to_writer_pretty(&mut stdout, &(&source, &rescanned))?;
                 }
                 super::super::VaultOpen::Held => {
+                    let mut body = json!({ "path": folder, "include": include, "kind": kind });
+                    if let Some(world) = world {
+                        body["world"] = world.to_hex().into();
+                    }
                     let answer = HeldServer::for_vault(&config)?.call(
                         Method::POST,
                         "/v1/owner/imports/folders/attach",
-                        Some(json!({ "path": folder, "include": include, "kind": kind })),
+                        Some(body),
                     )?;
                     let source = answer
                         .get("source")

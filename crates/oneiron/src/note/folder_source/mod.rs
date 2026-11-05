@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use super::files::{
     FileFacts, FileMeta, FileReadiness, FilesPlacement, NameOnlyFile, NameOnlyReason,
 };
-use super::import::{ImportedNote, ImportedNoteLink, NOTES_IMPORT_SOURCE};
+use super::import::{ImportedNote, ImportedNoteLink, NOTES_IMPORT_SOURCE, normalized_import_world};
 use super::proposals::{NoteActor, names_no_actor};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
@@ -102,6 +102,10 @@ pub struct FolderSource {
     pub attached_by: NoteActor,
     pub attached_at: u64,
     pub last_rescan_at: Option<u64>,
+    /// The owner's selected existing epistemic WORLD for ordinary Notes.
+    /// None keeps base reality; a Files source uses its Files placement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world: Option<EntityId>,
     /// Where a Files source's files live (FIX 6942); none for a folder
     /// attached as notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,7 +268,8 @@ impl FolderRescanReport {
 
 impl Vault {
     /// Attaches `folder` as a standing source of notes. The owner's one act;
-    /// each rescan after it lands under it.
+    /// each rescan after it lands under it. New notes are born in the
+    /// selected existing `world`; None or the base id keeps base reality.
     ///
     /// # Errors
     /// A blank or oversize folder or pattern, an unknown `kind`, an
@@ -276,8 +281,9 @@ impl Vault {
         folder: &str,
         include: Vec<String>,
         kind: &str,
+        world: Option<EntityId>,
     ) -> Result<FolderSource> {
-        self.attach_source(owner, folder, include, kind, None)
+        self.attach_source(owner, folder, include, kind, None, world)
     }
 
     /// [`Self::attach_folder_source`], placed as `files` says when it is a
@@ -289,6 +295,7 @@ impl Vault {
         include: Vec<String>,
         kind: &str,
         files: Option<FilesPlacement>,
+        world: Option<EntityId>,
     ) -> Result<FolderSource> {
         let invalid = super::document::invalid;
         if folder.trim().is_empty() || folder.len() > MAX_FOLDER_BYTES {
@@ -327,6 +334,7 @@ impl Vault {
                 attached_by: NoteActor::Actor(attached_by),
                 attached_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
                 last_rescan_at: None,
+                world: normalized_import_world(world),
                 files,
             };
             SOURCES.put(&self.store, txn, &key, &source)?;
