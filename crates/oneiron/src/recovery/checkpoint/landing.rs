@@ -86,7 +86,7 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
@@ -106,6 +106,9 @@ impl Vault {
         // takes its rows out (KS-2A).
         let (retired, retired_digests) =
             carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        if let Some(opened) = &mut opened {
+            opened.retire_message_results(&retired_digests)?;
+        }
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -185,7 +188,7 @@ impl Vault {
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
-        vault.with_write_txn_grouped(|txn| {
+        let cancelled = vault.with_write_txn_grouped(|txn| {
             let destination_floor = crate::ports::claim_order::floor_in_txn(&vault.store, txn)?;
             for entry in DB_MANIFEST {
                 let db = vault
@@ -281,27 +284,33 @@ impl Vault {
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+            let cancelled = crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
                 vault: &vault,
                 wtxn: txn,
                 erased: &erased,
             })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
-            response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
+            response_rows::removals::scrub_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &since,
+            )?;
             // A step claim's response pins go with what the rows no longer
             // hold, now the type index is back: an erased shell's release,
             // an omitted claim's or version's pin goes alone (FIX 6225).
             crate::llm::prune_step_response_pins_in_txn(
-                &vault.store,
+                &crate::secret_custody::CustodyWrite::of(&vault),
                 txn,
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
-            Ok(())
+            Ok(cancelled)
         })?;
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .erased_payload_cancellations_committed(&cancelled);
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         room.admit_derived(destination)?;

@@ -500,7 +500,16 @@ pub(super) fn apply_ops_with_authority_beside(
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 ops_claim::apply_reconcile_lexical_arm(
-                    store, &mut *wtxn, &mut state, source, keep,
+                    &crate::secret_custody::CustodyWrite {
+                        store,
+                        config,
+                        analyzer,
+                        text_index_trusted,
+                    },
+                    &mut *wtxn,
+                    &mut state,
+                    source,
+                    keep,
                 )?;
             }
             BatchOp::Vector {
@@ -526,7 +535,17 @@ pub(super) fn apply_ops_with_authority_beside(
             | BatchOp::SetEdgeWeight { .. }
             | BatchOp::SetEdgeVad { .. }
             | BatchOp::DeleteEdge { .. }) => {
-                ops_misc::apply_edge_arm(store, &mut *wtxn, &mut state, op)?;
+                ops_misc::apply_edge_arm(
+                    &crate::secret_custody::CustodyWrite {
+                        store,
+                        config,
+                        analyzer,
+                        text_index_trusted,
+                    },
+                    &mut *wtxn,
+                    &mut state,
+                    op,
+                )?;
             }
             BatchOp::Text { id, fields } => {
                 ops_text::apply_text_arm(
