@@ -3324,7 +3324,7 @@ class Oneiron:
             """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
         def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
         def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
@@ -3432,7 +3432,7 @@ class Oneiron:
             """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
     class _VaultRepoAnchorVerbs:
         def bind(self, spec: Facade.RepoAnchorBindInput) -> Facade.RepoAnchorBindOutput:
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
     class _VaultRepoSnapshotsVerbs:
         def get(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsGetInput]) -> Facade.RepoSnapshotsGetOutput:
             """Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."""

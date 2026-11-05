@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1248 facade rows, 4523 generated types.
+// UniFFI census: 1248 facade rows, 4524 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1200.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -42335,6 +42335,12 @@ pub struct CodeSnapshotIngestRequest {
     pub project_id: String,
     #[serde(rename = "pointer")]
     pub pointer: CodeRepoPointer,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
@@ -42354,6 +42360,12 @@ pub struct CodeSnapshotView {
     pub scope_key: String,
     #[serde(rename = "files")]
     pub files: Vec<CodeSnapshotFile>,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotRequest`.
@@ -43600,20 +43612,48 @@ pub struct ConnectorWitnessReadGrantRevoked {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(
+        rename = "local_folder",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub local_folder: Option<String>,
     #[serde(rename = "project")]
     pub project: String,
+    #[serde(rename = "anchor", default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::git_push_grant::RepoRegistrationView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoRegistrationView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "editable")]
+    pub editable: Vec<String>,
 }
 
 /// `oneiron::verbs::git_push_grant::RepoAnchorBindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     #[serde(rename = "anchor")]
     pub anchor: GitPushRepo,
+    #[serde(rename = "portable")]
+    pub portable: String,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<RepoRegistrationView>,
     #[serde(rename = "changed")]
     pub changed: bool,
 }

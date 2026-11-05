@@ -382,67 +382,117 @@ impl Vault {
     /// refreshes what stands.
     pub(crate) fn ensure_repo_manifest(&self, code: EntityId, origin_name: &str) {
         let ensured = self.with_write_txn_grouped(|txn| {
-            if !code_anchor_live(self, txn, &code)? {
-                return Ok(None);
-            }
-            if let Some(portable) = BY_CODE.get(&self.store, txn, &code)? {
-                return Ok(Some((RepoPortableId(portable), false)));
-            }
-            // Restore a missing index from the oldest held id before minting another.
-            let mut held: Option<RepoManifest> = None;
-            for row in MANIFESTS.iter_raw_from(&self.store, txn, &[])? {
-                let (key, bytes) = row?;
-                let Ok(manifest) = MANIFESTS.decode_value(&bytes) else {
-                    continue;
-                };
-                if manifest.code != code
-                    || <[u8; 32] as SideKey>::decode_key(&key) != Some(manifest.portable.0)
-                {
-                    continue;
-                }
-                if held
-                    .as_ref()
-                    .is_none_or(|other| manifest.mints_before(other))
-                {
-                    held = Some(manifest);
-                }
-            }
-            if let Some(manifest) = held {
-                BY_CODE.put(&self.store, txn, &code, &manifest.portable.0)?;
-                return Ok(Some((manifest.portable, true)));
-            }
-            let portable = RepoPortableId::mint();
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut manifest = RepoManifest {
-                portable,
-                version: REPO_MANIFEST_VERSION,
-                code,
-                minted_at: now,
-                origin_name: Some(origin_name.to_owned()),
-                visible_refs: Vec::new(),
-                lfs_pointers: Vec::new(),
-                epoch: 0,
-                updated_at: now,
-                writer: None,
-            };
-            self.sign_repo_manifest_in_txn(txn, &mut manifest)?;
-            MANIFESTS.put(&self.store, txn, &portable.0, &manifest)?;
-            BY_CODE.put(&self.store, txn, &code, &portable.0)?;
-            MINTED.put(&self.store, txn, &portable.0, &())?;
-            Ok(Some((portable, true)))
+            self.ensure_repo_manifest_in_txn(txn, code, Some(origin_name))
         });
-        let refreshed = ensured.and_then(|ensured| {
-            let Some((portable, written)) = ensured else {
-                return Ok(());
-            };
-            if written {
-                self.note_repo_manifest_written(code);
-            }
-            self.refresh_repo_manifest(code, portable)
+        let settled = ensured.and_then(|ensured| match ensured {
+            Some((portable, written)) => self.settle_ensured_repo_manifest(code, portable, written),
+            None => Ok(()),
         });
-        if let Err(error) = refreshed {
+        if let Err(error) = settled {
             tracing::warn!(code = %code.to_hex(), kind = ?error.kind(), "repo manifest not ensured");
         }
+    }
+
+    /// The checked mint of CODE entity `code`'s portable id, in the
+    /// caller's writer `txn` (FIX 4299 with L03): the manifest that stands
+    /// for it, else the oldest one held for it put back on the index, else a
+    /// fresh id, signed as before. A registration commits it with the CODE
+    /// row and its configuration, so success names both. `origin_name` is
+    /// the served name, `None` for an external repository. `Ok(None)` when
+    /// `code` is no live CODE entity; `Ok(Some((id, true)))` when this
+    /// writer wrote a manifest or its index row, which the caller settles
+    /// after its commit ([`Self::settle_ensured_repo_manifest`]).
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn ensure_repo_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        code: EntityId,
+        origin_name: Option<&str>,
+    ) -> Result<Option<(RepoPortableId, bool)>> {
+        if !code_anchor_live(self, txn, &code)? {
+            return Ok(None);
+        }
+        if let Some(portable) = BY_CODE.get(&self.store, txn, &code)? {
+            return Ok(Some((RepoPortableId(portable), false)));
+        }
+        // Restore a missing index from the oldest held id before minting another.
+        let mut held: Option<RepoManifest> = None;
+        for row in MANIFESTS.iter_raw_from(&self.store, txn, &[])? {
+            let (key, bytes) = row?;
+            let Ok(manifest) = MANIFESTS.decode_value(&bytes) else {
+                continue;
+            };
+            if manifest.code != code
+                || <[u8; 32] as SideKey>::decode_key(&key) != Some(manifest.portable.0)
+            {
+                continue;
+            }
+            if held
+                .as_ref()
+                .is_none_or(|other| manifest.mints_before(other))
+            {
+                held = Some(manifest);
+            }
+        }
+        if let Some(manifest) = held {
+            BY_CODE.put(&self.store, txn, &code, &manifest.portable.0)?;
+            return Ok(Some((manifest.portable, true)));
+        }
+        let portable = RepoPortableId::mint();
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let mut manifest = RepoManifest {
+            portable,
+            version: REPO_MANIFEST_VERSION,
+            code,
+            minted_at: now,
+            origin_name: origin_name.map(str::to_owned),
+            visible_refs: Vec::new(),
+            lfs_pointers: Vec::new(),
+            epoch: 0,
+            updated_at: now,
+            writer: None,
+        };
+        self.sign_repo_manifest_in_txn(txn, &mut manifest)?;
+        MANIFESTS.put(&self.store, txn, &portable.0, &manifest)?;
+        BY_CODE.put(&self.store, txn, &code, &portable.0)?;
+        MINTED.put(&self.store, txn, &portable.0, &())?;
+        Ok(Some((portable, true)))
+    }
+
+    /// What follows a committed ensure: a written manifest goes to the live
+    /// mirror, and the refs writer refreshes what stands. A served repo's
+    /// refresh reads its object store, so it never runs in the writer.
+    ///
+    /// # Errors
+    /// A store or object store failure of the refresh.
+    pub(crate) fn settle_ensured_repo_manifest(
+        &self,
+        code: EntityId,
+        portable: RepoPortableId,
+        written: bool,
+    ) -> Result<()> {
+        if written {
+            self.note_repo_manifest_written(code);
+        }
+        self.refresh_repo_manifest(code, portable)
+    }
+
+    /// Every CODE entity a portable id stands for here, in `txn` (FIX
+    /// 4299): each registered repository among them, since its registration
+    /// writer mints its id in the same writer.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn repo_manifest_anchors_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EntityId>> {
+        BY_CODE
+            .iter_from(&self.store, txn, &[])?
+            .map(|row| row.map(|(code, _)| code))
+            .collect()
     }
 
     /// Merges `carried`, a manifest a window brought, here: rule 7 against

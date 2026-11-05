@@ -445,6 +445,7 @@ impl Vault {
                 "proposal requires unanimous independent multi-critic acceptance",
             ));
         }
+        row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;

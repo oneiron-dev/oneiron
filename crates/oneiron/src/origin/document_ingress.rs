@@ -151,6 +151,7 @@ impl Vault {
         );
         let mut operations = Vec::new();
         let mut ingress = Vec::new();
+        let scope: String;
         {
             let old = update
                 .old_oid
@@ -167,8 +168,7 @@ impl Vault {
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
             // The repository's own scope, as every local writer spells it:
             // one document per path whatever ref a push moves (FIX 12199).
-            let scope =
-                crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+            scope = crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
             let mut renames = received_renames(
@@ -286,6 +286,16 @@ impl Vault {
                     }
                     return Err(Error::ConcurrentWrite("push operation receipt changed"));
                 }
+            }
+            // Every file a first landing changes passes the registered
+            // repository's retained whitelist, or the ref aborts before it
+            // publishes; a replay was judged when it landed (FIX 4299).
+            if held.is_none() {
+                let paths = fresh
+                    .operations
+                    .iter()
+                    .map(|operation| operation.path.as_str());
+                self.require_registered_edit_in_txn(txn, None, &scope, paths)?;
             }
             // A conflicting aggregate must refuse before any document effect.
             // Both receipt layers commit together or the entire ref aborts.
