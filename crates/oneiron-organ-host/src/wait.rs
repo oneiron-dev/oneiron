@@ -4,10 +4,13 @@
 //! redrive runs every held call that a node can now take, and its export
 //! files land as proposals waiting for Keep, as if it had run at once.
 
+use std::cell::RefCell;
+
 use oneiron::edit_settle::{OrganWait, OrganWaitRef, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
+use oneiron_organ_protocol::codec::{CodecError, EncodeScratch};
 use oneiron_organ_protocol::{ByteBuf, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
@@ -119,13 +122,104 @@ struct HeldCallRef<'a> {
     organ: &'a str,
     verb: &'a str,
     schema: u32,
-    args: &'a Value,
-    body: &'a Option<TypedBody>,
+    args: HeldValue<'a>,
+    body: HeldBody<'a>,
     inputs: HeldInputs<'a>,
     class: CallClass,
     deadline_ms: u64,
     grant: &'a str,
     lent: HeldLent<'a>,
+}
+
+struct HeldValue<'a> {
+    value: &'a Value,
+    encoding: &'a RefCell<WaitEncoding>,
+}
+
+impl Serialize for HeldValue<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.value
+            .serialize_with_scratch(serializer, &mut *self.encoding.borrow_mut())
+    }
+}
+
+struct HeldBody<'a> {
+    body: &'a Option<TypedBody>,
+    encoding: &'a RefCell<WaitEncoding>,
+}
+
+#[derive(Serialize)]
+struct HeldTypedBody<'a> {
+    kind: &'a str,
+    schema: u32,
+    value: HeldValue<'a>,
+}
+
+impl Serialize for HeldBody<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.body {
+            None => serializer.serialize_none(),
+            Some(body) => serializer.serialize_some(&HeldTypedBody {
+                kind: &body.kind,
+                schema: body.schema,
+                value: HeldValue {
+                    value: &body.value,
+                    encoding: self.encoding,
+                },
+            }),
+        }
+    }
+}
+
+struct WaitEncoding {
+    room: Option<Box<dyn crate::resource_memory::FloorLease>>,
+    refused: Option<crate::resource_memory::FloorRefusal>,
+}
+
+impl EncodeScratch for WaitEncoding {
+    fn grow(&mut self, bytes: u64) -> Result<(), CodecError> {
+        if let Some(room) = &mut self.room
+            && let Err(refused) = room.grow_untimed(bytes, &shutdown::stopping)
+        {
+            self.refused = Some(refused);
+            return Err(CodecError::Invalid("held-call encoding admission failed"));
+        }
+        Ok(())
+    }
+
+    fn materialized(&mut self, reserved: u64, actual: u64) {
+        if let Some(room) = &mut self.room {
+            room.materialized(reserved, actual);
+        }
+    }
+
+    fn shrink(&mut self, bytes: u64) {
+        if let Some(room) = &mut self.room {
+            room.shrink(bytes);
+        }
+    }
+}
+
+impl WaitEncoding {
+    fn error(&mut self, error: CodecError) -> HostError {
+        match self.refused.take() {
+            Some(crate::resource_memory::FloorRefusal::Floor { needed, available }) => {
+                HostError::Io(std::io::Error::new(
+                    std::io::ErrorKind::OutOfMemory,
+                    format!("held-call encoding needs {needed} bytes, {available} available"),
+                ))
+            }
+            Some(crate::resource_memory::FloorRefusal::Deadline) => HostError::Interrupted,
+            None => HostError::ReplyInvalid(format!("the call does not encode: {error}")),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct HeldInputRef<'a> {
+    artifact: &'a str,
+    version: u64,
+    owner: bool,
 }
 
 struct HeldInputs<'a>(&'a [SightedInput]);
@@ -135,8 +229,20 @@ impl Serialize for HeldInputs<'_> {
         use serde::ser::SerializeSeq;
         let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
         for sighted in self.0 {
-            sequence.serialize_element(&HeldInput {
-                artifact: sighted.input.artifact.to_hex(),
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let mut artifact = [0u8; 32];
+            for (source, output) in sighted
+                .input
+                .artifact
+                .as_bytes()
+                .iter()
+                .zip(artifact.chunks_exact_mut(2))
+            {
+                output[0] = HEX[(source >> 4) as usize];
+                output[1] = HEX[(source & 0x0f) as usize];
+            }
+            sequence.serialize_element(&HeldInputRef {
+                artifact: std::str::from_utf8(&artifact).expect("hex digits are ASCII"),
                 version: sighted.input.version,
                 owner: sighted.sight == SecretSight::Owner,
             })?;
@@ -167,13 +273,19 @@ impl Serialize for HeldBytes<'_> {
 }
 
 impl<'a> HeldCallRef<'a> {
-    fn of(call: &'a OrganCall, lent: &'a [LentInput]) -> Self {
+    fn of(call: &'a OrganCall, lent: &'a [LentInput], encoding: &'a RefCell<WaitEncoding>) -> Self {
         Self {
             organ: &call.organ,
             verb: &call.verb,
             schema: call.schema,
-            args: &call.args,
-            body: &call.body,
+            args: HeldValue {
+                value: &call.args,
+                encoding,
+            },
+            body: HeldBody {
+                body: &call.body,
+                encoding,
+            },
             inputs: HeldInputs(&call.inputs),
             class: call.class,
             deadline_ms: u64::try_from(call.deadline.as_millis()).unwrap_or(u64::MAX),
@@ -276,15 +388,27 @@ impl OrganRouter {
             trigger,
             submitter,
         } = job;
-        let snapshot = HeldCallRef::of(&call, &lent);
+        let encoding = RefCell::new(WaitEncoding {
+            room: self.hold_wait_encoding(0)?,
+            refused: None,
+        });
+        let snapshot = HeldCallRef::of(&call, &lent, &encoding);
         let encoded = oneiron_organ_protocol::encoded_len(&snapshot)
-            .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
-        let mut held_room = self.hold_wait_encoding(encoded)?;
-        let held = oneiron_organ_protocol::to_vec(&snapshot)
-            .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
-        if let Some(room) = &mut held_room {
-            room.materialized(encoded, held.capacity() as u64);
-        }
+            .map_err(|err| encoding.borrow_mut().error(err))?;
+        let capacity = usize::try_from(encoded).map_err(|_| {
+            HostError::Io(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                "held-call encoding exceeds addressable memory",
+            ))
+        })?;
+        let admitted = encoding.borrow_mut().grow(encoded);
+        admitted.map_err(|err| encoding.borrow_mut().error(err))?;
+        let mut held = Vec::with_capacity(capacity);
+        encoding
+            .borrow_mut()
+            .materialized(encoded, held.capacity() as u64);
+        oneiron_organ_protocol::codec::write_into(&mut held, &snapshot)
+            .map_err(|err| encoding.borrow_mut().error(err))?;
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
                 let proposals = propose_organ_outputs(
