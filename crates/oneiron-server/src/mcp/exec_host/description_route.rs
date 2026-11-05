@@ -85,6 +85,7 @@ fn routed_task(
         role: TASK_RUN_SEAT_ROLE,
         task: &task.task,
         type_ref: Some(type_ref),
+        learning: task.learning.as_ref(),
         purpose: &task.purpose,
         settings: &settings,
         tier: &tier,
