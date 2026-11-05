@@ -456,6 +456,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstPolicy
         | Row::VaultFederationBurstPolicySet
         | Row::VaultSyncRetainedWorkWaitSet
+        | Row::VaultSyncQuarantineHeldEdits
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
