@@ -9,8 +9,9 @@
 //! own signed call does there, named by the socket it came on
 //! (`ManagedPersonSession`), never by the signature of the upgrade, and the
 //! door's person check and the engine's roster, role and Grant checks judge
-//! him again. His socket closes on the vault's deletion as every socket
-//! does.
+//! him again. Once admitted as a member, his socket closes when membership
+//! ends, as well as on vault deletion. An invitee may still answer before
+//! first admission.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
