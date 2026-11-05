@@ -5,8 +5,8 @@
 //! never from the bindings that stand now: a version activated and rolled
 //! back before morning is still reported.
 //!
-//! Qualifications, activations, rollbacks, reverts and erases are items of
-//! their own, and any one of them makes a digest due. Nights that trained
+//! Trainings, failed trainings, qualifications, activations, rollbacks,
+//! reverts and erases are items of their own, and any one of them makes a digest due. Nights that trained
 //! nothing (held or skipped) are only counted, by reason, and ride a digest
 //! that is due anyway. The owner's own policy changes are not reported back
 //! to him, nor the host's record of what a worker serves after an event the
@@ -16,10 +16,7 @@ use std::collections::BTreeMap;
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    DrafterEventKind, DrafterHoldReason, DrafterRetrainOutcome, DrafterRollbackReason,
-    DrafterServing, DrafterSkipReason, EVENTS,
-};
+use super::{DrafterEventKind, DrafterRetrainOutcome, DrafterServing, EVENTS};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -51,8 +48,8 @@ pub struct DigestDrafter {
 pub struct DigestDrafterItem {
     /// The event's id: the ref the item renders with.
     pub event: String,
-    /// `qualified`, `failed_qualification`, `activated`, `rolled_back`,
-    /// `reverted` or `erased`.
+    /// `trained`, `failed_training`, `qualified`, `failed_qualification`,
+    /// `activated`, `rolled_back`, `reverted` or `erased`.
     pub kind: String,
     /// The versions it names, as 32 hex.
     pub versions: Vec<String>,
@@ -110,25 +107,12 @@ impl DigestDrafter {
     }
 }
 
-fn hold_reason(reason: DrafterHoldReason) -> String {
-    serde_json::to_value(reason)
+/// The snake-case name `value` serialises as, else `fallback`.
+fn wire_name(value: impl Serialize, fallback: &str) -> String {
+    serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "held".to_owned())
-}
-
-fn skip_reason(reason: DrafterSkipReason) -> String {
-    serde_json::to_value(reason)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "skipped".to_owned())
-}
-
-fn rollback_reason(reason: DrafterRollbackReason) -> String {
-    serde_json::to_value(reason)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "rolled_back".to_owned())
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 /// The drafter events after `seen`, the newest event an earlier line
@@ -162,10 +146,34 @@ pub(crate) fn unseen_drafter_line_in_txn(
             DrafterEventKind::Retrain { outcome, .. } => {
                 let key = match outcome {
                     DrafterRetrainOutcome::Held { reason } => {
-                        format!("held:{}", hold_reason(reason))
+                        format!("held:{}", wire_name(reason, "held"))
                     }
                     DrafterRetrainOutcome::Skipped { reason } => {
-                        format!("skipped:{}", skip_reason(reason))
+                        format!("skipped:{}", wire_name(reason, "skipped"))
+                    }
+                    // A night that trained, or whose training failed, is an
+                    // item of its own (FIX 14974).
+                    DrafterRetrainOutcome::Trained { version } => {
+                        items.push(DigestDrafterItem {
+                            event: event.id.to_hex(),
+                            kind: "trained".to_owned(),
+                            versions: vec![version.to_hex()],
+                            reason: None,
+                            at: event.at,
+                        });
+                        through = through.max(Some(event.id));
+                        continue;
+                    }
+                    DrafterRetrainOutcome::Failed { version, reason } => {
+                        items.push(DigestDrafterItem {
+                            event: event.id.to_hex(),
+                            kind: "failed_training".to_owned(),
+                            versions: vec![version.to_hex()],
+                            reason: Some(wire_name(reason, "failed")),
+                            at: event.at,
+                        });
+                        through = through.max(Some(event.id));
+                        continue;
                     }
                 };
                 *nights.entry(key).or_default() += 1;
@@ -190,9 +198,11 @@ pub(crate) fn unseen_drafter_line_in_txn(
                 None,
             ),
             DrafterEventKind::Activate { version } => ("activated", vec![version], None),
-            DrafterEventKind::Rollback { version, reason } => {
-                ("rolled_back", vec![version], Some(rollback_reason(reason)))
-            }
+            DrafterEventKind::Rollback { version, reason } => (
+                "rolled_back",
+                vec![version],
+                Some(wire_name(reason, "rolled_back")),
+            ),
             DrafterEventKind::Revert { version } => (
                 "reverted",
                 vec![version],
