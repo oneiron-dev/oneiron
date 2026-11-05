@@ -225,6 +225,7 @@ where
             owner_surface: surface,
             live_run: held.as_ref().map(HeldLiveRun::proof),
             planner,
+            slip_issuer: held.as_ref().and_then(|_| host.host_issuer()),
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
