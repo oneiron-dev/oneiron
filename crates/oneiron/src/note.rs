@@ -120,7 +120,10 @@ pub(crate) fn note_vault_readable_in_txn(
     id: &EntityId,
     bytes: &[u8],
 ) -> Result<bool> {
-    let Ok(body) = decode_note_body_using(bytes, NoteKind::wire) else {
+    // A migrated NOTE keeps its markdown on its document plane: judge the
+    // logical body, as a scoped NOTE read does.
+    let resolved = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
+    let Ok(body) = decode_note_body_using(&resolved, NoteKind::wire) else {
         return Ok(false);
     };
     let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
