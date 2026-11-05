@@ -14,6 +14,7 @@ pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;
+mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
@@ -73,7 +74,8 @@ pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
-    HarnessEvaluationTarget, RetuneThresholds,
+    HarnessEvaluationTarget, HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation,
+    HarnessOf360Scheduled, RetuneThresholds,
 };
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";

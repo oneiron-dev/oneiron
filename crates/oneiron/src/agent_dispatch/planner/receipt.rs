@@ -7,6 +7,10 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnPlanReceipt {
     pub asked: SpawnNeed,
+    /// Owner rows that supplied fields of `asked`, captured when those
+    /// values were selected. Call-only fields name no owner row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner_choices: Vec<crate::learning_setting_choice::SpawnChoiceSource>,
     pub plan: TeamPlan,
     /// The runner-up candidates with payoff and cost, best first — the
     /// CEO's top-shapes view rides the same rows.

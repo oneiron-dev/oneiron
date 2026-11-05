@@ -171,13 +171,15 @@ impl Vault {
             crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
                 .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
         backend.set_read_transport(transport);
-        backend.set_egress(Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
-            Arc::clone(self),
-            run_id,
-            crate::code_sandbox::egress::EgressConfig::from_env()
-                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
-        )));
-        self.run_script_pack_in_vm(request, backend, run_id)
+        let egress: Arc<dyn oneiron_container::EgressRelay> =
+            Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
+                Arc::clone(self),
+                run_id,
+                crate::code_sandbox::egress::EgressConfig::from_env()
+                    .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+            ));
+        backend.set_egress(Arc::clone(&egress));
+        self.run_script_pack_in_vm(request, backend, run_id, egress)
     }
 
     pub(crate) fn installed_script_pack(
@@ -213,9 +215,10 @@ impl Vault {
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
         run_id: EntityId,
+        egress: Arc<dyn oneiron_container::EgressRelay>,
     ) -> Result<PackScriptOutcome> {
         let selected = self.installed_script_pack(request.name)?;
-        self.run_selected_script_pack_in_vm(request, backend, selected, run_id)
+        self.run_selected_script_pack_in_vm(request, backend, selected, run_id, egress)
     }
 
     fn run_selected_script_pack_in_vm(
@@ -224,6 +227,7 @@ impl Vault {
         backend: Box<dyn MicroVmBackend>,
         (source, _path, receipt): (PackSource, String, PackInstallReceipt),
         run_id: EntityId,
+        egress: Arc<dyn oneiron_container::EgressRelay>,
     ) -> Result<PackScriptOutcome> {
         let PackScriptRun {
             name,
@@ -319,7 +323,8 @@ impl Vault {
             backend,
             resolver,
             allowlist,
-        )?;
+        )?
+        .with_credential_relay(egress);
         let guest = image.clone().with_source(injected);
         let result = adapter.run(&guest, budget);
         let session_manifest = adapter.session_manifest();
