@@ -3640,7 +3640,7 @@ class Oneiron:
         @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
-            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles."""
         def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
         def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:

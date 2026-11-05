@@ -13,6 +13,7 @@ mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod pad_objects;
 mod pad_refill;
@@ -456,6 +457,9 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
             ),
+            "residence.media_vectors" => {
+                media_vectors::media_vectors(server, auth, peer, request.params)
+            }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {
