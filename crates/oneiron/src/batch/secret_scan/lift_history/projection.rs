@@ -23,7 +23,7 @@ use crate::settings::ReadDestination;
 /// stay committed. On this device the state is the same. Off it, a proposal
 /// filed from a record a world withheld from that destination keeps is left
 /// out of the proposals shown and of every proposal count, as if it were
-/// never filed. Typed-body document, typed-body fork, codebase-snapshot and
+/// never filed. Typed-body document, typed-body fork, office-body fork, codebase-snapshot and
 /// note-proposal carriers also name their actual source entity in their row keys. Other
 /// side rows and carriers stay unknown. Run, receipt and retry counts omit only
 /// contributors whose actual source entity is known and withheld. Unknown
@@ -57,7 +57,8 @@ pub fn secret_lift_as_owner_toward(
 /// by `frontier::keys_of`. A codebase snapshot's key is its CODE_ARTIFACT entity
 /// id. A typed-body fork pairs its source entity with its fork id. A note
 /// proposal pairs its owning NOTE with its fork head; the path's outer hex
-/// decodes to that ASCII key and the first id is the source.
+/// decodes to that ASCII key and the first id is the source. An office-body fork
+/// pairs its artifact with its fork id; the first is the source.
 /// Other carrier and side-row keys remain unknown.
 fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     let path = &proposal.proposal.path;
@@ -65,7 +66,9 @@ fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
         return EntityId::from_hex(hex).ok();
     }
     let (table, hex) = path.strip_prefix("carrier:")?.split_once(':')?;
-    if table == crate::side_table::TYPED_BODY_FORK_DOC.name {
+    if table == crate::side_table::TYPED_BODY_FORK_DOC.name
+        || table == crate::side_table::OFFICE_BODY_FORK.name
+    {
         let (source, fork) = hex.split_at_checked(32)?;
         let entity = EntityId::from_hex(source).ok()?;
         EntityId::from_hex(fork).ok()?;
