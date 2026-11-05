@@ -237,10 +237,11 @@ async fn act(
         messages.push(text_message(role, line.text));
     }
     // FIX 6920: the board the action reads, hydrated once, as its
-    // requester's kept slip reads now. It rides as one request-only User
-    // right before the user turn the reply answers, so a Continue's saved
-    // reply and its suffix stay after it; the witness and the log never
-    // hold it.
+    // requester's kept slip reads now. It rides in two parts (I1 = C, FIX
+    // 14677): its state part as one request-only User right before the user
+    // turn the reply answers, its query part and the opener as one right
+    // after it, so a Continue's saved reply and its suffix stay after both;
+    // the witness and the log never hold it.
     let board = match server.and_then(Weak::upgrade) {
         Some(server) => {
             action_board(
@@ -270,12 +271,16 @@ async fn act(
     let text = ActionText {
         saved: context.saved,
         answers,
+        opener: crate::api::ai::chat::turn_opener(settings.turn_opener, vault),
     };
     let (admitted, board_context, board_rows) =
         admit_action(vault, ai, &seat, &action, text, messages, board)?;
     if let Some(rows) = &board_rows {
         today_sources.add(Some(rows));
     }
+    // The requester's board rode today's call, so the conversation's next
+    // turn reads one too: a published successor gets its tail prepared.
+    let board_rode = board_rows.is_some();
     let today_sources = today_sources.rows();
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
@@ -396,7 +401,10 @@ async fn act(
         None => answering,
     };
     let answering = match action_session {
-        Some(session) => session.commit_on_answer(answering),
+        Some(session) => session.commit_on_answer(
+            answering,
+            server.filter(|_| board_rode).and_then(Weak::upgrade),
+        ),
         None => answering,
     };
     drop(answering.subscription);
