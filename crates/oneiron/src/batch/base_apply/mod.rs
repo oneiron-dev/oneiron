@@ -151,6 +151,8 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
 
 /// Batch-level mutable state threaded through per-op arms and the tail.
 struct BatchApplyState {
+    #[cfg(feature = "sync")]
+    pending_native_skill_puts: Vec<super::put_apply::PendingNativeSkillPut>,
     replay: bool,
     run_derivations: Option<crate::skill_attribution::RunDerivations>,
     hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
@@ -229,6 +231,27 @@ pub(super) fn apply_ops_with_origin(
     )
 }
 
+/// Owned lower-apply outputs. The request and each final put remain data,
+/// not publication or proof that actor-after and caller-terminal checks ran.
+pub(super) struct PendingNativeSkillBatch {
+    #[cfg(feature = "sync")]
+    request: Option<crate::skill::SkillStateWrite>,
+    #[cfg(feature = "sync")]
+    puts: Vec<super::put_apply::PendingNativeSkillPut>,
+}
+
+impl PendingNativeSkillBatch {
+    #[cfg(feature = "sync")]
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Option<crate::skill::SkillStateWrite>,
+        Vec<super::put_apply::PendingNativeSkillPut>,
+    ) {
+        (self.request, self.puts)
+    }
+}
+
 /// [`apply_ops_with_origin`] for a batch that carries other authority rows
 /// (`authority_beside`, FIX 11764): each replicated AUTHORITY_LOG put is
 /// judged beside them, so history that arrives in two or more rows together
@@ -248,12 +271,42 @@ pub(super) fn apply_ops_with_authority_beside(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
-    mut gate_mode: ApplyOpsGateMode,
+    gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
     native_publication: Option<NativePublicationContext<'_>>,
 ) -> Result<()> {
+    apply_ops_with_authority_beside_collecting(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+        authority_beside,
+        own_device,
+        native_publication,
+    )
+    .map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(super) fn apply_ops_with_authority_beside_collecting(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    mut gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
+    native_publication: Option<NativePublicationContext<'_>>,
+) -> Result<PendingNativeSkillBatch> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
@@ -359,6 +412,8 @@ pub(super) fn apply_ops_with_authority_beside(
         replay,
     };
     let mut state = BatchApplyState {
+        #[cfg(feature = "sync")]
+        pending_native_skill_puts: Vec::new(),
         replay,
         run_derivations,
         hub_admission,
@@ -567,5 +622,13 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
-    tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
+    #[cfg(feature = "sync")]
+    let puts = std::mem::take(&mut state.pending_native_skill_puts);
+    tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)?;
+    Ok(PendingNativeSkillBatch {
+        #[cfg(feature = "sync")]
+        request: gate_mode.skill_state_write,
+        #[cfg(feature = "sync")]
+        puts,
+    })
 }
