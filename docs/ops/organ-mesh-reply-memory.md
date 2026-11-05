@@ -1,8 +1,14 @@
 # Organ mesh reply memory
 
 A serving organ host returns an `OrganOutcome`. Its existing frame lease covers
-its decoded body and report while those values live. Moving these values into
-a mesh `PeerResult` must not drop that lease before the result is encoded.
+the whole decoded proposal, including its body, report and inline output byte
+buffers. The receiver books the decoded-value estimate before typed decoding.
+That estimate includes encoded string, binary and extension payload lengths;
+it does not establish the exact capacity of every typed allocation. Releasing
+the encoded body returns its budget bytes, but the machine-floor lease keeps
+the encoded-plus-decoded peak until the frame holder drops. Moving decoded
+values into a mesh `PeerResult` must not drop that lease before the result is
+encoded.
 
 `mesh/serve.rs` keeps the result and its original frame lease in one private
 `CallReply`. For an owned inline output at or below the existing inline
