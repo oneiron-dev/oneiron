@@ -1,0 +1,152 @@
+/* ── the threads page — channel identities + the one thread ──
+   what app-channels.html carries beyond the chassis, recast to the
+   08-15 rulings: the identities are chrome (a flat ledger, unfold in
+   place, revoke settles in place); the thread is an instrument (the
+   agent-rendered lens) and reads like a quiet printed transcript —
+   seals and names left, serif voice, entries divided by SPACE only,
+   the send states hover-tier. Receipts are records you READ, so they
+   dock in the context column. ── */
+
+/* the sheet holds body + a summoned context column (the Slack model) */
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+aside.context {
+  width: var(--ctx-w); flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--ctx-bg);         /* a tinted zone divides, not a line */
+  display: flex; flex-direction: column; gap: 12px;
+}
+aside.context[hidden] { display: none; }
+.ctx-head { display: flex; align-items: center; gap: 10px; }
+.ctx-crumb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4); }
+.ctx-title { font-family: var(--serif); font-size: 16px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+.ctx-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 52ch; }
+.ctx-acts { display: flex; gap: 12px; flex-wrap: wrap; }
+/* the record's facts: mono key · mono value (the vault inspector's kv) */
+.ctx-kv { display: flex; flex-direction: column; gap: 6px; }
+.kv { display: flex; align-items: baseline; gap: 10px; }
+.kv .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); width: 74px; flex: none; }
+.kv .v { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.kv .v a:hover { color: var(--safelight); }
+/* the receipt ledger for one identity: time · what · state, one line each */
+.rlist { display: flex; flex-direction: column; gap: 7px; }
+.rrow { display: flex; align-items: baseline; gap: 10px; }
+.rrow .r-time { font-family: var(--mono); font-size: 11px; color: var(--silver-4); width: 40px; flex: none; font-feature-settings: "tnum" 1; }
+.rrow .r-what { font-family: var(--serif); font-size: 13px; line-height: 1.45; color: var(--silver-2); flex: 1; min-width: 0; }
+.rrow .r-st { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--silver-4); flex: none; }
+.rrow .r-st.is-verified { color: var(--dev-green); }
+
+/* ── sections: the inbox bundle shape — a serif head that folds in
+   place, the count only when closed, dividers = space ── */
+.tsec { display: flex; flex-direction: column; }
+.tsec + .tsec { margin-top: 20px; }
+.tsec.closed + .tsec { margin-top: 0; }
+.tsec .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; }
+.tsec .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.tsec .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.tsec .head:hover .fold-hint, .tsec .head:focus-visible .fold-hint { opacity: 1; }
+.tsec.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.tsec .head .meta-line { margin-left: auto; display: none; }
+.tsec.closed .head .meta-line { display: inline; }
+.tsec.closed > :not(.head) { display: none; }
+/* the instrument eyebrow sits above the head: this region is agent-rendered */
+.tsec > .label { padding: 0 0 6px; }
+
+/* ── identities: a flat ledger (chrome). space under the heads, never
+   a rule between rows; the row unfolds in place; revoke settles in
+   place — the act cools into the receipt line ── */
+.ident-wrap { overflow-x: auto; }
+.ident .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+table.ident { width: 100%; border-collapse: collapse; }
+table.ident th {
+  font-family: var(--mono); font-weight: 400;
+  font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--silver-3); text-align: left;
+  padding: 6px 10px 10px;
+}
+table.ident td { padding: 6px 10px; height: 34px; vertical-align: middle; }
+table.ident .c-chan { width: 38px; padding-right: 0; }
+table.ident .c-who { width: 208px; }
+table.ident .c-state { width: 112px; }
+table.ident .c-rcpt { width: 78px; text-align: right; }
+table.ident .c-act { width: 1%; white-space: nowrap; text-align: right; }
+table.ident tr.idr { cursor: pointer; outline: none; }
+/* the row highlight is soft: radius on the run's ends */
+@media (hover: hover) {
+  table.ident tr.idr:hover > td { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+  table.ident tr.idr:hover > td:first-child { border-radius: 5px 0 0 5px; }
+  table.ident tr.idr:hover > td:last-child { border-radius: 0 5px 5px 0; }
+}
+table.ident tr.idr.on > td { background: var(--bg-well); }
+table.ident tr.idr.on > td:first-child { border-radius: 5px 0 0 5px; }
+table.ident tr.idr.on > td:last-child { border-radius: 0 5px 5px 0; }
+table.ident tr.idr:focus-visible > td { background: var(--bg-well); }
+table.ident tr.idr:focus-visible { outline: 2px solid var(--safelight); outline-offset: -2px; }
+table.ident tr.det > td { padding: 0 10px; height: auto; }
+.ident .fold { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.ident tr.det.on .fold { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
+.ident .fold > .in { min-height: 0; overflow: hidden; }
+.ident .fold .in-pad { display: flex; flex-direction: column; gap: 5px; padding: 1px 0 11px 38px; max-width: 74ch; }
+.ident .charter { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); line-height: 1.5; }
+.ident .w-chan { display: flex; align-items: center; color: var(--silver-3); }
+.ident .w-chan svg { width: 14px; height: 14px; display: block; }
+.ident .who { display: flex; align-items: baseline; gap: 7px; }
+.ident .who .aname { font-family: var(--serif); font-size: 13.5px; }
+.ident .who .as { font-family: var(--mono); font-size: 11px; color: var(--silver-4); white-space: nowrap; }
+.ident .aud, .ident .st { font-family: var(--mono); font-size: 12px; color: var(--silver-3); white-space: nowrap; }
+.ident .st { color: var(--silver-2); }
+/* every mono token is a door: the receipts count opens the record */
+.ident .door { font-family: var(--mono); font-size: 12.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; transition: color 160ms ease; }
+.ident .door:hover, .ident .door:focus-visible { color: var(--safelight); }
+/* revoked: the row cools; the receipt line takes the act's seat */
+.ident tr.revoked .who, .ident tr.revoked .aud, .ident tr.revoked .st, .ident tr.revoked .door { opacity: 0.5; }
+.ident .c-act .meta-line { display: inline; }
+
+/* ── the thread: a printed transcript. seals/names in a left column,
+   serif voice, generous line-height, SPACE between entries; the send
+   state is a faint mono word at the row's end (and a door to the
+   receipt); times and channels ride the tooltips ── */
+.thr-quiet { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); padding: 0 0 4px; }
+.tx-list { display: flex; flex-direction: column; gap: 14px; padding: 8px 0 6px; max-width: 82ch; }
+.tx { display: flex; gap: 12px; align-items: baseline; padding: 0 8px 0 6px; }
+.tx-who { width: 78px; flex: none; display: flex; align-items: baseline; gap: 6px; }
+.tx-who .seal { transform: translateY(2px); }
+.tx-who .aname { font-family: var(--serif); font-size: 13.5px; }
+.tx-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tx-voice { font-family: var(--serif); font-size: 14.5px; line-height: 1.6; max-width: 62ch; }
+.tx-door { align-self: flex-start; font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--silver-3); transition: color 160ms ease; }
+.tx-door:hover, .tx-door:focus-visible { color: var(--safelight); }
+/* the row-end word: hover-tier — faint at rest, legible under the hand */
+.tx-end {
+  flex: none; display: inline-flex; align-items: baseline; gap: 6px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+  color: var(--silver-4); white-space: nowrap;
+  transition: color 160ms ease;
+}
+.tx:hover .tx-end { color: var(--silver-3); }
+.tx-end.is-verified, .tx:hover .tx-end.is-verified { color: var(--dev-green); }
+.tx-end.is-pending, .tx:hover .tx-end.is-pending { color: var(--silver-3); }
+.tx-end .throbber { font-size: 10.5px; }
+button.tx-end { cursor: pointer; }
+button.tx-end:hover, button.tx-end:focus-visible, .tx:hover button.tx-end:hover { color: var(--silver-1); }
+button.tx-end.is-verified:hover { color: var(--dev-green); }
+/* the row that opened the record */
+.tx.sel { background: var(--bg-well); border-radius: 5px; margin: -4px -8px -4px -6px; padding: 4px 16px 4px 12px; }
+
+/* the foot: one act, then the receipt it settles into */
+.thr-foot { display: flex; align-items: baseline; gap: 16px; padding: 8px 6px 0; flex-wrap: wrap; }
+.thr-foot .meta-line { display: inline; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ident .fold { transition: none; }
+  .tsec .head .fold-hint { transition: none; }
+}

@@ -209,7 +209,8 @@ impl Vault {
                     "changed_parts": outcome.changed_parts,
                     "effects": effects,
                 }
-            }),
+            })
+            .to_string(),
             made_by: Some(made_by.clone()),
         };
         let hold = DeckExportHold {
