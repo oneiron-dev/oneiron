@@ -37,7 +37,7 @@ pub(super) fn verify_dss(
     covered: &[EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
 ) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
     check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
@@ -52,7 +52,7 @@ fn check_dss(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
 ) -> Result<(), SealMemoryRefusal> {
     let catalog = match pdf::catalog(doc) {
         Some(c) => c,
@@ -62,15 +62,15 @@ fn check_dss(
                     VerifyCheckKind::ValidationMaterial,
                     false,
                     VerifyFindingCode::ValidationMaterialInvalid,
-                );
+                )?;
             } else {
-                checks.absent(VerifyCheckKind::ValidationMaterial);
+                checks.absent(VerifyCheckKind::ValidationMaterial)?;
             }
             return Ok(());
         }
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
-        checks.absent(VerifyCheckKind::ValidationMaterial);
+        checks.absent(VerifyCheckKind::ValidationMaterial)?;
         return Ok(());
     };
     let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
@@ -79,7 +79,7 @@ fn check_dss(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
+        )?;
         return Ok(());
     };
     if dss.has(b"VRI") {
@@ -87,7 +87,7 @@ fn check_dss(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
+        )?;
         return Ok(());
     }
     let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)?;
@@ -95,7 +95,7 @@ fn check_dss(
         VerifyCheckKind::ValidationMaterial,
         ok,
         VerifyFindingCode::ValidationMaterialInvalid,
-    );
+    )?;
     Ok(())
 }
 
@@ -178,9 +178,12 @@ fn material_valid(
             if entries.is_empty() {
                 return Ok(false);
             }
+            memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
+                let Some(issuer) =
+                    crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
+                else {
                     return Ok(false);
                 };
                 v.push(issuer);
@@ -204,6 +207,7 @@ fn material_valid(
                 else {
                     return Ok(false);
                 };
+                memory.admit_len::<&[u8]>(targets.len())?;
                 ocsp_targets.extend(targets);
             }
         }

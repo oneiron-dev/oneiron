@@ -225,6 +225,11 @@ pub struct ManagedArgs {
     pub start_mode: ManagedStartMode,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
+    /// The bootstrap admitted this start's outbox companion beside the engine
+    /// (`--vm-outbox-companion-admitted`): only `oneiron-vm-init` passes it,
+    /// only with a companion it admitted, so presence is the proof. Hidden
+    /// bootstrap plumbing, never operator policy.
+    pub vm_outbox_companion_admitted: bool,
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore, and
     /// serves on with that facility named missing in its readiness unless
@@ -253,6 +258,10 @@ pub struct ManagedArgs {
     /// The supervisor's credential broker binding, validated by the same
     /// rules as `[models.broker]`; absent keeps the same-user default.
     pub broker: Option<crate::config::models::BrokerConfig>,
+    /// The explicit per-vault host allocation (`--host-memory-bytes`,
+    /// `--host-cpu-millis`), as the operator supplied it; absent is
+    /// unbounded per field. Reported through the managed host, not enforced.
+    pub host_limits: oneiron_vault_contract::host::HostLimits,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,
