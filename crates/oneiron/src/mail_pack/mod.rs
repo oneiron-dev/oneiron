@@ -33,7 +33,9 @@
 //! connector admission, each EVENT bound to its source at birth
 //! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
 //! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
-//! The owner runs a step on this device through [`local_sync`].
+//! The owner runs a step on this device through [`local_sync`], and imports
+//! an mbox file or a Google Takeout export through [`mbox_import`], read by
+//! the engine's own MIME reader ([`mime`]).
 
 mod attachments;
 mod calendar;
@@ -47,8 +49,11 @@ mod importer;
 mod inbox;
 mod landing;
 mod local_sync;
+mod mbox;
+mod mbox_import;
 mod microsoft365;
 mod microsoft365_calendar;
+mod mime;
 mod pack;
 mod provider_delete;
 mod rest;
@@ -82,6 +87,7 @@ pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
 pub use local_sync::MailSourceSyncRequest;
+pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{
     HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,

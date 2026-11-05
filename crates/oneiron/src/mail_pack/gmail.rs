@@ -476,7 +476,7 @@ fn charset_of(content_type: &str) -> Option<String> {
 
 /// The addresses of an address-list header, split at the commas outside
 /// quotes and angle brackets.
-fn address_list(value: &str) -> Vec<String> {
+pub(super) fn address_list(value: &str) -> Vec<String> {
     let mut addresses = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
@@ -507,7 +507,7 @@ fn push_address(addresses: &mut Vec<String>, text: &str) {
 }
 
 /// An RFC 5322 `Date` value as Unix seconds; a trailing comment is dropped.
-fn rfc2822_seconds(value: &str) -> Option<u64> {
+pub(super) fn rfc2822_seconds(value: &str) -> Option<u64> {
     let bare = value.split_once(" (").map_or(value, |(head, _)| head).trim();
     chrono::DateTime::parse_from_rfc2822(bare)
         .ok()
