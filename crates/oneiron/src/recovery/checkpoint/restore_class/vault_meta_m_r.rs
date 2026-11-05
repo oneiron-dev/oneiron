@@ -9,6 +9,13 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_SEQ, CONTENT),
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
+    // The compliance log and setting are live: a restore never takes back a
+    // logged search or turns a switched-off search on again (FIX 12560).
+    (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
+    (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // A source's owner, custody name and settings are live configuration.
+    (&t::MAIL_PACK_SOURCE, LIVE),
+    (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.

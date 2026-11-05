@@ -152,6 +152,7 @@ pub mod policy_model;
 pub mod receipt;
 pub mod share;
 pub mod share_travel;
+pub mod source_audience;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -185,6 +186,7 @@ pub mod guest_document_share;
 pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
+pub mod mail_pack;
 pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
