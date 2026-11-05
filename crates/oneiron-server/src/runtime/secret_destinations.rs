@@ -226,6 +226,20 @@ impl RunSecretDestinations {
             .map(|slot| slot.effector.clone())
     }
 
+    /// Whether `destination` is one of these destinations.
+    #[must_use]
+    pub fn names(&self, destination: &str) -> bool {
+        lock(&self.slots).contains_key(destination)
+    }
+
+    /// The delivery for the grants run `run`'s host mints for it itself
+    /// (FIX 10624): their bytes land in these destinations only, never in
+    /// another registration the run's attempt names by then.
+    #[must_use]
+    pub fn own_delivery(&self, run: AttemptId) -> OwnSecretDelivery<'_> {
+        OwnSecretDelivery { run, own: self }
+    }
+
     fn fill(&self, grant: &EntityId, destination: &str, value: &[u8]) -> Result<()> {
         if value.contains(&0) || std::str::from_utf8(value).is_err() {
             return Err(refused(
@@ -261,6 +275,54 @@ impl RunSecretDestinations {
         for slot in lock(&self.slots).values_mut() {
             slot.value = None;
         }
+    }
+}
+
+/// The [`SecretHostDelivery`] of one run's own registration
+/// ([`RunSecretDestinations::own_delivery`], FIX 10624): a grant held for
+/// that run fills these destinations and withdraws from them; one held for
+/// another run is refused, by name.
+#[derive(Debug, Clone, Copy)]
+pub struct OwnSecretDelivery<'a> {
+    run: AttemptId,
+    own: &'a RunSecretDestinations,
+}
+
+impl SecretHostDelivery for OwnSecretDelivery<'_> {
+    fn destination_effector(
+        &self,
+        holder: &SecretGrantHolder,
+        destination: &str,
+    ) -> Option<String> {
+        if holder.run() != Some(self.run) {
+            return None;
+        }
+        self.own.effector(destination)
+    }
+
+    fn deliver(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId,
+        destination: &str,
+        value: &[u8],
+    ) -> Result<()> {
+        if holder.run() != Some(self.run) {
+            return Err(refused(destination, "the grant is held for another run"));
+        }
+        self.own.fill(grant, destination, value)
+    }
+
+    fn withdraw(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId,
+        destination: &str,
+    ) -> Result<SecretCleanup> {
+        if holder.run() != Some(self.run) {
+            return Ok(SecretCleanup::Absent);
+        }
+        Ok(self.own.withdraw(grant, destination))
     }
 }
 
