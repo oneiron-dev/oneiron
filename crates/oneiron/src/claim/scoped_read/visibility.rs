@@ -656,6 +656,9 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
+        if !self.phone_lines_allow_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
         // A CLAIM a reader with no record list reads is judged once per
         // access class (FIX 11915); every other row, and a CLAIM that path
         // leaves, takes the row admission below.
