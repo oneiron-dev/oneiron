@@ -1,4 +1,7 @@
-//! Stored reader-fold receipts and their occurrence vocabulary.
+//! Core half of `store::reader_fold_receipt`: its store-layer items live in `oneiron_store::reader_fold_receipt` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::reader_fold_receipt::*;
 
 use crate::side_table::{CodecError, RawValue};
 use crate::store::result_manifest::ResultOccurrence;
@@ -42,13 +45,6 @@ pub(crate) struct ReceiptFinding {
     pub(crate) state: String,
     pub(crate) reason: Option<String>,
     pub(crate) range: (u64, u64),
-}
-
-/// A child that settled short, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReceiptPartial {
-    pub(crate) task: EntityId,
-    pub(crate) reason: String,
 }
 
 /// One summary of a fold's tree and the results it summarized.
@@ -153,15 +149,6 @@ impl ReaderFoldReceipt {
     }
 }
 
-/// A summary made: its task, and its text's occurrence in the job's run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SummaryMemo {
-    pub(crate) task: EntityId,
-    pub(crate) owner: EntityId,
-    pub(crate) path: String,
-    pub(crate) handle: String,
-}
-
 macro_rules! json_row {
     ($row:ty, $what:literal) => {
         impl RawValue for $row {
@@ -177,4 +164,5 @@ macro_rules! json_row {
 }
 
 json_row!(ReaderFoldReceipt, "code-run reader fold receipt");
+
 json_row!(SummaryMemo, "code-run summary memo");

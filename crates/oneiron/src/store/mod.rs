@@ -120,7 +120,7 @@ pub mod ports {
 }
 
 pub(crate) mod agent_birth_custody;
-pub(crate) mod agent_birth_identity;
+pub(crate) use oneiron_store::agent_birth_identity;
 pub(crate) mod agent_definition;
 pub(crate) mod agent_definition_codec;
 pub(crate) mod agent_manifest;
@@ -151,7 +151,7 @@ pub(crate) use oneiron_store::attempt_retention;
 pub(crate) mod attempt_run_root;
 pub mod attempt_run_signal;
 pub use oneiron_store::attempt_state;
-pub(crate) mod base_agent;
+pub(crate) use oneiron_store::base_agent;
 pub mod canonical_document;
 pub(crate) mod centroid_evidence;
 pub use oneiron_store::checkout_task;
@@ -261,9 +261,9 @@ mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 pub mod claim_descriptors;
 mod claim_vad_owed;
-pub mod code_artifact_body;
+pub use oneiron_store::code_artifact_body;
 pub use oneiron_store::code_document_values;
-pub mod code_memory_values;
+pub use oneiron_store::code_memory_values;
 pub mod code_snapshot;
 pub(crate) use oneiron_store::query_memo_codec;
 pub mod query_memos;
@@ -560,17 +560,17 @@ pub use oneiron_store::dispatch_attempt_kind;
 pub mod checkout_lease;
 pub mod contract_oracle;
 
-pub mod repo_mutation_record;
+pub use oneiron_store::repo_mutation_record;
 
 pub use oneiron_store::code_commit_metadata;
 
-pub mod code_import_manifest;
+pub use oneiron_store::code_import_manifest;
 
 pub use oneiron_store::own_rate_record;
 
 pub use oneiron_store::repo_provenance_trailer;
 
-pub mod code_revision_identity;
+pub use oneiron_store::code_revision_identity;
 
 pub use oneiron_store::recovery_kit;
 
@@ -590,7 +590,7 @@ pub use oneiron_store::verb_domain;
 
 pub use oneiron_store::reaction_predicate;
 
-pub mod repo_proposal_record;
+pub use oneiron_store::repo_proposal_record;
 
 pub use oneiron_store::repo_import_predicate;
 

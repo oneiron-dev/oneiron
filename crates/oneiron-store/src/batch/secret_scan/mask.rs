@@ -2,3 +2,4 @@
 
 pub mod escaped_span;
 pub mod text_log;
+pub mod text_spans;
