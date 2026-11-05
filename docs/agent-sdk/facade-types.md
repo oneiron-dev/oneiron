@@ -5462,7 +5462,7 @@ export type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string
 /** `oneiron::blob_artifact::verbs::ArtifactExportRequest` */
 export type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null }
 /** `oneiron::blob_artifact::verbs::ArtifactExportFile` */
-export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string }
+export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string; notices?: WorldRecipientNotice[] }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentSkillInput` */
 export type AgentSkillInput = { skill_id: string; min_version?: string | null }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentMcpInput` */

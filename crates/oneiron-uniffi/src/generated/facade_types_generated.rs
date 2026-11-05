@@ -43081,6 +43081,8 @@ pub struct ArtifactExportFile {
     pub born_with: std::collections::HashMap<String, String>,
     #[serde(rename = "content_base64")]
     pub content_base64: String,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentSkillInput`.
