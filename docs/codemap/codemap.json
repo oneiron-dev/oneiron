@@ -49726,7 +49726,7 @@
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
       "crate-vis": 10,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -49736,7 +49736,37 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionWitnessContext",
+      "SessionWitnessOutcome"
+     ],
+     "path": "src/memory/witness/program/caller.rs",
+     "purpose": "Caller-bound session speech",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionWitnessBinding"
+     ],
+     "path": "src/memory/witness/program/caller/binding.rs",
+     "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -51531,6 +51561,7 @@
      "path": "src/off_record/lifecycle/creator.rs",
      "purpose": "Who manages a stretch entered alone (WILL-PLAN L13 row 03, Engine ruling 2026-10-19): the person or agent…",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "struct": 1
      }
@@ -51619,7 +51650,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -91404,7 +91435,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 354,
+     "files": 356,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92106,7 +92137,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6429,
+   "source_files": 6431,
    "test_files": 895
   },
   "oneiron-android": {
