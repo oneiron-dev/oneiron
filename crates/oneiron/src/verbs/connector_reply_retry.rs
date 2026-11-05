@@ -28,9 +28,8 @@ pub struct ConnectorReplyRetryView {
 }
 
 /// `vault.connectors.replies.retry_failed` as `owner`: the owner's proof is
-/// revalidated, the attempt decoded, and the existing native retry runs it
-/// again now as its successor. The Failed row and its kept result are read,
-/// never written.
+/// revalidated in the successor writer. The native retry queues the successor;
+/// the Failed predecessor and its kept result stay as history.
 ///
 /// # Errors
 /// The owner check's refusal, a malformed attempt ref, no failed connector
@@ -41,10 +40,9 @@ pub fn retry_failed_connector_reply_as(
     owner: &AuthenticatedOwner,
     input: ConnectorReplyRetryRequest,
 ) -> MemoryResult<ConnectorReplyRetryView> {
-    owner.revalidate(vault)?;
     let predecessor = attempt_id(&input.attempt_ref)?;
     let now = vault.now_recorded_at();
-    let successor = vault.retry_failed_connector_reply_job(predecessor, now)?;
+    let successor = vault.retry_failed_connector_reply_job_as(owner, predecessor, now)?;
     Ok(ConnectorReplyRetryView {
         predecessor_ref: crate::entity_id::bytes_to_hex_lower(predecessor.as_bytes()),
         successor_ref: crate::entity_id::bytes_to_hex_lower(successor.as_bytes()),

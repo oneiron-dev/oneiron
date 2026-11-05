@@ -1,6 +1,6 @@
 //! FIX 2405: the owner's retry of one Failed connector reply job, shared by
-//! HTTP, SDK and MCP. It runs on the owner's proof, revalidated before the
-//! engine's own writer (the native retry opens its writer itself).
+//! HTTP, SDK and MCP. The native retry revalidates the owner's proof in
+//! the same writer that mints the successor.
 use std::sync::Arc;
 
 use oneiron::Vault;
