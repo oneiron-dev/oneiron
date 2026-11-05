@@ -1135,7 +1135,7 @@ impl Memory<'_> {
             name: input.name.clone(),
             media_type: input.media_type.clone(),
             bytes,
-            report: input.report.clone(),
+            report: input.report.to_string(),
             made_by: input.made_by.clone(),
         };
         let read_rows = input

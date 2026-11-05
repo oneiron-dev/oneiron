@@ -878,7 +878,7 @@ pub(super) async fn propose_output(
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
-        report: request.report,
+        report: request.report.to_string(),
         made_by: request.made_by,
     };
     let delta_receipt = request.delta_receipt;
