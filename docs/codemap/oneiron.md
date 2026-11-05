@@ -6133,7 +6133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/note_session.rs` | src | s | 2 crate-vis | — | The existing app-tier MessagePack auth.bind handshake on the sync socket |
 | `src/sync/client/own_device.rs` | src | s | 4 crate-vis | — | The proof that window bytes this client takes come from one of the owner's own machines (FIX 11709) |
 | `src/sync/client/repo_projection.rs` | src | s | 2 crate-vis | — | A device's admission of the masked repo copies its home sends (FIX 7608 slice 4, LEAF 4.3) |
-| `src/sync/client/residence.rs` | src | s | 4 re-export · 11 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
+| `src/sync/client/residence.rs` | src | s | 5 re-export · 11 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
 | `src/sync/client/residence/authority.rs` | src | m | 1 fn · 3 crate-vis | — | Authority history from the home for a machine that syncs what it opened (OF-469) |
 | `src/sync/client/residence/authority/parts.rs` | src | s | 3 crate-vis | — | An authority entry past one RPC frame, either way (FIX 8087, 8246) |
 | `src/sync/client/residence/bundle.rs` | src | m | 3 fn · 3 re-export · 4 crate-vis | — | The vault's sealed cloud bundle through the home (DEC-0005 "Sealed copies", FIX 922) |
@@ -6161,8 +6161,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/pad_custody.rs` | src | m | 2 crate-vis | — | Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine… |
 | `src/sync/client/residence/promoted_pads.rs` | src | s | 5 crate-vis | — | The pads of a promoted window's world (FIX 3789) |
 | `src/sync/client/residence/rpc.rs` | src | m | 8 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
-| `src/sync/client/residence/search.rs` | src | s | 1 crate-vis | — | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
-| `src/sync/client/residence/search_client.rs` | src | s | 1 fn · 1 crate-vis | — | Home search orchestration |
+| `src/sync/client/residence/search.rs` | src | s | 1 struct · 2 crate-vis | ResidenceSearchPage | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
+| `src/sync/client/residence/search_client.rs` | src | s | 2 fn · 1 crate-vis | — | Home search orchestration |
 | `src/sync/client/residence/windows.rs` | src | m | 3 fn · 2 crate-vis | — | Window promote, retain, and demote lifecycle |
 | `src/sync/client/sealed_updates.rs` | src | m | 6 crate-vis | — | A machine's side of the sealed world-update relay (DEC-0005 fix 8: "A my-machines world on it still syncs |
 | `src/sync/client/sync_frames.rs` | src | m | 4 fn · 5 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
@@ -6176,7 +6176,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/handshake/acks.rs` | src | s | 1 crate-vis | — | Residence queue acknowledgments during the initial exchange |
 | `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
-| `src/sync/connection/mod.rs` | src | m | 3 struct · 17 fn · 4 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
+| `src/sync/connection/mod.rs` | src | m | 3 struct · 18 fn · 4 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
 | `src/sync/connection/node_batch.rs` | src | m | 3 crate-vis | — | One bounded node proposal batch per sync tick, its window updates and document frames taking turns (FIX… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
 | `src/sync/connection/residence_mode.rs` | src | s | 2 crate-vis | — | FIX 8869: the residence mode follows the committed home |
