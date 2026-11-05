@@ -1,7 +1,7 @@
-# ROOT TASKS layout for HTTP and live chat (FIX 12570)
+# ROOT TASKS layout for HTTP and native chat (FIX 12570)
 
-Status: parent 12570 PART. Supports ROOT raw HTTP and the native live-chat
-`start_turn` path, not full BOARD-LAYOUT.
+Status: parent 12570 PART. Supports ROOT raw HTTP, live chat `start_turn`,
+and admitted queued Continue/Retry boards, not full BOARD-LAYOUT.
 
 ## Partial scope
 
@@ -22,6 +22,14 @@ Covered:
   second lookup or the payer. The caller's stored layout does not set chat
   sizing, but its content read authority and HTTP TURN path are unchanged.
   The agent stages its layout through the native POST with its credential.
+- Queued Continue/Retry uses the same answering agent selected once for its
+  board, answer and records. Its pending layout projects before admission.
+  The accepted history commit derives the terminal TURN from the actual
+  saved MESSAGE's `PartOf` edge; no preselected TURN or attempt label is used.
+  For a reused prefix, this board belongs only to the fallback call: its
+  candidate activates only when that fallback actually answered. A prefix
+  answered without the fallback leaves pending state unchanged. Existing
+  native/no-slip, refused, held, omitted, empty and unsaved paths remain.
 - Explicit per-request `tasks_budget_tok` still wins for that render and
   never consumes pending.
 - Existing 5426 renderer (`render_with_token_budget`), metadata
@@ -30,8 +38,7 @@ Covered:
 
 Explicitly OPEN (full 12570 PART):
 
-- MCP/run/program next-turn application of the staged layout; queued
-  Continue/Retry stay old behavior (caller live-only, no candidate).
+- MCP/run/program next-turn application of the staged layout.
 - Fork-specific store, eager fork copy, or independent fork layout. Forks
   hold no copy in this slice and must not pretend otherwise.
 - Full shares summed across all sections, folds, filters, keep/note rows,
@@ -68,12 +75,12 @@ rows ride outside the allotment.
   `{"budget_tok": N}` is a staged set. Staged reset is never flattened with
   no pending. GET never mutates. Revision numbers stay internal.
 - A hydration without TURN and without a chat layout actor reads LIVE only
-  and never activates pending; A live chat turn projects its answering
+  and never activates pending; a native chat turn projects its answering
   agent's pending when present else live.
 - Staging needs `core:write` plus an entity principal and declared actor
   class. Reading needs `core:read`; without an entity identity it returns
   an empty state without reading storage. An identified HTTP caller reads
-  or stages only its own actor's row. A live chat turn projects its
+  or stages only its own actor's row. A native chat turn projects its
   answering agent's row for sizing only; content still reads as the caller.
 
 ## Overrides
@@ -88,7 +95,7 @@ rows ride outside the allotment.
   snapshot NOW before render (pending when present, else live), clamped to
   the SAME resolved global board cap the final frame renders under. The SAME
   accepted history transaction then activates the exact candidate.
-- A live chat turn with no per-request override projects its answering
+- A native chat turn with no per-request override projects its answering
   agent's SELECTED pending snapshot NOW before render (pending when
   present, else live), clamped to the SAME resolved global board cap the
   final frame renders under. The SAME accepted answer-history commit then
@@ -119,7 +126,7 @@ rows ride outside the allotment.
 - Keyed-retry idempotency and the once-only TURN anchor keep their existing
   semantics; the TURN gate (`board_turn_target`) still parses/auths first
   and the SAME-writer history still proves author/once-only finally.
-- A live chat turn inherits the SAME activation semantics: a concurrent
+- A native chat turn inherits the SAME activation semantics: a concurrent
   HTTP TURN advancing agent live between chat capture and chat commit skips
   silently (rendered bytes stand, live keeps newer); a pending-revision
   move alone still activates the exact rendered candidate while retaining

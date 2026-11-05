@@ -3,10 +3,9 @@
 //! `GET|POST /v1/core/context-board/layout/tasks`: one actor's durable ROOT
 //! TASKS-row token budget. GET reads the caller's own live default plus its
 //! one pending staged write; POST stages ONE pending batch for a later
-//! explicit TURN. This is parent 12570 PART, ROOT raw HTTP plus ONE live chat
-//! pending consumer: no fork store or copy, no MCP/run integration (queued
-//! actions stay old behavior), no full-board shares, folds, filters, notes or
-//! owner defaults. See
+//! explicit TURN or native chat answer. This is parent 12570 PART: ROOT raw
+//! HTTP and native live/queued chat, without fork copies, MCP/run integration,
+//! full-board shares, folds, filters, notes or owner defaults. See
 //! `docs/ops/context-board-tasks-layout.md`.
 //!
 //! POST `budget_tok` is REQUIRED nullable unsigned: missing is 400 and never
@@ -150,7 +149,7 @@ pub(crate) async fn context_board_tasks_layout_stage(
 ///
 /// Call only when the explicit per-request budget is `None` (explicit `Some`
 /// wins with its exact budget and never consumes pending, so hydration
-/// skips selection entirely then). `chat_layout_actor` carries ONE live chat
+/// skips selection entirely then). `chat_layout_actor` carries a native chat
 /// turn's answering agent: when `Some` it selects EXACTLY that actor with
 /// native `has_turn=true`; when `None` it keeps the auth-derived caller
 /// actor with the native `has_turn` untouched. Without TURN (and without a
