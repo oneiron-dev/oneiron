@@ -482,12 +482,16 @@ impl DecisionModel for BigModel {
                 )
                 .sourced(Some(call.evidence.to_vec())),
         };
+        let unrecorded = run.is_unrecorded();
+        let ladder = ladder.for_run(&run);
         // FIX 12516/12742 capture: the capture caller bound on this thread,
         // when this decide runs inside a decision's capture scope. The bound
         // optional session is threaded through, `None` only at unbound
         // sources; the room is resolved by the existing session gate, never
         // invented.
-        let caller = crate::decision_verdict::model_call_context();
+        let caller = (!unrecorded)
+            .then(crate::decision_verdict::model_call_context)
+            .flatten();
         let no_record_at_arrival = caller.as_ref().is_some_and(|c| {
             self.vault
                 .model_call_keeps_no_record_for(c.session.as_deref(), Some(c.principal))
@@ -543,7 +547,7 @@ impl DecisionModel for BigModel {
                 no_record,
             );
         }
-        if let Some(usage) = &self.trial_usage {
+        if !unrecorded && let Some(usage) = &self.trial_usage {
             usage
                 .lock()
                 .map_err(|_| failed("model trial usage lock"))?

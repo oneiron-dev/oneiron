@@ -26,6 +26,7 @@ mod model_list;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
+mod unrecorded;
 // FIX 1743: a stream's probation slot, and its end to its offer's health.
 mod stream_health;
 mod worker_lease;
@@ -901,6 +902,7 @@ impl OfferLadder {
                 let rung = &self.rungs[index];
                 self.rests
                     .fallback_for(&rung.offer.binding, &rung.wire_model)
+                    .map(|fallback| self.fallback_view(fallback))
                     .and_then(|fallback| self.listed_fallback(fallback))
                     .filter(|(_, view)| !view.rests_now())
                     .filter(|(_, view)| view.can_serve(&self.scope, call.needs))
@@ -961,11 +963,13 @@ impl OfferLadder {
             rung.model.as_str(),
             RunDenied::KeptOnDevice { reason },
         );
-        tracing::info!(
-            rung = rung.position,
-            reason = "world_stays_on_device",
-            "a fallback would take the work off the device; passed over"
-        );
+        if !self.rests.is_unrecorded() {
+            tracing::info!(
+                rung = rung.position,
+                reason = "world_stays_on_device",
+                "a fallback would take the work off the device; passed over"
+            );
+        }
     }
 
     /// Refuses the rung at `index` for the world's own order (FIX 11768):
@@ -984,11 +988,13 @@ impl OfferLadder {
             rung.model.as_str(),
             RunDenied::WorldRouteNotAdmitted,
         );
-        tracing::info!(
-            rung = rung.position,
-            reason = "world_route_not_admitted",
-            "the world's order names no such route; passed over"
-        );
+        if !self.rests.is_unrecorded() {
+            tracing::info!(
+                rung = rung.position,
+                reason = "world_route_not_admitted",
+                "the world's order names no such route; passed over"
+            );
+        }
     }
 
     /// Whether the call's voice keeps it from the rung at `index` (FIX 1746).
@@ -1029,13 +1035,15 @@ impl OfferLadder {
         let rest = self
             .rests
             .rest(&rung.offer.binding, &rung.wire_model, refusal);
-        tracing::warn!(
-            rung = rung.position,
-            kind = failure_kind(error),
-            reset = rest.map_or("unkept", |rest| rest.source.as_str()),
-            until = rest.map_or(0, |rest| rest.until),
-            "offer refused for a limit; it rests until its reset"
-        );
+        if !self.rests.is_unrecorded() {
+            tracing::warn!(
+                rung = rung.position,
+                kind = failure_kind(error),
+                reset = rest.map_or("unkept", |rest| rest.source.as_str()),
+                until = rest.map_or(0, |rest| rest.until),
+                "offer refused for a limit; it rests until its reset"
+            );
+        }
         Some(rest)
     }
 
@@ -1062,16 +1070,20 @@ impl OfferLadder {
                 let rest = self
                     .rests
                     .failed_down(&rung.offer.binding, &rung.wire_model);
-                tracing::warn!(
-                    rung = rung.position,
-                    kind,
-                    "rung's provider is down; trying the next"
-                );
+                if !self.rests.is_unrecorded() {
+                    tracing::warn!(
+                        rung = rung.position,
+                        kind,
+                        "rung's provider is down; trying the next"
+                    );
+                }
                 Passed::Down { kind, rest, sent }
             }
             None => {
                 let rung = &self.rungs[index];
-                tracing::warn!(rung = rung.position, kind, "rung failed; trying the next");
+                if !self.rests.is_unrecorded() {
+                    tracing::warn!(rung = rung.position, kind, "rung failed; trying the next");
+                }
                 Passed::Failed { kind, sent }
             }
         };
@@ -1537,7 +1549,9 @@ impl OfferLadder {
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
-                    rung.note_answered(call.request);
+                    if !self.rests.is_unrecorded() {
+                        rung.note_answered(call.request);
+                    }
                     return Ok(Sent::Answer(response));
                 }
                 Err(error) => {

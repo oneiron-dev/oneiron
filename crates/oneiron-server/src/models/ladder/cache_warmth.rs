@@ -370,7 +370,9 @@ impl OfferLadder {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(0, &walk, response.usage);
-                rung.note_answered(&request);
+                if !self.rests.is_unrecorded() {
+                    rung.note_answered(&request);
+                }
                 Ok(Some(response))
             }
             Err(error) => {
