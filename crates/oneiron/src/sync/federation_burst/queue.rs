@@ -1,6 +1,9 @@
 //! Actual deferred payloads and their identity-bound, idempotent completion.
 
 use std::borrow::Cow;
+use std::time::Instant;
+
+use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
 use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
@@ -217,7 +220,7 @@ impl DeferredWork {
     }
 
     pub(super) fn put_in_txn(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        let value = postcard::to_allocvec(&StoredWork {
+        let stored = StoredWork {
             id: self.id,
             authority_digest: self.authority_digest,
             peer: self.peer,
@@ -232,8 +235,26 @@ impl DeferredWork {
             arrival: self.arrival,
             deadline: self.deadline,
             carried: Cow::Borrowed(&self.carried),
-        })
-        .map_err(|_| corrupt())?;
+        };
+        let size = postcard::experimental::serialized_size(&stored).map_err(|_| corrupt())?;
+        let mut memory = MachineMemory::process()
+            .lease(size as u64, Instant::now())
+            .map_err(|refusal| {
+                let kind = match refusal {
+                    MemoryRefusal::Floor { .. } => std::io::ErrorKind::OutOfMemory,
+                    MemoryRefusal::WaitedOut { .. } => std::io::ErrorKind::WouldBlock,
+                };
+                crate::Error::Io(std::io::Error::new(
+                    kind,
+                    format!("federation queue serialization memory: {refusal:?}"),
+                ))
+            })?;
+        let mut value = Vec::new();
+        value.try_reserve_exact(size).map_err(|error| {
+            crate::Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        memory.materialized(size as u64, value.capacity() as u64);
+        let value = postcard::to_extend(&stored, value).map_err(|_| corrupt())?;
         // Storage capacity is distinct from the peer-relative burst verdict.
         // Accepted work stays durable: the queue's byte totals are observed
         // against these thresholds, never refused (FIX 7996, 8852).
