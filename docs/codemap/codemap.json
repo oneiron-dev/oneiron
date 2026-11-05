@@ -42145,7 +42145,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 3,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 9,
       "re-export": 2,
@@ -43979,7 +43979,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "re-export": 2,
       "struct": 6,
       "type": 1
@@ -100937,7 +100937,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 15,
-      "mod": 19,
+      "mod": 20,
       "re-export": 5,
       "struct": 1
      }
@@ -101826,7 +101826,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -102083,6 +102083,19 @@
      "purpose": "One authoritative parse",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Preservation"
+     ],
+     "path": "src/worksheet_preserve.rs",
+     "purpose": "FIX9820 PART: restore wholly-missing worksheet root foreign groups and SML ext records",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -102511,6 +102524,13 @@
      "layout": "dir",
      "purpose": "Bounded, retained OPC archives"
     },
+    "worksheet_preserve": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "FIX9820 PART: restore wholly-missing worksheet root foreign groups and SML ext records"
+    },
     "xlfn": {
      "files": 1,
      "impl_vault": false,
@@ -102549,7 +102569,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 169,
+   "source_files": 170,
    "test_files": 14
   },
   "oneiron-driver": {

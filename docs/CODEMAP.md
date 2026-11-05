@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 64 | 1 | 2 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 22 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 169 | 14 | 7 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 170 | 14 | 7 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 35 | 10 | 2 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 12 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
@@ -526,6 +526,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `pptx_comments` | dir | 9 | m | Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to |
 | `resource` | file | 1 | m | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
 | `retained_opc` | dir | 9 | m | Bounded, retained OPC archives |
+| `worksheet_preserve` | file | 1 | m | FIX9820 PART: restore wholly-missing worksheet root foreign groups and SML ext records |
 | `xlfn` | file | 1 | s | Excel's storage qualifiers for post-2007 worksheet functions |
 | `xlsx_body` | file+dir | 14 | m | SpreadsheetML workbook read and projection seam |
 | `xlsx_error` | file | 1 | s | Workbook read and projection errors |
