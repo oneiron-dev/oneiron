@@ -9,7 +9,7 @@
 //! data and document timestamp after it. It asks the engine back, protocol
 //! 1.1, for the signing identity (`seal.identity`), for the signature over
 //! the revision's signed attributes (`seal.sign`), and for every timestamp
-//! and CRL fetch (`net.fetch`, inside the allowlist the install grant
+//! and CRL/OCSP fetch (`net.fetch`, inside the allowlist the install grant
 //! names). Each verb asks it for the memory its PDF decodes and its
 //! fetched bytes take, before they allocate it (`memory.grow`, FIX 7654):
 //! the engine's host leases it from the machine's memory floor and holds it
@@ -1011,7 +1011,7 @@ impl SealBackend for AskedBackend {
 }
 
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
-/// allowlist. The seal fetches only timestamps and CRLs. A body comes back
+/// allowlist. The seal fetches timestamps, CRLs and OCSP replies. A body comes back
 /// whole: the engine measures its size against its `[limits]` rows, and the
 /// seal's own copy of it is reserved before it is made (`memory.grow`), as
 /// admitted bytes.
@@ -1027,7 +1027,8 @@ impl SealFetcher for AskedFetcher {
         let purpose = match request.purpose {
             FetchPurpose::Timestamp => "tsa",
             FetchPurpose::Crl => "crl",
-            FetchPurpose::Ocsp | FetchPurpose::AuthorityInformationAccess => {
+            FetchPurpose::Ocsp => "ocsp",
+            FetchPurpose::AuthorityInformationAccess => {
                 return Err(FetchError::Denied);
             }
         };

@@ -223,6 +223,26 @@ pub struct ServeArgs {
     #[arg(long = "preview-socket")]
     pub preview_socket: Option<PathBuf>,
 
+    /// Managed mode: the separate-user credential broker's absolute Unix
+    /// socket. Pair it with `--broker-uid`; the supervisor owns this binding.
+    #[arg(long = "broker-socket", requires = "managed_by_hypnos")]
+    pub broker_socket: Option<PathBuf>,
+
+    /// Managed mode: the OS user the separate-user credential broker runs as.
+    /// Pair it with `--broker-socket`; no UID is inferred.
+    #[arg(long = "broker-uid", requires = "managed_by_hypnos")]
+    pub broker_uid: Option<u32>,
+
+    /// Managed mode: the same-user credential broker child's absolute binary
+    /// path. Without it, the broker beside this server is used as before.
+    #[arg(long = "broker-program", requires = "managed_by_hypnos")]
+    pub broker_program: Option<PathBuf>,
+
+    /// Managed mode: an absolute PEM roots file the same-user broker child
+    /// trusts beside the system's. Repeat for each file; not for a separate user.
+    #[arg(long = "broker-extra-roots", requires = "managed_by_hypnos")]
+    pub broker_extra_roots: Option<Vec<PathBuf>>,
+
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
     /// over it. On a plain serve it is read as a config file layered over

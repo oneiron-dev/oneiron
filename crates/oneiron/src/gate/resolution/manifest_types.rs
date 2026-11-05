@@ -313,6 +313,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
     pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(crate) entity_resolution_bands:
+        Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
