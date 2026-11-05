@@ -288,14 +288,11 @@ impl Vault {
             RemoteTaskEnd::Completed => {
                 self.settle_remote_outbound_task(intent, RemoteTaskObservation::Completed)?
             }
-            RemoteTaskEnd::Unconfirmed => {
-                super::store::abandon_unconfirmed_remote_task(
-                    self,
-                    *intent,
-                    self.now_recorded_at(),
-                )?
-                .state
-            }
+            RemoteTaskEnd::Unconfirmed => super::store::abandon_unconfirmed_remote_task(
+                self,
+                *intent,
+                self.now_recorded_at(),
+            )?,
         };
         self.with_write_txn_grouped(|txn| POLLS.delete(&self.store, txn, intent).map(|_| ()))?;
         Ok(state)
