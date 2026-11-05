@@ -216,6 +216,7 @@ fn prepare_step_source(
         return Ok(Err(admitted::lapsed()));
     }
     let read = {
+        let _bodies = vault.pin_all_result_bodies();
         let rtxn = vault.store.env.read_txn()?;
         read_step_in_txn(vault, &rtxn, capsule, &start)?
     };

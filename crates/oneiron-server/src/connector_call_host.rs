@@ -382,11 +382,19 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     }
 
     fn abandon_awaiting_input(&mut self, handle: &str) {
+        self.resume = None;
         self.elicitations.finish(Some(&*self.vault), handle);
     }
 
     fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
-        let bound = self.elicitations.bind_call(&self.vault, handle, call_ref);
+        self.elicitations.bind_call(handle, call_ref);
+    }
+
+    fn awaiting_call_committed(&mut self, handle: &str, call_ref: EntityId) {
+        let bound = self.elicitations.call_ref(handle) == Some(call_ref);
+        if !bound && let Err(error) = self.vault.mark_connector_input_uncertain(&call_ref, handle) {
+            tracing::warn!(%error, "connector call questions not marked uncertain");
+        }
         // The row kept the round; its resume state goes beside it (FIX 9157).
         if let Some(resume) = self.resume.take().filter(|_| bound) {
             resume.keep(&self.vault, handle, &call_ref);
