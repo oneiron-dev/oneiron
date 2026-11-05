@@ -63,6 +63,9 @@ from .registry import (INVALID_INPUT, INVALID_REQUEST, LOST_RESIDENCY, STALE_GEN
 # A prepare that a later op of the session stops: the turn it prepared for
 # arrived, or the session moved on.
 SUPERSEDED = "superseded"
+# A prepare whose prefill could never fit the page pool beside its pinned
+# base: it would wait at the head of the commit queue for ever.
+PREPARE_TOO_LARGE = "prepare_too_large"
 
 # The ephemeral tail a differential rendering puts after a canonical path.
 PROBE = {"role": "user", "content": "oneiron session probe"}
@@ -250,7 +253,9 @@ def prepare(layer, body, conversation):
     """`session.prepare`: the path the input region carries, which must
     extend the published checkpoint `base` names, prefilled on it into the
     session's prepared tail; answers `{prepared_tokens, computed_tokens}`,
-    the tail's tokens past the checkpoint and the tokens it computed."""
+    the tail's tokens past the checkpoint and the tokens it computed. A tail
+    whose pages could never fit the pool beside its base is refused
+    `prepare_too_large` before it pins anything or joins the queue."""
     handle, binding = _target(body)
     op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
     base = _ref(body, "base")
@@ -277,10 +282,16 @@ def prepare(layer, body, conversation):
             layer.check_generation(session, generation)
             if layer.expected(session, base) is not checkpoint:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
-            stopped = session.preparing
-            release += layer.unprepare(session)
             staged = Staged(tokens, checkpoint.head, checkpoint, frontier, generation)
             kept = _commit(layer, session, op_id, staged, work, prepare=True)
+            # Refused before it pins its base or joins the queue: commits
+            # start in order, so one that can never fit would hold back every
+            # commit behind it.
+            base_pages = -(-frontier // PAGE_SIZE)
+            if kept.need + base_pages > layer.scheduler.pool_pages:
+                raise Refused(PREPARE_TOO_LARGE, "the prepared tail does not fit the page pool")
+            stopped = session.preparing
+            release += layer.unprepare(session)
             checkpoint.anchor.pins += 1
             session.preparing = kept
             layer.waiting.append(kept)
