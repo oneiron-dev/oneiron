@@ -155,6 +155,7 @@ impl Vault {
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             wtxn.commit()?;
             pending_cloud_revokes.publish();
+            self.notify_local_delete_materialized(&[*id]);
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
