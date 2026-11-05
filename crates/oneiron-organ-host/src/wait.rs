@@ -12,6 +12,7 @@ use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
 use oneiron_organ_protocol::codec::{CodecError, EncodeScratch};
+
 use oneiron_organ_protocol::{ByteBuf, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,8 @@ use crate::landing::propose_organ_outputs;
 use crate::route::{OrganRouter, RanOn, Routed};
 use crate::shutdown;
 use crate::spec::{CallClass, LentInput, OrganCall, OrganInput, SightedInput};
+
+mod native_write;
 
 /// One organ call whose export files are for an artifact's proposal
 /// landing.
@@ -443,9 +446,13 @@ impl OrganRouter {
                     held_by: actor,
                     held_at: vault.now_recorded_at(),
                 };
-                Ok(Submitted::Waiting(
-                    vault.hold_organ_wait(&row, &wait.reason)?,
-                ))
+                let room = encoding.borrow().room.clone();
+                Ok(Submitted::Waiting(native_write::hold(
+                    vault,
+                    &row,
+                    &wait.reason,
+                    room,
+                )?))
             }
         }
     }
