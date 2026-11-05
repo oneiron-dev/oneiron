@@ -631,6 +631,7 @@ fn plan_from_quotes(
         rung_skill: None,
         rung_providers: Vec::new(),
         asker_ref: None,
+        type_tree_root_lookup: None,
     };
     receipt.validate()?;
     Ok(receipt)
