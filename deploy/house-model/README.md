@@ -142,6 +142,17 @@ args = ["--spec-type", "draft-simple", "--spec-draft-n-max", "8",
         "--flash-attn", "on", "--jinja", "--reasoning-format", "deepseek"]
 ```
 
+An external EXL3 row may pin the manifest its operator's server was started
+with (FIX 9296): `launch_manifest_sha256` is the SHA-256 of the exact bytes
+of that `--launch-manifest` file (`sha256sum` of the file the server was
+given; the file's digest, not the `expected.runtime` build digest it
+names). An answer that echoes the pinned digest beside the epoch the row's
+worker qualified with keeps a verified-artifacts claim; a missing pin, a
+missing echo, or an epoch the worker did not qualify with leaves the
+receipt's build unknown. The calls still flow either way: the pin checks
+what an answer echoes, and proves nothing about which binary runs on the
+operator's machine.
+
 Only plain and embedded `serve` launch managed workers; a managed per-vault
 process shows its rows unchecked and calls its providers as before. Never
 run a managed row and its systemd unit at once: one supervisor owns a
@@ -164,6 +175,8 @@ commit, the CMake flags and the binary's SHA-256. Before each launch,
 - hashes every GGUF part the launch loads (target and draft, each part of a
   split GGUF), in full, at every launch, and the binary;
 - reads the target's typed tokenizer metadata and its chat templates;
+- reads the target's observed architecture facts into the manifest's
+  optional `architecture` section (below);
 - records the launch's arguments, every `LLAMA_ARG_*` variable by name and
   value (one that may hold a credential, by its SHA-256) and any llama.cpp
   `config.ini` by its SHA-256 (with one present, the `model`, `tokenizer`
@@ -187,6 +200,22 @@ digest, epoch and configured model, and puts its digests into the record.
 A launch whose identity cannot be prepared (an unwritable directory, an
 unreadable file, a `config.ini` that sets an alias) starts as before: no
 alias, no manifest, and its records name only the reported build.
+
+The manifest's optional top-level `architecture` section carries the
+target's observed shape facts only: the `general.architecture` string and,
+for exactly that observed architecture, the scalar `block_count`,
+`attention.head_count_kv`, `embedding_length` and `attention.head_count`
+counts (llama.cpp `d81235049384534c167caea52b85a694f6103d14` vocabulary:
+`general.architecture`, `{arch}.block_count`,
+`{arch}.attention.head_count_kv`, `{arch}.embedding_length`,
+`{arch}.attention.head_count`; the name is a `STRING`, the counts scalar
+`UINT32`). A fact with the wrong type, an array where a scalar belongs, a
+missing key or an undecodable name is left out, and with a `config.ini`
+present the section stays absent, as `model` does; unknown facts are only
+missing evidence, never a refused answer. The section rides inside the same
+manifest bytes, so the alias digest, epoch and configured model bind it. It
+is not the effective cache dtype, the compute bytes, or a usable admission
+bound.
 
 **EXL3.** `weights_manifest.py prepare` lists every `*.safetensors` shard of
 the target with its size and SHA-256 (above). At each launch the server
@@ -254,6 +283,11 @@ receipt. `schedule` (`{revision, action: yield | resume | reprioritize,
 answered `schedule_ack`. A cancel the Generator cannot complete keeps the
 call's pages, place and reservation charged until its Job ends, and the call
 ends with `final` error `release_failed`, never `released`.
+
+A native terminal's `queue.open_calls` excludes the call it ends. The
+scheduler keeps counting that call until its handler settles after the
+terminal send, so drains still wait for it. Other stats keep their captured
+counts; neither the scheduler count nor the captured snapshot is changed.
 
 ## The EXL3 scheduler
 

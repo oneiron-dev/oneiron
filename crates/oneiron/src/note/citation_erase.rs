@@ -74,6 +74,7 @@ pub(crate) fn erase_citations_in_txn(
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
     let mut dependents = fence_dependents(&vault.store, txn, *id)?;
+    scrub_stored_proposal_citations(vault, txn)?;
     dependents.retain(|citing| citing != id);
     #[cfg(feature = "sync")]
     for citing in &dependents {
@@ -105,6 +106,57 @@ pub(crate) fn validate_pins(
     for pin in pins {
         if pin_is_erased(vault, txn, pin)? {
             return Err(super::document::invalid("NOTE citation source was erased"));
+        }
+    }
+    Ok(())
+}
+
+/// Remove erased citations without changing authored text or surviving pins.
+pub(super) fn remove_erased_pins(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &super::document::NoteDocument,
+) -> Result<bool> {
+    let pins = doc.doc.get_map("pins");
+    let mut remove = Vec::new();
+    let entries: Vec<_> = pins
+        .keys()
+        .filter_map(|key| pins.get(&key).map(|value| (key, value)))
+        .collect();
+    for (key, value) in entries {
+        let loro::ValueOrContainer::Value(loro::LoroValue::String(value)) = value else {
+            return Err(super::document::invalid("invalid NOTE pin value"));
+        };
+        let pin: super::NotePin = serde_json::from_str(&value)
+            .map_err(|_| super::document::invalid("invalid NOTE pin"))?;
+        pin.validate()?;
+        if pin_is_erased(vault, txn, &pin)? {
+            remove.push(key.to_string());
+        }
+    }
+    let changed = !remove.is_empty();
+    for key in remove {
+        pins.delete(&key)
+            .map_err(|_| super::document::invalid("NOTE citation erase"))?;
+    }
+    Ok(changed)
+}
+
+/// Retired heads can retain authenticated pins after the live head stopped
+/// citing their source. They are not all in the live reverse-pin index.
+fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    for key in super::documents::NOTE_PROPOSAL_DOC.scan_keys(&vault.store, txn, &[])? {
+        let Some(raw) = super::documents::NOTE_PROPOSAL_DOC.get(&vault.store, txn, &key)? else {
+            continue;
+        };
+        let doc = super::document::NoteDocument::load((key.0).0, &raw)?;
+        if remove_erased_pins(vault, txn, &doc)? {
+            doc.doc.commit();
+            // A normal snapshot would keep the removed quote in its oplog.
+            let clean = super::storage::state_copy(&doc.doc)?;
+            let retained = super::document::NoteDocument::load((key.0).0, &clean)?;
+            validate_pins(vault, txn, &retained.pins()?)?;
+            super::documents::NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &clean)?;
         }
     }
     Ok(())

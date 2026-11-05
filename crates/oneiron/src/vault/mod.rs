@@ -30,6 +30,7 @@ mod reader_table;
 mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
+mod tagging_arm;
 mod transactions;
 mod vector_evidence;
 
@@ -116,6 +117,10 @@ pub struct Vault {
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    /// The late tagging arming first-run setup installs after open: read
+    /// beside the open config by [`Vault::tagging_marker_config`]. In memory
+    /// only: a reopened vault arms from its config again.
+    tagging_arm: std::sync::OnceLock<crate::config::tagging::TaggingMarkerConfig>,
     /// Where vector evidence starts now: the configured floors until the host
     /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
     /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
@@ -161,6 +166,8 @@ pub struct Vault {
     /// The claim VAD payment worker's wake and the claims the write door
     /// handed it (FIX 11702). In memory only: the debt rows are the debt.
     pub(crate) claim_vad_payment: crate::store::claim_vad_payment::ClaimVadPayment,
+    /// Volatile revoke work from committed local cloud-registration erases.
+    pub(crate) cloud_registration_erase_revokes: crate::secret_custody::EraseRevokes,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
@@ -268,6 +275,15 @@ pub struct Vault {
 impl Drop for Vault {
     fn drop(&mut self) {
         self.store.finish_detached_writes(Some(&*self));
+    }
+}
+
+impl Vault {
+    /// The embedding width this vault opened with: its configured vector
+    /// dimensions, read where a host measures the opened vault. Read-only:
+    /// the width is fixed when the vault opens.
+    pub fn embedding_dimensions(&self) -> usize {
+        self.config.dimensions
     }
 }
 

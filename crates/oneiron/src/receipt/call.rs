@@ -30,7 +30,9 @@
 //! classes); erasing an actor is one-way and rewrites who called in each of
 //! its receipts to [`ERASED_CALL_IDENTITY`], keeping each receipt, its ref
 //! and its time, and drops the attempt each named
-//! (`Vault::erase_call_receipt_actor_in_txn`). No prune policy ages them out.
+//! (`Vault::erase_call_receipt_actor_in_txn`). A deferred receipt landing
+//! after that actor's hard-delete marker applies the same scrub in its own
+//! writer before storage, keeping the receipt. No prune policy ages them out.
 //!
 //! OF-568 L4: a call that held a live run states the attempt it ran inside
 //! ([`CallAttemptRef`]), as the host witnessed it at the hold
@@ -47,6 +49,10 @@
 //! request and those input versions, so the Coach reads an equal digest as
 //! the same action on the same inputs. A call whose inputs were not
 //! captured states none, and is never read as equal to another.
+
+mod call_agent_witness;
+
+pub(crate) use call_agent_witness::unread_call_receipt_actor_in_txn;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -509,7 +515,7 @@ impl Vault {
         let action_digest = input
             .inputs
             .map(|inputs| inputs.action_digest(&input.verb, &input.request_digest));
-        let receipt = CallReceipt {
+        let mut receipt = CallReceipt {
             receipt_ref: receipt_ref.clone(),
             at: self.store.clock.now_recorded_at(),
             transport: input.transport,
@@ -532,8 +538,46 @@ impl Vault {
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
-        CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+        if self.call_receipt_actor_erased_in_txn(&*txn, &receipt.actor_ref)? {
+            receipt.actor_ref = ERASED_CALL_IDENTITY.to_owned();
+            receipt.actor_class = ERASED_CALL_IDENTITY.to_owned();
+            if receipt.credential_ref.is_some() {
+                receipt.credential_ref = Some(ERASED_CALL_IDENTITY.to_owned());
+            }
+            receipt.attempt_ref = None;
+        }
+        let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+        let stored = CALL_RECEIPTS.decode_value(&stored)?;
+        call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
         Ok(receipt_ref)
+    }
+
+    /// Whether a late receipt names an actor the vault already hard-erased.
+    fn call_receipt_actor_erased_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor_ref: &str,
+    ) -> Result<bool> {
+        let Ok(actor) = EntityId::from_hex(actor_ref) else {
+            return Ok(false);
+        };
+        if actor.to_hex() != actor_ref
+            || !self.local_hard_delete_marker_exists_in_txn(txn, &actor)?
+        {
+            return Ok(false);
+        }
+        if let Some(raw) = self.get_raw_in(txn, &actor)?
+            && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+            && !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON
+                    | crate::registry::ENTITY_TYPE_MACHINE
+                    | crate::registry::ENTITY_TYPE_AGENT_DEF
+            )
+        {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// The final delivery of a call whose answer was replaced when it was
@@ -575,7 +619,9 @@ impl Vault {
                 served_records: Vec::new(),
                 ..original
             };
-            CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.decode_value(&stored)?;
+            call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
             Ok(Some(receipt_ref))
         })
     }
@@ -621,6 +667,7 @@ impl Vault {
             receipt.attempt_ref = None;
             CALL_RECEIPTS.put(self, wtxn, &id, &receipt)?;
         }
+        call_agent_witness::erase_actor_in_txn(self, wtxn, actor)?;
         Ok(())
     }
 }

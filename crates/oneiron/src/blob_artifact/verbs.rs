@@ -154,6 +154,10 @@ pub struct NativeOutputRequest {
     /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// Additional rows the caller declares it read. Waiting-proposal readers
+    /// must admit each row. This is not authority or a complete read log.
+    #[serde(default)]
+    pub read_rows: Vec<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -1084,20 +1088,21 @@ impl Memory<'_> {
         input: &DeckProposeRequest,
     ) -> MemoryResult<DeckProposeOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        match self.vault().propose_blob_artifact_deck_edit(
+        let (outcome, read_rows) = self.vault().propose_blob_artifact_deck_edit_with_reads(
             &artifact,
             &input.transaction.canonical(),
             &input.run_ref,
             input.context.clone(),
-        )? {
+        )?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
-                proposed: Some(self.vault().retain_edit_proposal(
+                proposed: Some(self.vault().retain_edit_proposal_with_reads(
                     &artifact,
                     &proposal,
                     input.made_by.as_ref(),
                     self.made_by_reader(input.made_by.as_ref())?,
-                    self.artifact_actor(),
-                    self.vault().now_recorded_at(),
+                    (self.artifact_actor(), self.vault().now_recorded_at()),
+                    &read_rows,
                 )?),
                 rejected: None,
             }),
@@ -1121,15 +1126,20 @@ impl Memory<'_> {
             name: input.name.clone(),
             media_type: input.media_type.clone(),
             bytes,
-            report: input.report.clone(),
+            report: input.report.to_string(),
             made_by: input.made_by.clone(),
         };
-        Ok(self.vault().propose_native_output(
+        let read_rows = input
+            .read_rows
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
             self.made_by_reader(output.made_by.as_ref())?,
-            self.artifact_actor(),
-            self.vault().now_recorded_at(),
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
         )?)
     }
 
