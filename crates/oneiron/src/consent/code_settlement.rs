@@ -161,7 +161,7 @@ impl Vault {
             authentication: holder.decision_id(),
             grant_ref,
             policy: frozen.policy.clone(),
-            policy_frontier: resolution.frontier_hash(),
+            policy_frontier: resolution.read_frontier_hash()?,
         }))
     }
 }
