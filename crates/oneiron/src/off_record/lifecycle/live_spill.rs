@@ -1,5 +1,6 @@
-//! Borrowed published spill bytes for the HOST's exact live-session capture.
+//! Frozen native spill bytes for the HOST's exact live-session capture.
 
+use std::collections::BTreeSet;
 use std::io::{self, Read};
 use std::sync::Arc;
 
@@ -10,8 +11,9 @@ use crate::code_run::CodeRunRawOutput;
 use crate::compaction::output::OutputRef;
 use crate::error::OffRecordError;
 use crate::session_overlay::{OverlayKeyspace, OverlaySnapshot, SnapshotMergeRow};
+pub(crate) use crate::store::LiveSpillRetention;
 use crate::store::result_body_rows::{RAW_OUTPUTS, STORED_FILE, split_row};
-use crate::store::{BODY_KEYS, BodyDir, BodyFile};
+use crate::store::{BODY_KEYS, BodyDir, FrozenSpill, body_file_name, sealed_body_file_name};
 use crate::vault::VaultId;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -42,7 +44,7 @@ impl LiveSessionSpillIdentity {
 pub(crate) struct PublishedSessionSpill {
     identity: LiveSessionSpillIdentity,
     snapshot: OverlaySnapshot,
-    dir: BodyDir,
+    dir: Option<BodyDir>,
     bodies: Vec<PublishedBody>,
 }
 
@@ -68,19 +70,19 @@ impl PublishedSessionSpill {
         mut visit: impl FnMut(&[u8], &[u8], &CodeRunRawOutput, &mut dyn Read) -> Result<()>,
     ) -> Result<()> {
         for body in &self.bodies {
+            let dir = self.dir.as_ref().ok_or(Error::CorruptedIndex(
+                "off-record published body directory missing",
+            ))?;
             let reference = &body.reference;
             let key = self.snapshot.staged_value(
                 OverlayKeyspace::VaultMeta,
                 &BODY_KEYS.key_bytes(&reference.hash),
             );
             let key = key.map(|bytes| BODY_KEYS.decode_value(bytes)).transpose()?;
-            if self.dir.sealed.is_some()
-                && key.as_ref().is_none_or(|key| key.is_vault() || key.inline)
-            {
+            if dir.sealed.is_some() && key.as_ref().is_none_or(|key| key.is_vault() || key.inline) {
                 return Err(Error::CorruptedIndex("off-record published body key"));
             }
-            let mut file = self
-                .dir
+            let mut file = dir
                 .open_reader(&reference.hash, reference.byte_len, key.as_ref())?
                 .ok_or(Error::CorruptedIndex("off-record published body missing"))?;
             let mut reader = CheckedBody {
@@ -101,7 +103,7 @@ impl PublishedSessionSpill {
 }
 
 struct CheckedBody<'file> {
-    file: &'file mut BodyFile,
+    file: &'file mut dyn Read,
     digest: blake3::Hasher,
     read: u64,
 }
@@ -118,11 +120,80 @@ impl Read for CheckedBody<'_> {
     }
 }
 
-/// This says nothing about unfinished writers or their written `.tmp` bytes.
-/// In particular NoPublishedSpill must never acknowledge a whole hold order.
-pub(super) enum PublishedSpillOutcome {
-    NoPublishedSpill,
-    CapturedPublishedSpill,
+/// Metadata from the native source, never fabricated producer occurrence facts.
+pub(crate) enum WrittenSpillMetadata<'source> {
+    Published {
+        raw_key: &'source [u8],
+        raw_file_row: &'source [u8],
+    },
+    NativeFile {
+        name: &'source str,
+        /// The native spill finish succeeded, not the producer's completion.
+        finished: bool,
+        physical_len: u64,
+    },
+}
+
+pub(crate) struct WrittenSessionSpill {
+    published: PublishedSessionSpill,
+    native: Vec<(FrozenSpill, OutputRef)>,
+}
+
+impl WrittenSessionSpill {
+    pub(crate) fn identity(&self) -> &LiveSessionSpillIdentity {
+        self.published.identity()
+    }
+
+    pub(crate) fn body_count(&self) -> usize {
+        self.published.body_count() + self.native.len()
+    }
+
+    pub(crate) fn for_each_written_body(
+        &self,
+        mut visit: impl FnMut(WrittenSpillMetadata<'_>, &CodeRunRawOutput, &mut dyn Read) -> Result<()>,
+    ) -> Result<()> {
+        self.published
+            .for_each_published_body(|raw_key, raw_file_row, reference, reader| {
+                visit(
+                    WrittenSpillMetadata::Published {
+                        raw_key,
+                        raw_file_row,
+                    },
+                    reference,
+                    reader,
+                )
+            })?;
+        for (body, reference) in &self.native {
+            let mut file = body.reader()?;
+            let mut reader = CheckedBody {
+                file: &mut file,
+                digest: blake3::Hasher::new(),
+                read: 0,
+            };
+            visit(
+                WrittenSpillMetadata::NativeFile {
+                    name: body.name(),
+                    finished: body.finished(),
+                    physical_len: body.physical_len()?,
+                },
+                &CodeRunRawOutput::of_ref(*reference),
+                &mut reader,
+            )?;
+            if reader.read != reference.byte_len
+                || reader.digest.finalize().as_bytes() != &reference.hash
+            {
+                return Err(Error::CorruptedIndex(
+                    "off-record captured native body changed",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) enum WrittenSpillOutcome {
+    NoWrittenSpill,
+    CapturedWrittenSpill,
 }
 
 impl Vault {
@@ -132,7 +203,7 @@ impl Vault {
         &self,
         session_ref: &str,
         instance: EntityId,
-        register: impl FnOnce() -> Result<T>,
+        register: impl FnOnce(LiveSpillRetention) -> Result<T>,
     ) -> Result<T> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
@@ -147,17 +218,18 @@ impl Vault {
                 session_ref: session_ref.to_owned(),
             }));
         }
-        register()
+        let retention = entry.live_spill.retain()?;
+        register(retention)
     }
 }
 
-pub(super) fn with_closing_published_spill(
+pub(super) fn with_closing_written_spill(
     vault: &Vault,
     session_ref: &str,
     entry: &Arc<OffRecordSessionEntry>,
     instance: EntityId,
-    capture: impl FnOnce(&PublishedSessionSpill) -> Result<()>,
-) -> Result<PublishedSpillOutcome> {
+    capture: impl FnOnce(&WrittenSessionSpill) -> Result<()>,
+) -> Result<WrittenSpillOutcome> {
     {
         let state = session_entry_state(entry)?;
         if state.gone || state.overlay_shell != instance || !state.record.closing {
@@ -168,6 +240,7 @@ pub(super) fn with_closing_published_spill(
     }
     let _custody = vault.store.gate_custody_read_guard()?;
     entry.overlay.seal_writes()?;
+    let frozen = entry.live_spill.freeze()?;
     let snapshot = entry.overlay.snapshot()?;
     let rows = snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| {
         key.starts_with(RAW_OUTPUTS.decl().prefix)
@@ -191,27 +264,56 @@ pub(super) fn with_closing_published_spill(
             });
         }
     }
-    if bodies.is_empty() {
-        return Ok(PublishedSpillOutcome::NoPublishedSpill);
-    }
-    let dir = vault
-        .store
-        .session_body_dir(session_ref, false)?
-        .ok_or(Error::CorruptedIndex(
+    let dir = vault.store.session_body_dir(session_ref, false)?;
+    if !bodies.is_empty() && dir.is_none() {
+        return Err(Error::CorruptedIndex(
             "off-record published body directory missing",
-        ))?;
-    let source = PublishedSessionSpill {
-        identity: LiveSessionSpillIdentity {
-            source_vault: vault.vault_id(),
-            session_ref: session_ref.to_owned(),
-            instance,
+        ));
+    }
+    let mut published_names = BTreeSet::new();
+    for body in &bodies {
+        let name = if dir.as_ref().is_some_and(|dir| dir.sealed.is_some()) {
+            let key = snapshot
+                .staged_value(
+                    OverlayKeyspace::VaultMeta,
+                    &BODY_KEYS.key_bytes(&body.reference.hash),
+                )
+                .map(|bytes| BODY_KEYS.decode_value(bytes))
+                .transpose()?
+                .filter(|key| !key.is_vault() && !key.inline)
+                .ok_or(Error::CorruptedIndex("off-record published body key"))?;
+            sealed_body_file_name(&body.reference.hash, &key.instance)
+        } else {
+            body_file_name(&body.reference.hash)
+        };
+        published_names.insert(name);
+    }
+    let mut native = Vec::new();
+    for body in frozen {
+        if published_names.contains(body.name()) {
+            continue;
+        }
+        let (hash, byte_len) = body.measured()?;
+        native.push((body, OutputRef { hash, byte_len }));
+    }
+    let source = WrittenSessionSpill {
+        published: PublishedSessionSpill {
+            identity: LiveSessionSpillIdentity {
+                source_vault: vault.vault_id(),
+                session_ref: session_ref.to_owned(),
+                instance,
+            },
+            snapshot,
+            dir,
+            bodies,
         },
-        snapshot,
-        dir,
-        bodies,
+        native,
     };
-    // The collector returns only after its actual durable, exact ACK. This
-    // source and its snapshot lease drop before ordinary overlay close.
+    if source.body_count() == 0 {
+        return Ok(WrittenSpillOutcome::NoWrittenSpill);
+    }
+    // No source/IO/entry lock is held here. The final snapshot and native
+    // files remain owned until the collector verifies its exact durable ACK.
     capture(&source)?;
-    Ok(PublishedSpillOutcome::CapturedPublishedSpill)
+    Ok(WrittenSpillOutcome::CapturedWrittenSpill)
 }

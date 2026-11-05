@@ -478,17 +478,17 @@ impl Vault {
         if close_overlay {
             #[cfg(unix)]
             if let Some(captures) = self.pending_live_spill_captures(session_ref, spill_instance)? {
-                match super::live_spill::with_closing_published_spill(
+                match super::live_spill::with_closing_written_spill(
                     self,
                     session_ref,
                     entry,
                     spill_instance,
-                    |source| captures.capture(self, source),
+                    |source| captures.capture_written(self, source),
                 )? {
-                    super::live_spill::PublishedSpillOutcome::NoPublishedSpill => {
-                        captures.no_published_spill()?;
+                    super::live_spill::WrittenSpillOutcome::NoWrittenSpill => {
+                        captures.no_written_spill()?;
                     }
-                    super::live_spill::PublishedSpillOutcome::CapturedPublishedSpill => {}
+                    super::live_spill::WrittenSpillOutcome::CapturedWrittenSpill => {}
                 }
             }
             // Session handles lend composed views from `&self`, so safe
