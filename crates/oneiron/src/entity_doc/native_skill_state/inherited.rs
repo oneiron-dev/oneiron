@@ -62,6 +62,8 @@ pub(in crate::entity_doc) fn reconcile_for_persist(
     if stored_head.entity != entity.to_hex()
         || stored_head.entity != head.entity
         || stored_head.document != head.document
+        || stored_head.storage_document != head.storage_document
+        || stored_head.sequence_document != head.sequence_document
         || stored_head.incarnation != head.incarnation
         || stored_head.field != head.field
         || stored_head.generation != head.generation

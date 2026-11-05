@@ -201,7 +201,7 @@ fn local_in(
     if head.entity != message.to_hex() || head.field != content() {
         return Ok(None);
     }
-    let slot = DocumentSlot::from_hex(&head.document)?;
+    let slot = storage::document_slot(&head)?;
     // A stale state vector is marked by its absence.
     let version = match vault
         .store
@@ -331,6 +331,8 @@ impl Vault {
                     entity: carried.entity.clone(),
                     incarnation: carried.incarnation.clone(),
                     document: carried.document.clone(),
+                    storage_document: None,
+                    sequence_document: None,
                     field: content(),
                     generation: 0,
                     pending: 0,
@@ -380,7 +382,7 @@ impl Vault {
                         storage::persist(self, txn, &message, &mut head, &shallow, None)?;
                         self.store.port_document_shallow_since_put(
                             txn,
-                            slot,
+                            storage::document_slot(&head)?,
                             &shallow.doc.shallow_since_vv().encode(),
                         )?;
                     }
@@ -494,13 +496,15 @@ fn switched_in(
             "snapshot does not join this vault's document",
         )));
     }
-    let left = std::mem::replace(&mut head.document, carried.document.clone());
+    let left = storage::document_slot(&head)?.to_hex();
+    head.storage_document = storage::free_document_storage(&vault.store, txn, &carried.document)?;
+    head.document = carried.document.clone();
     storage::move_pointer(&vault.store, txn, message, &head.document)?;
     storage::persist(vault, txn, message, &mut head, &doc, None)?;
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(
             txn,
-            DocumentSlot::from_hex(&head.document)?,
+            storage::document_slot(&head)?,
             &doc.doc.shallow_since_vv().encode(),
         )?;
     }

@@ -51,6 +51,8 @@ impl PurgedDocument<'_> {
         if *entity != self.entity
             || head.entity != self.head.entity
             || head.document != self.head.document
+            || head.storage_document != self.head.storage_document
+            || head.sequence_document != self.head.sequence_document
             || head.incarnation != self.head.incarnation
             || head.field != self.head.field
             || head.generation != self.head.generation
@@ -425,7 +427,7 @@ impl Vault {
             let shallow = purged.document();
             self.store.port_document_shallow_since_put(
                 txn,
-                DocumentSlot::from_hex(&h.document)?,
+                storage::document_slot(&h)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
             let receipt = PurgeReceipt {

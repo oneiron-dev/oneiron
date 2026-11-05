@@ -22,11 +22,6 @@ pub(crate) enum RecordDocumentPreparation<'selected, 'carrier> {
     Candidate(RecordDocumentCandidate<'selected, 'carrier>),
     /// The selected import returned or another import is current now.
     TransportEnded,
-    /// Actual local slot rows still need reconciliation before there is a
-    /// whole candidate. This is not a refusal of ordinary row admission.
-    UnheadedText {
-        slots: Vec<DocumentSlot>,
-    },
     /// The local native head stands; no pointer or document was written.
     Stands(DocumentMerge),
 }
@@ -78,36 +73,26 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             slots.push(destination);
         }
         if let Some(head) = &local {
-            let held = DocumentSlot::from_hex(&head.document)?;
+            let held = storage::document_slot(head)?;
             if !slots.contains(&held) {
                 slots.push(held);
             }
         }
-        let prior_documents = slots
+        let mut prior_documents = slots
             .into_iter()
             .map(|slot| Ok((slot, document_rows_digest(store, txn, slot)?)))
             .collect::<Result<Vec<_>>>()?;
         let mut local_snapshot = None;
         let (head, document, before, left_document, deferred_purge, prior_logical) = match local {
             None => {
-                // SKILL has no lazy native birth: its existing text may
-                // still live in the entity slot's sequence rows. A carried
-                // destination can also already hold retained physical rows.
-                // Do not silently overwrite either or claim a joined view.
-                let mut slots = vec![DocumentSlot::of(entity)];
-                let destination = DocumentSlot::from_hex(&source.native().document)?;
-                if destination != slots[0] {
-                    slots.push(destination);
-                }
-                let mut occupied = Vec::new();
-                for slot in slots {
-                    if store.port_document_present(txn, slot)? {
-                        occupied.push(slot);
-                    }
-                }
-                if !occupied.is_empty() {
-                    return Ok(RecordDocumentPreparation::UnheadedText { slots: occupied });
-                }
+                // An unheaded BODY is independent text, never retrospectively
+                // bound to the sender's map field. Keep its real sequence route
+                // and choose separate physical storage if the native id is used.
+                let sequence_document = store
+                    .port_document_present(txn, DocumentSlot::of(entity))?
+                    .then(|| entity.to_hex());
+                let storage_document =
+                    storage::free_document_storage(store, txn, &source.native().document)?;
                 // No native head is not a claim that the revision ledger
                 // is empty. Its actual generic bindings remain untouched.
                 let prior_logical = prior_raw.as_ref().and_then(|raw| {
@@ -120,6 +105,8 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                     entity: native.entity.clone(),
                     incarnation: native.incarnation.clone(),
                     document: native.document.clone(),
+                    storage_document,
+                    sequence_document,
                     field: source.field().clone(),
                     generation: 0,
                     pending: 0,
@@ -229,8 +216,15 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 } else {
                     document
                 };
-                let left = switched
-                    .then(|| std::mem::replace(&mut head.document, native.document.clone()));
+                let left = if switched {
+                    let previous = storage::document_slot(&head)?.to_hex();
+                    head.storage_document =
+                        storage::free_document_storage(store, txn, &native.document)?;
+                    head.document = native.document.clone();
+                    Some(previous)
+                } else {
+                    None
+                };
                 (
                     head,
                     document,
@@ -241,6 +235,10 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 )
             }
         };
+        let destination = storage::document_slot(&head)?;
+        if !prior_documents.iter().any(|(slot, _)| *slot == destination) {
+            prior_documents.push((destination, document_rows_digest(store, txn, destination)?));
+        }
         let logical = storage::body_with_document(
             source.field(),
             &selected.raw()[ENTITY_METADATA_HEADER_LEN..],
