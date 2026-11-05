@@ -93,8 +93,7 @@ impl ScopedTouchRecord {
             return Ok(false);
         };
         let body = crate::claim::decode_claim_body(&row.body, false)?;
-        let claim = CommClaim::from_claim_body(&body)
-            .map_err(super::generic_put_routing::source_event_error)?;
+        let claim = CommClaim::from_claim_body(&body)?;
         let standing = claim.is_standing();
         let CommClaimValue::LastTouch {
             party_ref,
@@ -130,12 +129,8 @@ pub(super) fn capture_scoped_touch_source(
     birth: &RowBirth,
 ) -> Result<ScopedTouchSource> {
     let world = body.world.unwrap_or_else(crate::claim::base_world_id);
-    let claim =
-        CommClaim::from_claim_body(body).map_err(super::generic_put_routing::source_event_error)?;
-    let canonical = claim
-        .value
-        .claim_body()
-        .map_err(super::generic_put_routing::source_event_error)?;
+    let claim = CommClaim::from_claim_body(body)?;
+    let canonical = claim.value.claim_body()?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
         || !same_touch_context_except_world(body, &canonical)
     {
