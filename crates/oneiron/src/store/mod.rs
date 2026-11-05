@@ -476,8 +476,9 @@ pub(crate) use key_custody::{
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
     CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
     Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
-    standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+    TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds, refuse_foreign_binding,
+    retirement_in_txn, route_custody, standing_retirements_in_txn,
+    unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_custody::{
     Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
