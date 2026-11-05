@@ -22,6 +22,11 @@ changed proposal returns an error and leaves the proposal open. The writer
 rechecks the owner, current imported skill, source alias, ref policy and the
 owner's content-hash block rule.
 
+The first imported record write carries a native exact-record `OwnerConsent`
+admission proof. Its constructor spends the one-use authorization in the same
+writer; there is no second spend and no fabricated held-out result. Native origin,
+hash-block and callable sandbox admission checks remain in force.
+
 One transaction commits the consent receipt and its spent one-use authorization,
 the actual package, capabilities, provenance and scan receipts, the skill's
 `Approved` stamp and matching package sidecar, and the proposal's

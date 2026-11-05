@@ -154,6 +154,7 @@ impl Vault {
                 &scans,
                 occurred,
                 at,
+                Some(&authorization),
             )?;
             let mut approved = self.read_skill_record_in_txn(txn, entity)?;
             approved.approval_status = ClaimApprovalStatus::Approved;
@@ -161,7 +162,6 @@ impl Vault {
             let mut saved = package.clone();
             saved.record = self.read_skill_record_in_txn(txn, entity)?;
             self.persist_hub_package_in_txn(txn, entity, &saved)?;
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             self.close_hub_update_in_txn(
                 txn,
                 proposal,
@@ -172,6 +172,46 @@ impl Vault {
         })?;
         self.mark_hub_ref(&tracked, &revision, true)?;
         Ok(ClaimApprovalStatus::Approved)
+    }
+
+    /// Admits the exact imported write with the owner's one-use consent.
+    /// Constructing the native proof spends it in this same transaction.
+    pub(super) fn apply_hub_update_record_with_consent_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+        authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Result<()> {
+        let data = crate::skill::encode_skill_record(record)?;
+        let proof = super::super::HubAdmissionProof::consent(
+            &self.store,
+            txn,
+            *entity,
+            &data,
+            authorization,
+        )?;
+        crate::batch::apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: *entity,
+                entity_type: crate::registry::ENTITY_TYPE_SKILL,
+                occurred,
+                learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: true,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof),
+        )
     }
 
     fn pending_hub_update_in_txn(
