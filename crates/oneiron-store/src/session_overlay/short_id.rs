@@ -1,3 +1,6 @@
+//! Session-scoped short-id allocation over the overlay keyspace.
+//! Entry [`SessionOverlay::alloc_session_short_id`]; served to readers via the `overlay_db` accessors.
+//! Owned by `session_overlay`; ids are content-hashed, never durable row ids.
 use std::str;
 use std::sync::Arc;
 
