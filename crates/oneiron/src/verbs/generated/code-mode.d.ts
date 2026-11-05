@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1300 code-mode rows (1260 host rows, 40 run rows), 4579 declarations.
+// Census: 1300 code-mode rows (1260 host rows, 40 run rows), 4583 declarations.
 // Replies: 1114 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -370,7 +370,9 @@ declare namespace Sdk {
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
-  type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null };
+  type FoldKind = "repl_output";
+  type FoldedOutput = { step: number; handles: string[]; ids: string[] };
+  type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type Care = "light" | "medium" | "high" | "xhigh" | "max";
   type BriefIntent = { need: string; care?: Care | null };
   type SpawnPins = { model?: string | null; width?: number | null; pattern?: string | null; budget?: number | null };
@@ -4346,8 +4348,8 @@ declare namespace Sdk {
   type RunAttached = { live_run: string };
   type FoldUnfoldRequest = { live_run: string; fold: string };
   type FoldHistoryRequest = { live_run: string; from: number; limit: number };
-  type FoldSpan = { fold: string; from: number; through: number };
-  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
+  type FoldSpan = { fold: string; from: number; through: number; kind?: FoldKind | null };
+  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type FoldUnfold = { fold: number; at: number };
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
@@ -4533,8 +4535,10 @@ declare namespace Sdk {
   type MemoryEdgeInput = { src: string; kind: string; tgt: string; weight?: number | null };
   type MemoryEdgeOutput = { src: EntityId; kind: string; tgt: EntityId };
   type FoldMarkOptions = { note?: string | null };
-  type FoldMarkInput = number[] | [number[], FoldMarkOptions];
-  type FoldMarked = { fold: string; from: number; through: number; pending: boolean };
+  type FoldStepRef = number | string;
+  type FoldByKind = { kind: FoldKind; from?: FoldStepRef | null; through?: FoldStepRef | null; before?: FoldStepRef | null; note?: string | null };
+  type FoldMarkInput = number[] | [number[], FoldMarkOptions] | FoldByKind;
+  type FoldMarked = { fold: string; from: number; through: number; pending: boolean; kind?: FoldKind | null };
   type FoldCompactInput = { note?: string | null };
   type FoldCompactAsked = { pending: string[]; applies: string };
   type FoldUnfoldInput = { fold: string };
@@ -4975,7 +4979,7 @@ declare namespace self {
     /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
     wakes(input: Sdk.LiveRunRequest<Sdk.BoardWakeRequest>): Promise<Sdk.BoardWakeReply | StoredResult>;
   };
-  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
+  const fold: { (span: readonly [number, number], options?: { note?: string | null }): Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>; (input: Sdk.FoldByKind): Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>; };
   const folds: ((input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>) & {
     /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
     describe(input: Sdk.FoldUnfoldRequest): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
