@@ -789,6 +789,9 @@ impl OneironClient {
                 "vault.skills.fit.set" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
+                "vault.skills.advisory_ask.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
@@ -6950,6 +6953,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.fit.set", value)
+    }
+    pub fn vault_skills_advisory_ask_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillAdvisoryAskRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.advisory_ask.set", value)
     }
     pub fn vault_skills_permissions_approve(
         &self,

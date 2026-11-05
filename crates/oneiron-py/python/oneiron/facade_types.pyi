@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4493 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1233 facade rows, 4499 declarations.
+Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5649,6 +5649,8 @@ class SkillCodeAutoInstallRequest(TypedDict):
 SkillFitChoice = Literal["rule_fit", "owner_asked"]
 class SkillFitSetRequest(TypedDict):
     setting: SkillFitChoice
+class SkillAdvisoryAskRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -15098,6 +15100,10 @@ class DeckEmissionRequest(TypedDict):
     name: str
     run_ref: str
     trigger: NotRequired[MadeByTrigger | None]
+class CreatedInput(TypedDict):
+    source: ArtifactVersionRef
+    content_hash: list[int]
+    provenance_kind: str
 class CreatedSlide(TypedDict):
     part: str
     sld_id: int
@@ -15112,6 +15118,8 @@ class DeckCreationRecord(TypedDict):
     outline_hash: list[int]
     template: ArtifactVersionRef
     template_hash: list[int]
+    asset_inputs: dict[str, CreatedInput]
+    font_inputs: list[CreatedInput]
     run_ref: str
     made_by: NotRequired[EntityId | None]
     slides: list[CreatedSlide]
@@ -15510,6 +15518,7 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
+    read_rows: NotRequired[list[str]]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -16690,6 +16699,7 @@ class UnsupportedCapability(TypedDict):
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
+    code: NotRequired[str | None]
 class FatalLlmErrorInvalidRequestDetail(TypedDict):
     InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
@@ -16936,7 +16946,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind
@@ -18884,6 +18894,16 @@ class EsignSigningEvidence(TypedDict):
     disclosure_version: NotRequired[str | None]
     consent: bool
     intent: EsignSigningIntent
+SealProfile = Literal["baseline_b", "baseline_t", "baseline_lt", "baseline_lta"]
+SealDegradeReason = Literal["timestamp_unavailable", "validation_material_unavailable", "document_timestamp_unavailable"]
+class SealDegrade(TypedDict):
+    requested: SealProfile
+    achieved: SealProfile
+    reason: SealDegradeReason
+class SealProfileEvidence(TypedDict):
+    requested: SealProfile
+    achieved: SealProfile
+    degraded: list[SealDegrade]
 class EsignEventDrafted(TypedDict):
     event: Literal["drafted"]
     document: EsignDocument
@@ -18922,6 +18942,7 @@ class EsignEventSealed(TypedDict):
     event: Literal["sealed"]
     rejected: bool
     item_sha256: list[list[int]]
+    item_profiles: list[SealProfileEvidence]
 class EsignEventResealRequested(TypedDict):
     event: Literal["reseal_requested"]
     owner: str
@@ -19154,6 +19175,7 @@ class EsignSealedItemView(TypedDict):
     sealed_artifact: str
     sealed_version: int
     sha256: str
+    profile: SealProfileEvidence
 class EsignSealedView(TypedDict):
     attempt_ref: str
     audit_chain_sha256: str
