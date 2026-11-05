@@ -70,13 +70,16 @@ async fn enroll(
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let mut body = payload.read(&server).await?;
-    let target = kit_target(&server, &body.target)?;
-    let machine = body
+    kit_target(&server, &body.target)?;
+    let named = body
         .machine
         .as_deref()
         .map(|machine| entity_id("machine", machine))
-        .transpose()?
-        .unwrap_or(target);
+        .transpose()?;
+    let machine = crate::owner::recovery_kit::authority_holding_machine(server.vault(), named)?
+        .ok_or_else(|| {
+            OwnerError::Refused("this install has no machine in the vault".to_owned())
+        })?;
     let receipt = blocking(move || -> OwnerResult<Receipt> {
         let issuer = server.host_issuer().ok_or_else(|| {
             OwnerError::Refused(
