@@ -383,6 +383,24 @@ pub trait ExtractionEncoder: Send + Sync {
         let _ = caller;
         self.infer(input, work)
     }
+    /// A call with the invocation's vault and host extraction permission.
+    /// Queued transports must retain the context and admit each actual send.
+    fn infer_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &crate::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        if let Err(error) = context.authorize(input, work, self.model_id(), self.locality()) {
+            return EncoderAttempt {
+                execution: None,
+                panicked: false,
+                result: Err(error),
+            };
+        }
+        self.infer_for(input, work, caller)
+    }
 }
 /// Not deserializable: persistence requires a locally validated shadow receipt.
 #[derive(Debug, Clone, Serialize)]

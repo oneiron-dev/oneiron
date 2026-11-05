@@ -114,6 +114,7 @@ pub(crate) fn stored_prior_from_read_in_txn(
             frozen.map(Box::new)
         } else if let Some(row) = CELL.get(&vault.store, txn, &source.digest())? {
             stored_prior_for_cell_in_txn(vault, txn, source, row.form, &row.of, &source.digest())?
+                .0
                 .fold
         } else {
             None
@@ -193,8 +194,8 @@ pub(crate) fn read_learning_in_txn(
             (form, cell.predicate.default_of(form).to_owned())
         }
     };
-    let prior = prior_for_cell_in_txn(vault, txn, cell, form, &of, &digest)?;
-    if prior.origin != PriorOrigin::Shipped {
+    let (prior, default_hint) = prior_for_cell_in_txn(vault, txn, cell, form, &of, &digest)?;
+    if prior.origin != PriorOrigin::Shipped && !default_hint {
         return Ok(LearningRead {
             estimate: Estimate::from_prior(prior, of, window),
             own: false,
@@ -287,9 +288,9 @@ fn vault_twin_read_in_txn(
     let Some(row) = CELL.get(&vault.store, txn, &digest)? else {
         return Ok(None);
     };
-    let prior = cell_prior_in_txn(vault, txn, &row, &digest)?;
+    let (prior, default_hint) = cell_prior_in_txn(vault, txn, &row, &digest)?;
     Ok(
-        (prior.origin != PriorOrigin::Shipped).then(|| LearningRead {
+        (prior.origin != PriorOrigin::Shipped && !default_hint).then(|| LearningRead {
             estimate: Estimate::from_prior(prior, row.of.clone(), window),
             own: false,
             borrowed_from: Some(twin.clone()),

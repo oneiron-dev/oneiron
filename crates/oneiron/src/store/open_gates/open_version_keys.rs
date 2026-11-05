@@ -131,7 +131,9 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 26;
+/// v27 hashes full run/group identifiers in their v2 secondary-index keys.
+/// v26 is reserved for the separately landing attempt-record v4 format.
+pub const STORAGE_ABI_VERSION: u16 = 27;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

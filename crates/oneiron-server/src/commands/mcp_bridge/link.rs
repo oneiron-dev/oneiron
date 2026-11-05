@@ -40,6 +40,11 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::bridge_auth::UpgradeHeaders;
 use crate::cli::{McpSurface, McpTransport};
+use oneiron_vault_contract::BINDING_HEADER;
+
+mod replies;
+
+use replies::{ReplyWaiter, route};
 
 /// How long opening the socket may take, inside the request's own deadline.
 /// A server that cannot be reached in this time gets this request over HTTP,
@@ -60,6 +65,9 @@ const SOCKET_SILENCE_LIMIT: Duration = Duration::from_secs(25);
 /// The largest frame the socket takes from the server: answers come in
 /// 64 KiB chunks, so this bounds memory per frame, not the answer.
 const SOCKET_MAX_INBOUND_FRAME: usize = 1024 * 1024;
+
+/// The existing allowance for the packed status/body envelope.
+const RPC_ANSWER_ENVELOPE_BYTES: usize = 64;
 
 /// What the server sent back for one request.
 pub(super) struct Exchange {
@@ -202,7 +210,7 @@ impl HttpLink {
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header("x-oneiron-binding", binding);
+            .header(BINDING_HEADER, binding);
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
             Some(encoded) => request
@@ -314,6 +322,7 @@ struct Outbound {
     id: u64,
     frame: Vec<u8>,
     chunks: mpsc::UnboundedSender<Inbound>,
+    max_reply_bytes: usize,
 }
 
 /// What the driver tells one waiting request.
@@ -398,7 +407,12 @@ impl SocketLink {
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
-            .send(Outbound { id, frame, chunks })
+            .send(Outbound {
+                id,
+                frame,
+                chunks,
+                max_reply_bytes: bounds.max_reply_bytes,
+            })
             .is_err()
         {
             return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
@@ -427,7 +441,11 @@ impl SocketLink {
                     Ok(Some(Inbound::Chunk { bytes, last })) => {
                         packed.extend_from_slice(&bytes);
                         // The answer is packed with its status around it.
-                        if packed.len() > bounds.max_reply_bytes.saturating_add(64) {
+                        if packed.len()
+                            > bounds
+                                .max_reply_bytes
+                                .saturating_add(RPC_ANSWER_ENVELOPE_BYTES)
+                        {
                             return Err(Carried::Cut(Cut::TooLarge));
                         }
                         if last {
@@ -540,7 +558,7 @@ impl SocketLink {
                 };
                 for (name, value) in [
                     ("authorization", format!("Bearer {bearer}")),
-                    ("x-oneiron-binding", binding),
+                    (BINDING_HEADER, binding),
                 ] {
                     let Ok(value) = value.parse() else {
                         return Opened::Failed("the slip is not a header value".to_owned());
@@ -617,7 +635,7 @@ impl SocketLink {
 /// the request it answers, and pings while quiet. When the socket ends, every
 /// request still waiting hears why.
 async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outbound>) {
-    let mut waiting: HashMap<u64, mpsc::UnboundedSender<Inbound>> = HashMap::new();
+    let mut waiting: HashMap<u64, ReplyWaiter> = HashMap::new();
     let mut ping = tokio::time::interval(SOCKET_PING_INTERVAL);
     let mut heard = tokio::time::Instant::now();
     let mut revoked = false;
@@ -627,7 +645,11 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                 let Some(request) = request else {
                     break "the bridge is ending".to_owned();
                 };
-                waiting.insert(request.id, request.chunks);
+                waiting.insert(request.id, ReplyWaiter {
+                    chunks: request.chunks,
+                    sent: 0,
+                    max_reply_bytes: request.max_reply_bytes,
+                });
                 if let Err(error) = socket.send(Message::Binary(request.frame.into())).await {
                     break format!("the MCP socket broke: {error}");
                 }
@@ -661,7 +683,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
             }
             _ = ping.tick() => {
                 // A request that gave up no longer waits.
-                waiting.retain(|_, chunks| !chunks.is_closed());
+                waiting.retain(|_, waiter| !waiter.chunks.is_closed());
                 // While calls run, the server may read nothing more until one
                 // ends; each call keeps its own deadline meanwhile.
                 if waiting.is_empty() && heard.elapsed() > SOCKET_SILENCE_LIMIT {
@@ -674,8 +696,8 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
         }
     };
     requests.close();
-    for chunks in waiting.into_values() {
-        let _ = chunks.send(if revoked {
+    for waiter in waiting.into_values() {
+        let _ = waiter.chunks.send(if revoked {
             Inbound::Revoked(why.clone())
         } else {
             Inbound::Closed(why.clone())
@@ -685,55 +707,6 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
         let _ = request.chunks.send(Inbound::Unsent);
     }
     let _ = socket.close().await;
-}
-
-/// One frame from the server, to the request it answers.
-fn route(
-    data: &[u8],
-    waiting: &mut HashMap<u64, mpsc::UnboundedSender<Inbound>>,
-) -> Result<(), String> {
-    #[derive(Deserialize)]
-    struct Envelope<P> {
-        #[serde(rename = "type")]
-        kind: String,
-        id: u64,
-        last: bool,
-        payload: P,
-    }
-    fn decode<P: serde::de::DeserializeOwned>(envelope: &[u8]) -> Result<Envelope<P>, String> {
-        rmp_serde::from_slice(envelope)
-            .map_err(|_| "the server sent the MCP socket an undecodable frame".to_owned())
-    }
-    let Some((&oneiron::sync::transport::TAG_RPC, envelope)) = data.split_first() else {
-        return Err("the server sent the MCP socket a frame that is not an app RPC".to_owned());
-    };
-    let head: Envelope<serde::de::IgnoredAny> = decode(envelope)?;
-    match head.kind.as_str() {
-        "rpc.res" => {
-            let chunk: Envelope<serde_bytes::ByteBuf> = decode(envelope)?;
-            if let Some(chunks) = waiting.get(&chunk.id) {
-                let _ = chunks.send(Inbound::Chunk {
-                    bytes: chunk.payload.into_vec(),
-                    last: chunk.last,
-                });
-            }
-            if chunk.last {
-                waiting.remove(&chunk.id);
-            }
-        }
-        "rpc.err" => {
-            let refusal: Envelope<serde_json::Value> = decode(envelope)?;
-            if let Some(chunks) = waiting.remove(&refusal.id) {
-                let _ = chunks.send(Inbound::Closed(format!(
-                    "the server refused the call on the MCP socket: {}",
-                    refusal.payload
-                )));
-            }
-        }
-        // A ping's echo, or anything newer this bridge does not read.
-        _ => {}
-    }
-    Ok(())
 }
 
 /// One request as an app RPC frame: the server's `mcp` method, carrying the

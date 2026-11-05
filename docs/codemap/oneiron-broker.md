@@ -11,20 +11,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/call.rs` | src | s | 2 struct · 1 enum · 2 fn | CallHeader, Outcome, ReplyHeader | One call's header and its reply's header, and the checks both sides run |
+| `src/body.rs` | src | s | 1 fn · 3 crate-vis | — | Fallible output buffers for request bodies |
+| `src/call.rs` | src | s | 2 struct · 1 enum · 4 fn | CallHeader, Outcome, ReplyHeader | One call's header and its reply's header, and the checks both sides run |
 | `src/call/tests.rs` | test | s | — | — | The checks both sides run on a call (ARCH-0069 `#broker-design`): the digest binds the exact request, and… |
 | `src/child.rs` | src | m | 1 struct · 3 fn | ChildBroker | The same-user broker (ARCH-0069 `#broker-same-user-open`) |
 | `src/child/tests.rs` | test | s | — | — | A live child that let its channel go is not taken as ready (Astra on #1416): the daemon replaces it, or… |
 | `src/cli.rs` | src | s | 1 fn | — | `oneiron-broker serve --socket <path> --client-uid <uid> [--extra-roots <pem>]… [--timeout-secs <n>]`: the… |
-| `src/client.rs` | src | m | 4 struct · 1 enum · 9 fn | BrokerClient, BrokerConnection, BrokerReply, BrokerStream, StreamPart | The daemon's side of the socket |
+| `src/client.rs` | src | m | 4 struct · 1 enum · 10 fn | BrokerClient, BrokerConnection, BrokerReply, BrokerStream, StreamPart | The daemon's side of the socket |
 | `src/deadline.rs` | src | s | 1 const · 6 crate-vis | — | One call's deadline (FIX 8559) |
 | `src/digest.rs` | src | s | 2 fn | — | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `src/error.rs` | src | s | 3 enum | BrokerError, Failure, Refusal | Why a call stopped |
-| `src/form.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
-| `src/frame.rs` | src | s | 4 const · 14 crate-vis | — | The wire between the daemon and the broker, one connection per call |
-| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 12 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
+| `src/form.rs` | src | m | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
+| `src/frame.rs` | src | m | 4 const · 15 crate-vis | — | The wire between the daemon and the broker, one connection per call |
+| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 13 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
 | `src/peer.rs` | src | s | 7 crate-vis | — | Who this process is, and closing its memory to processes of its own uid |
-| `src/send.rs` | src | m | 1 struct · 7 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
+| `src/responses.rs` | src | m | 1 crate-vis | — | OpenAI Responses over one broker-upgraded WebSocket per call |
+| `src/route_keys.rs` | src | s | 1 crate-vis | — | — |
+| `src/send.rs` | src | m | 1 struct · 9 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `src/serve.rs` | src | m | 1 struct · 1 fn · 1 const · 1 crate-vis | ServeConfig | The broker's side of the socket: one call per connection, from the daemon's uid only |
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
 | `src/shape.rs` | src | m | 1 enum · 7 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
