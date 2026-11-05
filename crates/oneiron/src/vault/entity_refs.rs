@@ -1,7 +1,7 @@
 //! Core half of `vault::entity_refs`: its store-layer items live in `oneiron_store::vault::entity_refs` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::vault::entity_refs::*;
+pub(crate) use oneiron_store::vault::entity_refs::*;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
