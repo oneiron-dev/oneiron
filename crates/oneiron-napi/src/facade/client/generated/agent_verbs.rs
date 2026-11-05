@@ -6696,6 +6696,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_repo_model_generate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.model.generate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_repo_proposal_submit(
         &self,
         input: serde_json::Value,
