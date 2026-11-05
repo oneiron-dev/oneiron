@@ -145,6 +145,10 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 // Updates may carry a birth projection too. Read the birth
                 // from the fully replayed document, not its snapshot's cache.
                 let document = EntityDoc::from_loro(storage::load(store, txn, &head)?.doc)?;
+                crate::entity_doc::metadata::require_retained_record_metadata(
+                    &document,
+                    &head.field,
+                )?;
                 if document.birth().entity != head.entity {
                     return Err(Error::CorruptedIndex("record document birth owner"));
                 }
@@ -198,6 +202,10 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                         .ok_or(invalid("local document snapshot"))?,
                 )?;
                 super::retained::require_retained_extension(&local, &document)?;
+                crate::entity_doc::metadata::require_retained_record_metadata(
+                    &document,
+                    &head.field,
+                )?;
                 if document.birth().entity != head.entity
                     || document.birth().at != incoming.birth().at
                 {
