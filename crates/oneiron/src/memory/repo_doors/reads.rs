@@ -236,16 +236,19 @@ impl Memory<'_> {
             return Err(Error::CorruptedIndex("work file was modified").into());
         }
         // A read that says why may get the base file's stored bytes, while
-        // the work still holds that file's masked copy (FIX 8960).
+        // the work still holds that file's masked copy (FIX 8960). The rows
+        // the revealed bytes stand on join the answer's (FIX 4300).
+        let mut rows = vec![own.stamp.repo];
         if let Some(why) = input.why.as_deref() {
-            if let Some(revealed) =
+            if let Some((revealed, joined)) =
                 self.repo_view_base_reveal(binding, &own, &input.path, &bytes, why)?
             {
                 bytes = revealed;
+                rows.extend(joined.into_iter().filter(|row| *row != own.stamp.repo));
             }
         }
         Ok(RepoRunAnswer {
-            rows: vec![own.stamp.repo],
+            rows,
             output: RepoViewsReadOutput {
                 work: input.work,
                 path: input.path,
@@ -311,9 +314,13 @@ impl Memory<'_> {
 
     /// The stored bytes of the work's base file `path`, for a read that
     /// says `why`, when the work still holds exactly that file's masked copy
-    /// and the file reveal delivered them (FIX 8960); `None` otherwise, and
-    /// the work's bytes are read as they are. A base the run's ref no longer
-    /// pins, or a file the run changed, asks nothing.
+    /// and the file reveal delivered them (FIX 8960), with the rows they
+    /// stand on: the anchor, the base snapshot CODE and the file's ASSET
+    /// (FIX 4300). `None` otherwise, and the work's bytes are read as they
+    /// are. A base the run's ref no longer pins, a file the run changed, or
+    /// a file the run's lane or the scope leaves out asks nothing: the file
+    /// is joined as `snapshots.read` joins it, and joined again before the
+    /// reveal asks.
     fn repo_view_base_reveal(
         &self,
         binding: &RepoRunBinding,
@@ -321,15 +328,17 @@ impl Memory<'_> {
         path: &str,
         held: &[u8],
         why: &str,
-    ) -> MemoryResult<Option<Vec<u8>>> {
+    ) -> MemoryResult<Option<(Vec<u8>, Vec<EntityId>)>> {
         let snapshot = bytes_to_hex_lower(&own.stamp.base_snapshot);
-        let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
+        let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [path]);
         let Ok(join) =
-            self.repo_read_join_under(binding, &own.admitted, &target, &snapshot, SnapshotRows)
+            self.repo_read_join_under(binding, &own.admitted, &target, &snapshot, FileRow(path))
         else {
             return Ok(None);
         };
+        let rows = join.rows;
         let mount = join.mount;
+        let artifact = mount.code_artifact_id();
         let Some(masked) = mount.read_file_projected(path)? else {
             return Ok(None);
         };
@@ -350,12 +359,18 @@ impl Memory<'_> {
             drop(txn);
             match again {
                 Ok(again)
-                    if again.stamp == own.stamp && again.admitted.same_lease(&own.admitted) =>
-                {
-                    Ok(())
-                }
-                _ => Err(changed()),
+                    if again.stamp == own.stamp && again.admitted.same_lease(&own.admitted) => {}
+                _ => return Err(changed()),
             }
+            // The file's own join again: the lane still reads its ASSET and
+            // the scope still holds it (FIX 4300).
+            let file = self
+                .repo_read_join_under(binding, &own.admitted, &target, &snapshot, FileRow(path))
+                .map_err(|_| changed())?;
+            if file.mount.code_artifact_id() != artifact {
+                return Err(changed());
+            }
+            Ok(())
         };
         let read = run_reveal_reader(self, binding, &own.admitted).snapshot_file_read_with_why(
             &mount,
@@ -367,7 +382,7 @@ impl Memory<'_> {
         )?;
         Ok(read
             .filter(|read| read.proof.is_some())
-            .map(|read| read.projection.into_bytes()))
+            .map(|read| (read.projection.into_bytes(), rows)))
     }
 }
 
