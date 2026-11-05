@@ -19,13 +19,12 @@
 //! permit or delivery facts, and nothing is admitted or charged again.
 
 use super::replay::{RecoveryGovernance, effect_result, recovery_governance};
-use super::types::OutboundEffectResult;
+use super::types::{FirstPassAdmission, OutboundEffectResult};
 use crate::Vault;
 use crate::connector_key::SlateDisposition;
 use crate::consent::EffectDigest;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, GateError};
-use crate::gate::ExternalEffectGateInput;
 use crate::outbound_consent::{SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn};
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentState,
@@ -49,18 +48,17 @@ enum Release {
         Option<(EffectDigest, Option<EntityId>)>,
     ),
     Current(Box<IntentLedgerRecord>),
+    LinearHold(
+        Box<IntentLedgerRecord>,
+        crate::linear_sync::LinearEffectHold,
+    ),
     CampaignHold(
         Box<IntentLedgerRecord>,
         crate::campaign::enrollment::CampaignLegHold,
     ),
 }
 
-struct Candidate {
-    gate: ExternalEffectGateInput,
-    digest: EffectDigest,
-    actor: Option<EntityId>,
-    family: PinnedApprovalFamily,
-}
+use super::ordinary_slate::OrdinaryCandidate as Candidate;
 
 fn candidate_in_txn(
     vault: &Vault,
@@ -74,29 +72,23 @@ fn candidate_in_txn(
                 digest: candidate.digest,
                 actor: Some(candidate.actor),
                 family: PinnedApprovalFamily::ScopedMcp,
+                mirror: None,
             }),
         );
     }
-    Ok(
-        super::ordinary_slate::candidate_in_txn(vault, txn, record)?.map(|candidate| Candidate {
-            gate: candidate.gate,
-            digest: candidate.digest,
-            actor: candidate.actor,
-            family: candidate.family,
-        }),
-    )
+    super::ordinary_slate::candidate_in_txn(vault, txn, record)
 }
 
 /// The last snapshot before `record`'s send: `None` lets the send go on;
-/// otherwise the result the pass ends with. `pass_proof` is the press this
-/// pass's own admission spent on this row, if it spent one.
+/// otherwise the result the pass ends with. `admission` is evidence from
+/// this pass's own writer, absent on every later replay.
 ///
 /// # Errors
 /// Storage errors.
 pub(super) fn send_boundary(
     vault: &Vault,
     record: &IntentLedgerRecord,
-    pass_proof: Option<EffectDigest>,
+    admission: Option<&FirstPassAdmission>,
     now_ms: u64,
     replayed: bool,
     campaign_node: Option<u64>,
@@ -120,8 +112,15 @@ pub(super) fn send_boundary(
         }
         RecoveryGovernance::NeverAllow => never_allow(vault, record, now_ms, replayed).map(Some),
         // The Gate admitted this pass only on the press it spent.
-        RecoveryGovernance::AlwaysAsk if pass_proof.is_some() => Ok(None),
-        RecoveryGovernance::AlwaysAsk => always_ask(vault, record, replayed, campaign_node),
+        RecoveryGovernance::AlwaysAsk
+            if admission.is_some_and(|admission| admission.primary_press.is_some())
+                && !super::linear_mirror::is_candidate(vault, record)? =>
+        {
+            Ok(None)
+        }
+        RecoveryGovernance::AlwaysAsk => {
+            always_ask(vault, record, replayed, campaign_node, admission)
+        }
     }
 }
 
@@ -154,6 +153,7 @@ fn always_ask(
     record: &IntentLedgerRecord,
     replayed: bool,
     campaign_node: Option<u64>,
+    admission: Option<&FirstPassAdmission>,
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
     let release = vault.try_with_write_txn(|wtxn| -> Result<Release, IntentLedgerError> {
         let current =
@@ -169,6 +169,19 @@ fn always_ask(
             super::campaign_leg::hold_in_txn(vault, wtxn, (&current).into(), campaign_node)?
         {
             return Ok(Release::CampaignHold(Box::new(current), hold));
+        }
+        if candidate.mirror.is_some() {
+            return Ok(
+                match super::linear_mirror::release_in_txn(
+                    vault, wtxn, &current, &candidate, admission,
+                )? {
+                    super::linear_mirror::LinearRelease::Send => Release::Send,
+                    super::linear_mirror::LinearRelease::Spent => Release::Spent,
+                    super::linear_mirror::LinearRelease::Held(hold) => {
+                        Release::LinearHold(Box::new(current), hold)
+                    }
+                },
+            );
         }
         match setting_in_txn(vault, wtxn, &current)? {
             SlateDisposition::AlwaysAsk => {}
@@ -215,6 +228,9 @@ fn always_ask(
     })?;
     match release {
         Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
+        Release::LinearHold(current, hold) => Ok(Some(super::linear_mirror::held_result(
+            &current, hold, replayed,
+        ))),
         Release::CampaignHold(current, hold) => Ok(Some(super::campaign_leg::held_result(
             &current, hold, replayed,
         ))),
@@ -256,7 +272,7 @@ pub(super) fn setting_in_txn(
 
 /// `record` kept Pending for the owner's press, naming the digest and actor
 /// of `target` when the row recomposes one.
-fn held(
+pub(super) fn held(
     record: &IntentLedgerRecord,
     replayed: bool,
     target: Option<(EffectDigest, Option<EntityId>)>,

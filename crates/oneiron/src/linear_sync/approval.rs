@@ -301,6 +301,14 @@ pub(super) fn held(
     }
 }
 
+/// The native pair's selected hold for a recorded outbound retry.
+pub(crate) fn linear_outbound_pair_hold(
+    pair: &PairAdmission,
+    actors: [(EntityId, &ExternalEffectGateInput); 2],
+) -> LinearEffectHold {
+    held(pair, actors)
+}
+
 /// The recorded outbound door's co-actor (OF-427): the TASK revision's
 /// writer, bound under the admission writer, with the press its earlier
 /// admission of this operation kept, and a keeper for the press this
@@ -318,6 +326,7 @@ pub(crate) fn linear_writer_co_actor_in_txn(
     Ok(CoActorEffect {
         effect,
         kept_press,
+        payload_source: Some(request.task_ref),
         keep_press: Box::new(
             move |vault: &Vault, txn: &mut heed::RwTxn<'_>, digest: EffectDigest| {
                 // A press that names no writer (this door's writer effect

@@ -163,6 +163,8 @@ pub(crate) struct CoActorAdmission {
 pub(crate) struct CoActorEffect {
     pub(crate) effect: ExternalEffectGateInput,
     pub(crate) kept_press: Option<AdmittedApproval>,
+    /// The native source whose copied bytes this mutation retains.
+    pub(crate) payload_source: Option<EntityId>,
     pub(crate) keep_press: CoActorKeepPress,
 }
 
@@ -196,6 +198,19 @@ pub(super) fn keep_spent_presses(
         keep_press_after_admission(vault, &subject, |wtxn| keep(vault, wtxn, spent))?;
     }
     Ok(())
+}
+
+/// Evidence from this call's own committed admission, never from payload bytes.
+/// The co-actor is the exact input its callback evaluated as Allow under that
+/// same writer, including when it needed no press or its later keeper failed.
+pub(super) struct FirstPassAdmission {
+    pub(super) primary_press: Option<EffectDigest>,
+    pub(super) co_actor: Option<FirstPassCoActor>,
+}
+
+pub(super) struct FirstPassCoActor {
+    pub(super) effect: ExternalEffectGateInput,
+    pub(super) spent_press: Option<EffectDigest>,
 }
 
 /// A deterministic count bound on one server and tool. Admission holds the

@@ -8,6 +8,7 @@ mod budget;
 mod campaign_leg;
 mod connector_slate;
 pub(crate) mod dedupe;
+mod linear_mirror;
 mod ordinary_slate;
 mod replay;
 mod types;
