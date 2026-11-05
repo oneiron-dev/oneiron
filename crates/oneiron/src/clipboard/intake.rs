@@ -73,7 +73,7 @@ impl Vault {
         Ok(clip)
     }
 
-    /// Lists ordinary clips newest first under one owner-checked snapshot.
+    /// Lists active ordinary clips newest first under one owner-checked snapshot.
     /// `before` is an exclusive (copied_at, clip) position. Every positive
     /// requested limit is served; zero requests no rows. Private copies are
     /// not joined. Only the selected page's text is retained in the result.
@@ -85,7 +85,7 @@ impl Vault {
     ) -> Result<Vec<ClipboardEntry>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let mut rows = self.clipboard_metadata_in_txn(&txn)?;
+        let mut rows = self.clipboard_metadata_in_txn(&txn, true)?;
         rows.sort_by(|a, b| (b.copied_at, b.clip).cmp(&(a.copied_at, a.clip)));
         let mut entries = Vec::new();
         for row in rows
@@ -103,6 +103,7 @@ impl Vault {
     pub(super) fn clipboard_metadata_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        active_only: bool,
     ) -> Result<Vec<ClipMetadata>> {
         let world = clipboard_world_id()?;
         let mut rows = Vec::new();
@@ -110,7 +111,12 @@ impl Vault {
             return Ok(rows);
         }
         for clip in self.claims_for_subject_in_txn(txn, &world)? {
-            match self.clipboard_entry_in_txn(txn, clip) {
+            let entry = self.clipboard_claim_in_txn(txn, clip).and_then(|body| {
+                body.filter(|body| !active_only || body.lifecycle == ClaimLifecycleStatus::Active)
+                    .map(|body| clipboard_entry(clip, &body))
+                    .transpose()
+            });
+            match entry {
                 Ok(Some(entry)) => rows.push(ClipMetadata {
                     clip,
                     copied_at: entry.copied_at,
@@ -137,9 +143,8 @@ impl Vault {
         };
         Ok((body.predicate == PREDICATE_CLIPBOARD_CAPTURED
             && body.world == Some(world)
-            && body.subject == ClaimSubject::Entity(world)
-            && body.lifecycle == ClaimLifecycleStatus::Active)
-            .then_some(body))
+            && body.subject == ClaimSubject::Entity(world))
+        .then_some(body))
     }
 
     pub(super) fn clipboard_entry_in_txn(
@@ -150,24 +155,28 @@ impl Vault {
         let Some(body) = self.clipboard_claim_in_txn(txn, clip)? else {
             return Ok(None);
         };
-        let fields = body
-            .value
-            .as_map()
-            .ok_or(Error::InvalidClaimBody("Clipboard value is not a map"))?;
-        let text = fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(KEY_TEXT))
-            .and_then(|(_, value)| value.as_str())
-            .ok_or(Error::InvalidClaimBody("Clipboard value has no text"))?;
-        let copied_at = fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(KEY_COPIED_AT))
-            .and_then(|(_, value)| value.as_u64())
-            .ok_or(Error::InvalidClaimBody("Clipboard value has no copied_at"))?;
-        Ok(Some(ClipboardEntry {
-            clip,
-            copied_at,
-            text: text.to_owned(),
-        }))
+        clipboard_entry(clip, &body).map(Some)
     }
+}
+
+fn clipboard_entry(clip: EntityId, body: &ClaimBody) -> Result<ClipboardEntry> {
+    let fields = body
+        .value
+        .as_map()
+        .ok_or(Error::InvalidClaimBody("Clipboard value is not a map"))?;
+    let text = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(KEY_TEXT))
+        .and_then(|(_, value)| value.as_str())
+        .ok_or(Error::InvalidClaimBody("Clipboard value has no text"))?;
+    let copied_at = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(KEY_COPIED_AT))
+        .and_then(|(_, value)| value.as_u64())
+        .ok_or(Error::InvalidClaimBody("Clipboard value has no copied_at"))?;
+    Ok(ClipboardEntry {
+        clip,
+        copied_at,
+        text: text.to_owned(),
+    })
 }
