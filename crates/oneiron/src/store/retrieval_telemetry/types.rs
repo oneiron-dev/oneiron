@@ -471,6 +471,13 @@ pub struct RetrievalRunRecord {
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<super::state::RetrievalTurn>,
+    /// Id of the query expander whose expansion actually ran for this record
+    /// (FIX 4451, L05 YES 11:05): the `HydeExpander::id` label of the SAME
+    /// expander that produced the run's expansion. None stays honest for
+    /// runs with no attributable expansion; a configured-but-unused expander
+    /// is never stamped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_expander_id: Option<String>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -534,6 +541,7 @@ impl RetrievalRunRecord {
             policy_trace: None,
             replay_inputs: None,
             turn: None,
+            query_expander_id: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,
@@ -572,6 +580,15 @@ impl RetrievalRunRecord {
 
     pub(crate) fn with_trace(mut self, trace: Option<RetrievalTrace>) -> Self {
         self.trace = trace;
+        self
+    }
+
+    /// Stamps the id of the query expander whose expansion actually ran for
+    /// this record (FIX 4451, L05 YES 11:05). The caller passes the label of
+    /// the SAME expander that produced the run's expansion; None stays
+    /// honest for runs with no attributable expansion.
+    pub(crate) fn with_query_expander_id(mut self, id: Option<String>) -> Self {
+        self.query_expander_id = id;
         self
     }
 }
