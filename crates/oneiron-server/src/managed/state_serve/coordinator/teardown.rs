@@ -139,9 +139,13 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
     if let Some(oversight) = handles.oversight {
         oversight.stop().await;
     }
-    // Every writer has stopped: each HOST prospective order drains its last
-    // entries and names its next ordinal before the vault closes.
+    // Every writer has stopped, its own threads included: each HOST
+    // prospective order drains its last entries and names its next ordinal
+    // before the vault closes.
     if let Some(legal) = handles.host_legal {
+        if let Some(state) = &handles.state {
+            state.admitted_writes_ended().await;
+        }
         legal.finish().await;
     }
     // An inherited socket belongs to the supervisor. Only paths actually

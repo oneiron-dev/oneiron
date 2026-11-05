@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::Vault;
-use oneiron::deletion::HostLegalChannel;
+use oneiron::deletion::{HostLegalChannel, HostLegalConnectionRole};
 use tokio::sync::oneshot;
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 
@@ -114,9 +114,8 @@ impl HostLegalService {
     }
 }
 
-/// Each accepted connection's shutdown handle, and whether it carries a
-/// prospective order.
-type Accepted = HashMap<Id, (UnixStream, Arc<AtomicBool>)>;
+/// Each accepted connection's shutdown handle and its role.
+type Accepted = HashMap<Id, (UnixStream, Arc<HostLegalConnectionRole>)>;
 
 async fn serve(
     channel: HostLegalChannel,
@@ -178,11 +177,11 @@ async fn serve(
                         continue;
                     }
                 };
-                let prospective = connection.prospective_flag();
+                let role = connection.role();
                 let vault = Arc::clone(&vault);
                 let cancelled = Arc::clone(&cancelled);
                 let worker = workers.spawn_blocking(move || connection.run(&vault, &cancelled));
-                active.insert(worker.id(), (stream, prospective));
+                active.insert(worker.id(), (stream, role));
             }
         }
     };
@@ -226,18 +225,17 @@ fn quiet_captures(vault: &Vault, cancelled: &AtomicBool, active: &Accepted) {
     if let Err(error) = vault.stop_live_host_legal_captures() {
         tracing::warn!(%error, "HOST legal live captures did not stop");
     }
-    for (stream, prospective) in active.values() {
-        if !prospective.load(Ordering::Acquire) {
+    for (stream, role) in active.values() {
+        if role.close_unless_prospective() {
             let _ = stream.shutdown(Shutdown::Both);
         }
     }
 }
 
-/// Whether every connection still running carries a prospective order.
+/// Whether every connection still running carries a prospective order: a
+/// closed one has not joined yet.
 fn only_prospective(active: &Accepted) -> bool {
-    active
-        .values()
-        .all(|(_, prospective)| prospective.load(Ordering::Acquire))
+    active.values().all(|(_, role)| role.is_prospective())
 }
 
 fn joined(completed: Result<(Id, oneiron::Result<()>), JoinError>, active: &mut Accepted) {

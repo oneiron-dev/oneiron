@@ -8,7 +8,7 @@ mod live;
 mod messages;
 mod outbox;
 
-pub use auth::{HostLegalChannel, HostLegalConnection};
+pub use auth::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
 pub(crate) use live::HostLegalCaptures;
 
 use std::io::{self, Write};
@@ -75,8 +75,13 @@ impl HostLegalConnection {
         }
         if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
             // Teardown's stop trigger leaves this stream open; the final
-            // drain, a release or the order's term ends it.
-            self.prospective.store(true, Ordering::Release);
+            // drain, a release or the order's term ends it. A connection the
+            // trigger already closed never becomes prospective.
+            if !self.role.claim_prospective() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
             return self.run_prospective(vault, request, public);
         }
         if let CaptureScope::Messages(ids) = &request.scope {

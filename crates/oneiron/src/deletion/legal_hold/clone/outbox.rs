@@ -192,9 +192,17 @@ pub(super) fn release(vault: &Vault, key: OrderKey) -> Result<()> {
 /// only.
 #[derive(Default)]
 pub(crate) struct ProspectiveAttempts {
-    attempts: Mutex<Vec<Arc<ProspectiveAttempt>>>,
+    attempts: Mutex<Registered>,
     /// Set by the final drain once every writer of this process stopped.
     finishing: AtomicBool,
+}
+
+/// The attached attempts, and whether managed stop closed registration: an
+/// attempt that would attach after stop cancelled all is refused instead.
+#[derive(Default)]
+struct Registered {
+    attempts: Vec<Arc<ProspectiveAttempt>>,
+    closed: bool,
 }
 
 pub(super) struct ProspectiveAttempt {
@@ -230,20 +238,26 @@ impl ProspectiveAttempts {
         self.attempts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .attempts
             .clone()
     }
 
-    /// Cancels every attempt of `key` (every attempt when `None`) and shuts
-    /// its socket. Returns them, for a caller that must wait for them.
+    /// Cancels every attempt of `key` (every attempt when `None`, which also
+    /// closes registration) and shuts its socket. Returns them, for a caller
+    /// that must wait for them.
     pub(super) fn cancel(&self, key: Option<OrderKey>) -> Vec<Arc<ProspectiveAttempt>> {
-        let matched: Vec<_> = self
-            .attempts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .filter(|attempt| key.is_none_or(|key| attempt.key == key))
-            .cloned()
-            .collect();
+        let matched: Vec<_> = {
+            let mut registered = self.attempts.lock().unwrap_or_else(PoisonError::into_inner);
+            if key.is_none() {
+                registered.closed = true;
+            }
+            registered
+                .attempts
+                .iter()
+                .filter(|attempt| key.is_none_or(|key| attempt.key == key))
+                .cloned()
+                .collect()
+        };
         for attempt in &matched {
             attempt.cancelled.store(true, Ordering::Release);
             let _ = attempt.stream.shutdown(Shutdown::Both);
@@ -267,11 +281,19 @@ impl<'a> Attached<'a> {
             ended: Mutex::new(false),
             ended_changed: Condvar::new(),
         });
-        attempts
+        let mut registered = attempts
             .attempts
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(Arc::clone(&attempt));
+            .unwrap_or_else(PoisonError::into_inner);
+        if registered.closed {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "legal prospective capture stopped",
+            )
+            .into());
+        }
+        registered.attempts.push(Arc::clone(&attempt));
+        drop(registered);
         Ok(Self { attempts, attempt })
     }
 }
@@ -282,6 +304,7 @@ impl Drop for Attached<'_> {
             .attempts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .attempts
             .retain(|attempt| !Arc::ptr_eq(attempt, &self.attempt));
         *self
             .attempt
