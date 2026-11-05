@@ -32,6 +32,7 @@ pub mod esign_delivery;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+mod http_headers;
 mod ledger;
 /// The wake ledger's report in bounded pages (FIX 9549).
 mod ledger_pages;
@@ -98,6 +99,7 @@ pub use self::ctl::{
     ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
 };
+pub use self::http_headers::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
     LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
