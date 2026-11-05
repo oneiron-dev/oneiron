@@ -198,9 +198,10 @@ pub(super) fn apply_claim_candidate(
         }
         let found = stored_entity_type(store, wtxn, &facet)?;
         if found != Some(crate::registry::ENTITY_TYPE_FACET) {
-            return Err(Error::Registry(
-                crate::error::RegistryError::InvalidFacet { facet, found },
-            ));
+            return Err(Error::Registry(crate::error::RegistryError::InvalidFacet {
+                facet,
+                found,
+            }));
         }
         apply_edge_with_created_at(
             store,
