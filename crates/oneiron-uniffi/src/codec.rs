@@ -38,6 +38,7 @@ use crate::error::OneironError;
 
 mod ai_options;
 mod claims;
+mod core_write;
 mod key_value;
 mod proposal_results;
 mod proposals;
