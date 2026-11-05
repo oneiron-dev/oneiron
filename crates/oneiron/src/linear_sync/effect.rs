@@ -195,6 +195,41 @@ pub(crate) fn linear_effect_writer_in_txn(
     use crate::outbound_intent_ledger::IntentLedgerError;
     let refused =
         || IntentLedgerError::InvalidInput("linear effect is not the current mirror operation");
+    let (effect, digest, writer) = linear_effect_writer_view_in_txn(vault, txn, request)?;
+    let bound = EFFECT_AUTHORIZED
+        .get(&vault.store, txn, &request.operation_id)?
+        .map(|kept| kept.digest == digest);
+    match bound {
+        Some(false) => return Err(refused()),
+        Some(true) => {}
+        None => EFFECT_AUTHORIZED.put(
+            &vault.store,
+            txn,
+            &request.operation_id,
+            &EffectBinding {
+                digest,
+                writer,
+                scheduler: request.scheduler_actor,
+                task: request.task_ref,
+            },
+        )?,
+    }
+    Ok(effect)
+}
+
+/// The read-only part of the native co-actor binding. The request is the
+/// original operation; current TASK state only verifies it.
+fn linear_effect_writer_view_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &LinearEffectRequest,
+) -> Result<
+    (ExternalEffectGateInput, [u8; 32], EntityId),
+    crate::outbound_intent_ledger::IntentLedgerError,
+> {
+    use crate::outbound_intent_ledger::IntentLedgerError;
+    let refused =
+        || IntentLedgerError::InvalidInput("linear effect is not the current mirror operation");
     let linear = |error: LinearSyncError| match error {
         LinearSyncError::Store(error) => IntentLedgerError::from(error),
         _ => refused(),
@@ -242,25 +277,32 @@ pub(crate) fn linear_effect_writer_in_txn(
         crate::provenance::validate_actor_class(entity_type, actor_class)?;
     }
     let digest = binding(request, writer.actor_ref).map_err(linear)?;
-    let bound = EFFECT_AUTHORIZED
-        .get(&vault.store, txn, &request.operation_id)?
-        .map(|kept| kept.digest == digest);
-    match bound {
-        Some(false) => return Err(refused()),
-        Some(true) => {}
-        None => EFFECT_AUTHORIZED.put(
-            &vault.store,
-            txn,
-            &request.operation_id,
-            &EffectBinding {
-                digest,
-                writer: writer.actor_ref,
-                scheduler: request.scheduler_actor,
-                task: request.task_ref,
-            },
-        )?,
+    Ok((
+        effect(writer.actor_ref, class, request),
+        digest,
+        writer.actor_ref,
+    ))
+}
+
+/// Previews only an already bound native mirror operation for a question.
+/// It validates the same current operation and writer as admission, without
+/// creating a binding or spending or keeping a press.
+pub(crate) fn linear_effect_writer_preview_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &LinearEffectRequest,
+) -> Result<Option<ExternalEffectGateInput>, crate::outbound_intent_ledger::IntentLedgerError> {
+    use crate::outbound_intent_ledger::IntentLedgerError;
+    let Some(kept) = EFFECT_AUTHORIZED.get(&vault.store, txn, &request.operation_id)? else {
+        return Ok(None);
+    };
+    let (effect, digest, _) = linear_effect_writer_view_in_txn(vault, txn, request)?;
+    if kept.digest != digest {
+        return Err(IntentLedgerError::InvalidInput(
+            "linear effect is not the current mirror operation",
+        ));
     }
-    Ok(effect(writer.actor_ref, class, request))
+    Ok(Some(effect))
 }
 
 impl Vault {
