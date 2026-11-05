@@ -4827,13 +4827,13 @@ export type GraphFsKind = "directory" | "file" | "symlink" | "cursor"
 /** `oneiron::memory::graph_fs_doors::types::GraphFsEntryView` */
 export type GraphFsEntryView = { name: string; kind: GraphFsKind; target?: string | null; cursor?: string | null; byte_len?: number | null }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsDirectoryView` */
-export type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null }
+export type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null; read_receipt?: ScopedReadReceipt | null }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsEncoding` */
 export type GraphFsEncoding = "utf8" | "base64"
 /** `oneiron::memory::graph_fs_doors::types::GraphFsPlan` */
 export type GraphFsPlan = "pushdown" | "walk"
 /** `oneiron::memory::graph_fs_doors::types::GraphFsOutput` */
-export type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan }
+export type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan; read_receipt?: ScopedReadReceipt | null }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkRequest` */
 export type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkView` */

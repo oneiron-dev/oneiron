@@ -223,7 +223,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/mod.rs` | src | s | 8 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
 | `src/api/context_pack/reader.rs` | src | s | 2 crate-vis | — | The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent… |
 | `src/api/context_pack/resolve.rs` | src | m | 11 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
-| `src/api/context_pack/response.rs` | src | m | 30 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
+| `src/api/context_pack/response.rs` | src | L | 30 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
 | `src/api/context_pack/response_limits.rs` | src | s | 3 crate-vis | — | The response limits a context-pack response is cut to after its scoped filter, and the stats a cut pack shows |
 | `src/api/conversation_dag/append.rs` | src | s | 4 crate-vis | — | The DAG append doors' wire conversions (FIX 9771): a request becomes the engine's append of a TURN or of a… |
 | `src/api/conversation_dag/mod.rs` | src | m | 18 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
@@ -1054,7 +1054,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/evidence.rs` | src | s | 8 crate-vis | — | Where vector evidence starts in a shipped model's space, and the profile its floors hold for |
 | `src/embedder/local/isq.rs` | src | s | 7 crate-vis | — | Quantise-at-load, in one function |
 | `src/embedder/local/mod.rs` | src | m | 24 crate-vis | — | The `local` provider: the model runs in this process, on candle |
-| `src/embedder/local/model_manager.rs` | src | L | 25 crate-vis | — | Where the local model's files live, and how they get there |
+| `src/embedder/local/model_manager.rs` | src | L | 26 crate-vis | — | Where the local model's files live, and how they get there |
 | `src/embedder/local/model_manager/revision.rs` | src | s | 12 crate-vis | — | One hub ref, one commit (FIX 9489) |
 | `src/embedder/local/model_manager/tests.rs` | test | s | 1 crate-vis | — | Servers sharing one models directory |
 | `src/embedder/local/prompts.rs` | src | s | 3 crate-vis | — | What a query and a document carry before their text, read from the checkpoint's own… |
