@@ -3,9 +3,10 @@
 //!
 //! A held call parks its code-mode run on a durable wait keyed by its call
 //! ref. Neither the gate nor the consent doors send the call or answer the
-//! wait when the owner decides; this loop does, at startup and every
-//! [`CONNECTOR_SETTLE_INTERVAL`]. Each pass lists the engine's pending calls
-//! and, on a blocking worker, resumes each one that is due: the send happens
+//! wait when the owner decides; this loop does, at startup, after a committed
+//! consent answer, and every [`CONNECTOR_SETTLE_INTERVAL`]. Each pass lists
+//! the engine's pending calls and, on a blocking worker, resumes each one
+//! that is due: the send happens
 //! there, never inside a write transaction. A terminal outcome's reply is
 //! delivered to the wait its call ref names (the run parked on it, or a
 //! caller that reads the settled wait later), and only then acknowledged, so
@@ -25,7 +26,8 @@
 //! resume runs the call's gate again, so a call that stays held is retried
 //! after a doubling delay, from [`CONNECTOR_SETTLE_INTERVAL`] up to
 //! [`CONNECTOR_SETTLE_MAX_BACKOFF`], kept in memory and reset by a restart.
-//! There is no notification of a consent answer to wake the loop sooner.
+//! A committed consent answer wakes the next admitted pass and rechecks
+//! unpaced calls against their live gate, without waiting for that backoff.
 //! A call a full count-bound budget window paces skips its backoff: it waits
 //! while the window is shut and goes in the first pass after it opens, and
 //! the pass admits again the connector event wakes such a window paced
@@ -98,7 +100,8 @@ impl SyncServer {
     /// Starts the settler on a host with a write freeze: each pass is
     /// admitted through `admit` and holds that admission on its blocking
     /// thread through every expiry, repair, send and delivery it writes. A
-    /// refused pass settles nothing and waits its interval.
+    /// refused pass settles nothing and retains its consent recheck until
+    /// admitted; the same interval or a new consent answer retries admission.
     pub(crate) fn spawn_connector_settler_admitted(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -109,36 +112,43 @@ impl SyncServer {
 
 async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
     let mut backoffs = Backoffs::default();
+    let mut consent_recheck = false;
     loop {
-        let Some(admission) = admit() else {
-            tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL).await;
-            continue;
-        };
-        let pass = Arc::clone(&server);
-        let mut held = std::mem::take(&mut backoffs);
-        let outcome = tokio::task::spawn_blocking(move || {
-            let _admission = admission;
-            let settled =
-                settle_connector_calls(&pass, &mut held).map_err(|error| error.to_string());
-            (held, settled)
-        })
-        .await;
-        match outcome {
-            Ok((held, settled)) => {
-                backoffs = held;
-                if let Err(error) = settled {
-                    tracing::warn!(%error, "connector settle pass failed");
+        let notified = server.vault().connector_consent_wake().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if let Some(admission) = admit() {
+            let pass = Arc::clone(&server);
+            let mut held = std::mem::take(&mut backoffs);
+            let recheck = std::mem::take(&mut consent_recheck);
+            let outcome = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                let settled = settle_connector_calls(&pass, &mut held, recheck)
+                    .map_err(|error| error.to_string());
+                (held, settled)
+            })
+            .await;
+            match outcome {
+                Ok((held, settled)) => {
+                    backoffs = held;
+                    if let Err(error) = settled {
+                        tracing::warn!(%error, "connector settle pass failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(
+                        panicked = error.is_panic(),
+                        "connector settle pass ended; settler stopping"
+                    );
+                    return;
                 }
             }
-            Err(error) => {
-                tracing::error!(
-                    panicked = error.is_panic(),
-                    "connector settle pass ended; settler stopping"
-                );
-                return;
-            }
         }
-        tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL).await;
+        tokio::select! {
+            biased;
+            () = &mut notified => consent_recheck = true,
+            () = tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL) => {}
+        }
     }
 }
 
@@ -147,6 +157,7 @@ async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
 fn settle_connector_calls(
     server: &SyncServer,
     backoffs: &mut Backoffs,
+    consent_recheck: bool,
 ) -> Result<usize, IntentLedgerError> {
     let vault = server.vault();
     // Expiry first, so a call past its deadline settles in this same pass;
@@ -179,13 +190,14 @@ fn settle_connector_calls(
     }
     let now = Instant::now();
     // A call a budget window paces waits for the window, and goes in the
-    // first pass after it opens, whatever its backoff (FIX 8686).
+    // first pass after it opens, whatever its backoff (FIX 8686). A committed
+    // consent answer rechecks unpaced calls without clearing their backoffs.
     let due: Vec<_> = pending
         .into_iter()
         .filter(|call| match call.paced {
             _ if call.settled => true,
             Some(shut) => !shut,
-            None => backoffs.due(call.call_ref, now),
+            None => consent_recheck || backoffs.due(call.call_ref, now),
         })
         .collect();
     if due.is_empty() {

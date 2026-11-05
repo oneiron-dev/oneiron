@@ -84,14 +84,16 @@ pub(crate) enum AssetFileKind {
 }
 
 impl AssetFileKind {
-    const fn code(self) -> u8 {
+    /// The kind's byte, in a manifest and in a sync body reference alike.
+    pub(crate) const fn code(self) -> u8 {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
         }
     }
 
-    const fn from_code(code: u8) -> Option<Self> {
+    /// The kind a [`Self::code`] byte names.
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
