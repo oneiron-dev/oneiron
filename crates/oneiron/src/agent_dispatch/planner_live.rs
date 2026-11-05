@@ -22,6 +22,7 @@
 
 mod intent;
 mod learning;
+pub(crate) use learning::seat_model_rates_in_txn;
 mod root_plan;
 mod team_launch;
 mod width_outcomes;
