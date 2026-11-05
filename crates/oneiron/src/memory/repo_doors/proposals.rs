@@ -245,10 +245,24 @@ impl Memory<'_> {
             None => RepoProposalReview::VaultDefault,
         };
         let membership = &own.admitted.membership;
-        let RepoRef::LocalFolder { path: folder, .. } = &membership.repo_ref else {
-            return Err(refusal_error(RepoAccessRefusal::WrongRef));
+        let (repo_ref, repo) = match self
+            .vault
+            .open_served_queue_for_artifact(own.stamp.repo, &membership.repo_ref)?
+        {
+            Some((queue, source_repo, frozen_ref)) => {
+                if frozen_ref != own.stamp.git_ref {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                }
+                (source_repo, queue.into_repository())
+            }
+            None => {
+                let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                };
+                (membership.repo_ref.clone(), repo)
+            }
         };
-        let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+        let RepoRef::LocalFolder { path: folder, .. } = &repo_ref else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
@@ -362,9 +376,13 @@ impl Memory<'_> {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
         }
         let membership = &own.admitted.membership;
-        let pointers =
-            resolve_repo_queue_target(self.vault, &membership.repo_ref, &own.stamp.git_ref)?
-                .map_err(refusal_error)?;
+        let pointers = resolve_repo_queue_target(
+            self.vault,
+            own.stamp.repo,
+            &membership.repo_ref,
+            &own.stamp.git_ref,
+        )?
+        .map_err(refusal_error)?;
         if pointers.green != own.stamp.base_green {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
@@ -372,7 +390,7 @@ impl Memory<'_> {
                 &["Open a fresh work at the current green and propose the change again."],
             ));
         }
-        let queue = MergeQueue::open(self.vault, membership.repo_ref.clone())?;
+        let queue = pointers.queue;
         let candidates = rows
             .iter()
             .map(|row| self.repo_run_candidate(row, &own.stamp.base_green))
@@ -443,15 +461,14 @@ impl Memory<'_> {
     pub(super) fn repo_queue_entries(
         &self,
         binding: &RepoRunBinding,
-        repo_ref: &RepoRef,
+        queue: &MergeQueue<'_>,
         work: EntityId,
     ) -> MemoryResult<(Vec<RepoQueueEntryView>, Vec<EntityId>)> {
-        let queue = MergeQueue::open(self.vault, repo_ref.clone())?;
         let now = self.vault.now_recorded_at();
         let mut entries = Vec::new();
         let mut listed = Vec::new();
         for batch in queue.run_batches_of(work)? {
-            let (entry, blockers) = self.repo_entry_view(binding, &queue, batch, now)?;
+            let (entry, blockers) = self.repo_entry_view(binding, queue, batch, now)?;
             entries.push(entry);
             listed.extend(blockers);
         }
