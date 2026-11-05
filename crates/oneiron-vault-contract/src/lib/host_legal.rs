@@ -447,8 +447,12 @@ impl LiveSpillMetadata {
 pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
-    /// The selected stored MESSAGE rows with their document and outgoing edge
-    /// rows and the result body each still holds, in one source snapshot.
+    /// The selected stored MESSAGE rows, in id order, each followed by its
+    /// document rows (component 9), its outgoing edge rows (component 10),
+    /// its revision ledger rows (component 12: the retained history document
+    /// of its earlier stored rows, its revision state, its retained
+    /// frontiers, then each frontier's reverse identity naming it) and the
+    /// result body it still holds (component 11), in one source snapshot.
     Messages,
     /// One batch of a prospective order, in ordinal order: each new MESSAGE
     /// row sealed when it landed (component 8), and each outgoing edge row
