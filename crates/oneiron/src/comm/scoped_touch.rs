@@ -8,7 +8,7 @@ use crate::federation::Scope;
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::RowBirth;
 use crate::store::ManifestDbs;
-use crate::write_envelope::communication_record::ScopedTouchSource;
+use crate::write_envelope::communication_record::{ScopedTouchScopeForm, ScopedTouchSource};
 use crate::{EntityId, Error, Result};
 
 pub(crate) struct ScopedTouchRecord {
@@ -133,7 +133,11 @@ pub(super) fn capture_scoped_touch_source(
     let sensitivity = crate::claim::claim_sensitivity_band(body)
         .filter(|sensitivity| *sensitivity <= 3)
         .ok_or(Error::InvalidClaimBody("scoped comm source sensitivity"))?;
-    let canonical = claim.value.claim_body_with_sensitivity(sensitivity)?;
+    let scope_form = ScopedTouchScopeForm::from_scope(body.scope.as_ref()).ok_or(
+        Error::InvalidClaimBody("unsupported scoped comm source context"),
+    )?;
+    let canonical = touch_scope_body(&claim.value, scope_form, sensitivity)
+        .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
         || !same_touch_context_except_position(body, &canonical)
     {
@@ -153,6 +157,7 @@ pub(super) fn capture_scoped_touch_source(
         facet: body.scope_facet,
         project: body.scope_project,
         sensitivity,
+        scope_form,
         origin_digest: *digest.finalize().as_bytes(),
     })
 }
@@ -174,6 +179,7 @@ pub(super) fn scoped_touch_event_id(
             source.facet.as_bytes(),
             source.project.as_bytes(),
             &[source.sensitivity],
+            &[source.scope_form as u8],
             party_ref.as_bytes(),
             channel.as_bytes(),
             &occurred_at.to_le_bytes(),
@@ -210,15 +216,22 @@ pub(super) fn same_touch_context(left: &ClaimBody, right: &ClaimBody) -> bool {
         && same_touch_context_except_world(left, right)
 }
 
+pub(super) fn touch_scope_body(
+    value: &CommClaimValue,
+    scope_form: ScopedTouchScopeForm,
+    sensitivity: u8,
+) -> super::claims::CommResult<ClaimBody> {
+    let mut body = value.claim_body_with_sensitivity(sensitivity)?;
+    body.scope = scope_form.scope(sensitivity)?;
+    Ok(body)
+}
+
 pub(super) fn touch_slot_body(
     value: &CommClaimValue,
     source: Option<&ScopedTouchSource>,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = if let Some(source) = source {
-        if source.sensitivity > 3 {
-            return Err(super::claims::CommError::InvalidRecord);
-        }
-        value.claim_body_with_sensitivity(source.sensitivity)?
+        touch_scope_body(value, source.scope_form, source.sensitivity)?
     } else {
         value.claim_body()?
     };

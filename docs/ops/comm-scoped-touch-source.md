@@ -1,24 +1,32 @@
 # Scoped, explicitly born touch sources
 
 The bound batch router can project an explicitly born LastTouch with a
-noncanonical world, facet, project or explicit numeric sensitivity band from
-0 through 3. The original Put, ClaimOf edge and native
+noncanonical world, facet, project or native sensitivity band from 0 through 3.
+The original Put, ClaimOf edge and native
 birth still land through their existing gates before its source is created in
 the same writer. The source freezes the actual admitted native position; it
 does not copy position into a new head or supply a grant. The remaining context
-must exactly match the canonical constructor at that numeric band. Sensitivity
-strings, missing or duplicate stamps, additional opaque keys, noncanonical
-relationship or session contexts and unsupported births keep their full native
-raw path. No-birth inputs still require the canonical position before routing.
-The public claim constructor still uses sensitivity 2; rebuilding a frozen
-source comparison body does not change the original row or its stamp.
+must exactly match the constructor with the source's frozen scope form. The
+supported forms are a single numeric sensitivity map, a single map using the
+native spelling `public`, `private`, `internal`, `sensitive` or `restricted`, an
+absent scope, or an empty map. Missing and empty scopes retain the existing
+unstamped band of 2. Each form stays distinct for exact-context matching;
+`private` and `internal` share band 1 but do not share a slot. Duplicate stamps,
+additional opaque keys, noncanonical relationship or session contexts and other
+unsupported births keep their full native raw path. No-birth inputs still
+require the canonical position before routing. The public claim constructor
+still uses numeric sensitivity 2; rebuilding a frozen source comparison body
+does not change the original row or its stamp.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
-`TouchAsserted`, canonical base-world touches included, carries the five-element
-tuple: world id, facet id, project id, native sensitivity band, and a 32-byte
-admitted-origin digest. `original_head` and `source_position` must be present
-together. There is no old-format reader or migration. All born source ids use
+`TouchAsserted`, canonical base-world touches included, carries the six-element
+tuple: world id, facet id, project id, native sensitivity band, a 32-byte
+admitted-origin digest, and a scope-form code. Codes 0 through 7 mean numeric,
+public, private, internal, sensitive, restricted, absent, and empty-map scope,
+respectively. The strict decoder checks the native band against that form.
+The scope form is also bound into the source id. `original_head` and
+`source_position` must be present together. There is no old-format reader or migration. All born source ids use
 `COMM_BORN_TOUCH_EVENT` with the same typed position and origin binding.
 
 The digest covers the actual original stored row and its immutable base birth.

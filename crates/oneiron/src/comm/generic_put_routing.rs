@@ -322,7 +322,14 @@ fn take_batch_puts_in_txn(
                     else {
                         continue;
                     };
-                    value.claim_body_with_sensitivity(sensitivity)?
+                    let Some(scope_form) =
+                        crate::write_envelope::communication_record::ScopedTouchScopeForm::from_scope(
+                            body.scope.as_ref(),
+                        )
+                    else {
+                        continue;
+                    };
+                    super::scoped_touch::touch_scope_body(&value, scope_form, sensitivity)?
                 } else {
                     value.claim_body()?
                 };
