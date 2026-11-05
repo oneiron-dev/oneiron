@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::CleanupKind;
 use crate::entity_id::EntityId;
-use crate::memory::EntityView;
 use crate::note::NoteReadView;
 use crate::ports::ScopedReadResult;
+use crate::vault::entity_view::EntityView;
 
 /// Which open proposal to review.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

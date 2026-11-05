@@ -281,7 +281,10 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, None)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                None,
+            )?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -421,12 +424,12 @@ impl Vault {
                 "cleanup archives cannot be replayed as deletion intent",
             ));
         }
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, txn, id)?;
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, txn, id)?;

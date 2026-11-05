@@ -4,25 +4,23 @@
 use super::access_gate::HeldAuthority;
 use super::*;
 
-/// Which claim statuses a scoped read lane admits.
-///
-/// The status half of claim admission, and nothing else: every other check
-/// (reader, credential, ceiling, audience, relationship and grant) applies in
-/// both modes. Actor-owned exact-store claims are never admitted in either.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ClaimReadStatus {
-    /// Retrieval channels: `auto`/`approved`, active, and not stale unless
-    /// the resolved filter includes stale claims (the D19 read-path gate).
-    #[default]
-    Surfaceable,
-    /// The record verbs (get, list, history): proposed and closed claims are
-    /// part of those verbs' contract, so the status half admits every status.
-    Recorded,
+pub(crate) use crate::ports::ClaimReadStatus;
+
+pub(crate) trait ClaimReadStatusExt {
+    fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool;
+    fn admits_status(
+        self,
+        filter: &ResolvedRetrievalFilter,
+        generic_readable: bool,
+        approval: ClaimApprovalStatus,
+        lifecycle: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> bool;
 }
 
-impl ClaimReadStatus {
+impl ClaimReadStatusExt for ClaimReadStatus {
     /// Whether `body`'s status passes this mode.
-    pub(crate) fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
+    fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
         self.admits_status(
             filter,
             crate::claim::claim_generic_readable(body),
@@ -35,7 +33,7 @@ impl ClaimReadStatus {
     /// [`Self::admits`] over the status a claim's access class carries
     /// (FIX 11915): whether its predicate reads generically, its approval,
     /// its lifecycle and its staleness.
-    pub(super) fn admits_status(
+    fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
         generic_readable: bool,
