@@ -1,14 +1,15 @@
 //! The Coach triage's erased payload and dedupe move as one native queue rewrite.
 use super::super::{AttemptQueue, AttemptRecord};
-use crate::Result;
 use crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND;
 use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::store::Store;
+use crate::{EntityId, Result};
 
 fn erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,
+    only_evidence: Option<EntityId>,
 ) -> Result<Option<Vec<u8>>> {
     if record.kind != COACH_HOST_QUEUE_KIND {
         return Ok(None);
@@ -21,6 +22,7 @@ fn erased_payload_in_txn(
         txn,
         &payload.attempt_type,
         &payload.input,
+        only_evidence,
     )?
     else {
         return Ok(None);
@@ -46,7 +48,7 @@ pub(super) fn rewrite_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) -> Result<bool> {
-    Ok(match erased_payload_in_txn(store, txn, record)? {
+    Ok(match erased_payload_in_txn(store, txn, record, None)? {
         Some(payload) => apply(record, payload),
         None => false,
     })
@@ -59,9 +61,38 @@ pub(in crate::attempt_queue) fn scrub_in_txn(
     txn: &mut heed::RwTxn<'_>,
     record: &mut AttemptRecord,
 ) -> Result<()> {
-    if let Some(payload) = erased_payload_in_txn(store, txn, record)? {
+    if let Some(payload) = erased_payload_in_txn(store, txn, record, None)? {
         AttemptQueue::from_store(store).delete_owned_dedupe_entries_for_record(txn, record)?;
         apply(record, payload);
     }
     Ok(())
+}
+
+/// Fresh-marker hard paths retain the accepted writer and select only its
+/// evidence. The physical scan leaves every other payload family untouched.
+pub(crate) fn erase_feedback_triage_as_in_txn(
+    erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+) -> Result<()> {
+    let (vault, txn, evidence) = erase.parts();
+    let store = &vault.store;
+    let mut rewrites = Vec::new();
+    for row in store.attempt_records.iter(txn)? {
+        let (key, raw) = row?;
+        let Ok(id) = super::super::AttemptId::from_bytes(&key) else {
+            continue;
+        };
+        let Ok(mut record) = super::decode_record(&raw, id) else {
+            continue;
+        };
+        if let Some(payload) = erased_payload_in_txn(store, txn, &record, Some(evidence))?
+            && apply(&mut record, payload)
+        {
+            crate::store::attempt_manifest::erase_manifest_revision_pins(
+                &mut record.manifest,
+                |id| *id == evidence,
+            );
+            rewrites.push((raw.into_owned(), record));
+        }
+    }
+    super::flush_rewrites_in_txn(store, txn, rewrites)
 }

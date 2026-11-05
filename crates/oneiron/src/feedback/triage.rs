@@ -49,7 +49,7 @@ mod work;
 mod work_store;
 
 pub(crate) use self::erased::{
-    erase_handoff_actor_in_txn, erase_handoff_in_txn, refuse_erased_in_txn,
+    erase_handoff_actor_in_txn, erase_handoff_as_in_txn, erase_handoff_in_txn, refuse_erased_in_txn,
 };
 pub(crate) use self::jobs::job_target;
 use self::jobs::{

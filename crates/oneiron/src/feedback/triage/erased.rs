@@ -117,3 +117,12 @@ pub(crate) fn erase_handoff_actor_in_txn(
 ) -> Result<()> {
     erase_handoff_in_txn(&vault.store, txn, id)
 }
+
+/// The post-marker continuation of the same accepted hard erase. Its exact
+/// target, not the presence of some other marker, selects the handoffs.
+pub(crate) fn erase_handoff_as_in_txn(
+    erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+) -> Result<()> {
+    let (vault, txn, id) = erase.parts();
+    erase_handoff_actor_in_txn(vault, txn, &id)
+}

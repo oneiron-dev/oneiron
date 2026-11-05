@@ -72,13 +72,21 @@ impl Target {
         }
     }
 
-    fn erase_in_txn(&mut self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    fn erase_in_txn(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        only_evidence: Option<EntityId>,
+    ) -> Result<bool> {
         match self {
-            Self::Erased { .. } => Ok(true),
+            Self::Erased { .. } => Ok(only_evidence.is_none()),
             Self::Retained {
                 source_ref,
                 evidence,
             } => {
+                if only_evidence.is_some_and(|id| id != *evidence) {
+                    return Ok(false);
+                }
                 if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, evidence)? {
                     return Ok(false);
                 }
@@ -112,12 +120,13 @@ pub(crate) fn erased_queue_input_in_txn(
     txn: &heed::RoTxn<'_>,
     facet: &str,
     input: &Value,
+    only_evidence: Option<EntityId>,
 ) -> Result<Option<Value>> {
     if facet == super::COACH_FEEDBACK_TRIAGE_FACET {
         let Ok(mut target) = Target::decode(input) else {
             return Ok(None);
         };
-        return if target.erase_in_txn(store, txn)? {
+        return if target.erase_in_txn(store, txn, only_evidence)? {
             target.encode().map(Some)
         } else {
             Ok(None)
@@ -130,7 +139,7 @@ pub(crate) fn erased_queue_input_in_txn(
         let Ok(mut node) = NodeInput::decode(input) else {
             return Ok(None);
         };
-        if node.target.erase_in_txn(store, txn)? {
+        if node.target.erase_in_txn(store, txn, only_evidence)? {
             return rmpv::ext::to_value(node)
                 .map(Some)
                 .map_err(|_| invalid_job());

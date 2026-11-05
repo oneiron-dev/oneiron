@@ -187,8 +187,8 @@ pub use self::triage::{
 };
 pub(crate) use self::triage::{
     acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_actor_in_txn,
-    erase_handoff_in_txn, erased_queue_input_in_txn, job_handoff_in_txn, job_target, node_target,
-    refuse_erased_in_txn,
+    erase_handoff_as_in_txn, erase_handoff_in_txn, erased_queue_input_in_txn, job_handoff_in_txn,
+    job_target, node_target, refuse_erased_in_txn,
 };
 
 #[cfg(test)]

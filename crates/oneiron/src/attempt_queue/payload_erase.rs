@@ -384,6 +384,14 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
             rewrites.push((raw.into_owned(), record));
         }
     }
+    flush_rewrites_in_txn(store, txn, rewrites)
+}
+
+fn flush_rewrites_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    rewrites: Vec<(Vec<u8>, AttemptRecord)>,
+) -> Result<()> {
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
