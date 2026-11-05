@@ -135,10 +135,15 @@ impl Memory<'_> {
                 &input.kinds,
                 limit,
                 None,
+                None,
             ),
-            None => {
-                lane.search_vector_revisioned_with_rescore(&input.query, limit, None, skip_rescore)
-            }
+            None => lane.search_vector_revisioned_with_rescore(
+                &input.query,
+                limit,
+                None,
+                skip_rescore,
+                None,
+            ),
         }?;
         self.produced_from(found.hits.iter().map(|hit| hit.id));
         Ok(ScopedReadResult {

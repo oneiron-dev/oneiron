@@ -545,7 +545,7 @@ impl Vault {
     /// 8849). Enforcing it on reads is the scope checks' (L02).
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
-        hold_store::use_limit_in_txn(&self.store, &txn, record)
+        hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
     }
 }
 
