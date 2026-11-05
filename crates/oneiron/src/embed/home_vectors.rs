@@ -1,6 +1,7 @@
 //! Default CLAIM vectors move only over an authenticated own-machine read,
 //! never through a canonical window's retained operation history.
 
+pub(crate) mod copy_scope;
 mod pending;
 pub(crate) mod retained;
 mod sealed;
