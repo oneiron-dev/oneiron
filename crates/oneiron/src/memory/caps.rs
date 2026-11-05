@@ -23,7 +23,7 @@ pub use crate::request_limits::{
     MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_as_of,
     check_batch_len, check_blob_bytes, check_deadline_ms, check_deadline_ms_number,
     check_dimensions, check_limit_nonzero, check_payload_bytes, check_query,
-    check_token_budget_number, check_unix_seconds, clamp_search_limit,
+    check_token_budget_number, check_unix_seconds,
 };
 
 /// Rejects a NaN or infinite score before it narrows from `f64` to `f32`.
