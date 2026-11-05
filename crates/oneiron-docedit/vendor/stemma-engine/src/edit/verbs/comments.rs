@@ -91,7 +91,8 @@
 //! the comment is retained, never orphaned.
 //!
 //! v1 scope (fail loud beyond it, per CLAUDE.md "start narrow"):
-//! - `CommentCreate` targets a top-level paragraph in the named native story;
+//! - `CommentCreate` targets a top-level paragraph or direct cell paragraph in
+//!   the named native story; body targets keep the original top-level lookup;
 //! - the body must be non-empty (an empty comment is refused, not defaulted);
 //! - `CommentDelete` deletes the whole discussion rooted at the target: the
 //!   comment PLUS every reply that threads under it, transitively. For each
@@ -196,15 +197,12 @@ pub(crate) fn apply_create(
     let comment_id = fresh_comment_id(doc);
     let para_id = fresh_para_id(doc, &comment_id);
     let (blocks, content_hash) = comment_blocks_mut(doc, story, step_index)?;
-    let idx = find_block_index(blocks, block_id).ok_or_else(|| EditError::BlockNotFound {
-        block_id: block_id.clone(),
-        step_index,
-    })?;
+    let (block, status) = comment_target_mut(blocks, block_id, story.is_some(), step_index)?;
 
     // Block-level tracked status still refuses (a whole inserted/deleted block's
     // existence is contested), but tracked SEGMENTS do NOT — a comment legally
     // anchors on a redlined clause. The refusal names the escape hatch.
-    let block_status = match &blocks[idx].status {
+    let block_status = match status {
         TrackingStatus::Normal => None,
         TrackingStatus::Inserted(_) => Some("inserted"),
         TrackingStatus::Deleted(_) => Some("deleted"),
@@ -218,7 +216,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    match &blocks[idx].block {
+    match &*block {
         BlockNode::Paragraph(_) => {}
         BlockNode::Table(_) => {
             return Err(EditError::NotAParagraph {
@@ -237,7 +235,7 @@ pub(crate) fn apply_create(
     }
 
     if let Some(expected) = semantic_hash
-        && let Err(actual) = check_block_guard(&blocks[idx].block, expected)
+        && let Err(actual) = check_block_guard(block, expected)
     {
         return Err(EditError::BlockSemanticHashMismatch {
             block_id: block_id.clone(),
@@ -247,7 +245,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    let BlockNode::Paragraph(para) = &mut blocks[idx].block else {
+    let BlockNode::Paragraph(para) = block else {
         unreachable!("checked paragraph above");
     };
 
@@ -358,6 +356,52 @@ pub(crate) fn apply_create(
         copies: copies.count,
         anchored,
     }))
+}
+
+/// Keep the body's original top-level lookup; named stories also address
+/// direct cell paragraphs by their imported native paragraph id.
+fn comment_target_mut<'a>(
+    blocks: &'a mut [TrackedBlock],
+    block_id: &NodeId,
+    cells: bool,
+    step_index: usize,
+) -> Result<(&'a mut BlockNode, &'a TrackingStatus), EditError> {
+    if let Some(index) = find_block_index(blocks, block_id) {
+        let tracked = &mut blocks[index];
+        return Ok((&mut tracked.block, &tracked.status));
+    }
+    if cells {
+        for tracked in blocks {
+            let BlockNode::Table(table) = &mut tracked.block else {
+                continue;
+            };
+            for row in &mut table.rows {
+                for cell in &mut row.cells {
+                    if cell.v_merge == crate::domain::VerticalMerge::Continue {
+                        continue;
+                    }
+                    for block in &mut cell.blocks {
+                        if super::super::block_id_of(block) != block_id {
+                            continue;
+                        }
+                        let status = [
+                            &tracked.status,
+                            row.tracking_status.as_ref().unwrap_or(&tracked.status),
+                            cell.tracking_status.as_ref().unwrap_or(&tracked.status),
+                        ]
+                        .into_iter()
+                        .find(|status| !matches!(status, TrackingStatus::Normal))
+                        .unwrap_or(&tracked.status);
+                        return Ok((block, status));
+                    }
+                }
+            }
+        }
+    }
+    Err(EditError::BlockNotFound {
+        block_id: block_id.clone(),
+        step_index,
+    })
 }
 
 /// Resolve only the addressed native story. A local paragraph id never falls

@@ -38,10 +38,17 @@ Native range markers in comment content are non-conformant under ISO/IEC
 `UnsupportedEdit`; it never redirects the marker to the body. Imported comments,
 existing reads, replies, resolution and deletion keep their current behavior.
 
-The source supports top-level paragraphs, not paragraphs inside a table cell.
-The separately scoped story-cell annotation inventory is not cell ParagraphAsk
-support. Header/footer marker serialization follows the native story serializer;
-Word's handling of those file-authored ranges has not been proved. No Word run,
+The source supports top-level paragraphs and direct table-cell paragraphs in
+one named story. For a cell, copy its actual paragraph id from that story's
+`cells[].paragraphs[]` native read; do not use the table id, grid address or joined
+cell text as a paragraph identity. The native lookup keeps the same story and
+uses the paragraph's guard and existing quote/marker splice. The native cell
+lock and enclosing table lock still apply. The same whole-document live pin
+covers top-level and direct cell paragraphs for reads and change comparisons.
+BODY table cells and nested table paragraphs remain outside this source slice.
+
+Header/footer marker serialization follows the native story serializer; Word's
+handling of those file-authored ranges has not been proved. No Word run,
 compiler result, whole-story fidelity result or full FIX 14487 completion is
 claimed by this source change. Existing BODY behavior and numeric policies are
 unchanged.
