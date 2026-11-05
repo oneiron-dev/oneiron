@@ -29,6 +29,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
 
+mod diagnostic;
 mod induction;
 
 use induction::{Candidate, INDUCTION_VERSION, Predecessor};
@@ -289,7 +290,9 @@ impl Pass<'_> {
             } else {
                 "no run but its own or its successor's"
             };
-            self.pending(failed.id, reason);
+            if withheld || !self.diagnose_no_trace(&key, failed.id, &predecessor)? {
+                self.pending(failed.id, reason);
+            }
             return Ok(());
         } else if distinct {
             self.pairs(&digest, changed, Some(&predecessor))?
