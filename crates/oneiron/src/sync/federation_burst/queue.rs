@@ -3,6 +3,8 @@
 use std::borrow::Cow;
 use std::time::Instant;
 
+use super::payload::DeferredPayload;
+
 use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
@@ -38,7 +40,7 @@ pub(in crate::sync) struct DeferredWork {
     /// The window the original request names: its replay address.
     pub(in crate::sync) window: String,
     pub(in crate::sync) kind: WorkKind,
-    pub(in crate::sync) payload: Vec<u8>,
+    pub(in crate::sync) payload: DeferredPayload,
     pub(super) inputs: NormalizedBurstInputs,
     pub(super) peer: [u8; 32],
     pub(super) isolated_update: Option<IsolatedParts>,
@@ -62,7 +64,7 @@ struct StoredWork<'a> {
     selector: Cow<'a, [u8]>,
     window: Cow<'a, str>,
     kind: WorkKind,
-    payload: Cow<'a, [u8]>,
+    payload: &'a [u8],
     rate_ratio: f32,
     streak: u32,
     streak_ratio: f32,
@@ -101,7 +103,7 @@ impl DeferredWork {
             selector,
             window: key.as_str().to_owned(),
             kind,
-            payload: payload.to_vec(),
+            payload: DeferredPayload::copy_from_slice(payload)?,
             isolated_update: None,
             streak_ratio: 0.0,
             inputs: NormalizedBurstInputs {
@@ -227,7 +229,7 @@ impl DeferredWork {
             selector: Cow::Borrowed(&self.selector),
             window: Cow::Borrowed(&self.window),
             kind: self.kind,
-            payload: Cow::Borrowed(&self.payload),
+            payload: &self.payload,
             rate_ratio: self.inputs.rate_ratio,
             streak: self.inputs.streak,
             streak_ratio: self.streak_ratio,
@@ -323,7 +325,7 @@ impl DeferredWork {
             selector: row.selector.into_owned(),
             window: row.window.into_owned(),
             kind: row.kind,
-            payload: row.payload.into_owned(),
+            payload: DeferredPayload::copy_from_slice(row.payload)?,
             isolated_update: row.isolated_update.map(Cow::into_owned),
             streak_ratio: row.streak_ratio,
             inputs: NormalizedBurstInputs {
