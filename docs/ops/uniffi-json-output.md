@@ -82,6 +82,12 @@ encoding error. The same public `AiOptions` record retains required option
 order, present empty lists and the optional media-unit count, including zero.
 Its typed client call and native host-door checks remain unchanged.
 
+`vault.conversations.create` and `vault.conversations.turns.create` use an
+owned native write-receipt lift. Its required body moves into `WireJson`,
+including a present JSON null; id, entity type and learned-at keep their
+existing types. Native writers, announcement projection and client hooks
+still complete before the conversion; request bodies are not substituted.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions

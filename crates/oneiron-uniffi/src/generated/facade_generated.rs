@@ -5234,12 +5234,12 @@ export_facade! {
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
     let output = client.vault_conversations_create(&input)?;
-    crate::codec::lift_record("vault.conversations.create", &output)
+    Lift::lift(output)
 };
 "vault.conversations.turns.create" => fn vault_conversations_turns_create(&self, input: ConversationTurnCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationTurnCreateInput = crate::codec::lower_record("vault.conversations.turns.create", input)?;
     let output = client.vault_conversations_turns_create(&input)?;
-    crate::codec::lift_record("vault.conversations.turns.create", &output)
+    Lift::lift(output)
 };
 "vault.conversations.records.append" => fn vault_conversations_records_append(&self, input: DagRecordAppendInput) -> DagRecordAppendReceipt = |client| {
     let input: oneiron::core_write::DagRecordAppendInput = crate::codec::lower_record("vault.conversations.records.append", input)?;
