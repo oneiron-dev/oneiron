@@ -122,7 +122,9 @@ pub use layout::{
     fold_line, is_section_key, unfold_command,
 };
 pub use layout_store::{BoardLayoutCandidate, BoardLayoutState};
-pub(crate) use layout_store::{erase_board_layout_actor_in_txn, inherit_board_layout_in_txn};
+pub(crate) use layout_store::{
+    board_layouts_in_txn, erase_board_layout_actor_in_txn, inherit_board_layout_in_txn,
+};
 pub use memories::{
     CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor,
     MemoriesSection, MemoryRow, MemorySlot, MemorySource,
