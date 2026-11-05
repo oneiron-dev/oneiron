@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1233 facade rows, 4491 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1185.
+// UniFFI census: 1234 facade rows, 4495 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1186.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -25044,6 +25044,34 @@ pub struct OffRecordNoteRequest {
     pub evidence_turn_refs: Option<Vec<String>>,
 }
 
+/// `oneiron::verbs::off_record::OffRecordArtifactSaveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordArtifactSaveRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+}
+
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomShortIdPair`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordRoomShortIdPair {
+    #[serde(rename = "room")]
+    pub room: String,
+    #[serde(rename = "vault")]
+    pub vault: String,
+}
+
+/// `oneiron::verbs::off_record::OffRecordArtifactSaved`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordArtifactSaved {
+    #[serde(rename = "replayed")]
+    pub replayed: Vec<String>,
+    #[serde(rename = "short_ids")]
+    pub short_ids: Vec<OffRecordRoomShortIdPair>,
+}
+
 /// `oneiron::verbs::off_record::OffRecordClaimRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -25577,6 +25605,8 @@ pub enum OffRecordNoticeAct {
     SavedTalk,
     #[serde(rename = "saved_turn")]
     SavedTurn,
+    #[serde(rename = "saved_artifact")]
+    SavedArtifact,
     #[serde(rename = "saving_from_here")]
     SavingFromHere,
     #[serde(rename = "saving_stopped")]
@@ -25660,15 +25690,6 @@ pub struct OffRecordRoomWitnessRequest {
     pub turn: WireWitnessTurn,
     #[serde(rename = "summary", default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-}
-
-/// `oneiron::verbs::off_record_rooms::OffRecordRoomShortIdPair`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct OffRecordRoomShortIdPair {
-    #[serde(rename = "room")]
-    pub room: String,
-    #[serde(rename = "vault")]
-    pub vault: String,
 }
 
 /// `oneiron::verbs::off_record_rooms::OffRecordRoomSavedTurn`.
@@ -68466,6 +68487,24 @@ pub struct FoldUnfoldRequest {
     pub fold: String,
 }
 
+/// `oneiron::compaction::fold_kinds::FoldKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FoldKind {
+    #[serde(rename = "repl_output")]
+    ReplOutput,
+}
+
+/// `oneiron::compaction::fold_kinds::FoldedOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldedOutput {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "handles")]
+    pub handles: Vec<String>,
+    #[serde(rename = "ids")]
+    pub ids: Vec<String>,
+}
+
 /// `oneiron::compaction::folds::FoldDescription`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
@@ -68485,6 +68524,12 @@ pub enum FoldDescription {
         ids: Vec<String>,
         #[serde(rename = "handles")]
         handles: Vec<String>,
+        #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+        kind: Option<FoldKind>,
+        #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        #[serde(rename = "outputs", default, skip_serializing_if = "Option::is_none")]
+        outputs: Option<Vec<FoldedOutput>>,
     },
     Pending {
         #[serde(rename = "fold")]
@@ -68499,6 +68544,8 @@ pub enum FoldDescription {
         note: Option<String>,
         #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
         failed: Option<String>,
+        #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+        kind: Option<FoldKind>,
     },
 }
 
@@ -68534,6 +68581,8 @@ pub struct FoldSpan {
     pub from: u64,
     #[serde(rename = "through")]
     pub through: u64,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `oneiron::compaction::folds::FoldPending`.
@@ -68549,6 +68598,8 @@ pub struct FoldPending {
     pub note: Option<String>,
     #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `oneiron::compaction::folds::FoldList`.
@@ -72646,6 +72697,8 @@ pub struct FoldMarkRequest {
     pub through: u64,
     #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `oneiron::compaction::folds::FoldMarked`.
@@ -72659,6 +72712,8 @@ pub struct FoldMarked {
     pub through: u64,
     #[serde(rename = "pending")]
     pub pending: bool,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `oneiron::compaction::folds::FoldReply` with `T` = `FoldMarked`.
