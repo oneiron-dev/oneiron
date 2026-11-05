@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use oneiron::ingest::{AgUiFileImport, AgUiFileReceipt};
-use oneiron::memory::MemoryError;
 
 use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
@@ -19,12 +18,7 @@ pub(crate) async fn vault_ingest_ag_ui_import(
         server,
         auth,
         "vault.ingest.ag_ui.import",
-        move |memory, owner| {
-            memory
-                .vault()
-                .ingest_ag_ui_file(owner, &input)
-                .map_err(MemoryError::from)
-        },
+        move |memory, owner| memory.ingest_ag_ui_file(owner, &input),
     )
     .await
 }

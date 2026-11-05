@@ -165,6 +165,15 @@ impl Vault {
 }
 
 impl Memory<'_> {
+    /// Capture an owner-selected file through the native owner-bound writer.
+    pub fn ingest_ag_ui_file(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &AgUiFileImport,
+    ) -> MemoryResult<AgUiFileReceipt> {
+        Ok(self.vault().ingest_ag_ui_file(owner, input)?)
+    }
+
     /// Read exactly this capture under the caller's normal credential, locality
     /// and room scope. Missing/withheld rows reveal no source metadata.
     pub fn read_ag_ui_file(&self, input: &AgUiFileReadInput) -> MemoryResult<AgUiFileRead> {
