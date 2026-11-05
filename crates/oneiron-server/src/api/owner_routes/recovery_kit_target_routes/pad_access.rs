@@ -23,7 +23,9 @@ use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EntityId;
-use oneiron::sync::client::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
+use oneiron::sync::client::{
+    PadAdmissionError, SealedBundleRelayObservation, sealed_bundle_relay_observation,
+};
 use oneiron::sync::residence::{grant_local_sealed_pad_access_with_kit, sealed_generation_hex};
 use oneiron::world_keys::{PadAdmissionTarget, RecoveryRootSeed, SealedBundleGeneration};
 use serde::{Deserialize, Serialize};
@@ -163,7 +165,12 @@ async fn pad_access(
             let report = connection
                 .grant_sealed_bundle_pad_access_with_kit(&owner, &seed, recipient)
                 .await
-                .map_err(|error| owner_error(OwnerError::Refused(error.to_string())))?;
+                .map_err(|error| match error {
+                    PadAdmissionError::Resource(error) => owner_error(error.into()),
+                    PadAdmissionError::Transport(error) => {
+                        owner_error(OwnerError::Refused(error.to_string()))
+                    }
+                })?;
             (PadAccessHome::Connection, report)
         }
         None => {

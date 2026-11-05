@@ -39,7 +39,7 @@ mod turn;
 mod upload;
 mod work;
 
-pub use self::access::PadAdmissionReport;
+pub use self::access::{PadAdmissionError, PadAdmissionReport};
 pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
 pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
 pub use self::report::SealedBundleRelay;

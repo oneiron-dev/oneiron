@@ -201,10 +201,10 @@ pub(super) async fn sweep_erased(
             match access::own_grant(vault, rpc, &object.pads, &mut asks).await {
                 Ok(Some(grant)) => grants.push(grant),
                 Ok(None) => {}
-                Err(access::OwnGrantError::Resource(error)) => {
+                Err(access::PadAdmissionError::Resource(error)) => {
                     opening_error.get_or_insert(error);
                 }
-                Err(access::OwnGrantError::Transport(error)) => return Err(error),
+                Err(access::PadAdmissionError::Transport(error)) => return Err(error),
             }
             object.keys = match vault.open_key_pads_to_erase(&object.pads, kit, &grants) {
                 Ok(opened) => Some(held(opened)),

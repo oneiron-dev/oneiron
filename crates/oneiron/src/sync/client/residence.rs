@@ -23,7 +23,7 @@ use self::windows::PromotionReply;
 pub(crate) use self::windows::retry_refused_retains;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::{
-    PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation,
+    PadAdmissionError, PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation,
     sealed_bundle_relay_observation,
 };
 pub(crate) use bundle::{observe_sealed_bundle_relay, relay_sealed_bundle};
