@@ -22876,6 +22876,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/scratchpad/run_lifecycle.rs",
+     "purpose": "Exact-pad ownership at a durable code run's close",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -28230,7 +28241,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "re-export": 1,
       "struct": 2
@@ -30262,7 +30273,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 1
      }
     },
@@ -34127,7 +34138,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 2,
       "struct": 1
      }
@@ -49180,13 +49191,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/support/transactions.rs",
      "purpose": "Write plumbing: owner authorship, host origin, claim envelopes and actor-verified write txns",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -49715,7 +49726,7 @@
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
       "crate-vis": 10,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -49725,7 +49736,37 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionWitnessContext",
+      "SessionWitnessOutcome"
+     ],
+     "path": "src/memory/witness/program/caller.rs",
+     "purpose": "Caller-bound session speech",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionWitnessBinding"
+     ],
+     "path": "src/memory/witness/program/caller/binding.rs",
+     "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -51467,7 +51508,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -51520,6 +51561,7 @@
      "path": "src/off_record/lifecycle/creator.rs",
      "purpose": "Who manages a stretch entered alone (WILL-PLAN L13 row 03, Engine ruling 2026-10-19): the person or agent…",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "struct": 1
      }
@@ -51608,7 +51650,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -77897,7 +77939,7 @@
      "purpose": "Seq allocation, retention enforcement, quarantined_records plus sync_doctor",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -84856,7 +84898,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1262
+      "fn": 1263
      }
     },
     {
@@ -85311,7 +85353,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 97,
+      "re-export": 98,
       "struct": 33
      }
     },
@@ -86186,6 +86228,19 @@
      "surface": {
       "fn": 6,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SyncHeldEditEvidence"
+     ],
+     "path": "src/verbs/sync_quarantine.rs",
+     "purpose": "Owner-only retained held-edit evidence from the sync quarantine",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -90910,7 +90965,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91393,7 +91448,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 354,
+     "files": 356,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92030,7 +92085,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 112,
+     "files": 113,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92095,7 +92150,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6428,
+   "source_files": 6432,
    "test_files": 895
   },
   "oneiron-android": {
@@ -101013,6 +101068,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites.rs",
+     "purpose": "Source-defined preset sites retained when Edit Points makes a freeform",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/points/preset_sites/data.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -102122,7 +102197,7 @@
      "purpose": "A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its…"
     },
     "live": {
-     "files": 61,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102215,7 +102290,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 166,
+   "source_files": 168,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -106313,7 +106388,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1230
+      "fn": 1231
      }
     },
     {
@@ -108066,7 +108141,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1231
+      "fn": 1232
      }
     },
     {
@@ -113132,7 +113207,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 165
+      "crate-vis": 166
      }
     },
     {
@@ -114063,6 +114138,16 @@
      "purpose": "The host doors of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and `.revoke`",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/sync_quarantine_doors.rs",
+     "purpose": "The owner's retained sync held-edit evidence, with no settlement act",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -119226,7 +119311,7 @@
      "path": "src/config/models/broker.rs",
      "purpose": "`[models.broker]` as the file writes it, and its check into the [`BrokerConfig`] this server runs its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -127735,7 +127820,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 661,
+     "files": 662,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128241,7 +128326,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1536,
+   "source_files": 1537,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134105,6 +134190,7 @@
       "QualificationLimits",
       "QualificationPlan",
       "Quarantine",
+      "QuarantineContainer",
       "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersPage",
@@ -135146,6 +135232,7 @@
       "SwitchNotCarried",
       "SwitchOutcome",
       "SwitchStage",
+      "SyncHeldEditEvidence",
       "TabSwitch",
       "TabSwitchCause",
       "TableBody",
@@ -135347,6 +135434,7 @@
       "TupleTaskAskHandleTaskAskStatus",
       "TupleU32U32",
       "TupleU64I32",
+      "TupleU64SyncHeldEditEvidence",
       "TupleU64U64",
       "TurnAction",
       "TurnActionRebindReceipt",
@@ -135614,8 +135702,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1107,
-      "struct": 3370
+      "enum": 1108,
+      "struct": 3372
      }
     },
     {
