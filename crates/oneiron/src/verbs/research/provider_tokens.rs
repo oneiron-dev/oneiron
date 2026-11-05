@@ -25,6 +25,14 @@ pub struct ResearchProviderTokenSnapshotWire {
     pub unsettled_calls: usize,
     pub input: Option<u64>,
     pub output: Option<u64>,
+    /// Native reports retained by failed leases, not complete call totals.
+    pub failed_call_reports: Vec<ResearchFailedCallTokenReportWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchFailedCallTokenReportWire {
+    pub input: Option<u64>,
+    pub output: Option<u64>,
 }
 
 pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopeProviderTokensWire>> {
@@ -53,6 +61,14 @@ pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopePr
                                 unsettled_calls: snapshot.observation.unsettled_calls,
                                 input: snapshot.observation.input,
                                 output: snapshot.observation.output,
+                                failed_call_reports: snapshot
+                                    .failed_call_reports
+                                    .into_iter()
+                                    .map(|report| ResearchFailedCallTokenReportWire {
+                                        input: report.input,
+                                        output: report.output,
+                                    })
+                                    .collect(),
                             })
                             .collect()
                     }),

@@ -26,12 +26,15 @@ pub struct ProviderTokenObservation {
 /// has a new generation even when its attempt and lease strings repeat.
 /// The generation is opaque observation data, not an entity reference,
 /// authority or proof that every guard on a spend scope was covered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderTokenSnapshot {
     pub generation: [u8; 16],
     /// Capture order within this generation, not a call or charge count.
     pub observation_id: [u8; 16],
     pub observation: ProviderTokenObservation,
+    /// Native receipts retained by failed leases, including partial reports.
+    /// Missing requests remain uncovered; an empty list is not a known zero.
+    pub failed_call_reports: Vec<ProviderTokenMeasurement>,
 }
 
 impl BudgetGuard {
@@ -46,6 +49,12 @@ impl BudgetGuard {
             generation: state.provider_token_generation,
             observation_id: *EntityId::now().as_bytes(),
             observation: observation_in_state(&state),
+            failed_call_reports: state
+                .leases
+                .values()
+                .filter(|record| record.dispatched)
+                .flat_map(|record| record.provider_failed_call_reports.iter().copied())
+                .collect(),
         }
     }
 
@@ -67,6 +76,26 @@ impl BudgetGuard {
             return Err(BudgetDenied::LeaseInvalid);
         }
         record.provider_tokens = measurement;
+        Ok(())
+    }
+
+    /// Retains native reports on a failed started lease without treating
+    /// those partial reports as its complete usage or changing any charge.
+    pub fn observe_provider_failed_call_reports(
+        &self,
+        lease: &BudgetLease,
+        reports: Vec<ProviderTokenMeasurement>,
+    ) -> Result<(), BudgetDenied> {
+        let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
+        let record = state
+            .leases
+            .get_mut(lease.id())
+            .ok_or(BudgetDenied::LeaseInvalid)?;
+        if !record.dispatched {
+            return Err(BudgetDenied::LeaseInvalid);
+        }
+        record.provider_failed_call_reports = reports;
         Ok(())
     }
 

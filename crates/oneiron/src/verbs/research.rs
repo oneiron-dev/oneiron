@@ -32,7 +32,10 @@ use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::task_verb::forbidden;
 
 mod provider_tokens;
-pub use provider_tokens::{ResearchProviderTokenSnapshotWire, ResearchScopeProviderTokensWire};
+pub use provider_tokens::{
+    ResearchFailedCallTokenReportWire, ResearchProviderTokenSnapshotWire,
+    ResearchScopeProviderTokensWire,
+};
 
 /// `vault.research.bind`: binds a campaign to its existing root attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
