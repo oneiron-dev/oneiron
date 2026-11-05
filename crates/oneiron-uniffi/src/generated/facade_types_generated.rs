@@ -52459,6 +52459,8 @@ pub enum FatalLlmError {
     InvalidRequestDetail {
         #[serde(rename = "message")]
         message: String,
+        #[serde(rename = "code", default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
     #[serde(rename = "Auth")]
     Auth,
@@ -53206,6 +53208,8 @@ pub enum ManifestKind {
     Skill,
     #[serde(rename = "actor_claim")]
     ActorClaim,
+    #[serde(rename = "workflow_context_row")]
+    WorkflowContextRow,
 }
 
 /// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
