@@ -119,6 +119,10 @@ default layout, else the engine's own sizing of every section.
 The response's `board_budget.folded` and `board_budget.fitted` name the
 sections the layout folded or fitted.
 
+An MCP connector's board lays TASKS out from the rows its scope admits
+(`mcp_scoped_task_rows`), so its fold line, filter, share and kept rows see
+exactly what the connector may see.
+
 ## Not built yet
 
 - An owner override of one agent's layout alone (the override applies to
@@ -126,5 +130,4 @@ sections the layout folded or fitted.
 - MEMORIES filters: a memory row names no author yet, so `who` cannot
   narrow it. TASKS filters by `who` and `status`; INBOX filters by `who`
   (the sender).
-- The connector board's TASKS share, filter and full fold counts (its fold
-  line counts its scoped rows only).
+
