@@ -88,7 +88,29 @@ impl Memory<'_> {
         markdown: impl Into<String>,
         world: Option<crate::EntityId>,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_note_in_world(
+        self.author_take_in_world_with_time(target, markdown, world, None)
+    }
+
+    /// An imported take stamped at its source's arrival, through the same
+    /// attributed NOTE writer as an ordinary take.
+    pub(crate) fn author_take_in_world_at(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+        world: Option<crate::EntityId>,
+        at: u64,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_take_in_world_with_time(target, markdown, world, Some(at))
+    }
+
+    fn author_take_in_world_with_time(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+        world: Option<crate::EntityId>,
+        at: Option<u64>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world_with_time(
             &NoteWriteEnvelope {
                 kind: NoteKind::parse("opinion/take").expect("shipped kind"),
                 scope: NoteScope::About(target),
@@ -97,6 +119,7 @@ impl Memory<'_> {
                 mask: None,
             },
             world,
+            at,
         )
     }
 
@@ -132,6 +155,15 @@ impl Memory<'_> {
         &self,
         envelope: &NoteWriteEnvelope,
         world: Option<crate::EntityId>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world_with_time(envelope, world, None)
+    }
+
+    fn author_note_in_world_with_time(
+        &self,
+        envelope: &NoteWriteEnvelope,
+        world: Option<crate::EntityId>,
+        at: Option<u64>,
     ) -> MemoryResult<EntityRefReceipt> {
         // OF-063 prose links (FIX 1228): the one engine write every take,
         // dissent and diary entry passes through reads its markdown for links
@@ -183,7 +215,7 @@ impl Memory<'_> {
             source_revision_ref: envelope.source_revision_ref,
         })?;
         let note_id = self.vault.store.clock.entity_id()?;
-        let at = self.vault.store.clock.now_recorded_at();
+        let at = at.unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
         let occurred = TimeRange { start: at, end: at };
 
         self.with_actor_content_write_txn(|content| {
