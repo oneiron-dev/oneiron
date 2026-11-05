@@ -67,6 +67,7 @@ mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
 mod current_scope;
+mod device_succession;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
@@ -117,6 +118,7 @@ mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -327,6 +329,8 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
+// The origin cut a repo manifest is written and judged by (FIX 15740).
+pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
@@ -431,7 +435,7 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
-use readonly_fold::authority_view_readonly_for_store_in_txn;
+pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::{
