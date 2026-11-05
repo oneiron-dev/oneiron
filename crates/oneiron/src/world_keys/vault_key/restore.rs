@@ -30,9 +30,9 @@ use crate::recovery::checkpoint::{
     RestorePlan, RetiredBy, RetiredRecipient,
 };
 use crate::store::RecipientRetirement;
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason as R;
-use crate::store::restore_admission::because;
+use crate::recovery::checkpoint::Rejected;
+use crate::recovery::checkpoint::RestoreAdmissionReason as R;
+use crate::recovery::checkpoint::because;
 use crate::world_keys::{OpenedDataKey, refused};
 use crate::{EntityId, Vault};
 

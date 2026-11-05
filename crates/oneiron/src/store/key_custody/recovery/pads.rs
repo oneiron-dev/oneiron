@@ -20,9 +20,9 @@ use crate::entity_id::EntityId;
 use crate::store::Store;
 use crate::store::key_custody::head::CustodyOpener;
 use crate::store::key_custody::identity::{CustodyKind, CustodySubject};
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason as R;
-use crate::store::restore_admission::because;
+use crate::recovery::checkpoint::Rejected;
+use crate::recovery::checkpoint::RestoreAdmissionReason as R;
+use crate::recovery::checkpoint::because;
 
 /// A world pad's full id: world (16) | generation (8, big-endian) | mint (16).
 type PadItem = [u8; 40];

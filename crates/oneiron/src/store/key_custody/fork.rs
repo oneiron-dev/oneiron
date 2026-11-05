@@ -14,8 +14,8 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::recovery::checkpoint::Rejected;
+use crate::recovery::checkpoint::RestoreAdmissionReason as R;
 
 use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
