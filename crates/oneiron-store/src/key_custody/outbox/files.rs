@@ -57,4 +57,3 @@ pub fn exists(path: &Path) -> Result<bool> {
         Err(err) => Err(err.into()),
     }
 }
-

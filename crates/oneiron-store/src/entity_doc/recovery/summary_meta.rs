@@ -12,4 +12,3 @@ use oneiron_base::error::Result;
 
 /// The meta keys a summary document keeps its typed values under.
 pub const SUMMARY_META: [&str; 2] = ["purpose", "derivation"];
-

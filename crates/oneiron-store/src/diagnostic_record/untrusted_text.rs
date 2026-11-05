@@ -118,4 +118,3 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
     }
     Some(cursor + 1)
 }
-
