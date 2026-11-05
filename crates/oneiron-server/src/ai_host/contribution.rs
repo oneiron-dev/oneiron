@@ -1,12 +1,18 @@
 //! The host's replay capsule for the Coach's contribution checks (FIX 3028):
 //! the concrete [`ContributionReplayHost`] the Coach's recipe borrows for one
 //! wake pass. Each pair runs the engine's matched-fork runner
-//! ([`run_contribution_forks`]) on two lent seams. The model call is the
+//! ([`run_contribution_forks`]) on three lent seams. The model call is the
 //! capsule's own model by its exact route, with no fallback, each fork on
-//! its own equal cap the Coach pays under live policy. The scorer is the
+//! its own equal cap the Coach pays under live policy. An engine step's
+//! fork's program runs on a fresh runtime of the checked-in component in a
+//! scratch store of its own (FIX 3607, [`program`]). The scorer is the
 //! registered replay judge on the pass's clock: it resolves the run's anchor
 //! to the skill's goal axis as the project's goal states it, and judges each
-//! fork's answer by that axis, blind to which fork it reads.
+//! fork by that axis, blind to which fork it reads: an engine step's fork by
+//! what its program did, a workflow step's by its answer's text.
+
+mod program;
+
 use std::sync::Weak;
 
 use oneiron::code_run::{
@@ -29,6 +35,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use self::program::{LentProgram, ProgramLending, executed_text};
 use super::CHAT_ROLE;
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
@@ -51,6 +58,9 @@ pub(super) struct HostContributionReplay {
     judge: &'static ServeReplayJudge,
     /// What one fork's call may spend.
     fork_units: u64,
+    /// The runtime and scratch stores an engine step's forks' programs run
+    /// on.
+    programs: ProgramLending,
 }
 
 impl HostContributionReplay {
@@ -65,6 +75,7 @@ impl HostContributionReplay {
             handle,
             judge,
             fork_units: FORK_BUDGET_UNITS.min(pass_units),
+            programs: ProgramLending::default(),
         }
     }
 }
@@ -86,9 +97,14 @@ impl ContributionReplayHost for HostContributionReplay {
             handle: &self.handle,
             fork_units: self.fork_units,
         };
+        let program = LentProgram {
+            server: &server,
+            vault,
+            lending: &self.programs,
+        };
         let scorer = JudgeScorer { judge: self.judge };
         Ok(
-            match run_contribution_forks(vault, candidate, &model, &scorer, clock)? {
+            match run_contribution_forks(vault, candidate, &model, &program, &scorer, clock)? {
                 Ok(forks) => Some(forks),
                 Err(reason) => {
                     tracing::debug!(reason = reason.as_str(), "contribution forks unavailable");
@@ -207,7 +223,9 @@ impl ContributionForkScorer for JudgeScorer {
     /// The judge's live-axis question on the fork's answer, on the pass's
     /// clock. Both forks are asked on the same state but for the answer, with
     /// no instructions in it, so the judge cannot tell which had the skill.
-    /// An abstained or failed judgment decides nothing.
+    /// An engine step's fork's answer is what its program did when run (FIX
+    /// 3607), never the answer's text. An abstained or failed judgment
+    /// decides nothing.
     fn passes(
         &self,
         vault: &Vault,
@@ -225,7 +243,10 @@ impl ContributionForkScorer for JudgeScorer {
             clock,
             receipt: fork.receipt,
             task: task_text(vault, fork.task),
-            response: answer_text(vault, fork.response),
+            response: match fork.executed {
+                Some(executed) => executed_text(vault, executed),
+                None => answer_text(vault, fork.response),
+            },
         };
         let notes: &dyn HeldOutReplayNotes = &notes;
         match notes.live_axis_met(candidate.skill, &blind, fork.receipt, &anchor.rubric) {

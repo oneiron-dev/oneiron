@@ -64,9 +64,9 @@ pub(crate) fn erase_capsule_actor_in_txn(
 }
 
 /// Every body `actor`'s capsules name, with the run that owns it: each
-/// kept request, each start and each fork answer, read before the erase
-/// releases them, so the provenance door's hard erase retires their
-/// instances (FIX 6278). A capsule erased before names none.
+/// kept request, each start, each fork answer and each fork's executed body,
+/// read before the erase releases them, so the provenance door's hard erase
+/// retires their instances (FIX 6278). A capsule erased before names none.
 ///
 /// # Errors
 ///
@@ -141,7 +141,8 @@ fn capsule_bodies(
 
 use crate::dreamer_runner::step_replay::erased;
 
-/// Every fork answer the contribution rows keep, by the capsule its fork
+/// Every fork answer the contribution rows keep, and every body an engine
+/// step's fork's program left (FIX 3607), by the capsule its fork
 /// regenerated: its body and path. A row that does not decode names none.
 fn fork_answers_in_txn(
     dbs: &impl SideTableDbs,
@@ -159,6 +160,10 @@ fn fork_answers_in_txn(
                 receipt.step,
             );
             answers.push((at, receipt.response, receipt.response_path));
+            if let Some(execution) = &receipt.execution {
+                let executed = execution.bodies();
+                answers.extend(executed.map(|body| (at, body.body, body.stored_path.clone())));
+            }
         }
     }
     Ok(answers)

@@ -5,11 +5,15 @@
 //! against the run's anchor by one rubric. A loaded skill's check
 //! regenerates the run's first step without the skill's body; an ancestor
 //! check on one used edge regenerates the earliest step that exposed the
-//! edge's source without that source's body ([`ancestor`]). The host lends
-//! the model call and the scorer; this runner picks the capsule, builds the
-//! two requests, keeps each fork's receipt and returns the scored pair. It
-//! records no check and publishes nothing from one fork: the Coach's recipe
-//! records the pair ([`crate::skill_attribution::record_contribution_pair`]).
+//! edge's source without that source's body ([`ancestor`]). An engine
+//! step's fork is scored on what its answer's program did when run against
+//! the step's recorded calls, never on the answer's text (FIX 3607,
+//! [`execution`]); a workflow step's on its answer's text. The host lends
+//! the model call, the program run and the scorer; this runner picks the
+//! capsule, builds the two requests, keeps each fork's receipt and returns
+//! the scored pair. It records no check and publishes nothing from one
+//! fork: the Coach's recipe records the pair
+//! ([`crate::skill_attribution::record_contribution_pair`]).
 //!
 //! A knowledge exposure is the one unit: a body the host put in the run's
 //! task, tagged where it went. A callable or result-only use, an ancestor
@@ -19,13 +23,21 @@
 
 mod admission;
 mod ancestor;
+mod execution;
 
 use serde::{Deserialize, Serialize};
 
 pub use self::admission::ForkMismatch;
 pub(crate) use self::admission::matched_contribution_facts_in_txn;
 use self::ancestor::{target_slots, target_step};
+pub use self::execution::{
+    ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork,
+    ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidence, ForkExecutionPin,
+    execute_contribution_fork,
+};
+use self::execution::{ProgramStep, fork_evidence};
 use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
+use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
     ForkProvenance, ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,
     step_replay_capsules_in_txn, store_fork_response,
@@ -48,7 +60,7 @@ const FIRST_STEP: u64 = 0;
 pub(super) const FORK_RECEIPT_PREFIX: &str = "contribution_fork:";
 
 /// Why a matched pair cannot be run. None of these is a verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionReplayUnavailable {
     /// The anchor cannot judge a new output (an owner verdict, a world
@@ -85,11 +97,19 @@ pub enum ContributionReplayUnavailable {
     ModelUnavailable,
     /// The forks did not finish by the clock, or the scorer did not decide.
     Unfinished,
+    /// An engine step's fork's program could not run against the captured
+    /// step (FIX 3607), for the shadow runner's own reason: its window or a
+    /// body is gone or withheld, a call the record does not hold, a nested
+    /// unit or a guest view not captured, a step that parked on a recorded
+    /// wait, or no runtime now. Never a loss of the program.
+    ProgramReplay(ShadowUnavailable),
 }
 
 impl ContributionReplayUnavailable {
+    /// The reason's stable name; a program replay's is the shadow runner's
+    /// own reason's name.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::AnchorNotReplayable => "anchor_not_replayable",
             Self::AnchorUnresolved => "anchor_unresolved",
@@ -103,19 +123,24 @@ impl ContributionReplayUnavailable {
             Self::ForksDiverged => "forks_diverged",
             Self::ModelUnavailable => "model_unavailable",
             Self::Unfinished => "unfinished",
+            Self::ProgramReplay(unavailable) => unavailable.reason.as_str(),
         }
     }
 
     /// Whether the reason holds for good: the pair is recorded unavailable
     /// and no later pass pays for it again. A model not served now, an
     /// anchor that does not resolve now and a pass that ran out of time are
-    /// asked again.
+    /// asked again, as is a program replay the shadow runner says a retry
+    /// may find available.
     #[must_use]
-    pub const fn lasting(self) -> bool {
-        !matches!(
-            self,
-            Self::AnchorUnresolved | Self::ModelUnavailable | Self::Unfinished
-        )
+    pub const fn lasting(&self) -> bool {
+        match self {
+            Self::ProgramReplay(unavailable) => !unavailable.retryable,
+            reason => !matches!(
+                reason,
+                Self::AnchorUnresolved | Self::ModelUnavailable | Self::Unfinished
+            ),
+        }
     }
 }
 
@@ -150,28 +175,33 @@ impl ForkScoring {
     }
 }
 
-/// A fork's frozen scoring identity: the canonical rubric digest and the
-/// scorer-byte digest as resolved at prepare, before either fork. Both
-/// forks of a pair copy it; admission rehashes the candidate against it.
+/// A fork's frozen scoring identity: the canonical rubric digest, the
+/// scorer-byte digest and the evidence the scorer reads, as resolved at
+/// prepare, before either fork. Both forks of a pair copy it, an engine
+/// step's execution pin included (FIX 3607); admission rehashes the
+/// candidate against it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForkScoringIdentity {
     pub rubric: [u8; 32],
     pub scorer: [u8; 32],
+    pub evidence: ForkEvidence,
 }
 
 impl ForkScoringIdentity {
-    fn of(anchor: &ReplayAnchor) -> Result<Self> {
+    fn of(anchor: &ReplayAnchor, evidence: ForkEvidence) -> Result<Self> {
         let encode =
             |error: serde_json::Error| Error::InvalidConfig(format!("replay anchor: {error}"));
         Ok(Self {
             rubric: *blake3::hash(&serde_json::to_vec(&anchor.rubric).map_err(encode)?).as_bytes(),
             scorer: *blake3::hash(anchor.scorer.as_bytes()).as_bytes(),
+            evidence,
         })
     }
 }
 
-/// One fork's durable receipt: what it regenerated, how, what it answered
-/// and, once scored, whether it passed.
+/// One fork's durable receipt: what it regenerated, how, what it answered,
+/// for an engine step what its answer's program did (FIX 3607) and, once
+/// scored, whether it passed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContributionForkReceipt {
     pub receipt: String,
@@ -200,6 +230,9 @@ pub struct ContributionForkReceipt {
     pub anchor_scoring: ForkScoringIdentity,
     /// The outcome it was scored for.
     pub scoring: ForkScoring,
+    /// An engine step's fork's executed program; `None` until it ran, and
+    /// always `None` for a workflow step's.
+    pub execution: Option<ContributionForkExecution>,
     /// Whether it passed; `None` until scored.
     pub passed: Option<bool>,
     /// Unix seconds it was generated.
@@ -241,6 +274,10 @@ pub struct ScoredFork<'a> {
     /// The task both forks answered: the step's input without the exposure.
     pub task: &'a LlmRequest,
     pub response: &'a LlmResponse,
+    /// For an engine step, what `response`'s program did when run (FIX
+    /// 3607): the evidence its scorer reads in place of the answer's text.
+    /// `None` for a workflow step, scored on its answer's text.
+    pub executed: Option<&'a ExecutedForkView>,
 }
 
 /// The anchor's scorer, lent by the host.
@@ -275,9 +312,11 @@ pub trait ContributionForkScorer {
 
 /// Runs `candidate`'s matched pair, or says why it cannot: both forks of
 /// the step its target's check regenerates, each kept as a receipt as soon
-/// as it answers and scored against one anchor. A fork already generated or scored is reused,
-/// never paid for again. A reason that holds for good is recorded, so a
-/// later pass returns it without paying.
+/// as it answers, an engine step's program run by `program` and its
+/// execution kept (FIX 3607), and scored against one anchor. A fork already
+/// generated, executed or scored is reused, never paid for again. A reason
+/// that holds for good is recorded, so a later pass returns it without
+/// paying.
 ///
 /// # Errors
 ///
@@ -286,6 +325,7 @@ pub fn run_contribution_forks(
     vault: &Vault,
     candidate: &ContributionCandidate,
     model: &dyn ContributionForkModel,
+    program: &dyn ContributionForkProgram,
     scorer: &dyn ContributionForkScorer,
     clock: &RetrievalDeadline,
 ) -> Result<std::result::Result<ContributionForks, ContributionReplayUnavailable>> {
@@ -310,12 +350,13 @@ pub fn run_contribution_forks(
         provenance,
         candidate,
         model,
+        program,
         scorer,
         clock,
         pair: pair_digest(candidate),
     };
-    let rows = fork_rows(vault, &runner.pair)?;
-    if let Some(reason) = rows.unavailable {
+    let mut rows = fork_rows(vault, &runner.pair)?;
+    if let Some(reason) = rows.unavailable.take() {
         return Ok(Err(reason));
     }
     let outcome = match runner.prepare(&rows, capsule)? {
@@ -325,7 +366,7 @@ pub fn run_contribution_forks(
     if let Err(reason) = &outcome
         && reason.lasting()
     {
-        put_unavailable(vault, &runner.pair, &runner.provenance, *reason)?;
+        put_unavailable(vault, &runner.pair, &runner.provenance, reason.clone())?;
     }
     Ok(outcome)
 }
@@ -360,12 +401,16 @@ struct Prepared {
     anchor: ReplayAnchor,
     anchor_scoring: ForkScoringIdentity,
     anchor_hash: [u8; 32],
+    /// An engine step's frozen window and execution pin; `None` for a
+    /// workflow step.
+    program_step: Option<ProgramStep>,
 }
 
 struct Runner<'a> {
     vault: &'a Vault,
     candidate: &'a ContributionCandidate,
     model: &'a dyn ContributionForkModel,
+    program: &'a dyn ContributionForkProgram,
     scorer: &'a dyn ContributionForkScorer,
     clock: &'a RetrievalDeadline,
     pair: [u8; 32],
@@ -432,7 +477,12 @@ impl Runner<'_> {
         let Some(anchor) = self.scorer.resolve(self.vault, self.candidate)? else {
             return Ok(Err(Unavailable::AnchorUnresolved));
         };
-        let anchor_scoring = ForkScoringIdentity::of(&anchor)?;
+        // An engine step's window is frozen once here, before either fork.
+        let (evidence, program_step) = match fork_evidence(self.vault, &capsule, self.program)? {
+            Ok(evidence) => evidence,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let anchor_scoring = ForkScoringIdentity::of(&anchor, evidence)?;
         let anchor_hash = anchor_hash(self.candidate, &anchor_scoring)?;
         if [&rows.with_skill, &rows.without_skill]
             .into_iter()
@@ -451,11 +501,12 @@ impl Runner<'_> {
             anchor,
             anchor_scoring,
             anchor_hash,
+            program_step,
         }))
     }
 
     /// One paired draw in a fixed order, the fork with the skill first, then
-    /// both scored.
+    /// an engine step's two programs run in that order, then both scored.
     fn run(&self, prepared: &Prepared, rows: ForkRows) -> Outcome<ContributionForks> {
         let with_skill =
             match self.generated(prepared, rows.with_skill, ForkTreatment::WithSkill)? {
@@ -467,6 +518,14 @@ impl Runner<'_> {
                 Ok(fork) => fork,
                 Err(reason) => return Ok(Err(reason)),
             };
+        let with_skill = match self.executed(prepared, with_skill)? {
+            Ok(fork) => fork,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let without_skill = match self.executed(prepared, without_skill)? {
+            Ok(fork) => fork,
+            Err(reason) => return Ok(Err(reason)),
+        };
         let with_skill = match self.scored(prepared, with_skill)? {
             Ok(fork) => fork,
             Err(reason) => return Ok(Err(reason)),
@@ -549,6 +608,7 @@ impl Runner<'_> {
                 anchor: prepared.anchor_hash,
                 anchor_scoring: prepared.anchor_scoring,
                 scoring: ForkScoring::of(self.candidate),
+                execution: None,
                 passed: None,
                 generated_at: crate::unix_seconds_now(),
             },
@@ -560,7 +620,8 @@ impl Runner<'_> {
     }
 
     /// The fork as scored, else scored now against the pair's anchor, its
-    /// task the step's input without the exposure for both forks.
+    /// task the step's input without the exposure for both forks, and an
+    /// engine step's on what its program did (FIX 3607).
     fn scored(
         &self,
         prepared: &Prepared,
@@ -572,10 +633,15 @@ impl Runner<'_> {
         let Some(response) = fork_response(self.vault, prepared.capsule.run, &fork)? else {
             return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
+        let executed = match self.executed_view(prepared, &fork)? {
+            Ok(executed) => executed,
+            Err(reason) => return Ok(Err(reason)),
+        };
         let scored = ScoredFork {
             receipt: &fork.receipt,
             task: &prepared.without_skill,
             response: &response,
+            executed: executed.as_ref(),
         };
         let Some(passed) = self.scorer.passes(
             self.vault,
@@ -665,7 +731,8 @@ fn pair_digest(candidate: &ContributionCandidate) -> [u8; 32] {
 }
 
 /// The anchor's identity: its kind, the outcome it settled, its axis and
-/// the frozen scoring identity both forks were scored under.
+/// the frozen scoring identity both forks were scored under, the evidence
+/// they were scored on included.
 fn anchor_hash(
     candidate: &ContributionCandidate,
     identity: &ForkScoringIdentity,
@@ -681,5 +748,7 @@ fn anchor_hash(
     hasher.update(&identity.rubric);
     hasher.update(&[0]);
     hasher.update(&identity.scorer);
+    hasher.update(&[0]);
+    identity.evidence.hash_into(&mut hasher);
     Ok(*hasher.finalize().as_bytes())
 }
