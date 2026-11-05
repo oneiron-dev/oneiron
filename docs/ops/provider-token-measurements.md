@@ -271,3 +271,13 @@ aggregate counts or failed-call report list to that attempt. It does not cover
 unrecorded sources, join child usage, prove finality or produce an RSI total.
 The controller check, receipt forwarding, charges and reservation settlement
 remain unchanged.
+
+Scoped pattern-start captures use that same lease state too. A resident entry
+lends its already-bound lease; a live-run action supplies its actual leased
+attempt id before lending the action's lease. Both paths keep the original
+guard, payer, listed models and once-only booking ledger. A host that cannot
+construct a lease-aware backend still takes its original backend before any
+generation begins. This factory fallback is not a retry of a paid or captured
+call. The affordability probe constructs no observed model run, and unscoped
+starts keep their old path. Other workflow, compaction and speech sources are
+not covered by this port.

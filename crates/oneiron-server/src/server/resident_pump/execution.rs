@@ -577,6 +577,7 @@ fn enter_run(
             actor,
             model_seat,
             line.clone(),
+            lease.as_ref().map(|lease| lease.on(vault).state()),
         )
         .map(|runner| LiveLeaseRunner::lend(runner, vault, lease.as_ref()));
         bound = bound.with_planner(planner);
