@@ -1,6 +1,6 @@
 //! Diagnostic record vocabulary, canonical body codecs and content addresses.
 
-mod address;
+use oneiron_store::diagnostic_record::address;
 pub(crate) mod admission;
 pub(crate) mod diagnostic_codec;
 pub(crate) mod event;
