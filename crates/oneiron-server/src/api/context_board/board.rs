@@ -231,6 +231,7 @@ pub(super) fn board_parts(
     people: &PeopleView<'_>,
     hook_pins: &[oneiron::context_board::HookPin],
     tasks_budget_tok: Option<usize>,
+    tasks_keep: &[EntityId],
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -351,6 +352,7 @@ pub(super) fn board_parts(
                 None => rows.render(),
                 Some(budget) => rows.render_with_token_budget(budget),
             };
+            tasks.keep_rows_open(&rows, tasks_keep);
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
             (tasks, you)
         }
@@ -407,8 +409,9 @@ pub(super) fn board_parts(
             .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;
         lead.extend(oneiron::context_board::fanout_action_rows(&launches));
     }
-    let tasks_section =
-        oneiron::context_board::assemble_tasks_section(&tasks, lead).map_err(board_frame_error)?;
+    let tasks_section = tasks
+        .board_section_keeping(lead, tasks_keep)
+        .map_err(board_frame_error)?;
 
     // SKILLS, with the learning view on each found skill row and the agent
     // definitions the capability channel found.
@@ -495,7 +498,12 @@ pub(super) fn board_parts(
         sections,
         you,
         worlds: worlds.detail_rows().to_vec(),
-        tasks: tasks_section.detail_rows().to_vec(),
+        tasks: tasks_section
+            .pinned_rows()
+            .iter()
+            .chain(tasks_section.detail_rows())
+            .cloned()
+            .collect(),
         tasks_budget,
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         room_page,

@@ -6,8 +6,9 @@
 //! incarnation prevents activation after erase and recreation.
 //!
 //! New native attenuated forks copy the source actor's live and pending
-//! TASKS state once, then diverge. Other fork families, MCP/run integration,
-//! program turns, shares, folds and owner defaults stay open.
+//! TASKS state once, then diverge. Kept task ids share the budget
+//! snapshot. Other fork families, program turns, shares, folds and owner
+//! defaults stay open.
 //! Checkpoint rows remain unclassified. See
 //! `docs/ops/context-board-tasks-layout.md` for the supported scope.
 
@@ -24,13 +25,15 @@ const TASKS_BUDGET: SideTable<EntityId, TasksBudgetRow, Named> =
 
 /// One actor's durable TASKS layout row: its live default, the monotonic
 /// stage counter, the last applied revision, one pending staged write, and
-/// the row's internal incarnation. Tokens only, no notes or content.
+/// the row's internal incarnation. Tokens and ids only, no notes or content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TasksBudgetRow {
     /// Live default this actor's ROOT board renders under: `None` is the
     /// 100-row behavior, `Some(0)` a literal zero.
     pub(crate) live: Option<u64>,
+    /// Native task ids kept open beyond the optional-row projection.
+    pub(crate) live_keep: Vec<EntityId>,
     /// The last applied pending revision (`0` before any activation).
     pub(crate) live_revision: u64,
     /// Monotonic stage counter, bumped on every staged write.
@@ -43,12 +46,14 @@ pub(crate) struct TasksBudgetRow {
 }
 
 /// One staged TASKS budget write: its value and its captured stage revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TasksBudgetPending {
     /// Staged value: `None` resets to 100-row behavior, `Some(v)` sets
     /// (`Some(0)` a literal zero).
     pub(crate) value: Option<u64>,
+    /// Full keep snapshot, never a patch at activation time.
+    pub(crate) keep: Vec<EntityId>,
     /// The `total_revision` captured when this write staged.
     pub(crate) revision: u64,
 }
@@ -61,28 +66,31 @@ pub(crate) struct TasksBudgetPending {
 /// from hydration to the history writer; all fields are private and are
 /// consumed only by the new TURN record method (through
 /// [`activate_tasks_layout_in_txn`], called only there).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksLayoutCandidate {
     actor: EntityId,
     incarnation: EntityId,
     live_revision: u64,
     pending_revision: u64,
     value: Option<u64>,
+    keep: Vec<EntityId>,
 }
 
 /// One actor's ROOT TASKS layout state for GET/POST: live plus pending.
 /// `pending: None` is no pending; `Some` with `value: None` is a staged
 /// reset. Engine `u64`; the HTTP DTO converts to `usize` losslessly on 64-bit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksLayoutState {
     pub live: Option<u64>,
+    pub live_keep: Vec<EntityId>,
     pub pending: Option<TasksLayoutPendingState>,
 }
 
 /// The staged write of [`TasksLayoutState`]: `value: None` is a staged reset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksLayoutPendingState {
     pub value: Option<u64>,
+    pub keep: Vec<EntityId>,
 }
 
 /// An actor's erase removes its TASKS-budget row (FIX 3520).
@@ -113,6 +121,7 @@ pub(crate) fn inherit_tasks_layout_in_txn(
         .get(&vault.store, &*txn, source)?
         .unwrap_or(TasksBudgetRow {
             live: None,
+            live_keep: Vec::new(),
             live_revision: 0,
             total_revision: 0,
             pending: None,
@@ -124,15 +133,28 @@ pub(crate) fn inherit_tasks_layout_in_txn(
 }
 
 impl Memory<'_> {
-    /// Stages this actor's ROOT TASKS-row token budget as ONE pending batch:
-    /// `None` stages a reset to 100-row behavior, `Some(0)` a literal zero,
-    /// `Some(v)` that many tokens. Repeated writes replace the pending batch
-    /// and bump the monotonic stage counter; they never queue per turn.
-    ///
-    /// Own actor only, through the verified actor write txn. A missing row is
-    /// born here with a fresh incarnation; reads never create rows.
+    /// Stages the token allotment while preserving the same pending batch's
+    /// kept rows (or the live keep set when no batch is pending).
     pub fn stage_tasks_layout(&self, value: Option<usize>) -> MemoryResult<TasksLayoutState> {
-        let value = value.map(|v| v as u64);
+        self.stage_tasks_layout_update(Some(value), None)
+    }
+
+    /// Patches this actor's ONE pending TASKS snapshot. An omitted field
+    /// keeps its latest pending value, else its live value. Explicit
+    /// `Some(None)` resets the budget; `Some(Vec::new())` clears kept ids.
+    /// Kept ids are metadata, not authority: renderers may use only their
+    /// already-admitted task source. No authored text enters this row.
+    pub fn stage_tasks_layout_update(
+        &self,
+        budget: Option<Option<usize>>,
+        keep: Option<Vec<EntityId>>,
+    ) -> MemoryResult<TasksLayoutState> {
+        let budget = budget.map(|value| value.map(|v| v as u64));
+        let keep = keep.map(|mut ids| {
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        });
         self.vault()
             .write_txn_door(crate::store::Callback::Audited, |txn| {
                 // Own render preferences grant no shared-content write. Keep
@@ -149,6 +171,7 @@ impl Memory<'_> {
                     Some(row) => row,
                     None => TasksBudgetRow {
                         live: None,
+                        live_keep: Vec::new(),
                         live_revision: 0,
                         total_revision: 0,
                         pending: None,
@@ -161,19 +184,36 @@ impl Memory<'_> {
                     .ok_or(Error::InvariantViolation(
                         "tasks layout stage counter is exhausted",
                     ))?;
+                let previous = row.pending.take().unwrap_or_else(|| TasksBudgetPending {
+                    value: row.live,
+                    keep: row.live_keep.clone(),
+                    revision: row.live_revision,
+                });
                 row.total_revision = next;
                 row.pending = Some(TasksBudgetPending {
-                    value,
+                    value: budget.unwrap_or(previous.value),
+                    keep: keep.clone().unwrap_or(previous.keep),
                     revision: next,
                 });
                 TASKS_BUDGET.put(store, txn, &actor, &row)?;
-                Ok(TasksLayoutState {
-                    live: row.live,
-                    pending: row.pending.map(|pending| TasksLayoutPendingState {
-                        value: pending.value,
-                    }),
-                })
+                Ok(row.state())
             })
+    }
+}
+
+impl TasksBudgetRow {
+    fn state(&self) -> TasksLayoutState {
+        TasksLayoutState {
+            live: self.live,
+            live_keep: self.live_keep.clone(),
+            pending: self
+                .pending
+                .as_ref()
+                .map(|pending| TasksLayoutPendingState {
+                    value: pending.value,
+                    keep: pending.keep.clone(),
+                }),
+        }
     }
 }
 
@@ -186,14 +226,10 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let row = TASKS_BUDGET.get(&self.store, &rtxn, &actor)?;
         Ok(match row {
-            Some(row) => TasksLayoutState {
-                live: row.live,
-                pending: row.pending.map(|pending| TasksLayoutPendingState {
-                    value: pending.value,
-                }),
-            },
+            Some(row) => row.state(),
             None => TasksLayoutState {
                 live: None,
+                live_keep: Vec::new(),
                 pending: None,
             },
         })
@@ -214,20 +250,21 @@ impl Vault {
     /// exact candidate the same accepted history commit must activate. Stored
     /// `None` selects `None` (100-row path); stored values clamp with
     /// `min(stored_u64, cap_as_u64)` before the `usize` cast, proven to fit.
-    /// Missing rows select `(None, None)`.
+    /// The middle tuple holds the exact selected keep set; missing rows
+    /// select `(None, Vec::new(), None)`.
     pub fn select_tasks_layout(
         &self,
         actor: EntityId,
         has_turn: bool,
         cap_tok: usize,
-    ) -> Result<(Option<usize>, Option<TasksLayoutCandidate>)> {
+    ) -> Result<(Option<usize>, Vec<EntityId>, Option<TasksLayoutCandidate>)> {
         let rtxn = self.store.env.read_txn()?;
         let row = TASKS_BUDGET.get(&self.store, &rtxn, &actor)?;
         let Some(row) = row else {
-            return Ok((None, None));
+            return Ok((None, Vec::new(), None));
         };
         if !has_turn {
-            return Ok((clamp_stored(row.live, cap_tok)?, None));
+            return Ok((clamp_stored(row.live, cap_tok)?, row.live_keep, None));
         }
         match row.pending {
             Some(pending) => {
@@ -241,10 +278,11 @@ impl Vault {
                     live_revision: row.live_revision,
                     pending_revision: pending.revision,
                     value: pending.value,
+                    keep: pending.keep.clone(),
                 };
-                Ok((effective, Some(candidate)))
+                Ok((effective, pending.keep, Some(candidate)))
             }
-            None => Ok((clamp_stored(row.live, cap_tok)?, None)),
+            None => Ok((clamp_stored(row.live, cap_tok)?, row.live_keep, None)),
         }
     }
 }
@@ -295,6 +333,7 @@ pub(crate) fn activate_tasks_layout_in_txn(
         return Ok(());
     }
     row.live = candidate.value;
+    row.live_keep = candidate.keep.clone();
     row.live_revision = candidate.pending_revision;
     if row
         .pending

@@ -1,16 +1,16 @@
 //! ROOT TASKS layout over raw HTTP (FIX 12570, HTTP slice).
 //!
 //! `GET|POST /v1/core/context-board/layout/tasks`: one actor's durable ROOT
-//! TASKS-row token budget. GET reads the caller's own live default plus its
-//! one pending staged write; POST stages ONE pending batch for a later
+//! TASKS-row token budget and kept task ids. GET reads the caller's own
+//! live default plus its one pending staged write; POST stages ONE pending batch for a later
 //! explicit TURN or native chat answer. This is parent 12570 PART: ROOT raw
-//! HTTP and native live/queued chat, without fork copies, MCP/run integration,
+//! HTTP, native live/queued chat, fork snapshots and live-only run boards; no
 //! full-board shares, folds, filters, notes or owner defaults. See
 //! `docs/ops/context-board-tasks-layout.md`.
 //!
-//! POST `budget_tok` is REQUIRED nullable unsigned: missing is 400 and never
-//! resets, `null` stages a reset to 100-row behavior, `0` stages a literal
-//! zero for optional rows. Repeated writes replace the pending batch.
+//! POST patches `budget_tok` and/or `keep` into ONE pending snapshot. Omission
+//! preserves the latest pending value, else live. Budget `null` resets to
+//! 100-row behavior; `keep: []` clears kept ids. No authored text is stored.
 //! Hydration selection lives here too: explicit per-request `Some` wins with
 //! its exact budget and never consumes pending (this slice ignores pending
 //! entirely then: no candidate); otherwise TURN projects the staged pending
@@ -20,6 +20,7 @@
 use super::super::core_engine_error;
 use super::super::credential_memory;
 use super::super::json_payload;
+use super::super::parse_entity_id_param;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -36,17 +37,19 @@ use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
-/// One ROOT TASKS layout stage: the REQUIRED nullable unsigned allotment.
-/// Missing `budget_tok` is 400 and never resets; explicit `null` stages a
-/// reset to 100-row behavior.
+/// One ROOT TASKS layout patch. Omission preserves the other fields in the
+/// pending snapshot; explicit `null` resets only the token allotment.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ContextBoardTasksLayoutStageRequest {
     /// Staged concrete-row allotment: `Some(0)` a literal zero, `None` a
-    /// reset to 100-row behavior. Required even for `null`.
+    /// reset to 100-row behavior. Omitted leaves the current value unchanged.
     #[serde(default, deserialize_with = "present")]
-    #[schema(value_type = Option<usize>, required = true, example = 400)]
+    #[schema(value_type = Option<usize>, example = 400)]
     pub(crate) budget_tok: Option<Option<usize>>,
+    /// Native 32-hex task row ids; `[]` clears, omission preserves.
+    #[serde(default)]
+    pub(crate) keep: Option<Vec<String>>,
 }
 
 /// A field that is present, even as `null`; `#[serde(default)]` leaves an
@@ -68,17 +71,20 @@ pub(crate) struct ContextBoardTasksLayoutState {
     /// Live default this actor's ROOT board renders under.
     #[schema(nullable = true, example = 400)]
     pub(crate) live_budget_tok: Option<usize>,
+    /// Live task ids kept open when the current read admits them.
+    pub(crate) live_keep: Vec<String>,
     /// Staged write awaiting TURN activation; `None` is no pending.
     #[schema(nullable = true)]
     pub(crate) pending: Option<ContextBoardTasksLayoutPending>,
 }
 
 /// The staged write of [`ContextBoardTasksLayoutState`].
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ContextBoardTasksLayoutPending {
     /// Staged value: `None` resets to 100-row behavior.
     #[schema(nullable = true, example = 400)]
     pub(crate) budget_tok: Option<usize>,
+    pub(crate) keep: Vec<String>,
 }
 
 /// Reads the caller's own ROOT TASKS layout state. GET never mutates.
@@ -101,6 +107,7 @@ pub(crate) async fn context_board_tasks_layout(
     let Some(actor) = tasks_layout_actor(&auth) else {
         return Ok(Json(ContextBoardTasksLayoutState {
             live_budget_tok: None,
+            live_keep: Vec::new(),
             pending: None,
         }));
     };
@@ -112,14 +119,14 @@ pub(crate) async fn context_board_tasks_layout(
 }
 
 /// Stages the caller's ROOT TASKS layout as ONE pending batch for a later
-/// explicit TURN. Missing `budget_tok` is 400 and never resets.
+/// explicit TURN. Missing fields never reset another staged value.
 #[utoipa::path(
     post,
     path = "/v1/core/context-board/layout/tasks",
     request_body(content = ContextBoardTasksLayoutStageRequest, content_type = "application/json"),
     responses(
         (status = 200, description = "Staged; pending awaits an explicit TURN.", body = ContextBoardTasksLayoutState, content_type = "application/json"),
-        (status = 400, description = "Missing budget_tok or malformed layout request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 400, description = "No layout patch or malformed layout request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or names no entity principal and actor class.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "TASKS layout stage failed.", body = ApiErrorEnvelope, content_type = "application/json")
@@ -133,12 +140,20 @@ pub(crate) async fn context_board_tasks_layout_stage(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let req = json_payload(payload)?;
-    let Some(staged) = req.budget_tok else {
-        return Err(ApiError::bad_request("budget_tok is required", Some("budget_tok")).into());
-    };
+    if req.budget_tok.is_none() && req.keep.is_none() {
+        return Err(ApiError::bad_request("budget_tok or keep is required", None).into());
+    }
+    let keep = req
+        .keep
+        .map(|ids| {
+            ids.iter()
+                .map(|id| parse_entity_id_param(id, "keep"))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let memory = tasks_layout_memory(&server, &auth)?;
     let state = memory
-        .stage_tasks_layout(staged)
+        .stage_tasks_layout_update(req.budget_tok, keep)
         .map_err(tasks_layout_error)?;
     Ok(Json(tasks_layout_dto(state)?))
 }
@@ -164,6 +179,7 @@ pub(crate) fn hydrate_tasks_selection(
 ) -> Result<
     (
         Option<usize>,
+        Vec<EntityId>,
         Option<oneiron::context_board::TasksLayoutCandidate>,
     ),
     ApiError,
@@ -175,7 +191,7 @@ pub(crate) fn hydrate_tasks_selection(
             .map_err(|error| core_engine_error("tasks layout selection failed", error));
     }
     let Some(actor) = tasks_layout_actor(auth) else {
-        return Ok((None, None));
+        return Ok((None, Vec::new(), None));
     };
     server
         .vault
@@ -258,11 +274,13 @@ fn tasks_layout_dto(
         .map(|pending| {
             Ok::<_, ApiError>(ContextBoardTasksLayoutPending {
                 budget_tok: pending.value.map(stored_usize).transpose()?,
+                keep: pending.keep.iter().map(EntityId::to_hex).collect(),
             })
         })
         .transpose()?;
     Ok(ContextBoardTasksLayoutState {
         live_budget_tok,
+        live_keep: state.live_keep.iter().map(EntityId::to_hex).collect(),
         pending,
     })
 }

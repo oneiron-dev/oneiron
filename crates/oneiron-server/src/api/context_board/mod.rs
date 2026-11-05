@@ -527,8 +527,8 @@ pub(crate) async fn context_board_hydrate(
     // and never activates; a native chat turn projects its answering
     // agent's row with native has_turn=true and activates it in the SAME
     // accepted answer-history commit.
-    let (tasks_budget_tok, tasks_layout_candidate) = match req.tasks_budget_tok {
-        Some(explicit) => (Some(explicit), None),
+    let (tasks_budget_tok, tasks_keep, tasks_layout_candidate) = match req.tasks_budget_tok {
+        Some(explicit) => (Some(explicit), Vec::new(), None),
         None => {
             let cap_tok =
                 oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
@@ -552,6 +552,7 @@ pub(crate) async fn context_board_hydrate(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &hook_pins,
         tasks_budget_tok,
+        &tasks_keep,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -595,7 +596,7 @@ pub(crate) async fn context_board_hydrate(
         memories.as_ref(),
         &parts.authority,
         &board_render,
-        tasks_layout_candidate,
+        tasks_layout_candidate.clone(),
     );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.

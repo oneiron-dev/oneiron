@@ -552,7 +552,7 @@ fn keep_chat_history(
         capture.memories.as_ref(),
         Some(&capture.worlds),
         &author,
-        capture.tasks_candidate,
+        capture.tasks_candidate.clone(),
         |_| true,
     ) {
         Ok(Some(_)) => Ok(()),

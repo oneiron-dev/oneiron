@@ -2,12 +2,12 @@
 
 Status: parent 12570 PART. Supports ROOT raw HTTP, live chat `start_turn`,
 admitted queued Continue/Retry boards, native attenuated-fork TASKS snapshots,
-and live-only run-board sizing, not full BOARD-LAYOUT.
+live-only run-board sizing, and explicit kept TASKS ids, not full BOARD-LAYOUT.
 
 ## Partial scope
 
-One authenticated actor's ROOT TASKS-row token budget, durably staged and
-commit-linked to an explicit actual TURN or a live chat answer's TURN.
+One authenticated actor's ROOT TASKS-row token budget and kept native task ids,
+durably staged and commit-linked to an explicit actual TURN or a live chat answer's TURN.
 New native attenuated forks also inherit that actor-keyed TASKS state once.
 Other sections and fork families remain outside this slice.
 
@@ -15,7 +15,8 @@ Covered:
 
 - `GET|POST /v1/core/context-board/layout/tasks` (one raw HTTP API, no SDK
   row, no MCP verb, no catalog/generator change).
-- Actor-keyed durable live default plus ONE pending staged write.
+- Actor-keyed durable live default plus ONE pending staged snapshot. Budget
+  and kept ids coalesce into that same snapshot, not separate per-field queues.
 - Explicit TURN projects the staged pending snapshot NOW before render; the
   SAME accepted history transaction activates the exact candidate.
 - Live `POST /v1/ai/chat` projects its answering agent's ROOT layout before
@@ -52,7 +53,7 @@ Explicitly OPEN (full 12570 PART):
 - Eager copies for other fork families, and fork pending-layout application
   beyond the supported HTTP/native chat paths. An inherited row alone does
   not prove that a particular pumped run projected it.
-- Full shares summed across all sections, folds, filters, keep/note rows,
+- Full shares summed across all sections, folds, filters, authored note rows,
   owner defaults/settings, prefix epoch handling, or full-board layout.
 - Any new numeric cap, default, timeout, row/byte/count cap, or speed/GPU/
   deploy/server/build claim.
@@ -76,14 +77,18 @@ rows ride outside the allotment.
 
 ## Staging
 
-- POST `{budget_tok}` is REQUIRED nullable unsigned. Missing `budget_tok`
-  (including `{}`) is 400 and never resets. Explicit `null` stages a reset;
-  `0` stages literal zero; unsigned stages that many tokens.
-- Repeated writes replace ONE pending batch and bump the monotonic stage
-  counter; they never queue per turn.
-- GET reports `{live_budget_tok, pending}` for the caller's own actor only.
+- POST accepts `budget_tok` and/or `keep`. At least one must be present; `{}`
+  stays 400 and never resets anything. Budget `null` stages a reset, `0`
+  literal zero, and unsigned stages that many tokens. `keep` is an array of
+  native 32-hex row ids; `[]` clears it, while omission or `null` leaves it
+  unchanged. Invalid ids use the existing bad-id response.
+- Each patch starts from the current pending snapshot, else live. A budget-only
+  patch preserves kept ids; a keep-only patch preserves the budget. Repeated
+  writes replace ONE pending batch and bump the monotonic stage counter;
+  they never queue per turn. Duplicate kept ids collapse to one stored id.
+- GET reports `{live_budget_tok, live_keep, pending}` for the caller's own actor only.
   `pending: null` is no pending; `{"budget_tok": null}` is a staged reset;
-  `{"budget_tok": N}` is a staged set. Staged reset is never flattened with
+  `{"budget_tok": N, "keep": [...]}` is a staged full snapshot. Staged reset is never flattened with
   no pending. GET never mutates. Revision numbers stay internal.
 - A hydration without TURN and without a chat layout actor reads LIVE only
   and never activates pending; a native chat turn projects its answering
@@ -99,7 +104,7 @@ rows ride outside the allotment.
 - Explicit per-request `tasks_budget_tok: Some` uses its exact requested
   budget for that render (validated against the SAME effective board cap
   before ANY retrieval, FIX 14248) and never selects or consumes pending.
-  This slice ignores pending entirely then: no candidate. Newer staged
+  This slice ignores the stored layout entirely then: no kept ids and no candidate. Newer staged
   writes wait for a later actual TURN that uses the stored layout. Chat
   sends none today.
 - Explicit TURN with no per-request override projects the SELECTED pending
@@ -116,10 +121,36 @@ rows ride outside the allotment.
 - No-turn reads without a chat layout actor never activate, even when
   pending exists.
 
+## Kept TASKS rows
+
+- Kept ids are Engine metadata, not content or read authority. They restore
+  only native rows from the SAME already-admitted `TasksSectionRows` that the
+  normal projection used. No by-id fetch, short-handle alias or wider read is
+  added. Unknown or withheld ids render nothing and produce no missing-id
+  refusal; acknowledged failures stay off. A source scan that was incomplete
+  stays incomplete; keeping an id does not invent a complete source census.
+- Concrete kept rows can exceed the optional-row allotment, like existing
+  post-projection hooks. The pre-frame meter includes them and remains distinct
+  from the final board cost. Restored rows leave the omitted count exactly
+  once; source exhaustion is unchanged. Hook pinning/tagging still follows.
+- After normal assembly and its existing row-byte fallback, actually rendered
+  kept rows move to the section's existing pinned floor. They stay open through
+  final SHED; the count fallback names only remaining optional task rows.
+  Discovery hints retain their old rank. The floor can truthfully exceed the
+  cap, using the existing `floor_exceeds_cap` metadata, not a new limit.
+- A kept snapshot activates only with its exact accepted TURN candidate, under
+  the same actor/incarnation/live/pending revision checks as the token budget.
+  Budget and keep activate together, never by reading current pending again.
+  New native forks copy both live and pending keep sets in the same creation
+  transaction. Supported run boards read live kept ids only, never pending.
+- Whole-section fold/unfold, live status/failed/changed/asking summaries and
+  authored fold notes remain separate unbuilt engineering. Keeping rows is not
+  evidence that those features are complete.
+
 ## Concurrency
 
 - The captured candidate binds its actor, the row's fresh real incarnation,
-  the captured live revision, and the captured pending revision/value. Its
+  the captured live revision, and the captured pending revision/full snapshot. Its
   type is public for transport; all fields stay private and are consumed
   only by the new TURN record method.
 - Activation runs in the SAME returned `RwTxn` after `stage_board_turn`
