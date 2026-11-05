@@ -11,12 +11,12 @@ use super::boundary::{
 };
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEntityRefReceipt,
-    NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
-    NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
-    NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome,
-    NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence,
+    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
+    NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
+    NapiRecallResidence, NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiTurnProgramWakeOutcome, NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -430,6 +430,27 @@ fn record_ref_from_engine(record: oneiron::lens::RecordRef) -> NapiRecordRef {
 /// Projects one engine memory item onto the boundary DTO.
 pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem {
     NapiMemoryItem {
+        asset_ref: item.asset_ref,
+        embedding_matches: item
+            .embedding_matches
+            .into_iter()
+            .map(|evidence| {
+                let kind = |kind| match kind {
+                    oneiron::store::embedding::InputKind::Text => "text".to_owned(),
+                    oneiron::store::embedding::InputKind::Image => "image".to_owned(),
+                    oneiron::store::embedding::InputKind::Audio => "audio".to_owned(),
+                };
+                NapiEmbeddingMatchEvidence {
+                    space: evidence.space,
+                    embedding_kind: kind(evidence.embedding_kind),
+                    query_kind: kind(evidence.query_kind),
+                    score: f64::from(evidence.score),
+                    floor: f64::from(evidence.floor),
+                    strong: f64::from(evidence.strong),
+                    matched: evidence.matched,
+                }
+            })
+            .collect(),
         short_id: item.short_id,
         source_revision_ref: item.source_revision_ref,
         kind: item.kind,

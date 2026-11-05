@@ -75,7 +75,7 @@ impl Memory<'_> {
         room: &RoomNote<'_>,
         input: &NoteAccessRequest,
         indexed: bool,
-        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         let key = self.read_key()?;
         let view = room.session.read_view()?;
@@ -102,7 +102,7 @@ impl Memory<'_> {
         key: ScopedReadActorKey,
         note: EntityId,
         input: &NoteAccessRequest,
-        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         self.project_note_read_in_room_at(session, view, key, note, input, false, project)
     }
@@ -115,7 +115,7 @@ impl Memory<'_> {
         note: EntityId,
         input: &NoteAccessRequest,
         indexed: bool,
-        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         let lane = self
             .vault()

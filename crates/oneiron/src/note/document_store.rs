@@ -72,6 +72,17 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A selected room NOTE, admitted by the save's closed replay capability.
+pub(super) fn persist_saved_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    grant: &crate::off_record::PromoteReplayGrant,
+) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, true, Some(grant))?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
 /// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
 /// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
@@ -102,6 +113,16 @@ fn persist_structural(
     doc: &NoteDocument,
     masks: bool,
 ) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, masks, None)
+}
+
+fn persist_structural_with_origin(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    masks: bool,
+    grant: Option<&crate::off_record::PromoteReplayGrant>,
+) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Each citation's quote, which the pin rows below keep, is scanned as the
@@ -128,7 +149,13 @@ fn persist_structural(
     // as a citation scrub stores one.
     let indexed_before = super::revision::indexed_input_in_txn(vault, txn, doc.id)?;
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    super::revision::index_stored_note_in_txn(vault, txn, doc.id, indexed_before.as_deref(), None)?;
+    super::revision::index_stored_note_in_txn(
+        vault,
+        txn,
+        doc.id,
+        indexed_before.as_deref(),
+        grant,
+    )?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
@@ -697,7 +724,13 @@ pub(crate) fn deck_outline_document_in_txn(
     if body.kind != NoteKind::Plugin("brief".to_owned()) {
         return Err(invalid("a deck outline is a brief NOTE"));
     }
-    load(vault, txn, note)?.view()
+    let mut view = load(vault, txn, note)?.view()?;
+    for record in &mut view.authorship {
+        if record.operation == note && record.actor == super::NoteActor::Erased {
+            record.actor = body.author_ref.erased_here(vault, txn)?;
+        }
+    }
+    Ok(view)
 }
 
 pub(crate) fn resolve_deck_pin_in_txn(
