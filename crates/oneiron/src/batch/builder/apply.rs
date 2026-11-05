@@ -372,6 +372,7 @@ pub(super) fn admit_federated_puts(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
             ..
         } = &mut ops[*index]
@@ -381,6 +382,7 @@ pub(super) fn admit_federated_puts(
             blob.extend_from_slice(&occurred.start.to_be_bytes());
             blob.extend_from_slice(&occurred.end.to_be_bytes());
             blob.extend_from_slice(&learned_at.to_be_bytes());
+            blob.extend_from_slice(&row_version.unwrap_or(0).to_be_bytes());
             blob.extend_from_slice(data);
             let admitted = crate::sync::selector::admit_federated_entity_blob(
                 vault,
