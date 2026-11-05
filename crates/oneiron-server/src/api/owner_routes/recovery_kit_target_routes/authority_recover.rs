@@ -14,7 +14,7 @@ use oneiron::error::RecordError;
 use oneiron::recovery::KitSecretKind;
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use super::super::blocking;
 use super::{Kit, OwnerDevice};
@@ -43,15 +43,23 @@ struct RecoverRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KitInput {
-    pieces: Vec<String>,
+    pieces: Vec<KitText>,
     #[serde(default)]
-    passphrase: Option<String>,
+    passphrase: Option<KitText>,
 }
 
-impl Drop for KitInput {
-    fn drop(&mut self) {
-        self.pieces.zeroize();
-        self.passphrase.zeroize();
+/// Each decoded field owns its wipe even if the surrounding JSON never finishes.
+struct KitText(Zeroizing<String>);
+
+impl<'de> Deserialize<'de> for KitText {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|text| Self(Zeroizing::new(text)))
+    }
+}
+
+impl KitText {
+    fn into_string(mut self) -> String {
+        std::mem::take(&mut *self.0)
     }
 }
 
@@ -64,7 +72,7 @@ async fn recover(
     if !crate::api::has_json_content_type(&headers) {
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
-    let mut input = read_input(body).await?;
+    let input = read_input(body).await?;
     let receipt = blocking(move || -> OwnerResult<RecoveryReceipt> {
         let target = authority_vault_id(&input.target)?;
         let actual = server.vault().authority_fold()?.vault_id;
@@ -75,8 +83,13 @@ async fn recover(
         }
         let new_device = input.new_device.into_native()?;
         let kit = Kit::parse(
-            std::mem::take(&mut input.kit.pieces),
-            input.kit.passphrase.take(),
+            input
+                .kit
+                .pieces
+                .into_iter()
+                .map(KitText::into_string)
+                .collect(),
+            input.kit.passphrase.map(KitText::into_string),
         )?;
         let secret = server.vault().restore_kit_here(
             target,
