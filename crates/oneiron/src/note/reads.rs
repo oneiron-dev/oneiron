@@ -366,6 +366,7 @@ impl Memory<'_> {
             return Ok((None, gate));
         }
         let selected = if at.indexed {
+            super::ensure_citations_ready(&self.vault().store, txn, note)?;
             super::revision::indexed_doc_in_txn(at.store, txn, note, at.pending)?
         } else {
             None

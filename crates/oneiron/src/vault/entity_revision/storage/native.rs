@@ -308,3 +308,26 @@ pub(crate) fn indexed_native_note_in_txn(
             .ok_or(Error::EntityNotFound)?;
     Ok(Some((slot, stored.at(frontier)?)))
 }
+
+/// Native prose keeps the same pending-citation fence as the canonical NOTE
+/// reader. Generic physical history is not silently placed in that namespace.
+pub(super) fn ensure_readable(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    mode: super::super::ReadMode,
+    current: Option<&RevisionState>,
+) -> Result<()> {
+    let selected = match mode {
+        super::super::ReadMode::Live => current.map(|state| state.live),
+        super::super::ReadMode::Indexed => current.map(|state| state.indexed),
+        super::super::ReadMode::Pinned(revision) => Some(revision),
+    };
+    if let Some(selected) = selected
+        && active_note(store, txn, id, selected)?.is_some()
+    {
+        crate::note::ensure_citations_ready(&vault.store, txn, *id)?;
+    }
+    Ok(())
+}
