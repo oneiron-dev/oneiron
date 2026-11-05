@@ -110,10 +110,14 @@ prefix. Chunk boundaries, padding checks, JSON-before-sink errors, file writes
 and final field handling keep their existing order.
 
 The other object members stream to a second anonymous vault-staged file instead
-of one rebuilt encoded metadata vector. Values retain their original bytes;
-normalized property names cannot exceed their original JSON spelling. Omitting
-the base64 member also removes its name and punctuation. The head and decoded
-input bytes therefore fit within the raw body's stored-copy room; no second
+of one rebuilt encoded metadata vector. Values and quoted property names retain
+their original bytes. Names are unescaped only into the existing stack-array bulk
+matcher, never a name vector or normalization string. A non-bulk name is replayed
+from its saved extent through the same admitted reader, after any preceding comma;
+the reader ends exactly at that name's closing quote. Escaped names keep the same
+meaning for the later DTO decode. Omitting the base64 member also removes its name
+and punctuation. The head and decoded input bytes therefore fit within the raw
+body's stored-copy room; no second
 cumulative disk claim is created. Files still close on drop, and real disk
 capacity failures keep the custody response.
 
@@ -125,6 +129,9 @@ transfer worker admit a separate 64 KiB head reader and decode the route's DTO.
 There is no buffer lease or vault transaction across that wait, and the original
 live cancellation flag remains in use. The phases do not overlap. A head-file
 read failure keeps body-not-whole rather than being called malformed JSON.
+Position, seek and original-name replay failures keep that same response; malformed
+name escapes or UTF-8 still produce invalid JSON. A head write failure does not
+stop replaying the name's full extent or judging the rest of the document.
 
 A readable head's DTO errors still precede saved input-sink errors. The reader
 drops before its lease, including refusal and unwind; the returned request keeps
@@ -133,8 +140,8 @@ before the worker returns.
 
 A physical memory floor uses the existing internal-server-error shape with a
 custody-decode allocation message. A stopped wait keeps body-not-whole, not disk
-capacity. Per-property names and their normalization strings, generic DTOs and
-native decoded rows remain unpriced; this is not whole-endpoint heap admission.
+capacity. The later serde reader's key scratch space, generic DTOs and native
+decoded rows remain unpriced; this is not whole-endpoint heap admission.
 
 ## Native answers
 
