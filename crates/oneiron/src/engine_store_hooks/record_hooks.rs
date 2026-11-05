@@ -69,6 +69,50 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
     }
 
+    fn record_comm_send_receipt(
+        &self,
+        vault: &crate::Vault,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_send_receipt(vault, party, channel_class, occurred_at)
+    }
+
+    fn record_comm_actor_send_receipt_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        display_name: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_actor_send_receipt_in_txn(
+            vault,
+            wtxn,
+            actor,
+            display_name,
+            channel_class,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_thread_event(
+        &self,
+        vault: &crate::Vault,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_thread_event(vault, thread_ref, party, joined, occurred_at)
+    }
+
+    fn run_comm_projector_housekeeping_step(&self, vault: &crate::Vault) {
+        crate::comm::run_comm_projector_housekeeping_step(vault)
+    }
+
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)
     }
