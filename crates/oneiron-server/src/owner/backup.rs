@@ -397,7 +397,10 @@ pub(crate) fn prune(
 /// are read again and each unlink and directory sync runs while the vault's
 /// writer is held. Neither `keep`, a held prune nor a handoff pin keeps one:
 /// the Owners' deletion let them go, and their stage acks go with them. The
-/// caller holds the backup lock.
+/// caller holds the backup lock. The automatic custody companion beside
+/// these backups expires under the same deletion deadline and hold recheck;
+/// only this lineage's sealed head and keyless log go, never local keys or
+/// an independent target.
 pub(crate) fn prune_deleted_vault_backups(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
@@ -448,6 +451,7 @@ pub(crate) fn prune_deleted_vault_backups(
     payload_retention::settle(vault, plan, &gone, inventories);
     payload_retention::sweep(vault, plan);
     handoff::sweep_orphan_stage_acks(plan);
+    vault.retire_deleted_backup_custody(&plan.dir)?;
     Ok(Some(gone))
 }
 

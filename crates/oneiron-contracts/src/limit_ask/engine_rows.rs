@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 137] = [
+    pub const ALL: [Self; 138] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -143,6 +143,7 @@ impl EngineLimit {
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
         Self::CodebaseManifestFiles,
+        Self::RequestedResultRows,
     ];
 
     /// The config key that sets the row.
@@ -285,6 +286,7 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
             Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
+            Self::RequestedResultRows => "limits.requested_result_rows",
         }
     }
 
@@ -496,6 +498,10 @@ impl EngineLimit {
             Self::SharedMergeEvidenceRows => 4_096,
             // The legacy codebase snapshot manifest's threshold (FIX 74).
             Self::CodebaseManifestFiles => 10_000_000,
+            // Two to the twentieth: far above any page a door serves in
+            // ordinary use. Past it the row asks, and the whole requested
+            // count is served.
+            Self::RequestedResultRows => 1_048_576,
         }
     }
 }

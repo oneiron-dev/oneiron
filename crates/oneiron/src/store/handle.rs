@@ -271,6 +271,9 @@ pub struct StoreCore {
     /// The engine's attempt queue operations, supplied by the open door with
     /// the delete guards.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's core write operations, supplied by the open door with the
+    /// delete guards.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -315,7 +318,7 @@ pub struct StoreCore {
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
     /// key goes. Never persisted.
-    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
+    pub(crate) inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
@@ -354,11 +357,11 @@ pub struct StoreCore {
     pub(crate) credential_revocations: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
-    pub(crate) container_output: crate::conversation::ContainerOutputGuard,
+    pub(crate) container_output: crate::store::container_output::ContainerOutputGuard,
     /// The voice calls live in each room, by host token (FIX 1388/1389 C1).
     /// Per vault, in memory, never persisted: hosts register again after a
     /// restart.
-    pub(crate) live_speakers: crate::conversation::LiveSpeakers,
+    pub(crate) live_speakers: crate::store::live_speaker_calls::LiveSpeakers,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -690,7 +693,9 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
+        pub(crate) trait ManifestDbs:
+            policy_fold::PolicyFoldSource + oneiron_store::vector_index::VectorIndexDbs
+        {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs
