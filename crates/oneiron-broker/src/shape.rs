@@ -84,6 +84,9 @@ pub enum Shape {
     /// A server's liveness: `GET …/health`, no body, Bearer. A GPU pod
     /// answers its health here.
     Health,
+    /// A Gemini model listing: `GET …/v1beta/models`, no body,
+    /// `x-goog-api-key`.
+    GeminiModels,
 }
 
 struct Row {
@@ -326,6 +329,8 @@ const OPENAI_MODELS: Row = openai(
 
 const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
 
+const GEMINI_MODELS: Row = gemini("GET", &["v1beta", "models"], Body::Empty, Selector::Binding);
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -353,6 +358,7 @@ impl Shape {
             Self::SystemOne => &SYSTEM_ONE,
             Self::OpenAiModels => &OPENAI_MODELS,
             Self::Health => &HEALTH,
+            Self::GeminiModels => &GEMINI_MODELS,
         }
     }
 
