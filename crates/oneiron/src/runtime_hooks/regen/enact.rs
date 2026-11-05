@@ -18,7 +18,10 @@ use crate::skill_hub::pack_catalog::{
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 use super::history::{self, HookRegenActor, HookRegenEvent};
-use super::{HookContractStamp, HookRegenPrior, HookRegenRecord, REGEN, files_with_hook_body};
+use super::{
+    HookContractStamp, HookRegenOutcome, HookRegenPrior, HookRegenRecord, REGEN, body_hash,
+    files_with_hook_body, pending_candidate,
+};
 
 /// Whose put installs a hook body a regen enacts (FIX 4692).
 #[derive(Clone, Copy)]
@@ -61,6 +64,25 @@ impl HookPut<'_> {
         match self {
             Self::Owner(_) => vault.prepare_owner_pack_put(files),
             Self::Agent { .. } => vault.prepare_agent_local_pack_put(files),
+        }
+    }
+
+    /// Sets binding `binding`'s dial to `enabled` in the caller's writer, as
+    /// this put writes its rows: the owner's, or the authoring agent's.
+    fn set_enabled_in_txn(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        binding: EntityId,
+        enabled: bool,
+    ) -> Result<()> {
+        match self {
+            Self::Owner(owner) => {
+                vault.set_pack_hook_enabled_by_owner_in_txn(txn, owner, binding, enabled)
+            }
+            Self::Agent { agent, .. } => {
+                vault.set_pack_hook_enabled_by_agent_in_txn(txn, agent, binding, enabled)
+            }
         }
     }
 
@@ -218,6 +240,7 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or(Error::EntityNotFound)?;
+            pack_unmoved(&row, &current)?;
             let record = REGEN.get(&self.store, txn, &binding)?;
             let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
             let disposition = put.put_in_txn(self, txn, &prepared)?;
@@ -225,6 +248,12 @@ impl Vault {
                 return Ok(disposition);
             }
             let rebound = self.rebound_in_txn(txn, &current, &prior.body_hash, binding)?;
+            // The restored body takes the dial of the body it replaces: the
+            // install keeps a returning binding's own dial, which the
+            // adoption turned off.
+            if let Some(restored) = rebound {
+                put.set_enabled_in_txn(self, txn, restored, current.enabled)?;
+            }
             let declined = HookContractStamp::current();
             let reverted = HookRegenRecord {
                 body_hash: prior.body_hash.clone(),
@@ -259,5 +288,134 @@ impl Vault {
             self.verb_hook_bindings_changed();
         }
         Ok(disposition)
+    }
+}
+
+impl Vault {
+    /// The one enactment of a pending regen, through `put` as
+    /// [`HookPut::for_hook`] resolves it for the hook, with its receipt
+    /// naming `by`.
+    pub(in crate::runtime_hooks) fn enact_hook_regen(
+        &self,
+        put: HookPut<'_>,
+        by: &HookRegenActor,
+        binding: EntityId,
+        candidate_hash: &str,
+        stamped: bool,
+    ) -> Result<PackInstallDisposition> {
+        let (_, row) = self
+            .pack_hook_bindings()?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .ok_or(Error::EntityNotFound)?;
+        let put = put.for_hook(&row)?;
+        let record = self.hook_regen_record(binding)?;
+        let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+        let source = self
+            .get_pack_source(&row.source)?
+            .ok_or(Error::EntityNotFound)?;
+        let (files, replaced) = files_with_hook_body(&source, &row.hook, candidate.as_bytes());
+        // The body this adoption replaces, kept for a revert (FIX 4690).
+        let replaced = replaced.and_then(|bytes| String::from_utf8(bytes).ok());
+        let prepared = put.prepare(self, files)?;
+        let disposition = self.with_write_txn_grouped(|txn| {
+            let (_, current) = self
+                .pack_hook_bindings_in_txn(txn)?
+                .into_iter()
+                .find(|(id, _)| *id == binding)
+                .ok_or(Error::EntityNotFound)?;
+            pack_unmoved(&row, &current)?;
+            let record = REGEN.get(&self.store, txn, &binding)?;
+            let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+            let stamped_diff = matches!(
+                record.as_ref().and_then(|record| record.pending.as_ref()),
+                Some(HookRegenOutcome::NeedsHumanStamp { .. })
+            );
+            let disposition = put.put_in_txn(self, txn, &prepared)?;
+            // A Candidate or Blocked put keeps the pending decision and the
+            // native proposal records, without advancing the last good body.
+            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+                return Ok(disposition);
+            }
+            // The new body binds under a new id; resolve it in this writer,
+            // before any other regen decision or pack install can intervene.
+            let rebound = self.rebound_in_txn(txn, &current, candidate_hash, binding)?;
+            let previous = replaced
+                .as_ref()
+                .zip(record.as_ref())
+                .map(|(body, record)| HookRegenPrior {
+                    body: body.clone(),
+                    body_hash: body_hash(body),
+                    stamp: record.stamp.clone(),
+                });
+            let adopted = HookRegenRecord {
+                body_hash: candidate_hash.to_owned(),
+                stamp: target.clone(),
+                intent: record.and_then(|record| record.intent),
+                pending: None,
+                previous,
+                declined: None,
+            };
+            for id in std::iter::once(binding).chain(rebound) {
+                REGEN.put(self, txn, &id, &adopted)?;
+            }
+            history::append_in_txn(
+                self,
+                txn,
+                binding,
+                &current,
+                candidate_hash,
+                by,
+                HookRegenEvent::Adopted {
+                    candidate_hash: candidate_hash.to_owned(),
+                    target,
+                    stamped: stamped_diff,
+                    rebound,
+                },
+            )?;
+            Ok(disposition)
+        })?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
+    }
+
+    /// The binding a body put under `current`'s hook bound under, in the
+    /// acting writer, when it is a new id: the new body binds under a new
+    /// id, resolved before any other regen decision or pack install can
+    /// intervene.
+    fn rebound_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        current: &PackHookBinding,
+        body_hash: &str,
+        binding: EntityId,
+    ) -> Result<Option<EntityId>> {
+        Ok(self
+            .pack_hook_bindings_in_txn(txn)?
+            .into_iter()
+            .find(|(_, bound)| {
+                bound.pack == current.pack
+                    && bound.hook == current.hook
+                    && bound.body_hash == body_hash
+            })
+            .map(|(id, _)| id)
+            .filter(|id| *id != binding))
+    }
+}
+
+/// Refuses a put prepared from a pack source other than the one `current`
+/// binds from in the writer. Another put of the pack landed since the
+/// files were prepared, and installing the stale prepared pack would undo
+/// it. The caller asks again, and a new prepare starts from the pack as it
+/// stands.
+fn pack_unmoved(prepared: &PackHookBinding, current: &PackHookBinding) -> Result<()> {
+    if prepared.source == current.source {
+        Ok(())
+    } else {
+        Err(Error::ConcurrentWrite(
+            "the hook's pack changed since this regen was prepared; ask again",
+        ))
     }
 }
