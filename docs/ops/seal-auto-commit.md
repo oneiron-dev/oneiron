@@ -10,6 +10,12 @@ actor. Its actor-bound Generated source-trust row retains the existing unstamped
 floor, receipts and warnings, and selects `auto_checker: "native.esign.seal"`. The independent
 top-level host/Dreamer `auto_checker` setting is unchanged.
 
+The seal actor is also registered in the engine's native MACHINE provision list.
+At host open, the existing host-rooted provisioner enrolls its per-vault key and
+retains the signer before seal versions append. Reopening retains that same native
+signer, and host re-rooting includes the same actor list. A revoked or foreign
+binding still supplies no signer. Mandatory MACHINE claim verification is unchanged.
+
 The producer retains the independent sealer verification, profile coherence and SHA-256 checks.
 Only their typed verified outputs can form the private job guard. In the final writer, the
 selected native policy checker binds the current attempt lease owner and count, unchanged

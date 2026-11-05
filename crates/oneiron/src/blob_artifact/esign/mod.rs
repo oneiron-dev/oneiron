@@ -95,6 +95,6 @@ mod public_read;
 pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
-pub(crate) use artifact_actor::actor as artifact_machine;
+pub(crate) use artifact_actor::{actor as artifact_machine, seal_actor as seal_machine};
 
 pub mod template;

@@ -41,7 +41,7 @@ pub(crate) fn actor(
 }
 
 /// A separate, policy-nameable writer for verified SealJob outputs only.
-pub(super) fn seal_actor(
+pub(crate) fn seal_actor(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,
