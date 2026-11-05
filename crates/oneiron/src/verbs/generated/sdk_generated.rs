@@ -2205,6 +2205,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.off_record.artifacts.save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordArtifactSaveRequest,
+                >(),
+            ),
+            (
                 "vault.off_record.claims.upsert",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::OffRecordClaimRequest,
@@ -7415,6 +7421,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.discard",
     "vault.off_record.recall",
     "vault.off_record.notes.create",
+    "vault.off_record.artifacts.save",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "self.off_record.results.list",
@@ -8898,6 +8905,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.off_record.notes.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
+        "vault.off_record.artifacts.save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordArtifactSaved,
+        >(),
         "vault.off_record.claims.upsert" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
         }
@@ -10622,6 +10632,7 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.discard",
     "vault.off_record.recall",
     "vault.off_record.notes.create",
+    "vault.off_record.artifacts.save",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "self.off_record.results.list",
@@ -13633,6 +13644,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.off_record.notes.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.artifacts.save" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20709,6 +20727,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.off_record.notes.create" => {
             let _input: crate::task_verb::sdk::OffRecordNoteRequest = decode(value.clone())?;
         }
+        "vault.off_record.artifacts.save" => {
+            let _input: crate::task_verb::sdk::OffRecordArtifactSaveRequest =
+                decode(value.clone())?;
+        }
         "vault.off_record.claims.upsert" => {
             let _input: crate::task_verb::sdk::OffRecordClaimRequest = decode(value.clone())?;
         }
@@ -24472,6 +24494,9 @@ pub fn invoke(
         "vault.off_record.recall" => encode(vault_off_record_recall(memory, decode(value)?)?),
         "vault.off_record.notes.create" => {
             encode(vault_off_record_notes_create(memory, decode(value)?)?)
+        }
+        "vault.off_record.artifacts.save" => {
+            encode(vault_off_record_artifacts_save(memory, decode(value)?)?)
         }
         "vault.off_record.claims.upsert" => {
             encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
@@ -29762,6 +29787,12 @@ pub fn vault_off_record_notes_create(
     input: crate::task_verb::sdk::OffRecordNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
     crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.notes.create", &input)
+}
+pub fn vault_off_record_artifacts_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordArtifactSaveRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordArtifactSaved> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.artifacts.save", &input)
 }
 pub fn vault_off_record_claims_upsert(
     memory: &Memory<'_>,

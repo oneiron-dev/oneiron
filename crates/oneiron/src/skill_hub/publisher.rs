@@ -91,6 +91,7 @@ impl Vault {
                     entity_type: crate::registry::ENTITY_TYPE_SKILL_HUB,
                     occurred,
                     learned_at,
+                    row_version: None,
                     data: data.clone(),
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

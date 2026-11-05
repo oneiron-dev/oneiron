@@ -188,6 +188,21 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// its outbox revision to 4 at the floor. No `Ping` field is added and this
 /// version stays 3.
 ///
+/// VM descriptor-first outbox sets (FIX 11071 / 6685): carrier revision 5
+/// sends the complete set as descriptor-only
+/// [`VmOutboxFrame::Offer`](crate::vm_outbox::VmOutboxFrame::Offer) frames,
+/// then waits for [`VmOutboxFrame::Go`](crate::vm_outbox::VmOutboxFrame::Go)
+/// before body chunks. Only the existing ordered final acks report the
+/// result after the set; an early deferral returns them without bodies.
+/// It carries a build floor at the engine revision it merges in: the host
+/// library, guest image and companion all speak revision 5, and LC's image
+/// acceptance moves its outbox revision to 5 at that floor. Other revisions
+/// are refused at the hello, with no old reader. Native staging allocation
+/// uses the same file through body receipt and publication; unsupported
+/// allocation keeps the original write path and later failures keep their
+/// final outcomes. No cap, timing or `Ping` field changes, and this version
+/// stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
@@ -233,16 +248,17 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// address are the supervisor's; the engine defaults none. No `Ping` field is
 /// added and this version stays 3.
 ///
-/// VM managed profile (FIX 6809): the config drive's five typed files,
-/// `/config/organization-owner`, `/config/member-vault`,
-/// `/config/failure-signal-export`, `/config/failure-signal-training` and
-/// `/config/fast-dims`
+/// VM managed profile (FIX 6809; FIX 13707): the config drive's seven typed
+/// files, `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training`,
+/// `/config/fast-dims`, `/config/privacy-posture` and
+/// `/config/checkpoint-host-opt-out`
 /// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
-/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// and its six siblings), which `oneiron-vm-init` reads before the vault's
 /// key goes in and passes to an open's or a cold restore's engine as its
 /// managed-profile flags, carry a build floor, at the engine revision they
 /// merged in, proven by the image manifest's required
-/// `vm_managed_profile_revision` 1
+/// `vm_managed_profile_revision` 2
 /// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
 /// An image before the floor ignores the files, so its vault would start
 /// without its tenancy or its owner's choices: a supervisor checks the
