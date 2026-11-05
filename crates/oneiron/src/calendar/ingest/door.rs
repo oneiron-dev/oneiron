@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
+use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
 use crate::calendar::{CalendarError, CalendarReadRequest};
@@ -247,6 +248,10 @@ fn apply_upload(
         preserve_direction: !complete,
         now: vault.now_recorded_at(),
         blob_ref: &blob_ref,
+        source: Some(CalendarPassportSource {
+            artifact: source,
+            version,
+        }),
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
     };

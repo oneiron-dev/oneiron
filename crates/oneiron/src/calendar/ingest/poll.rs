@@ -336,7 +336,8 @@ pub fn run_ics_feed_poll_with_screener(
             pause_feed(vault, config, &cursor_digest, prior_cursor, now)
         }
         IcsFetchResponse::Complete { etag, body } => {
-            let blob_ref = archive_raw_feed(vault, config, &body, now)?;
+            let source = archive_raw_feed(vault, config, &body, now)?;
+            let blob_ref = source.blob_ref();
             let feed = parse_ics_feed(&body)?;
             let mut admission = PollAdmission {
                 vault,
@@ -346,6 +347,7 @@ pub fn run_ics_feed_poll_with_screener(
                 preserve_direction: false,
                 now,
                 blob_ref: &blob_ref,
+                source: Some(source),
                 verdict_fold: VerdictFold::default(),
                 continuations: Some(Vec::new()),
             };

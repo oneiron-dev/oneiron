@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4488 declarations.
+Census: 1232 facade rows, 4489 declarations.
 Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -18224,6 +18224,9 @@ class CalendarPassportReadRequest(TypedDict):
     event_ref: str
     system: str
     uid: str
+class CalendarPassportSource(TypedDict):
+    artifact: EntityId
+    version: int
 CalendarPassportDirection = Literal["inbound", "outbound", "two_way"]
 CalendarPassportPresence = Literal["live", "absent"]
 class CalendarPassportValue(TypedDict):
@@ -18231,6 +18234,7 @@ class CalendarPassportValue(TypedDict):
     uid: str
     last_sequence: int
     content_hash: list[int]
+    source: NotRequired[CalendarPassportSource | None]
     direction: CalendarPassportDirection
     last_seen_at: int
     presence: CalendarPassportPresence
