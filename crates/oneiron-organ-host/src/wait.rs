@@ -113,33 +113,77 @@ const fn redrive_sight(admitted_as_owner: bool) -> SecretSight {
     }
 }
 
-impl HeldCall {
-    fn of(call: &OrganCall, lent: &[LentInput]) -> Self {
+/// The same held-call shape, borrowing the live job before routing consumes it.
+#[derive(Serialize)]
+struct HeldCallRef<'a> {
+    organ: &'a str,
+    verb: &'a str,
+    schema: u32,
+    args: &'a Value,
+    body: &'a Option<TypedBody>,
+    inputs: HeldInputs<'a>,
+    class: CallClass,
+    deadline_ms: u64,
+    grant: &'a str,
+    lent: HeldLent<'a>,
+}
+
+struct HeldInputs<'a>(&'a [SightedInput]);
+
+impl Serialize for HeldInputs<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for sighted in self.0 {
+            sequence.serialize_element(&HeldInput {
+                artifact: sighted.input.artifact.to_hex(),
+                version: sighted.input.version,
+                owner: sighted.sight == SecretSight::Owner,
+            })?;
+        }
+        sequence.end()
+    }
+}
+
+struct HeldLent<'a>(&'a [LentInput]);
+
+impl Serialize for HeldLent<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for input in self.0 {
+            sequence.serialize_element(&(input.media_type.as_str(), HeldBytes(&input.bytes)))?;
+        }
+        sequence.end()
+    }
+}
+
+struct HeldBytes<'a>(&'a [u8]);
+
+impl Serialize for HeldBytes<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(self.0)
+    }
+}
+
+impl<'a> HeldCallRef<'a> {
+    fn of(call: &'a OrganCall, lent: &'a [LentInput]) -> Self {
         Self {
-            organ: call.organ.clone(),
-            verb: call.verb.clone(),
+            organ: &call.organ,
+            verb: &call.verb,
             schema: call.schema,
-            args: call.args.clone(),
-            body: call.body.clone(),
-            inputs: call
-                .inputs
-                .iter()
-                .map(|sighted| HeldInput {
-                    artifact: sighted.input.artifact.to_hex(),
-                    version: sighted.input.version,
-                    owner: sighted.sight == SecretSight::Owner,
-                })
-                .collect(),
+            args: &call.args,
+            body: &call.body,
+            inputs: HeldInputs(&call.inputs),
             class: call.class,
             deadline_ms: u64::try_from(call.deadline.as_millis()).unwrap_or(u64::MAX),
-            grant: call.grant.clone(),
-            lent: lent
-                .iter()
-                .map(|input| (input.media_type.clone(), ByteBuf::from(input.bytes.clone())))
-                .collect(),
+            grant: &call.grant,
+            lent: HeldLent(lent),
         }
     }
+}
 
+impl HeldCall {
     fn into_call(self) -> Result<(OrganCall, Vec<LentInput>), String> {
         let inputs = self
             .inputs
@@ -201,8 +245,15 @@ impl OrganRouter {
             trigger,
             submitter,
         } = job;
-        let held = oneiron_organ_protocol::to_vec(&HeldCall::of(&call, &lent))
+        let snapshot = HeldCallRef::of(&call, &lent);
+        let encoded = oneiron_organ_protocol::encoded_len(&snapshot)
             .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
+        let mut held_room = self.hold_wait_encoding(encoded)?;
+        let held = oneiron_organ_protocol::to_vec(&snapshot)
+            .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
+        if let Some(room) = &mut held_room {
+            room.materialized(encoded, held.capacity() as u64);
+        }
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
                 let proposals = propose_organ_outputs(
