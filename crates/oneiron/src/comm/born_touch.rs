@@ -145,7 +145,6 @@ pub(super) fn adopt_born_touch_head_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     value: &CommClaimValue,
-    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<Option<EntityId>> {
     let row = vault
         .store
@@ -191,6 +190,7 @@ pub(super) fn adopt_born_touch_head_in_txn(
     {
         return Err(CommError::InvalidRecord);
     }
-    admission.write(vault, txn, &[id], &[], |_| Ok(()))?;
+    // This is the original Put the batch already admitted, not a new write.
+    // The projector admits every subsequent supersession of another head.
     Ok(Some(id))
 }
