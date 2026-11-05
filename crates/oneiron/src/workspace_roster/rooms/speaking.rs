@@ -12,7 +12,7 @@ use crate::memory::{Memory, MemoryResult};
 use crate::{EntityId, Result};
 
 use super::participation::require_reader;
-use super::{CLAIMS, HISTORY, RESPONSE, RoomTurn, turn_in, turns_readable};
+use super::{CLAIMS, HISTORY, RESPONSE, RoomTurn, project_room_of, turn_in, turns_readable};
 
 /// How many of the room's newest turns the ROOM section reads for open
 /// speaking claims.
@@ -33,16 +33,24 @@ impl Memory<'_> {
     /// The open speaking claims on `room`'s newest [`ROOM_SPEAKING_TURNS`]
     /// turns, newest first: each unanswered turn someone claimed, and each
     /// unanswered, unclaimed turn that names the reader. Only turns the
-    /// reader may read are listed. Empty when the room's Scope reads no
-    /// turns.
+    /// reader may read are listed. Empty for an ordinary Conversation, which
+    /// keeps no claim-before-speaking receipts, and when the room's Scope
+    /// reads no turns.
     ///
     /// # Errors
     ///
-    /// A reader that does not belong to the room, and storage faults.
+    /// A reader that does not belong to a project room, and storage faults.
     pub fn room_speaking_claims(&self, room: EntityId) -> MemoryResult<Vec<RoomSpeakingClaim>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        // An ordinary Conversation's membership ledger stays its reader
+        // gate, already met by the section it renders in.
+        if project_room_of(self.vault(), &txn, room)?.is_none() {
+            return Ok(Vec::new());
+        }
+        require_reader(self.vault(), &txn, room, self.actor())?;
+        drop(txn);
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
